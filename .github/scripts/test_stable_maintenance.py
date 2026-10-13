@@ -1145,6 +1145,12 @@ sys.exit(int(sys.argv[1]))
         self.assertIn("permission-workflows: write", workflow)
         self.assertIn("GITHUB_TOKEN: ${{ steps.publish-token.outputs.token }}", workflow)
 
+        concurrency = maintain_job.split("    concurrency:\n", 1)[1].split("    env:\n", 1)[0]
+        self.assertIn("group: stable-maintenance-azure-quota\n", concurrency)
+        self.assertNotIn("${{", concurrency)
+        self.assertIn("cancel-in-progress: false\n", concurrency)
+        self.assertIn("queue: max\n", concurrency)
+
         dockerfile = DOCKERFILE.read_text()
         self.assertRegex(dockerfile, r"FROM rust:1\.98\.0-bookworm@sha256:[0-9a-f]{64} AS rust-toolchain")
         self.assertRegex(dockerfile, r"FROM rust:1\.98\.0-bookworm@sha256:[0-9a-f]{64} AS maintenance-tools")
@@ -1957,7 +1963,7 @@ class CommitFilteringTests(unittest.TestCase):
             "cargo vet", "Cargo Audit", "cargo audit/cargo vet", "cargo fmt", "cargo clippy",
             "Version 4.0.5", "Branch stable-4.x", "Update Cargo.nix", "Regenerate Cargo.nix",
             "nix crate2nix -- generate", "chore: refresh cargo vet metadata", "feat: new capability",
-            "docs(parser): clarify", "refactor!: API", "style: rustfmt", "test: more tests", "chore(deps): bump x",
+            "docs(parser): clarify", "refactor!: API", "style: rustfmt", "chore(deps): bump x",
             "i18n: add German", "l10n: add French", "feat(i18n): add Spanish",
         ]
         for subject in subjects:
@@ -1965,13 +1971,15 @@ class CommitFilteringTests(unittest.TestCase):
                 self.assertIsNotNone(sm.prefilter_commit(subject, ["src/a.rs"]))
 
     def test_ambiguous_fix_security_ci_and_revert_are_not_title_filtered(self):
-        for subject in ("fix: prevent panic", "security: harden parser", "ci: repair packaging", "Revert bad fix", "Update parser"):
+        for subject in ("fix: prevent panic", "security: harden parser", "ci: repair packaging", "Revert bad fix", "Update parser", "test: correct a regression"):
             with self.subTest(subject=subject):
                 self.assertIsNone(sm.prefilter_commit(subject, ["src/a.rs"]))
 
     def test_path_and_author_filters(self):
         self.assertEqual(sm.prefilter_commit("Update stuff", ["Cargo.lock"]), "dependency metadata only")
-        self.assertEqual(sm.prefilter_commit("Repair action", [".github/workflows/ci.yml"]), "CI only")
+        for paths in ([".github/workflows/ci.yml"], [".github/workflows/stable-package-target.yml"],
+                      ["src/a.rs", ".github/workflows/ci.yml"]):
+            self.assertEqual(sm.prefilter_commit("Repair testing", paths), "CI change requires manual backport")
         self.assertEqual(sm.prefilter_commit("Whatever", ["src/a.rs"], author="dependabot[bot]"), "dependabot/dependency update")
         self.assertEqual(sm.prefilter_commit("Merge branch", ["src/a.rs"], parents=2), "merge")
 
@@ -2169,6 +2177,7 @@ class MutationBoundaryTests(unittest.TestCase):
             runner.git.side_effect = git
             output = io.StringIO()
             with mock.patch.object(sm, "AzureAI", side_effect=AssertionError("AI must not resolve conflicts")), \
+                 mock.patch.object(sm, "_commit_record", return_value={"paths": ["src/a.rs"]}), \
                  mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
                  mock.patch.object(sm.sys, "stderr", output):
                 sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
@@ -2336,7 +2345,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
             ai.call("instructions", data, sm.BOOL_SCHEMA, "result")
         self.assertEqual(request.call_count, sm.MAX_AI_ATTEMPTS)
         self.assertEqual(sleep.call_args_list, [mock.call(70), mock.call(130)])
-        self.assertEqual(len(output.getvalue().splitlines()), sm.MAX_AI_ATTEMPTS)
+        self.assertEqual(sum(line.startswith("azure-debug:") for line in output.getvalue().splitlines()), sm.MAX_AI_ATTEMPTS)
         self.assertIn("limit_tokens=150000 remaining_tokens=0", output.getvalue())
 
     def test_azure_does_not_retry_before_an_excessive_server_wait(self):
@@ -2372,7 +2381,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
                 with self.assertRaises(sm.MaintenanceError):
                     ai.call(secret, secret, sm.BOOL_SCHEMA, secret)
             lines = output.getvalue().splitlines()
-            self.assertEqual(len(lines), sm.MAX_AI_ATTEMPTS)
+            self.assertEqual(sum(line.startswith("azure-debug:") for line in lines), sm.MAX_AI_ATTEMPTS)
             self.assertIn("stage=" + stage, lines[-1])
             self.assertIn("reason=" + reason, lines[-1])
             self.assertNotIn(secret, output.getvalue())
@@ -2393,7 +2402,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
                 with self.assertRaisesRegex(sm.MaintenanceError, "bounded retries"):
                     ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
             lines = output.getvalue().splitlines()
-            self.assertEqual(len(lines), sm.MAX_AI_ATTEMPTS)
+            self.assertEqual(sum(line.startswith("azure-debug:") for line in lines), sm.MAX_AI_ATTEMPTS)
             self.assertIn("stage=structured-output", lines[-1])
             self.assertIn("reason=missing-structured-output", lines[-1])
 
@@ -2481,7 +2490,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["branch", "--show-current"]:
                     return sm.CommandResult(0, "stable-4.x\n", "")
-                if argv == ["rev-list", "--reverse", f"{cutoff}..{main}"]:
+                if argv == ["rev-list", "--topo-order", "--reverse", f"{cutoff}..{main}"]:
                     return sm.CommandResult(0, "\n".join([earlier, failed, later]) + "\n", "")
                 if argv[:2] == ["show", "--format=fuller"]:
                     return sm.CommandResult(0, "patch", "")
@@ -2521,6 +2530,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
             self.assertNotIn(f"backport-debug: sha={failed}", output.getvalue())
             self.assertIn("backport-summary: phase=classify candidates=3 selected=2 skipped=0 manual_review=1", output.getvalue())
             with mock.patch.object(sm.sys, "stderr", output), \
+                 mock.patch.object(sm, "_commit_record", return_value=record), \
                  mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build:
                 sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
             self.assertEqual(build.call_count, 3)  # Baseline and both attempted picks.
@@ -2939,7 +2949,7 @@ class MaintenanceHistoryTests(unittest.TestCase):
                 sm.phase_import_dependabot(mock.Mock(branch="stable-4.x"), state, runner)
             runner.git.assert_not_called()
             self.assertEqual(state.load()["dependabot_skipped"], [
-                {"number": 18, "reason": "Cargo handled by audited dependency phase"}])
+                {"number": 18, "reason": "Cargo handled by audited dependency phase", "intentional": True}])
 
     def test_release_keeps_unresolved_backports_eligible(self):
         for pending in ({"backport_review_required": [{"sha": "b" * 40}]}, {"backports_deferred": ["b" * 40]}, {}):
@@ -3016,6 +3026,575 @@ class MaintenanceHistoryTests(unittest.TestCase):
                     candidates = runner.git(["rev-list", f"{through}..{main}"]).stdout.splitlines()
                     self.assertEqual(candidates, [main] if pending_key else [])
                     self.assertIn('version = "4.0.5"', (root / "Cargo.toml").read_text())
+
+
+class SequentialMaintenanceTests(unittest.TestCase):
+    repository = MaintenanceHistoryTests.repository
+    commit = MaintenanceHistoryTests.commit
+
+    def test_backport_patch_treats_inventory_paths_literally(self):
+        for name in (":(exclude)**", "Cargo.*", "ordinary.rs"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                (runner.root / name).write_text("literal filename marker\n")
+                (runner.root / "value.rs").write_text("actual source change marker\n")
+                lock = runner.root / "Cargo.lock"
+                lock.write_text(lock.read_text() + "generated metadata marker\n")
+                sha = self.commit(runner, "Fix source with unusual filename")
+                record = sm._commit_record(runner, sha)
+                self.assertIn(name, record["paths"])
+                patch = sm.backport_patch(runner, record)
+                self.assertIn("+literal filename marker", patch)
+                self.assertIn("+actual source change marker", patch)
+                self.assertNotIn("generated metadata marker", patch)
+
+    def test_skewed_merge_history_replays_prerequisite_before_child(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            source = runner.root / "value.rs"
+            source.write_text("pub fn value() -> u32 { 0 }\n")
+            baseline = self.commit(runner, "Existing functionality")
+            runner.git(["branch", "-f", "stable-4.x", baseline])
+            def dated(subject, year):
+                date = f"{year}-01-01T00:00:00+0000"
+                with mock.patch.dict(runner.env, {"GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}):
+                    return self.commit(runner, subject)
+            source.write_text("pub fn value() -> u32 { 1 }\n")
+            prerequisite = dated("Fix prerequisite", 2030)
+            (runner.root / "left.txt").write_text("left fix\n")
+            left = dated("Fix independent left", 2040)
+            runner.git(["checkout", "-b", "skewed-side", prerequisite])
+            source.write_text("pub fn value() -> u32 { 2 }\n")
+            child = dated("Fix child", 2000)
+            (runner.root / "right.txt").write_text("right fix\n")
+            right = dated("Fix independent right", 2010)
+            runner.git(["checkout", "main"])
+            with mock.patch.dict(runner.env, {"GIT_COMMITTER_DATE": "2050-01-01T00:00:00+0000"}):
+                runner.git(["merge", "--no-ff", "skewed-side", "-m", "Merge skewed history"])
+            main = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            chronological = runner.git(["rev-list", "--reverse", f"{baseline}..{main}"]).stdout.splitlines()
+            self.assertLess(chronological.index(child), chronological.index(prerequisite))
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": main})
+            ai = mock.Mock()
+            def decision(instructions, data, schema, name):
+                if name == "stable_relevance_decision" and "Fix child" in data:
+                    self.assertEqual(source.read_text(), "pub fn value() -> u32 { 1 }\n")
+                    self.assertIn("pub fn value() -> u32 { 1 }", data)
+                return {"decision": True, "reason": "bug-fix"}
+            ai.call.side_effect = decision
+            with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "format_backport"), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            applied = state.load()["backports_applied"]
+            self.assertLess(applied.index(prerequisite), applied.index(child))
+            self.assertEqual(set(applied), {prerequisite, child, left, right})
+            self.assertEqual(source.read_text(), "pub fn value() -> u32 { 2 }\n")
+
+    def test_repair_rejects_manifest_and_audit_policy_edits(self):
+        for path in ("Cargo.toml", "src/member/Cargo.toml", "src/member/Cargo.lock", ".cargo/audit.toml", "source-only"):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                source = runner.root / "value.rs"
+                source.write_text("old\n")
+                policy = runner.root / ("Cargo.toml" if path == "source-only" else path)
+                policy.parent.mkdir(parents=True, exist_ok=True)
+                original = policy.read_text() if policy.exists() else "policy = 'stable'\n"
+                policy.write_text(original)
+                baseline = self.commit(runner, "Existing feature and policy")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                source.write_text("fixed on main\n")
+                policy.write_text(original + "# main metadata change\n")
+                sha = self.commit(runner, "Fix existing feature with metadata")
+                runner.git(["checkout", "stable-4.x"])
+                source.write_text("stable variant\n")
+                pre_head = self.commit(runner, "Stable variant")
+                source.write_text("fixed stable variant\n")
+                if path != "source-only":
+                    if path == ".cargo/audit.toml":
+                        policy.write_text(original + "[advisories]\nignore = ['RUSTSEC-2000-0001']\n")
+                    elif path.endswith("Cargo.toml"):
+                        policy.write_text(original + "[features]\nunreviewed = []\n")
+                    else:
+                        policy.write_text(original + "# unreviewed lockfile change\n")
+                patch = runner.git(["diff"]).stdout
+                runner.git(["reset", "--hard", pre_head])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
+                ai = mock.Mock()
+                ai.call.side_effect = lambda instructions, data, schema, name: (
+                    {"decision": True, "patch": patch} if name == "backport_conflict_repair" else {"decision": True})
+                with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
+                     mock.patch.object(sm, "format_backport") as fmt:
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner, adaptive=True)
+                self.assertEqual(policy.read_text(), original)
+                if path == "source-only":
+                    self.assertEqual(state.load()["backports_applied"], [sha])
+                    self.assertEqual(source.read_text(), "fixed stable variant\n")
+                    self.assertEqual(build.call_count, 2)
+                    fmt.assert_called_once()
+                else:
+                    self.assertEqual(state.load()["backports_deferred"], [sha])
+                    self.assertEqual(source.read_text(), "stable variant\n")
+                    self.assertEqual(build.call_count, 1)
+                    fmt.assert_not_called()
+                    self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), pre_head)
+                    self.assertEqual(ai.call.call_count, sm.MAX_BACKPORT_REPAIR_ATTEMPTS)
+
+    def test_repair_rejects_hidden_protected_preimage_in_patch_headers(self):
+        for section_path in ("Cargo.toml", "value.rs"):
+            with self.subTest(section_path=section_path), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                policy = runner.root / "Cargo.toml"
+                source = runner.root / "value.rs"
+                policy.write_text("original manifest\n")
+                source.write_text("original source\n")
+                baseline = self.commit(runner, "Existing policy and source")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                policy.write_text("main manifest\n")
+                source.write_text("main source\n")
+                sha = self.commit(runner, "Fix existing source with metadata")
+                runner.git(["checkout", "stable-4.x"])
+                patch = (f"diff --git a/{section_path} b/value.rs\n"
+                         "--- a/Cargo.toml\n+++ b/value.rs\n@@ -1 +1 @@\n"
+                         "-original manifest\n+new source\n")
+                inventory = runner.git(["apply", "--numstat", "-"], input_text=patch).stdout
+                self.assertEqual(inventory, "1\t1\tvalue.rs\n")
+                runner.git(["apply", "--check", "--index", "-"], input_text=patch)
+                ai = mock.Mock(); ai.call.return_value = {"decision": True, "patch": patch}
+                self.assertFalse(sm.repair_backport(runner, sha, baseline, ai))
+                self.assertEqual(policy.read_text(), "original manifest\n")
+                self.assertEqual(source.read_text(), "original source\n")
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), baseline)
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertEqual(ai.call.call_count, sm.MAX_BACKPORT_REPAIR_ATTEMPTS)
+
+    def test_followup_sees_applied_and_formatted_predecessor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            source = runner.root / "value.rs"
+            source.write_text("pub fn value() -> u32 { 0 }\n")
+            baseline = self.commit(runner, "Existing functionality")
+            runner.git(["branch", "-f", "stable-4.x", baseline])
+            source.write_text("pub fn value() -> u32 { 1 }\n")
+            first = self.commit(runner, "Fix existing value")
+            source.write_text("pub fn value() -> u32 { 2 }\n")
+            second = self.commit(runner, "Fix follow-up value")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": second})
+            ai = mock.Mock(); calls = []
+            def decision(instructions, data, schema, name):
+                calls.append(name)
+                self.assertIn("untrusted", instructions)
+                if name == "backport_conflict_repair":
+                    head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                    source.write_text("pub fn value() -> u32 {\n    2\n}\n")
+                    patch = runner.git(["diff"]).stdout
+                    runner.git(["reset", "--hard", head])
+                    return {"decision": True, "patch": patch}
+                if name == "backport_repair_scope":
+                    return {"decision": True}
+                if name == "stable_relevance_decision" and "Fix follow-up value" in data:
+                    self.assertIn("pub fn value() -> u32 {\n    1\n}", data)
+                return {"decision": True, "reason": "bug-fix"}
+            ai.call.side_effect = decision
+            def format_command(current, command, **kwargs):
+                self.assertEqual(command, ["cargo", "fmt", "--all"])
+                number = "1" if "{ 1 }" in source.read_text() else "2"
+                source.write_text("pub fn value() -> u32 {\n    " + number + "\n}\n")
+                return sm.CommandResult(0, "", "")
+            with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=format_command), \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(calls, ["bug_fix_decision", "stable_relevance_decision"] * 2 +
+                             ["backport_conflict_repair", "backport_repair_scope"])
+            self.assertEqual(build.call_count, 3)  # One baseline, then each commit.
+            value = state.load()
+            self.assertEqual(value["backports_applied"], [first, second])
+            self.assertEqual(value["backports_deferred"], [])
+            self.assertEqual(runner.git(["rev-list", "--count", baseline + "..HEAD"]).stdout.strip(), "2")
+            messages = runner.git(["log", "--format=%B", baseline + "..HEAD"]).stdout
+            for sha in (first, second):
+                self.assertIn("(cherry picked from commit " + sha + ")", messages)
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+            sm.phase_report(mock.Mock(branch="stable-4.x"), state, runner)
+            report = (state.directory / "report.md").read_text()
+            self.assertIn("Fix follow-up value", report)
+            self.assertEqual(len(json.loads((state.directory / "report.json").read_text())["outcomes"]), 2)
+
+    def test_new_feature_labeled_fix_is_skipped_without_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "new-provider.rs").write_text("new provider\n")
+            feature = self.commit(runner, "fix: support a new provider edge case")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": feature})
+            ai = mock.Mock(); ai.call.return_value = {"decision": False, "reason": "new-feature"}
+            with mock.patch.object(sm, "AzureAI", return_value=ai), mock.patch.object(sm, "locked_build") as build:
+                sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            build.assert_not_called()
+            self.assertFalse((runner.root / "new-provider.rs").exists())
+            self.assertEqual(state.load()["backport_outcomes"][0]["outcome"], "intentional-skip")
+            self.assertEqual(state.load()["backport_skipped"][0]["reason"], "new-feature")
+
+    def test_uncertain_relevance_remains_pending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "fix.rs").write_text("fix\n")
+            sha = self.commit(runner, "Fix existing behavior")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": sha})
+            ai = mock.Mock(); ai.call.side_effect = [
+                {"decision": True, "reason": "bug-fix"}, {"decision": False, "reason": "uncertain"}]
+            with mock.patch.object(sm, "AzureAI", return_value=ai), mock.patch.object(sm, "locked_build") as build:
+                sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            build.assert_not_called()
+            self.assertEqual(sm.maintenance_main_through(state.load()), baseline)
+            self.assertEqual(state.load()["backport_outcomes"][0]["outcome"], "pending")
+
+    def test_conflict_repair_is_scoped_verified_built_and_formatted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            source = runner.root / "value.rs"
+            source.write_text("old\n")
+            baseline = self.commit(runner, "Existing feature")
+            source.write_text("fixed on main\n")
+            sha = self.commit(runner, "Fix existing feature")
+            runner.git(["checkout", "stable-4.x"])
+            source.write_text("stable variant\n")
+            pre_head = self.commit(runner, "Stable variant")
+            source.write_text("fixed stable variant\n")
+            patch = runner.git(["diff"]).stdout
+            runner.git(["reset", "--hard", pre_head])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
+            ai = mock.Mock(); ai.call.side_effect = [{"decision": True, "patch": patch}, {"decision": True}]
+            with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
+                 mock.patch.object(sm, "format_backport") as fmt:
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner, adaptive=True)
+            self.assertEqual(source.read_text(), "fixed stable variant\n")
+            self.assertEqual(state.load()["backports_adapted"], [sha])
+            self.assertEqual(build.call_count, 2)
+            fmt.assert_called_once_with(runner, pre_head)
+            self.assertIn(sha, runner.git(["log", "-1", "--format=%B"]).stdout)
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
+    def test_repair_cannot_touch_other_files_or_create_symlinks(self):
+        for malicious in ("other-path", "symlink"):
+            with self.subTest(malicious=malicious), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                source = runner.root / "value.rs"
+                source.write_text("old\n")
+                baseline = self.commit(runner, "Baseline")
+                source.write_text("main fix\n"); sha = self.commit(runner, "Fix existing behavior")
+                runner.git(["checkout", "stable-4.x"])
+                source.write_text("stable\n"); pre_head = self.commit(runner, "Stable variant")
+                source.write_text("bad\n"); patch = runner.git(["diff"]).stdout
+                runner.git(["reset", "--hard", pre_head])
+                if malicious == "other-path":
+                    patch = patch.replace("value.rs", "Cargo.toml")
+                else:
+                    patch = patch.replace("index ", "old mode 100644\nnew mode 120000\nindex ", 1)
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
+                ai = mock.Mock(); ai.call.return_value = {"decision": True, "patch": patch}
+                with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "format_backport") as fmt:
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner, adaptive=True)
+                fmt.assert_not_called()
+                self.assertEqual(source.read_text(), "stable\n")
+                self.assertEqual(state.load()["backports_deferred"], [sha])
+                self.assertEqual(ai.call.call_count, sm.MAX_BACKPORT_REPAIR_ATTEMPTS)
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), pre_head)
+
+    def test_format_failure_reverts_only_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "fix.rs").write_text("fix\n"); sha = self.commit(runner, "Fix")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
+            with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "format_backport", side_effect=sm.MaintenanceError("formatter failed")):
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner, adaptive=True)
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), baseline)
+            self.assertEqual(state.load()["backports_deferred"], [sha])
+            self.assertEqual(state.load()["backports_repair_failed"][0]["reason"], "format-failed")
+
+    def test_formatter_drift_cannot_be_amended_into_backport(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            unrelated = runner.root / "unrelated.rs"
+            unrelated.write_text("fn unrelated() {} // existing formatting drift\n")
+            baseline = self.commit(runner, "Existing stable code")
+            runner.git(["branch", "-f", "stable-4.x", baseline])
+            (runner.root / "earlier.txt").write_text("earlier accepted fix\n")
+            earlier = self.commit(runner, "Earlier independent fix")
+            candidate = runner.root / "fix.rs"
+            candidate.write_text("fn fix() {}\n")
+            rejected = self.commit(runner, "Attempt triggering unrelated rustfmt drift")
+            (runner.root / "later.txt").write_text("later independent fix\n")
+            later = self.commit(runner, "Later independent fix")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [earlier, rejected, later]})
+            def formatter(current, command, **kwargs):
+                if candidate.exists():
+                    candidate.write_text("fn fix() {\n}\n")
+                    unrelated.write_text("fn unrelated() {\n}\n")
+                return sm.CommandResult(0, "", "")
+            with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=formatter):
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner, adaptive=True)
+            value = state.load()
+            self.assertEqual(value["backports_applied"], [earlier, later])
+            self.assertEqual(value["backports_deferred"], [rejected])
+            self.assertEqual(value["backports_repair_failed"][0]["reason"], "format-failed")
+            self.assertFalse(candidate.exists())
+            self.assertEqual(unrelated.read_text(), "fn unrelated() {} // existing formatting drift\n")
+            self.assertTrue((runner.root / "earlier.txt").exists())
+            self.assertTrue((runner.root / "later.txt").exists())
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
+    def test_formatter_preserves_canonical_literal_filenames(self):
+        for name in ("src/café.rs", "src/tab\tname.rs", "src/line\nname.rs", ":(exclude)**.rs"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                source = runner.root / name
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("fn fix() {}\n")
+                self.commit(runner, "Fix existing source")
+                def formatter(*args, **kwargs):
+                    source.write_text("fn fix() {\n}\n")
+                    return sm.CommandResult(0, "", "")
+                with mock.patch.object(sm, "contained_repo_command", side_effect=formatter):
+                    sm.format_backport(runner, baseline)
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertEqual(runner.git(["show", f"HEAD:{name}"]).stdout, "fn fix() {\n}\n")
+
+    def test_independent_report_counts_pending_without_sequential_outcomes(self):
+        sha = "b" * 40
+        cases = (
+            ({"backport_review_required": [{"sha": sha}]}, 1),
+            ({"backports_deferred": [sha]}, 1),
+            ({"backport_review_required": [{"sha": sha}, {"sha": "c" * 40}],
+              "backports_deferred": [sha]}, 2),
+            ({"backports_applied": [sha]}, 0),
+            ({"backport_inflight": sha}, 0),
+        )
+        for fields, expected in cases:
+            for outcomes in (None, []):
+                with self.subTest(fields=fields, outcomes=outcomes), tempfile.TemporaryDirectory() as tmp:
+                    state = sm.State(Path(tmp) / "state")
+                    value = {"branch": "stable-4.x", **fields}
+                    if outcomes is not None:
+                        value["backport_outcomes"] = outcomes
+                    state.save(value)
+                    with mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                        sm.phase_report(mock.Mock(branch="stable-4.x"), state, mock.Mock())
+                    report = json.loads((state.directory / "report.json").read_text())
+                    self.assertEqual(report["pending"], expected)
+                    self.assertEqual(report["interrupted"], "backport_inflight" in fields)
+                    markdown = (state.directory / "report.md").read_text()
+                    self.assertIn("pending work remains" if expected or report["interrupted"]
+                                  else "examined backlog accounted for", markdown)
+
+    def test_ci_backports_require_review_before_ai_build_or_mutation(self):
+        payloads = (
+            "    permissions: {contents: write}\n",
+            "    env: {KEY: '${{ secrets.STABLE_MAINTENANCE_APP_PRIVATE_KEY }}'}\n",
+            "    environment: production\n    runs-on: self-hosted\n",
+            "    uses: owner/repo/.github/workflows/job.yml@main\n    secrets: inherit\n",
+            "    steps:\n      - uses: attacker/action@main\n",
+            "    steps:\n      - run: curl https://example.invalid\n",
+            "    permissions: &grant {contents: write}\n    env: *grant\n",
+            "    steps:\n      - run: cargo fmt --check\n",
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                workflow = runner.root / ".github/workflows/ci.yml"
+                workflow.write_text("name: CI\npermissions: {contents: read}\njobs:\n  fmt:\n" + payload)
+                sha = self.commit(runner, "Fix test job")
+                runner.git(["checkout", "stable-4.x"])
+                original_workflow = workflow.read_text()
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": sha})
+                with mock.patch.object(sm, "AzureAI") as ai, mock.patch.object(sm, "locked_build") as build:
+                    sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                ai.assert_not_called(); build.assert_not_called()
+                self.assertEqual(state.load()["backport_outcomes"][0]["outcome"], "intentional-skip")
+                self.assertEqual(state.load()["backport_skipped"][0]["reason"], "CI change requires manual backport")
+                with mock.patch.object(sm, "AzureAI") as ai:
+                    sm.phase_classify_backports(mock.Mock(branch="stable-4.x"), state, runner, candidates=[sha])
+                ai.assert_not_called()
+                value = state.load(); value["backport_candidates"] = [sha]; state.save(value)
+                with mock.patch.object(sm, "locked_build") as build, mock.patch.object(sm, "format_backport") as fmt:
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner, adaptive=True)
+                build.assert_not_called(); fmt.assert_not_called()
+                self.assertEqual(state.load()["backports_deferred"], [sha])
+                self.assertEqual(workflow.read_text(), original_workflow)
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), baseline)
+                ai = mock.Mock()
+                self.assertFalse(sm.repair_backport(runner, sha, baseline, ai))
+                ai.call.assert_not_called()
+
+    def test_ci_admission_sees_quoted_paths_and_both_sides_of_renames(self):
+        for case in ("quoted-name", "renamed-out"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                workflow = runner.root / ".github/workflows/wé.yml"
+                workflow.write_text("name: existing\n")
+                baseline = self.commit(runner, "Existing workflow")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                if case == "quoted-name":
+                    workflow.write_text("name: changed\n")
+                    (runner.root / "fix.rs").write_text("fn fix() {}\n")
+                else:
+                    workflow.rename(runner.root / "source.rs")
+                sha = self.commit(runner, "Fix existing behavior")
+                self.assertIn(".github/workflows/wé.yml", sm._commit_record(runner, sha)["paths"])
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
+                with mock.patch.object(sm, "locked_build") as build:
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                build.assert_not_called()
+                self.assertEqual(state.load()["backports_deferred"], [sha])
+                self.assertEqual(workflow.read_text(), "name: existing\n")
+
+    def test_independent_apply_rejects_ci_added_by_parentless_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            runner.git(["checkout", "--orphan", "root-fixture"])
+            workflow = runner.root / ".github/workflows/unreviewed.yml"
+            workflow.write_text("name: unreviewed\n")
+            sha = self.commit(runner, "Fix via root commit")
+            record = sm._commit_record(runner, sha)
+            self.assertEqual(record["parents"], 0)
+            self.assertIn(".github/workflows/unreviewed.yml", record["paths"])
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
+            with mock.patch.object(sm, "locked_build") as build:
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            build.assert_not_called()
+            self.assertEqual(state.load()["backports_deferred"], [sha])
+            self.assertFalse(workflow.exists())
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), baseline)
+
+    def test_container_manifest_translation_preserves_containment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); child = root / "src/common/Cargo.toml"
+            child.parent.mkdir(parents=True); child.write_text("[dependencies]\nfoo = { workspace = true }\n")
+            (root / "Cargo.toml").write_text('[workspace.dependencies]\nfoo = "1.2.0"\n')
+            for path, valid in (("/workspace/src/common/Cargo.toml", True), ("/etc/Cargo.toml", False),
+                                ("/workspace/../Cargo.toml", False)):
+                metadata = {"workspace_members": ["member"], "packages": [{"id": "member", "manifest_path": path},
+                    {"id": "foo", "name": "foo", "version": "1.2.0", "source": "registry+https://github.com/rust-lang/crates.io-index"}],
+                    "resolve": {"nodes": [{"id": "member", "deps": [{"name": "foo", "pkg": "foo"}]}]}}
+                with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, json.dumps(metadata), "")):
+                    if valid:
+                        mapped = sm.cargo_metadata(sm.Runner(root))
+                        target = sm.direct_registry_packages(mapped)[0]
+                        sm.update_direct_dependency_manifests(root, mapped, "foo", "1.2.1", target)
+                        self.assertIn('foo = "1.2.1"', (root / "Cargo.toml").read_text())
+                    else:
+                        with self.assertRaises(sm.MaintenanceError):
+                            sm.cargo_metadata(sm.Runner(root))
+
+    def test_zero_retry_delay_with_empty_quota_waits_a_window(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        error = sm.HTTPStatusError(429, {"retry-after": "0", "x-ratelimit-remaining-tokens": "0"})
+        with mock.patch.object(sm, "http_json", side_effect=[error, {"output_text": '{"decision":true}'}]), \
+             mock.patch.object(sm.time, "sleep") as sleep, mock.patch.object(sm.secrets, "randbelow", return_value=0):
+            ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+        sleep.assert_called_once_with(60)
+
+    def test_sequential_build_failure_keeps_earlier_work_and_continues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            commits = []
+            for name in ("earlier", "broken", "later"):
+                (runner.root / (name + ".rs")).write_text(name + "\n")
+                commits.append(self.commit(runner, "Fix " + name))
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": commits[-1]})
+            ai = mock.Mock(); ai.call.return_value = {"decision": True, "reason": "bug-fix"}
+            def build(current):
+                return sm.CommandResult(101 if (runner.root / "broken.rs").exists() else 0, "", "")
+            with mock.patch.object(sm, "AzureAI", return_value=ai), mock.patch.object(sm, "locked_build", side_effect=build), \
+                 mock.patch.object(sm, "format_backport"), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            value = state.load()
+            self.assertEqual(value["backports_applied"], [commits[0], commits[2]])
+            self.assertEqual(value["backports_deferred"], [commits[1]])
+            self.assertEqual([row["outcome"] for row in value["backport_outcomes"]], ["applied", "pending", "applied"])
+            self.assertEqual(sm.maintenance_main_through(value), baseline)
+            self.assertFalse((runner.root / "broken.rs").exists())
+
+    def test_interrupted_commit_preserves_completed_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "earlier.rs").write_text("earlier\n"); first = self.commit(runner, "Fix earlier")
+            (runner.root / "later.rs").write_text("later\n"); later = self.commit(runner, "Fix later")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": later})
+            ai = mock.Mock(); ai.call.return_value = {"decision": True, "reason": "bug-fix"}
+            apply = sm.phase_apply_backports
+            def fail_later(args, current_state, current_runner, **kwargs):
+                if current_state.load()["backport_candidates"] == [later]:
+                    raise sm.MaintenanceError("interrupted")
+                return apply(args, current_state, current_runner, **kwargs)
+            with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                 mock.patch.object(sm, "phase_apply_backports", side_effect=fail_later), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "format_backport"), self.assertRaisesRegex(sm.MaintenanceError, "interrupted"):
+                sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            value = state.load()
+            self.assertEqual(value["backports_applied"], [first])
+            self.assertEqual(value["backport_inflight"], later)
+            self.assertEqual(sm.maintenance_main_through(value), baseline)
+
+    def test_backport_context_omits_generated_metadata_and_labels_excerpts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            (runner.root / "Cargo.nix").write_text("generated baseline\n")
+            source = runner.root / "value.rs"
+            source.write_text("pub fn value() -> u32 { 0 }\n")
+            self.commit(runner, "Existing source")
+            (runner.root / "Cargo.nix").write_text("generated-line\n" * 100000)
+            source.write_text("pub fn value() -> u32 { 1 }\n")
+            sha = self.commit(runner, "Fix source with regenerated Nix")
+            patch = sm.backport_patch(runner, sm._commit_record(runner, sha))
+            self.assertNotIn("generated-line", patch)
+            self.assertIn("pub fn value()", patch)
+            text = "irrelevant line\n" * 5000 + "pub fn value() -> u32 { 0 }\n" + "more irrelevant\n" * 5000
+            excerpt = sm.source_excerpt(text, patch, 2048)
+            self.assertIn("EXCERPTS ONLY", excerpt)
+            self.assertIn("pub fn value() -> u32 { 0 }", excerpt)
+            self.assertLessEqual(len(excerpt.encode()), 2048)
 
 
 class InitializePhaseTests(unittest.TestCase):
