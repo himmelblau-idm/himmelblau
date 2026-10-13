@@ -953,25 +953,18 @@ impl HimmelblauConfig {
         Some(account_id.to_string())
     }
 
-    /// This function maps a UPN to a mapped name. If a mapping script is
-    /// configured, it will use the mapping cache to obtain the mapped name.
-    /// If a mapping script is not configured, but upn to cn mapping is
-    /// enabled, it will map the upn to the cn. Otherwise it will return the
-    /// name unchanged.
+    /// Map a UPN to the local name of the account. Without a mapping script,
+    /// cn mapping returns the local part of a primary-domain UPN. With a
+    /// script, the name comes from the mapping cache; on a miss the local part
+    /// is used when the script maps it back to the UPN, and a cached name that
+    /// only differs in case from it is normalized to it. The result must not
+    /// depend on the state of the cache, or one account gets two names.
+    /// Anything else is returned unchanged.
     pub fn map_upn_to_name(&self, upn: &str) -> String {
         self.map_upn_to_name_impl(upn, MAPPED_NAME_CACHE)
     }
 
     /// Inner impl with an injectable mapping cache path for hermetic unit tests.
-    ///
-    /// With a mapping script, the result must not depend on the state of the
-    /// mapping cache: it is empty until a root process has run the script, it
-    /// is keyed by whatever spelling the user typed at login, and a read can
-    /// fail while another process writes it. Returning the UPN in those cases
-    /// gives one account two names, which AccountsService handles as two
-    /// users (it then spins in a reload loop and blocks GDM). So a cache miss
-    /// falls back to the cn mapping of the primary domain, and a cached name
-    /// that only differs in case from the cn is normalized to it.
     fn map_upn_to_name_impl(&self, upn: &str, cache_path: &str) -> String {
         let Some((name, domain)) = split_username(upn) else {
             // This isn't a upn, just return the input unchanged
@@ -994,17 +987,45 @@ impl HimmelblauConfig {
             };
         }
 
-        let cached = MappedNameCache::new(cache_path, &Mode::ReadOnly)
-            .ok()
+        // Writable only for root, so root callers cache a confirmed cn.
+        let cache = MappedNameCache::new(cache_path, &Mode::ReadWrite).ok();
+        let cached = cache
+            .as_ref()
             .and_then(|cache| cache.lookup_mapped_name(upn));
         match cached {
             Some(mapped) if is_primary_cn && mapped.eq_ignore_ascii_case(name) => {
                 name.to_lowercase()
             }
             Some(mapped) => mapped,
-            None if is_primary_cn => name.to_lowercase(),
+            None if is_primary_cn && self.script_maps_to(&name.to_lowercase(), upn) => {
+                let cn = name.to_lowercase();
+                if let Some(cache) = &cache {
+                    // Failing to insert a name map is not a critical failure.
+                    if let Err(e) = cache.insert_mapping(upn, &cn) {
+                        error!("Failed to cache name mapping for {} as {}: {}", upn, cn, e);
+                    }
+                }
+                cn
+            }
             None => upn.to_string(),
         }
+    }
+
+    /// True when the mapping script maps `name` to `upn`, so `name` resolves back.
+    fn script_maps_to(&self, name: &str, upn: &str) -> bool {
+        let Some(script) = self.get_name_mapping_script() else {
+            return false;
+        };
+        Command::new(script)
+            .arg(name)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .is_some_and(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .trim()
+                    .eq_ignore_ascii_case(upn)
+            })
     }
 
     pub fn get_sudo_groups(&self) -> Vec<String> {
@@ -1081,6 +1102,25 @@ mod tests {
     fn create_temp_passwd(contents: &str) -> String {
         let file_path = format!("/tmp/himmelblau_test_passwd_{}", uuid::Uuid::new_v4());
         fs::write(&file_path, contents).expect("Failed to write temporary passwd file");
+        file_path
+    }
+
+    // Throwaway mapping cache so map_upn_to_name_impl can be tested hermetically.
+    fn create_temp_mapping_cache(rows: &[(&str, &str)]) -> String {
+        let file_path = format!("/tmp/himmelblau_test_mapping_{}.db", uuid::Uuid::new_v4());
+        let conn = rusqlite::Connection::open(&file_path).expect("Failed to create mapping cache");
+        conn.execute(
+            "CREATE TABLE mapping (upn TEXT PRIMARY KEY, mapped_name TEXT NOT NULL)",
+            [],
+        )
+        .expect("Failed to create mapping table");
+        for (upn, mapped_name) in rows {
+            conn.execute(
+                "INSERT INTO mapping (upn, mapped_name) VALUES (?1, ?2)",
+                rusqlite::params![upn, mapped_name],
+            )
+            .expect("Failed to insert mapping");
+        }
         file_path
     }
 
@@ -2296,34 +2336,19 @@ mod tests {
         );
     }
 
-    // Throwaway mapping cache so map_upn_to_name_impl can be tested hermetically.
-    fn create_temp_mapping_cache(rows: &[(&str, &str)]) -> String {
-        let file_path = format!("/tmp/himmelblau_test_mapping_{}.db", uuid::Uuid::new_v4());
-        let conn = rusqlite::Connection::open(&file_path).expect("Failed to create mapping cache");
-        conn.execute(
-            "CREATE TABLE mapping (upn TEXT PRIMARY KEY, mapped_name TEXT NOT NULL)",
-            [],
-        )
-        .expect("Failed to create mapping table");
-        for (upn, mapped_name) in rows {
-            conn.execute(
-                "INSERT INTO mapping (upn, mapped_name) VALUES (?1, ?2)",
-                rusqlite::params![upn, mapped_name],
-            )
-            .expect("Failed to insert mapping");
-        }
-        file_path
+    fn script_config_with(script: &str) -> HimmelblauConfig {
+        HimmelblauConfig::new(Some(&create_temp_config(&format!(
+            r#"
+        [global]
+        name_mapping_script = {script}
+        domains = example.com
+        "#
+        ))))
+        .unwrap()
     }
 
     fn script_config() -> HimmelblauConfig {
-        HimmelblauConfig::new(Some(&create_temp_config(
-            r#"
-        [global]
-        name_mapping_script = /path/to/name_mapping_script
-        domains = example.com
-        "#,
-        )))
-        .unwrap()
+        script_config_with("../../scripts/test_script_domain.sh")
     }
 
     #[test]
@@ -2354,6 +2379,33 @@ mod tests {
     }
 
     #[test]
+    fn test_map_upn_to_name_script_prefers_exact_cache_key() {
+        let cache = create_temp_mapping_cache(&[
+            ("First.Last@example.com", "jdoe"),
+            ("first.last@example.com", "flast"),
+        ]);
+        let config = script_config();
+        assert_eq!(
+            config.map_upn_to_name_impl("first.last@example.com", &cache),
+            "flast"
+        );
+        assert_eq!(
+            config.map_upn_to_name_impl("First.Last@example.com", &cache),
+            "jdoe"
+        );
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_read_error_falls_back_to_cn() {
+        let broken = format!("/tmp/himmelblau_test_mapping_{}.db", uuid::Uuid::new_v4());
+        rusqlite::Connection::open(&broken).expect("Failed to create mapping cache");
+        assert_eq!(
+            script_config().map_upn_to_name_impl("first.last@example.com", &broken),
+            "first.last"
+        );
+    }
+
+    #[test]
     fn test_map_upn_to_name_script_login_spelling_is_normalized() {
         // The cache is keyed and valued by what the user typed at login.
         let cache = create_temp_mapping_cache(&[("First.Last@example.com", "First.Last")]);
@@ -2375,8 +2427,34 @@ mod tests {
     fn test_map_upn_to_name_script_keeps_renamed_mapping() {
         let cache = create_temp_mapping_cache(&[("john.doe@example.com", "jdoe")]);
         assert_eq!(
-            script_config().map_upn_to_name_impl("john.doe@example.com", &cache),
+            script_config_with("../../scripts/test_script_rename.sh")
+                .map_upn_to_name_impl("john.doe@example.com", &cache),
             "jdoe"
+        );
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_miss_keeps_upn_when_cn_does_not_map_back() {
+        // The script maps jdoe, not john.doe, to john.doe@example.com.
+        let config = script_config_with("../../scripts/test_script_rename.sh");
+        let cache = create_temp_mapping_cache(&[]);
+        let name = config.map_upn_to_name_impl("john.doe@example.com", &cache);
+        assert_eq!(name, "john.doe@example.com");
+        assert_eq!(
+            config.map_name_to_upn_impl(&name, &create_temp_passwd(PASSWD_MINIMAL)),
+            Some("john.doe@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_miss_cn_maps_back() {
+        let config = script_config();
+        let cache = create_temp_mapping_cache(&[]);
+        let name = config.map_upn_to_name_impl("first.last@example.com", &cache);
+        assert_eq!(name, "first.last");
+        assert_eq!(
+            config.map_name_to_upn_impl(&name, &create_temp_passwd(PASSWD_MINIMAL)),
+            Some("first.last@example.com".to_string())
         );
     }
 
@@ -2386,6 +2464,24 @@ mod tests {
         assert_eq!(
             script_config().map_upn_to_name_impl("user@contoso.com", &cache),
             "user@contoso.com"
+        );
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_miss_without_cn_mapping_is_unchanged() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        name_mapping_script = ../../scripts/test_script_domain.sh
+        cn_name_mapping = false
+        domains = example.com
+        "#,
+        )))
+        .unwrap();
+        let cache = create_temp_mapping_cache(&[]);
+        assert_eq!(
+            config.map_upn_to_name_impl("first.last@example.com", &cache),
+            "first.last@example.com"
         );
     }
 

@@ -97,14 +97,16 @@ impl MappedNameCache {
     }
 
     /// Returns the cached name for a UPN, or `None` on a miss or a read error.
-    /// UPNs are case-insensitive, so the key is matched regardless of case.
+    /// UPNs are case-insensitive, so the key is matched regardless of case,
+    /// preferring an exact match.
     pub fn lookup_mapped_name(&self, upn: &str) -> Option<String> {
         if !upn.contains('@') {
             return None;
         }
         let conn = self.conn.as_ref()?;
         conn.query_row(
-            "SELECT mapped_name FROM mapping WHERE lower(upn) = lower(?1) LIMIT 1",
+            "SELECT mapped_name FROM mapping WHERE lower(upn) = lower(?1) \
+             ORDER BY upn = ?1 DESC LIMIT 1",
             params![upn],
             |row| row.get(0),
         )
