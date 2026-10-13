@@ -1,0 +1,65 @@
+[package]
+name = "himmelblau-collabora"
+description = "Collabora Office Microsoft 365 integration"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+axum = { version = "0.8.6", features = ["ws"] }
+broker-client.workspace = true
+clap.workspace = true
+futures-util = "0.3"
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+uuid.workspace = true
+rusty-leveldb = "4"
+urlencoding.workspace = true
+
+[[bin]]
+name = "himmelblau-collabora"
+path = "src/main.rs"
+
+[package.metadata.deb]
+name = "himmelblau-collabora"
+depends = ["$auto", "himmelblau-broker | microsoft-identity-broker"]
+suggests = ["collabora-office"]
+enhances = ["himmelblau"]
+assets = [
+  ["target/release/himmelblau-collabora", "usr/bin/himmelblau-collabora", "755"],
+  ["platform/himmelblau-collabora.service", "usr/lib/systemd/user/", "644"],
+  ["platform/himmelblau-collabora.desktop", "etc/xdg/autostart/", "644"],
+]
+maintainer-scripts = "platform"
+
+[package.metadata.generate-rpm]
+name = "himmelblau-collabora"
+assets = [
+  { source = "target/release/himmelblau-collabora", dest = "/usr/bin/himmelblau-collabora", mode = "755" },
+  { source = "./platform/himmelblau-collabora.service", dest = "/usr/lib/systemd/user/himmelblau-collabora.service", mode = "644" },
+  { source = "./platform/himmelblau-collabora.desktop", dest = "/etc/xdg/autostart/", mode = "644" },
+]
+post_install_script = "platform/postinst"
+pre_uninstall_script = "platform/prerm"
+
+[package.metadata.generate-rpm.requires]
+himmelblau-broker = "*"
+
+[package.metadata.generate-rpm.suggests]
+collabora-office = "*"
+
+[package.metadata.generate-rpm.supplements]
+"(himmelblau and collabora-office)" = ""
+
+[dev-dependencies]
+tokio-tungstenite = "0.28"

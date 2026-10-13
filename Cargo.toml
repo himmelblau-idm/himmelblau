@@ -16,6 +16,7 @@ members = [
 	"src/selinux",
 	"src/apparmor",
 	"src/o365",
+	"src/collabora",
 	"fuzz",
 	"src/orchestrator",
 ]

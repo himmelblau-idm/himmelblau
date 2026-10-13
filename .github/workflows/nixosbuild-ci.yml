@@ -26,4 +26,4 @@ jobs:
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7
       - run: nix flake check
-      - run: nix build .#daemon .#sso .#broker .#pam .#nss .#aad-tool .#o365 2>&1
+      - run: nix build .#daemon .#sso .#broker .#pam .#nss .#aad-tool .#o365 .#collabora 2>&1

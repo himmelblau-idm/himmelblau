@@ -1,0 +1,84 @@
+#!/bin/sh
+set -eu
+
+# Only a real removal may stop bridges and delete profile/recovery state.
+# Debian also calls prerm for upgrade error recovery and deconfiguration; RPM
+# passes the remaining instance count, with 0 identifying the final removal.
+case "${1:-}" in
+    remove|0) ;;
+    *) exit 0 ;;
+esac
+# An alternate-root dpkg operation must not stop or clean up the build host's users.
+# Keep unit-file changes in the target root. The helper fallback also honors it.
+if [ -n "${DPKG_ROOT:-}" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --root="$DPKG_ROOT" --global disable himmelblau-collabora.service >/dev/null 2>&1 || true
+    elif command -v deb-systemd-helper >/dev/null 2>&1; then
+        # Older installs used systemctl and have no helper link-state record.
+        deb-systemd-helper --user update-state himmelblau-collabora.service >/dev/null 2>&1 || true
+        deb-systemd-helper --user disable himmelblau-collabora.service >/dev/null 2>&1 || true
+    fi
+    exit 0
+fi
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --global disable himmelblau-collabora.service >/dev/null 2>&1 || true
+fi
+for runtime in /run/user/[0-9]*; do
+    [ -d "$runtime" ] || continue
+    uid=${runtime##*/}
+    # Do not hide NSS errors behind a successful cut or assume that an
+    # unresolved runtime UID cannot still own a running bridge.
+    if ! passwd_entry=$(getent passwd "$uid") || [ -z "$passwd_entry" ]; then
+        echo "Cannot look up user for runtime UID $uid. Retry removal when account lookup is available; cleanup has not run." >&2
+        exit 1
+    fi
+    user=${passwd_entry%%:*}
+    if [ -z "$user" ]; then
+        echo "Cannot look up user for runtime UID $uid. Retry removal when account lookup is available; cleanup has not run." >&2
+        exit 1
+    fi
+    # An empty successful listing proves the service is not loaded. A failed
+    # user-bus connection does not: only skip it if the system manager confirms
+    # that this user's manager is inactive (runtime directories can outlive it).
+    if units=$(runuser -u "$user" -- env XDG_RUNTIME_DIR="$runtime" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+        systemctl --user list-units --all --no-legend --plain \
+        himmelblau-collabora.service 2>/dev/null); then
+        [ -n "$units" ] || continue
+    elif manager_state=$(systemctl show "user@$uid.service" \
+        --property=ActiveState --value 2>/dev/null) && \
+        [ "$manager_state" = inactive ]; then
+        continue
+    else
+        echo "Cannot determine Collabora bridge status for $user. Stop the user's bridge or log out and retry removal; cleanup has not run." >&2
+        exit 1
+    fi
+    if ! runuser -u "$user" -- env XDG_RUNTIME_DIR="$runtime" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+        systemctl --user stop himmelblau-collabora.service; then
+        echo "Cannot stop Collabora bridge for $user. Stop it and retry removal; cleanup has not run." >&2
+        exit 1
+    fi
+done
+
+# Run cleanup as each profile owner, including users who are logged out.
+# A locked Collabora profile must be closed before package removal can finish.
+if ! passwd_entries=$(getent passwd) || [ -z "$passwd_entries" ]; then
+    echo "Cannot enumerate profile owners. Retry removal when account lookup is available; cleanup has not run." >&2
+    exit 1
+fi
+printf '%s\n' "$passwd_entries" | while IFS=: read -r user password uid gid gecos home shell; do
+    [ "$home" != / ] && [ -d "$home" ] || continue
+    if [ -d "$home/.config/Collabora Office" ] || \
+       [ -d "$home/.var/app/com.collaboraoffice.Office/config/Collabora Office" ] || \
+       [ -d "$home/.local/state/himmelblau-collabora" ]; then
+        # These are the default paths discovered above. Do not inherit the
+        # package manager's XDG paths; custom paths need in-session cleanup.
+        if ! runuser -u "$user" -- env HOME="$home" \
+            XDG_CONFIG_HOME="$home/.config" XDG_STATE_HOME="$home/.local/state" \
+            /usr/bin/himmelblau-collabora cleanup; then
+            echo "Collabora cleanup failed for $user. Close Collabora and retry removal, or run himmelblau-collabora cleanup in that user's session." >&2
+            exit 1
+        fi
+    fi
+done
