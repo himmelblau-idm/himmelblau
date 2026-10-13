@@ -746,6 +746,17 @@ in
       default = "/home/";
       description = ''
         The prefix to use for user home directories.
+        On SELinux systems, a custom prefix must have a persistent file-context
+        equivalence to /home before users' homes are created. This labels the prefix
+        home_root_t and applies the normal home/content contexts to its whole subtree.
+        For example:
+        sudo mkdir -p /home/entra
+        sudo semanage fcontext -a -e /home "$(readlink -f /home/entra)"
+        sudo restorecon -R "$(readlink -f /home/entra)"
+        Resolve the destination when /home is a symlink, such as on Aurora; retain
+        /home as the equivalence source. Use the same setup for prefixes outside /home.
+        Relabel only the configured prefix. Changing just its directory label with
+        chcon does not provide the descendant file-context rules.
       '';
       example = "/home/entra/";
     };
