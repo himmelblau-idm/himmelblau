@@ -770,6 +770,69 @@ optional {
 	allow himmelblaud_tasks_t home_root_t:lnk_file { create getattr read unlink };
 }
 
+# Label new homes and aliases at creation time, before copying the skeleton.
+optional {
+	require {
+		type home_root_t;
+		type user_home_dir_t;
+	}
+	type_transition himmelblaud_tasks_t home_root_t:dir user_home_dir_t;
+	type_transition himmelblaud_tasks_t home_root_t:lnk_file user_home_dir_t;
+	allow himmelblaud_tasks_t user_home_dir_t:dir { create setattr };
+}
+
+optional {
+	require {
+		type user_home_dir_t;
+		type user_home_t;
+	}
+	type_transition himmelblaud_tasks_t user_home_dir_t:dir user_home_t;
+	type_transition himmelblaud_tasks_t user_home_dir_t:file user_home_t;
+	type_transition himmelblaud_tasks_t user_home_dir_t:lnk_file user_home_t;
+}
+
+# Special home-content types vary by distro. Keep each transition optional so
+# an unavailable type does not disable the other skeleton-label transitions.
+optional {
+	require {
+		type user_home_dir_t;
+		type config_home_t;
+	}
+	type_transition himmelblaud_tasks_t user_home_dir_t:dir config_home_t ".config";
+}
+
+optional {
+	require {
+		type user_home_dir_t;
+		type gconf_home_t;
+	}
+	type_transition himmelblaud_tasks_t user_home_dir_t:dir gconf_home_t ".local";
+}
+
+optional {
+	require {
+		type gconf_home_t;
+		type data_home_t;
+	}
+	type_transition himmelblaud_tasks_t gconf_home_t:dir data_home_t "share";
+}
+
+optional {
+	require {
+		type data_home_t;
+		type flatpak_home_t;
+	}
+	type_transition himmelblaud_tasks_t data_home_t:dir flatpak_home_t "flatpak";
+}
+
+optional {
+	require {
+		type user_home_dir_t;
+		type ssh_home_t;
+	}
+	type_transition himmelblaud_tasks_t user_home_dir_t:dir ssh_home_t ".ssh";
+}
+
 ############################
 # App-specific types
 
