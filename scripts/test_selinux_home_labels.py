@@ -28,6 +28,9 @@ import subprocess
 import tempfile
 
 
+COMMAND_TIMEOUT = 60
+
+
 # Ordinary nested content and each special-name transition in the policy.
 # The daemon copies this private fixture through its /etc/skel bind mount.
 SKELETON_FILES = {
@@ -43,7 +46,7 @@ SKELETON_FILES = {
 
 def output(*args):
     """Run a checked command and return its trimmed stdout."""
-    return subprocess.check_output(args, text=True).strip()
+    return subprocess.check_output(args, text=True, timeout=COMMAND_TIMEOUT).strip()
 
 
 def label_type(path):
@@ -94,15 +97,18 @@ def test_home_prefix(prefix):
             f"[global]\nhome_prefix = {prefix}/\n"
             f"task_socket_path = {endpoint}\nuse_etc_skel = true\nselinux = true\n"
         )
-        subprocess.run(["chcon", "-t", "himmelblau_var_run_t", str(root)], check=True)
+        subprocess.run(["chcon", "-t", "himmelblau_var_run_t", str(root)], check=True,
+                       timeout=COMMAND_TIMEOUT)
         subprocess.run(["chcon", "-R", "-t", "himmelblau_etc_t",
-                        str(configuration), str(empty)], check=True)
-        subprocess.run(["chcon", "-R", "-t", "etc_t", str(skeleton)], check=True)
+                        str(configuration), str(empty)], check=True, timeout=COMMAND_TIMEOUT)
+        subprocess.run(["chcon", "-R", "-t", "etc_t", str(skeleton)], check=True,
+                       timeout=COMMAND_TIMEOUT)
         with socket.socket(socket.AF_UNIX) as server, (root / "log").open("w") as log:
             server.bind(str(endpoint))
             server.listen(1)
             server.settimeout(20)
-            subprocess.run(["chcon", "-t", "himmelblau_var_run_t", str(endpoint)], check=True)
+            subprocess.run(["chcon", "-t", "himmelblau_var_run_t", str(endpoint)], check=True,
+                           timeout=COMMAND_TIMEOUT)
             task = subprocess.Popen([
                 "systemd-run", "--quiet", "--wait", "--collect", "--unit=" + unit,
                 "-p", f"BindReadOnlyPaths={configuration}:/etc/himmelblau",
@@ -188,15 +194,18 @@ def test_home_prefix(prefix):
                 print("restorecon dry-run:",
                       "corrections required" if changes else "no corrections", flush=True)
             finally:
-                subprocess.run(["systemctl", "stop", unit], check=False,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 try:
-                    task.wait(timeout=20)
+                    subprocess.run(["systemctl", "stop", unit], check=False,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   timeout=COMMAND_TIMEOUT)
                 finally:
-                    if alias.is_symlink():
-                        alias.unlink()
-                    if home.is_dir():
-                        shutil.rmtree(home)
+                    try:
+                        task.wait(timeout=20)
+                    finally:
+                        if alias.is_symlink():
+                            alias.unlink()
+                        if home.is_dir():
+                            shutil.rmtree(home)
     print("FAIL: " + ", ".join(failures) if failures
           else "PASS: home, alias and skeleton", flush=True)
     return 1 if failures else 0
@@ -207,24 +216,27 @@ def custom_home_prefix(parent):
     """Own an empty prefix and its temporary /home equivalence, then clean both."""
     with tempfile.TemporaryDirectory(prefix="himmel-prefix-", dir=parent) as directory:
         prefix = Path(directory).resolve()
-        mapped = False
+        mapping_attempted = False
         try:
             # A parent-only relabel must not masquerade as a configured subtree.
-            subprocess.run(["chcon", "-t", "home_root_t", str(prefix)], check=True)
+            subprocess.run(["chcon", "-t", "home_root_t", str(prefix)], check=True,
+                           timeout=COMMAND_TIMEOUT)
             try:
                 require_home_prefix(prefix)
             except ValueError:
                 print("PASS: parent-only relabel refused", flush=True)
             else:
                 raise RuntimeError("Prefix without a /home equivalence was accepted")
+            # The add can commit before its command times out.
+            mapping_attempted = True
             subprocess.run(["semanage", "fcontext", "-a", "-e", "/home", str(prefix)],
-                           check=True)
-            mapped = True
-            subprocess.run(["restorecon", str(prefix)], check=True)
+                           check=True, timeout=COMMAND_TIMEOUT)
+            subprocess.run(["restorecon", str(prefix)], check=True, timeout=COMMAND_TIMEOUT)
             yield prefix
         finally:
-            if mapped:
-                subprocess.run(["semanage", "fcontext", "-d", str(prefix)], check=True)
+            if mapping_attempted:
+                subprocess.run(["semanage", "fcontext", "-d", str(prefix)], check=True,
+                               timeout=COMMAND_TIMEOUT)
 
 
 def main():
