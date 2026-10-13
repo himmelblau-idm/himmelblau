@@ -2734,6 +2734,29 @@ def repair_backport(runner: Runner, sha: str, pre_head: str, ai: AzureAI) -> boo
                 raise MaintenanceError("invalid repair patch")
             if re.search(r"^(?:old mode|new mode|(?:new|deleted) file mode (?!100(?:644|755)$)|GIT binary patch|Binary files|rename |copy )", patch, re.M):
                 raise MaintenanceError("repair patch changes file types")
+            # Numstat reports only a destination for mismatched old/new names,
+            # while apply can also delete the old file. Our no-renames policy
+            # must cover both Git section names and the unified body headers.
+            for section in re.split(r"(?m)^diff --git ", patch)[1:]:
+                section_lines = section.splitlines()
+                if not section_lines:
+                    raise MaintenanceError("invalid repair patch section")
+                header, *lines = section_lines
+                names = re.fullmatch(r"a/([A-Za-z0-9_./-]+) b/([A-Za-z0-9_./-]+)", header)
+                if not names or names[1] != names[2]:
+                    raise MaintenanceError("repair patch has mismatched paths")
+                old_headers, new_headers = [], []
+                for line in lines:
+                    if line.startswith("@@"):
+                        break
+                    if line.startswith("--- "):
+                        old_headers.append(line)
+                    elif line.startswith("+++ "):
+                        new_headers.append(line)
+                if (old_headers not in (["--- a/" + names[1]], ["--- /dev/null"])
+                        or new_headers not in (["+++ b/" + names[1]], ["+++ /dev/null"])
+                        or old_headers == ["--- /dev/null"] and new_headers == ["+++ /dev/null"]):
+                    raise MaintenanceError("repair patch has mismatched paths")
             inventory = runner.git(["apply", "--numstat", "-"], input_text=patch).stdout.splitlines()
             for line in inventory:
                 fields = line.split("\t")
@@ -2743,7 +2766,8 @@ def repair_backport(runner: Runner, sha: str, pre_head: str, ai: AzureAI) -> boo
                 pure = PurePosixPath(name)
                 if pure.is_absolute() or ".." in pure.parts or name not in allowed or not re.fullmatch(r"[A-Za-z0-9_./-]+", name):
                     raise MaintenanceError("repair patch escaped original paths")
-                if name in {"Cargo.nix", "Cargo.lock"} or name.startswith(("supply-chain/", ".github/scripts/")):
+                if (DEPENDENCY_PATH_RE.search(name) or name in {"Cargo.nix", ".cargo/audit.toml"}
+                        or name.startswith(("supply-chain/", ".github/scripts/"))):
                     raise MaintenanceError("repair patch changes protected metadata")
                 if is_ci_only([name]):
                     raise MaintenanceError("CI backports require manual review")
@@ -2808,7 +2832,7 @@ def phase_classify_backports(
     value = state.load()
     cutoff, main = require_sha(value["cutoff"]), require_sha(value["main_head"])
     if candidates is None:
-        candidates = runner.git(["rev-list", "--reverse", f"{cutoff}..{main}"]).stdout.splitlines()
+        candidates = runner.git(["rev-list", "--topo-order", "--reverse", f"{cutoff}..{main}"]).stdout.splitlines()
     schema = BACKPORT_DECISION_SCHEMA if compact else BOOL_SCHEMA
     selected, skipped, review_required = [], [], []
     ai: AzureAI | None = None
@@ -3031,7 +3055,7 @@ def phase_backports(args: argparse.Namespace, state: State, runner: Runner) -> N
     if runner.git(["status", "--porcelain"]).stdout:
         raise MaintenanceError("backports requires a clean worktree including untracked files")
     initial = state.load()
-    inventory = runner.git(["rev-list", "--reverse", f"{require_sha(initial['cutoff'])}..{require_sha(initial['main_head'])}"]).stdout.splitlines()
+    inventory = runner.git(["rev-list", "--topo-order", "--reverse", f"{require_sha(initial['cutoff'])}..{require_sha(initial['main_head'])}"]).stdout.splitlines()
     keys = ("backport_candidates", "backport_skipped", "backport_review_required", "backports_applied",
             "backports_conflict_skipped", "backports_build_failed", "backports_deferred", "backports_adapted", "backports_repair_failed", "backports_conflict_details")
     aggregate = {key: [] for key in keys}

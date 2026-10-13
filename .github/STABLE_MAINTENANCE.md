@@ -1,8 +1,9 @@
 # Stable maintenance behavior
 
 The workflow snapshots trusted tooling from the triggering `main` revision and
-stable source separately. Its `backports` phase inventories commits in ancestry
-order, then completes one commit before evaluating the next:
+stable source separately. Its `backports` phase inventories commits with reversed
+topological ordering, so ancestors precede descendants even when timestamps are
+skewed. It completes one commit before evaluating the next:
 
 1. Classify the actual patch and description as a correction to existing behavior.
    A `fix` subject does not authorize a new feature.
@@ -37,9 +38,11 @@ Backport input is bounded to 192 KiB. Generated lockfile and Cargo.nix diffs are
 excluded from AI context (not from the original cherry-pick), and large stable
 files use explicitly labeled excerpts around patch anchors. Missing context is
 not evidence that functionality is absent. AI decisions must record an allowed
-reason; uncertain decisions stay pending. Repairs cannot edit generated metadata,
+reason; uncertain decisions stay pending. Repairs cannot edit Cargo manifests or
+lockfiles (including nested members), `.cargo/audit.toml`, generated metadata,
 supply-chain policy or automation tooling, and never import prerequisite features
-from main.
+from main. A mixed source/metadata commit can be adapted only if the repair leaves
+these protected files unchanged.
 
 Azure retries use 5/10-second backoff for other failures. Throttling respects
 positive server guidance; missing/zero guidance falls back to a 60/120-second

@@ -2490,7 +2490,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["branch", "--show-current"]:
                     return sm.CommandResult(0, "stable-4.x\n", "")
-                if argv == ["rev-list", "--reverse", f"{cutoff}..{main}"]:
+                if argv == ["rev-list", "--topo-order", "--reverse", f"{cutoff}..{main}"]:
                     return sm.CommandResult(0, "\n".join([earlier, failed, later]) + "\n", "")
                 if argv[:2] == ["show", "--format=fuller"]:
                     return sm.CommandResult(0, "patch", "")
@@ -3031,6 +3031,130 @@ class MaintenanceHistoryTests(unittest.TestCase):
 class SequentialMaintenanceTests(unittest.TestCase):
     repository = MaintenanceHistoryTests.repository
     commit = MaintenanceHistoryTests.commit
+
+    def test_skewed_merge_history_replays_prerequisite_before_child(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            source = runner.root / "value.rs"
+            source.write_text("pub fn value() -> u32 { 0 }\n")
+            baseline = self.commit(runner, "Existing functionality")
+            runner.git(["branch", "-f", "stable-4.x", baseline])
+            def dated(subject, year):
+                date = f"{year}-01-01T00:00:00+0000"
+                with mock.patch.dict(runner.env, {"GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date}):
+                    return self.commit(runner, subject)
+            source.write_text("pub fn value() -> u32 { 1 }\n")
+            prerequisite = dated("Fix prerequisite", 2030)
+            (runner.root / "left.txt").write_text("left fix\n")
+            left = dated("Fix independent left", 2040)
+            runner.git(["checkout", "-b", "skewed-side", prerequisite])
+            source.write_text("pub fn value() -> u32 { 2 }\n")
+            child = dated("Fix child", 2000)
+            (runner.root / "right.txt").write_text("right fix\n")
+            right = dated("Fix independent right", 2010)
+            runner.git(["checkout", "main"])
+            with mock.patch.dict(runner.env, {"GIT_COMMITTER_DATE": "2050-01-01T00:00:00+0000"}):
+                runner.git(["merge", "--no-ff", "skewed-side", "-m", "Merge skewed history"])
+            main = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            chronological = runner.git(["rev-list", "--reverse", f"{baseline}..{main}"]).stdout.splitlines()
+            self.assertLess(chronological.index(child), chronological.index(prerequisite))
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": main})
+            ai = mock.Mock()
+            def decision(instructions, data, schema, name):
+                if name == "stable_relevance_decision" and "Fix child" in data:
+                    self.assertEqual(source.read_text(), "pub fn value() -> u32 { 1 }\n")
+                    self.assertIn("pub fn value() -> u32 { 1 }", data)
+                return {"decision": True, "reason": "bug-fix"}
+            ai.call.side_effect = decision
+            with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "format_backport"), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            applied = state.load()["backports_applied"]
+            self.assertLess(applied.index(prerequisite), applied.index(child))
+            self.assertEqual(set(applied), {prerequisite, child, left, right})
+            self.assertEqual(source.read_text(), "pub fn value() -> u32 { 2 }\n")
+
+    def test_repair_rejects_manifest_and_audit_policy_edits(self):
+        for path in ("Cargo.toml", "src/member/Cargo.toml", "src/member/Cargo.lock", ".cargo/audit.toml", "source-only"):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                source = runner.root / "value.rs"
+                source.write_text("old\n")
+                policy = runner.root / ("Cargo.toml" if path == "source-only" else path)
+                policy.parent.mkdir(parents=True, exist_ok=True)
+                original = policy.read_text() if policy.exists() else "policy = 'stable'\n"
+                policy.write_text(original)
+                baseline = self.commit(runner, "Existing feature and policy")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                source.write_text("fixed on main\n")
+                policy.write_text(original + "# main metadata change\n")
+                sha = self.commit(runner, "Fix existing feature with metadata")
+                runner.git(["checkout", "stable-4.x"])
+                source.write_text("stable variant\n")
+                pre_head = self.commit(runner, "Stable variant")
+                source.write_text("fixed stable variant\n")
+                if path != "source-only":
+                    if path == ".cargo/audit.toml":
+                        policy.write_text(original + "[advisories]\nignore = ['RUSTSEC-2000-0001']\n")
+                    elif path.endswith("Cargo.toml"):
+                        policy.write_text(original + "[features]\nunreviewed = []\n")
+                    else:
+                        policy.write_text(original + "# unreviewed lockfile change\n")
+                patch = runner.git(["diff"]).stdout
+                runner.git(["reset", "--hard", pre_head])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
+                ai = mock.Mock()
+                ai.call.side_effect = lambda instructions, data, schema, name: (
+                    {"decision": True, "patch": patch} if name == "backport_conflict_repair" else {"decision": True})
+                with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
+                     mock.patch.object(sm, "format_backport") as fmt:
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner, adaptive=True)
+                self.assertEqual(policy.read_text(), original)
+                if path == "source-only":
+                    self.assertEqual(state.load()["backports_applied"], [sha])
+                    self.assertEqual(source.read_text(), "fixed stable variant\n")
+                    self.assertEqual(build.call_count, 2)
+                    fmt.assert_called_once()
+                else:
+                    self.assertEqual(state.load()["backports_deferred"], [sha])
+                    self.assertEqual(source.read_text(), "stable variant\n")
+                    self.assertEqual(build.call_count, 1)
+                    fmt.assert_not_called()
+                    self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), pre_head)
+                    self.assertEqual(ai.call.call_count, sm.MAX_BACKPORT_REPAIR_ATTEMPTS)
+
+    def test_repair_rejects_hidden_protected_preimage_in_patch_headers(self):
+        for section_path in ("Cargo.toml", "value.rs"):
+            with self.subTest(section_path=section_path), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                policy = runner.root / "Cargo.toml"
+                source = runner.root / "value.rs"
+                policy.write_text("original manifest\n")
+                source.write_text("original source\n")
+                baseline = self.commit(runner, "Existing policy and source")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                policy.write_text("main manifest\n")
+                source.write_text("main source\n")
+                sha = self.commit(runner, "Fix existing source with metadata")
+                runner.git(["checkout", "stable-4.x"])
+                patch = (f"diff --git a/{section_path} b/value.rs\n"
+                         "--- a/Cargo.toml\n+++ b/value.rs\n@@ -1 +1 @@\n"
+                         "-original manifest\n+new source\n")
+                inventory = runner.git(["apply", "--numstat", "-"], input_text=patch).stdout
+                self.assertEqual(inventory, "1\t1\tvalue.rs\n")
+                runner.git(["apply", "--check", "--index", "-"], input_text=patch)
+                ai = mock.Mock(); ai.call.return_value = {"decision": True, "patch": patch}
+                self.assertFalse(sm.repair_backport(runner, sha, baseline, ai))
+                self.assertEqual(policy.read_text(), "original manifest\n")
+                self.assertEqual(source.read_text(), "original source\n")
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), baseline)
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertEqual(ai.call.call_count, sm.MAX_BACKPORT_REPAIR_ATTEMPTS)
 
     def test_followup_sees_applied_and_formatted_predecessor(self):
         with tempfile.TemporaryDirectory() as tmp:
