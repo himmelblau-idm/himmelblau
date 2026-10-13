@@ -57,6 +57,7 @@ use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use tokio::runtime::Runtime;
 
 const FIDO_INTERRUPT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const BLUETOOTH_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[macro_export]
 macro_rules! auth_handle_mfa_resp {
@@ -676,15 +677,34 @@ fn qr_bluetooth_message(
 }
 
 async fn check_bluetooth() -> BluetoothState {
-    let conn = match zbus::Connection::system().await {
-        Ok(c) => c,
-        Err(e) => {
-            debug!("D-Bus system connection failed: {:?}", e);
-            return BluetoothState::NoAdapter;
-        }
-    };
+    probe_bluetooth_with(async {
+        let conn = match zbus::Connection::system().await {
+            Ok(c) => c,
+            Err(e) => {
+                debug!("D-Bus system connection failed: {:?}", e);
+                return BluetoothState::NoAdapter;
+            }
+        };
+        check_bluetooth_on_connection(&conn).await
+    })
+    .await
+}
 
-    let builder = match zbus::fdo::ObjectManagerProxy::builder(&conn)
+async fn probe_bluetooth_with(probe: impl Future<Output = BluetoothState>) -> BluetoothState {
+    match tokio::time::timeout(BLUETOOTH_PROBE_TIMEOUT, probe).await {
+        Ok(state) => state,
+        Err(e) => {
+            debug!(
+                "Bluetooth availability probe timed out; QR transport unavailable: {}",
+                e
+            );
+            BluetoothState::NoAdapter
+        }
+    }
+}
+
+async fn check_bluetooth_on_connection(conn: &zbus::Connection) -> BluetoothState {
+    let builder = match zbus::fdo::ObjectManagerProxy::builder(conn)
         .destination("org.bluez")
         .and_then(|b| b.path("/"))
     {
@@ -694,15 +714,31 @@ async fn check_bluetooth() -> BluetoothState {
             return BluetoothState::NoAdapter;
         }
     };
-    let proxy = match builder.build().await {
+    let proxy = match builder
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+    {
         Ok(proxy) => proxy,
         Err(e) => {
             debug!("BlueZ not available on D-Bus: {:?}", e);
             return BluetoothState::NoAdapter;
         }
     };
-    let objects = match proxy.get_managed_objects().await {
-        Ok(o) => o,
+    let objects = match proxy
+        .inner()
+        .call_with_flags::<_, _, zbus::fdo::ManagedObjects>(
+            "GetManagedObjects",
+            zbus::proxy::MethodFlags::NoAutoStart.into(),
+            &(),
+        )
+        .await
+    {
+        Ok(Some(objects)) => objects,
+        Ok(None) => {
+            error!("BlueZ GetManagedObjects unexpectedly returned no reply");
+            return BluetoothState::NoAdapter;
+        }
         Err(e) => {
             debug!("BlueZ GetManagedObjects failed: {:?}", e);
             return BluetoothState::NoAdapter;
@@ -3042,6 +3078,18 @@ mod fido_cancellation_tests {
     }
 
     #[tokio::test]
+    async fn fido_stalled_bluetooth_probe_preserves_usb_fallback() {
+        let result = wait_for_fido(
+            prepare_fido_transport_with(&SimpleMessagePrinter::default(), true, true, true, || {
+                probe_bluetooth_with(std::future::pending::<BluetoothState>())
+            }),
+            2000,
+        )
+        .await;
+        assert_eq!(result, Ok(FidoAuthMethod::SecurityKey));
+    }
+
+    #[tokio::test]
     async fn fido_without_qr_does_not_wait_for_bluetooth() {
         for (has_security_key, has_cross_device, can_display_qr, expected) in [
             (true, false, true, FidoAuthMethod::SecurityKey),
@@ -3397,6 +3445,152 @@ mod fido_cancellation_tests {
                 0
             );
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod bluetooth_probe_tests {
+    use super::*;
+    use std::io::BufRead;
+    use std::process::{Child, Command, Stdio};
+
+    struct PrivateBus(Child);
+
+    impl PrivateBus {
+        fn start() -> (Self, String) {
+            let mut child = Command::new("dbus-daemon")
+                .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("This integration test requires dbus-daemon");
+            let mut address = String::new();
+            std::io::BufReader::new(child.stdout.take().unwrap())
+                .read_line(&mut address)
+                .unwrap();
+            (Self(child), address.trim().to_owned())
+        }
+    }
+
+    impl Drop for PrivateBus {
+        fn drop(&mut self) {
+            // Let the private daemon remove its listening socket on exit.
+            let pid = libc::pid_t::try_from(self.0.id()).unwrap();
+            assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+            self.0.wait().expect("Failed to reap private D-Bus");
+        }
+    }
+
+    struct BluezFixture {
+        powered: std::sync::Mutex<Option<bool>>,
+        no_auto_start: Arc<AtomicBool>,
+        stalled: Arc<AtomicBool>,
+    }
+
+    #[zbus::interface(name = "org.freedesktop.DBus.ObjectManager")]
+    impl BluezFixture {
+        async fn get_managed_objects(
+            &self,
+            #[zbus(header)] header: zbus::message::Header<'_>,
+        ) -> zbus::fdo::ManagedObjects {
+            self.no_auto_start.store(
+                header
+                    .primary()
+                    .flags()
+                    .contains(zbus::message::Flags::NoAutoStart),
+                Ordering::Release,
+            );
+            if self.stalled.load(Ordering::Acquire) {
+                return std::future::pending().await;
+            }
+            let mut objects = zbus::fdo::ManagedObjects::new();
+            if let Some(powered) = *self.powered.lock().unwrap() {
+                objects.insert(
+                    zbus::zvariant::OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+                    std::collections::HashMap::from([(
+                        zbus::names::OwnedInterfaceName::try_from("org.bluez.Adapter1").unwrap(),
+                        std::collections::HashMap::from([(
+                            "Powered".into(),
+                            zbus::zvariant::OwnedValue::from(powered),
+                        )]),
+                    )]),
+                );
+            }
+            objects
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires dbus-daemon; uses an isolated private session bus"]
+    async fn bluez_probe_does_not_auto_start_and_preserves_adapter_states() {
+        let (_bus, address) = PrivateBus::start();
+        let client = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        assert!(matches!(
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                check_bluetooth_on_connection(&client)
+            )
+            .await
+            .unwrap(),
+            BluetoothState::NoAdapter,
+        ));
+        let no_auto_start = Arc::new(AtomicBool::new(false));
+        let stalled = Arc::new(AtomicBool::new(false));
+        let service = zbus::connection::Builder::address(address.as_str())
+            .unwrap()
+            .name("org.bluez")
+            .unwrap()
+            .serve_at(
+                "/",
+                BluezFixture {
+                    powered: std::sync::Mutex::new(Some(true)),
+                    no_auto_start: no_auto_start.clone(),
+                    stalled: stalled.clone(),
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let fixture = service
+            .object_server()
+            .interface::<_, BluezFixture>("/")
+            .await
+            .unwrap();
+        for powered in [Some(true), Some(false), None] {
+            *fixture.get().await.powered.lock().unwrap() = powered;
+            let state = tokio::time::timeout(
+                Duration::from_secs(1),
+                check_bluetooth_on_connection(&client),
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                (powered, state),
+                (Some(true), BluetoothState::PoweredOn)
+                    | (Some(false), BluetoothState::PoweredOff)
+                    | (None, BluetoothState::NoAdapter)
+            ));
+            assert!(
+                no_auto_start.load(Ordering::Acquire),
+                "BlueZ probe permits service activation"
+            );
+        }
+        stalled.store(true, Ordering::Release);
+        let started = Instant::now();
+        let method = wait_for_fido(
+            prepare_fido_transport_with(&SimpleMessagePrinter::default(), true, true, true, || {
+                probe_bluetooth_with(check_bluetooth_on_connection(&client))
+            }),
+            2000,
+        )
+        .await;
+        assert_eq!(method, Ok(FidoAuthMethod::SecurityKey));
+        assert!(started.elapsed() < Duration::from_millis(1500));
     }
 }
 

@@ -13,6 +13,9 @@ QR/Bluetooth code, connect their phone, and complete passkey authentication.
 When both transports are offered, they share this deadline rather than
 receiving separate timeouts. The shared deadline starts before Bluetooth
 discovery and waiting for the adapter to be powered on.
+Bluetooth availability probes do not start BlueZ and are limited to one
+second within this deadline. A failed probe disables QR transport; any
+remaining FIDO budget is available for security-key authentication.
 Keyboard interrupts pending during PAM authentication abort the attempt
 instead of switching to a different authentication method.
 In the Entra FIDO flow, interactive PIN input runs on the PAM caller thread.
