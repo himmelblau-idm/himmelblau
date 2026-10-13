@@ -3369,6 +3369,50 @@ class SequentialMaintenanceTests(unittest.TestCase):
             self.assertTrue((runner.root / "later.txt").exists())
             self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
 
+    def test_formatter_preserves_canonical_literal_filenames(self):
+        for name in ("src/café.rs", "src/tab\tname.rs", "src/line\nname.rs", ":(exclude)**.rs"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                source = runner.root / name
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("fn fix() {}\n")
+                self.commit(runner, "Fix existing source")
+                def formatter(*args, **kwargs):
+                    source.write_text("fn fix() {\n}\n")
+                    return sm.CommandResult(0, "", "")
+                with mock.patch.object(sm, "contained_repo_command", side_effect=formatter):
+                    sm.format_backport(runner, baseline)
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertEqual(runner.git(["show", f"HEAD:{name}"]).stdout, "fn fix() {\n}\n")
+
+    def test_independent_report_counts_pending_without_sequential_outcomes(self):
+        sha = "b" * 40
+        cases = (
+            ({"backport_review_required": [{"sha": sha}]}, 1),
+            ({"backports_deferred": [sha]}, 1),
+            ({"backport_review_required": [{"sha": sha}, {"sha": "c" * 40}],
+              "backports_deferred": [sha]}, 2),
+            ({"backports_applied": [sha]}, 0),
+            ({"backport_inflight": sha}, 0),
+        )
+        for fields, expected in cases:
+            for outcomes in (None, []):
+                with self.subTest(fields=fields, outcomes=outcomes), tempfile.TemporaryDirectory() as tmp:
+                    state = sm.State(Path(tmp) / "state")
+                    value = {"branch": "stable-4.x", **fields}
+                    if outcomes is not None:
+                        value["backport_outcomes"] = outcomes
+                    state.save(value)
+                    with mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                        sm.phase_report(mock.Mock(branch="stable-4.x"), state, mock.Mock())
+                    report = json.loads((state.directory / "report.json").read_text())
+                    self.assertEqual(report["pending"], expected)
+                    self.assertEqual(report["interrupted"], "backport_inflight" in fields)
+                    markdown = (state.directory / "report.md").read_text()
+                    self.assertIn("pending work remains" if expected or report["interrupted"]
+                                  else "examined backlog accounted for", markdown)
+
     def test_ci_backports_require_review_before_ai_build_or_mutation(self):
         payloads = (
             "    permissions: {contents: write}\n",

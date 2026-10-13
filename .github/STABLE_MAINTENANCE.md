@@ -12,11 +12,12 @@ skewed. It completes one commit before evaluating the next:
    review, not an intentional exclusion.
 3. Cherry-pick. For conflicts, try at most two AI-proposed adaptations. Models
    return patch data, never commands. Trusted code checks paths, file types,
-   application, testing-job boundaries, and obtains a second scope decision.
+   application, CI exclusion boundaries, and obtains a second scope decision.
 4. Build the locked workspace. On failure, restore only this attempt and preserve
    earlier accepted commits. Record compiler codes and leave the item pending.
 5. Run contained `cargo fmt --all` and amend formatting into the backport commit.
    Only Rust paths changed by this applied/adapted attempt may be amended.
+   NUL-delimited inventories and literal staging preserve unusual filenames.
    Formatter changes to unrelated paths or a formatter failure roll back only
    this attempt and leave it pending.
 
@@ -65,7 +66,9 @@ The run summary and 30-day `report.md`/`report.json` artifacts show commit subje
 applied/adapted fixes, intentional exclusions, pending work, conflict paths and
 compiler codes. Raw credentials, model responses and subprocess output are not
 uploaded. The artifacts preserve processing order; the displayed table puts
-pending work first. The main-through marker retains the old cutoff while any
+pending work first. Independent phase reports count unique pending commits from
+their review/deferred lists when no sequential outcomes exist.
+The main-through marker retains the old cutoff while any
 backport is pending. An existing maintenance PR still blocks another release
 proposal until it is handled.
 

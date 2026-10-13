@@ -2942,15 +2942,17 @@ def phase_classify_backports(
 def format_backport(runner: Runner, pre_head: str) -> None:
     # Scope formatting to the actual applied/adapted attempt, not all of main's
     # paths or every file that this rustfmt version chooses to rewrite.
-    allowed = set(runner.git(["diff", "--name-only", require_sha(pre_head), "HEAD", "--"]).stdout.splitlines())
+    allowed = set(filter(None, runner.git(
+        ["diff", "--no-renames", "--name-only", "-z", require_sha(pre_head), "HEAD", "--"],
+    ).stdout.split("\0")))
     contained_repo_command(runner, ["cargo", "fmt", "--all"], network=False, source_rw=True, cache_rw=False)
-    paths = runner.git(["diff", "--name-only"]).stdout.splitlines()
+    paths = list(filter(None, runner.git(["diff", "--no-renames", "--name-only", "-z"]).stdout.split("\0")))
     if paths:
         if any(not path.endswith(".rs") for path in paths):
             raise MaintenanceError("formatter changed non-Rust source")
         if not set(paths).issubset(allowed):
             raise MaintenanceError("formatter changed paths outside the current backport")
-        runner.git(["add", "--", *paths])
+        runner.git(["--literal-pathspecs", "add", "--", *paths])
         runner.git(["commit", "--amend", "--no-edit"])
 
 
@@ -3432,6 +3434,11 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
         lines.append(f"- {key.replace('_', ' ').title()}: {len(value.get(key, []))}")
     outcomes = value.get("backport_outcomes", [])
     pending = sum(row.get("outcome") == "pending" for row in outcomes)
+    if not outcomes:
+        # Independent classify/apply phases populate these lists, not the
+        # sequential outcome table. Count each deferred commit only once.
+        pending = len({row["sha"] for row in value.get("backport_review_required", [])}
+                      | set(value.get("backports_deferred", [])))
     lines.extend(["", f"Maintenance completion: **{'pending work remains' if pending or value.get('backport_inflight') else 'examined backlog accounted for'}**.",
                   "Publication gates and maintenance completion are separate results."])
     if value.get("backport_inflight"):
