@@ -1614,6 +1614,58 @@ class CargoVetTests(unittest.TestCase):
         self.assertEqual(diagnostic["conclusion"], "fail (vetting)")
         self.assertNotIn("SECRET", output.getvalue())
 
+    def test_vet_capture_preserves_exception_for_json_interpreter_limits(self):
+        previous_limit = sys.get_int_max_str_digits()
+        try:
+            sys.set_int_max_str_digits(4300)
+            nested = "[" * 10000 + "0" + "]" * 10000
+            oversized_integer = '{"integer":' + "9" * 4301 + "}"
+            for payload, error_type in ((nested, RecursionError), (oversized_integer, ValueError)):
+                with self.assertRaises(error_type):
+                    json.loads(payload)
+                for capture in ("timeout", "output-limit"):
+                    with self.subTest(error_type=error_type, capture=capture):
+                        failure = sm.CommandCaptureError("capture failed", capture,
+                            sm.CommandResult(-9, payload, "SECRET\n::error::SECRET"))
+                        output = io.StringIO()
+                        with mock.patch.object(sm, "isolated_vet_command", side_effect=failure), \
+                             mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.CommandCaptureError) as caught:
+                            sm.diagnostic_vet_check(mock.Mock(), Path("state"), locked=True)
+                        self.assertIs(caught.exception, failure)
+                        diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                        self.assertEqual(diagnostic["stdout_shape"], "invalid-json")
+                        self.assertEqual(diagnostic["capture"], capture)
+                        self.assertNotIn("SECRET", output.getvalue())
+                        self.assertNotIn("::error::", output.getvalue())
+        finally:
+            sys.set_int_max_str_digits(previous_limit)
+
+    def test_review_check_semantic_rejections_emit_diagnostics(self):
+        for cause in ("checked-set", "suggested-set", "ambiguity"):
+            with self.subTest(cause=cause):
+                report = json.loads(VET_CHECK_REPORT)
+                if cause == "checked-set":
+                    report["failures"].append({"name": "unexpected", "version": "2.0.0",
+                                               "missing_criteria": ["safe-to-deploy"]})
+                elif cause == "suggested-set":
+                    report["suggest"]["suggestions"][0]["name"] = "other"
+                else:
+                    duplicate = json.loads(json.dumps(report["suggest"]["suggestions"][0]))
+                    duplicate["suggested_diff"]["from"] = "0.8.0"
+                    report["suggest"]["suggestions"].append(duplicate)
+                output = io.StringIO()
+                error = "ambiguous" if cause == "ambiguity" else "disagree"
+                with mock.patch.object(sm, "isolated_vet_command", side_effect=[
+                        sm.CommandResult(255, VET_LOCKED_FAILURE, ""),
+                        sm.CommandResult(255, json.dumps(report), "SECRET")]), \
+                     mock.patch.object(sm.sys, "stderr", output), self.assertRaisesRegex(sm.MaintenanceError, error):
+                    sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
+                diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                self.assertEqual(diagnostic["stage"], "review-check")
+                self.assertEqual(diagnostic["conclusion"], "fail (vetting)")
+                self.assertEqual(diagnostic["failure_count"], 2 if cause == "checked-set" else 1)
+                self.assertNotIn("SECRET", output.getvalue())
+
     def test_parser_returns_only_explicit_unvetted_commands(self):
         output = """
         Vetting Failed!

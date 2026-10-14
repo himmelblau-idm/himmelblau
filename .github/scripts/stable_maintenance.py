@@ -1516,7 +1516,7 @@ def report_vet_diagnostics(result: CommandResult, stage: str, *, capture: str = 
         try:
             report = json.loads(result.stdout)
             shape = "object" if isinstance(report, dict) else "non-object"
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             shape = "invalid-json"
     conclusion = report.get("conclusion") if isinstance(report, dict) else None
     if not isinstance(conclusion, str) or conclusion not in {"success", "fail (vetting)", "fail (violation)"}:
@@ -1576,20 +1576,20 @@ def reviewable_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
     # suggestions. The separate locked report remains authoritative.
     try:
         suggestions = parse_cargo_vet_check_suggestions(suggested)
+        locked_keys = {(item.crate, item.new) for item in locked}
+        checked_keys = {(item.crate, item.new) for item in parse_locked_cargo_vet_report(suggested)}
+        suggestion_keys = {(item.crate, item.new) for item in suggestions}
+        if checked_keys != locked_keys or suggestion_keys != locked_keys:
+            raise MaintenanceError("cargo-vet locked gaps and review suggestions disagree")
+        by_key: dict[tuple[str, str], list[VetItem]] = {}
+        for item in suggestions:
+            by_key.setdefault((item.crate, item.new), []).append(item)
+        if any(len(matches) != 1 for matches in by_key.values()):
+            raise MaintenanceError("cargo-vet emitted ambiguous review suggestions")
+        return [by_key[(item.crate, item.new)][0] for item in locked]
     except MaintenanceError:
         report_vet_diagnostics(suggested, "review-check")
         raise
-    locked_keys = {(item.crate, item.new) for item in locked}
-    checked_keys = {(item.crate, item.new) for item in parse_locked_cargo_vet_report(suggested)}
-    suggestion_keys = {(item.crate, item.new) for item in suggestions}
-    if checked_keys != locked_keys or suggestion_keys != locked_keys:
-        raise MaintenanceError("cargo-vet locked gaps and review suggestions disagree")
-    by_key: dict[tuple[str, str], list[VetItem]] = {}
-    for item in suggestions:
-        by_key.setdefault((item.crate, item.new), []).append(item)
-    if any(len(matches) != 1 for matches in by_key.values()):
-        raise MaintenanceError("cargo-vet emitted ambiguous review suggestions")
-    return [by_key[(item.crate, item.new)][0] for item in locked]
 
 
 def permission_error_path_hints(stderr: str) -> list[str]:
