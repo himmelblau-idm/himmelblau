@@ -1350,25 +1350,40 @@ pub async fn put(
         .await;
     let mut response = match result {
         Ok(saved) => {
+            let reopen_required = saved.etag.is_none();
             let recoveries = {
                 let mut docs = app.docs.lock().await;
-                if let Some(current) = docs.values_mut().find(|d| d.capability == doc.capability) {
-                    // Invalidate older upload URLs even if Graph omits eTag.
-                    current.save_revision = Uuid::new_v4();
+                let current = docs.values_mut().find(|d| d.capability == doc.capability);
+                let recoveries = if let Some(current) = current {
                     if let Some(tag) = saved.etag {
+                        current.save_revision = Uuid::new_v4();
                         current.etag = tag;
                     }
                     std::mem::take(&mut current.recoveries)
                 } else {
                     Vec::new()
+                };
+                if reopen_required {
+                    // A later metadata fetch could describe someone else's edit.
+                    // End this session rather than adopt an unproven revision.
+                    docs.retain(|_, current| current.capability != doc.capability);
                 }
+                recoveries
             };
             for path in recoveries {
                 if app.remove_recovery(&path).await.is_err() {
                     tracing::warn!("Unable to remove superseded recovery copy");
                 }
             }
-            axum::Json(json!({"success":true})).into_response()
+            if reopen_required {
+                tracing::warn!("Saved document has no eTag; ending its editing session");
+                (StatusCode::CONFLICT, axum::Json(json!({
+                    "success":false,
+                    "error":"The document was saved to Microsoft 365, but its new revision was not returned. This editing session has ended. Reopen the document from the file picker before making further edits or saves. Export a local copy first if you have made additional edits."
+                }))).into_response()
+            } else {
+                axum::Json(json!({"success":true})).into_response()
+            }
         }
         Err(err) => {
             tracing::warn!("Microsoft 365 save failed: {err}");
@@ -2128,17 +2143,75 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn successful_save_without_etag_still_invalidates_older_uploads() {
+    async fn successful_save_without_etag_ends_session_and_cleans_recovery() {
         let (app, mock, task) = mock_app(6).await;
         let delayed = app.issue("doc".into(), Kind::Upload).await;
-        assert_eq!(save(&app).await.status(), StatusCode::OK);
-        assert_eq!(app.docs.lock().await.get("doc").unwrap().etag, "old");
+        let fetch_token = app.issue("doc".into(), Kind::Fetch).await;
+        let doc = app.docs.lock().await.get("doc").unwrap().clone();
+        let _session_lease = doc.session_lease.clone();
+        let path = app.recovery(&doc, b"earlier edits").await.unwrap();
+        app.docs
+            .lock()
+            .await
+            .get_mut("doc")
+            .unwrap()
+            .recoveries
+            .push(path.clone());
+        let other = Document {
+            id: "00000000-0000-0000-0000-000000000002".into(),
+            capability: "other-capability".into(),
+            session_lease: Arc::new(()),
+            ..doc
+        };
+        app.docs.lock().await.insert("other".into(), other);
+
+        let response = save(&app).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_transfer_cors(&response);
+        let body = axum::body::to_bytes(response.into_body(), 8192)
+            .await
+            .unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["success"], false);
+        let error = value["error"].as_str().unwrap();
+        assert!(error.contains("saved to Microsoft 365"));
+        assert!(error.contains("Reopen the document"));
+        assert!(!app.docs.lock().await.contains_key("doc"));
+        assert!(app.document("doc", "cap").await.is_none());
+        assert!(app.document("other", "other-capability").await.is_some());
+        assert!(!path.exists());
+        assert!(!path.with_extension("json").exists());
+
+        // Both existing and newly issued capabilities must fail before reading
+        // the body or reaching Graph, even while a socket still pins the session.
+        let fresh = app.issue("doc".into(), Kind::Upload).await;
+        for token in [delayed, fresh] {
+            let body = axum::body::Body::from_stream(futures_util::stream::pending::<
+                Result<Bytes, std::io::Error>,
+            >());
+            let response = tokio::time::timeout(
+                Duration::from_secs(2),
+                put(
+                    State(app.clone()),
+                    Query(HashMap::from([("token".into(), token.clone())])),
+                    Request::new(body),
+                ),
+            )
+            .await
+            .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_transfer_cors(&response);
+            assert!(!app.one_shots.lock().await.contains_key(&token));
+        }
         assert!(matches!(
-            app.consume(&delayed, Kind::Upload).await,
-            Err(StatusCode::CONFLICT)
+            app.consume(&fetch_token, Kind::Fetch).await,
+            Err(StatusCode::UNAUTHORIZED)
         ));
+        assert_eq!(mock.sessions.load(Ordering::SeqCst), 1);
         assert_eq!(mock.uploads.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.downloads.load(Ordering::SeqCst), 0);
         assert_eq!(app.uploads.available_permits(), 1);
+        tokio::fs::remove_dir_all(&app.state).await.unwrap();
         task.abort();
     }
 

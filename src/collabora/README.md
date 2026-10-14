@@ -35,7 +35,7 @@ The picker includes **Recovery copies**, which works even when Microsoft 365 is 
 
 Unsaved copies survive service restart and logout so a failed upload is not silently lost. This intentionally differs from the original logout-cleanup criterion; bounded user-managed retention is the policy for this experimental precursor. New copies include a private source-identity sidecar, so the picker and downloads retain the original filename after restart. Older copies without metadata still work, but need their original document filename extension restored after download.
 
-Upload URLs are bound to the document revision at issuance. A delayed or retried URL is rejected before reading its body if another save has succeeded, rather than inheriting the newer save’s eTag.
+Upload URLs are bound to the document revision at issuance. A delayed or retried URL is rejected before reading its body if another save has succeeded, rather than inheriting the newer save’s eTag. If Microsoft 365 confirms a save without returning its new eTag, the bridge ends that editing session and asks you to reopen the file before further edits or saves; it does not adopt an unproven revision from a later metadata read.
 
 Only one bridge process may own a state directory. Before writing another recovery copy, it reclaims recognized temporary files left by a crashed write. Cleanup refuses to run while that bridge is active. A private, empty sibling `himmelblau-collabora.lock` file remains after cleanup so concurrent processes always coordinate through the same lock file.
 
