@@ -517,7 +517,7 @@ def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
     error = "locked cargo-vet check failed without parseable requirements"
     try:
         report = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
         raise MaintenanceError(error) from exc
     if not isinstance(report, dict):
         raise MaintenanceError(error)
@@ -563,7 +563,7 @@ def parse_cargo_vet_check_suggestions(result: CommandResult) -> list[VetItem]:
     parse_locked_cargo_vet_report(result)
     try:
         report = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
         raise MaintenanceError(error) from exc
     if not isinstance(report, dict) or report.get("conclusion") != "fail (vetting)":
         raise MaintenanceError(error)

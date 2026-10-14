@@ -1640,6 +1640,43 @@ class CargoVetTests(unittest.TestCase):
         finally:
             sys.set_int_max_str_digits(previous_limit)
 
+    def test_completed_vet_reports_reject_json_interpreter_limits_with_diagnostics(self):
+        previous_limit = sys.get_int_max_str_digits()
+        try:
+            sys.set_int_max_str_digits(4300)
+            for payload, error_type in (
+                ("[" * 10000 + "0" + "]" * 10000, RecursionError),
+                ('{"integer":' + "9" * 4301 + "}", ValueError),
+            ):
+                with self.assertRaises(error_type):
+                    json.loads(payload)
+                result = sm.CommandResult(255, payload, "SECRET\n::error::SECRET")
+                for parser in (sm.parse_locked_cargo_vet_report, sm.parse_cargo_vet_check_suggestions):
+                    with self.subTest(error_type=error_type, parser=parser.__name__):
+                        with self.assertRaises(sm.MaintenanceError) as caught:
+                            parser(result)
+                        self.assertIsInstance(caught.exception.__cause__, error_type)
+                for stage in ("locked-check", "review-check"):
+                    with self.subTest(error_type=error_type, stage=stage):
+                        results = [result] if stage == "locked-check" else [
+                            sm.CommandResult(255, VET_LOCKED_FAILURE, ""), result]
+                        check = sm.locked_vet_gaps if stage == "locked-check" else sm.reviewable_vet_gaps
+                        output = io.StringIO()
+                        with mock.patch.object(sm, "isolated_vet_command", side_effect=results), \
+                             mock.patch.object(sm.sys, "stderr", output), \
+                             self.assertRaises(sm.MaintenanceError) as caught:
+                            check(mock.Mock(), Path("state"))
+                        self.assertIsInstance(caught.exception.__cause__, error_type)
+                        diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                        self.assertEqual(diagnostic["stage"], stage)
+                        self.assertEqual(diagnostic["capture"], "complete")
+                        self.assertEqual(diagnostic["stdout_shape"], "invalid-json")
+                        self.assertEqual(diagnostic["exit"], 255)
+                        self.assertNotIn("SECRET", output.getvalue())
+                        self.assertNotIn("::error::", output.getvalue())
+        finally:
+            sys.set_int_max_str_digits(previous_limit)
+
     def test_review_check_semantic_rejections_emit_diagnostics(self):
         for cause in ("checked-set", "suggested-set", "ambiguity"):
             with self.subTest(cause=cause):
