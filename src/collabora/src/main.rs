@@ -158,6 +158,15 @@ fn endpoint_key() -> String {
     )
 }
 
+fn key_for_bound_port(previous: Option<Endpoint>, port: u16) -> String {
+    // A stale profile can disclose its key to the process occupying the old
+    // port. Reuse that key only when we actually bind the saved port again.
+    previous
+        .filter(|endpoint| endpoint.port == port)
+        .map(|endpoint| endpoint.key)
+        .unwrap_or_else(endpoint_key)
+}
+
 fn state_dir() -> Result<PathBuf> {
     if let Ok(path) = env::var("XDG_STATE_HOME") {
         return Ok(PathBuf::from(path).join("himmelblau-collabora"));
@@ -221,7 +230,7 @@ async fn serve() -> Result<()> {
     let listener = bind_listener(requested).await?;
     let address: SocketAddr = listener.local_addr()?;
     let graph = graph::Graph::new()?;
-    let key = previous.map(|e| e.key).unwrap_or_else(endpoint_key);
+    let key = key_for_bound_port(previous, address.port());
     write_endpoint(
         &endpoint_path,
         &Endpoint {
@@ -364,11 +373,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn occupied_saved_port_is_replaced() {
+    async fn occupied_saved_port_rotates_bootstrap_key() {
         let occupied = bind_listener(0).await.unwrap();
         let port = occupied.local_addr().unwrap().port();
+        let old_key = endpoint_key();
         let replacement = bind_listener(port).await.unwrap();
-        assert_ne!(port, replacement.local_addr().unwrap().port());
+        let bound_port = replacement.local_addr().unwrap().port();
+        assert_ne!(port, bound_port);
+        let key = key_for_bound_port(
+            Some(Endpoint {
+                port,
+                key: old_key.clone(),
+            }),
+            bound_port,
+        );
+        assert_ne!(old_key, key);
+        assert!(Endpoint {
+            port: bound_port,
+            key,
+        }
+        .is_valid());
+    }
+
+    #[test]
+    fn unchanged_saved_port_retains_bootstrap_key() {
+        let port = 12345;
+        let old_key = endpoint_key();
+        let key = key_for_bound_port(
+            Some(Endpoint {
+                port,
+                key: old_key.clone(),
+            }),
+            port,
+        );
+        assert_eq!(old_key, key);
     }
 
     #[test]

@@ -175,9 +175,10 @@ impl Graph {
         // Serialize acquisition, and only invalidate the rejected bearer: an
         // in-flight 401 must not discard a newer token acquired by another task.
         let mut cache = self.token_cache.lock().await;
-        if let Some(token) = cache.as_ref().filter(|t| {
-            t.valid_until > Instant::now() && Some(t.value.as_str()) != rejected
-        }) {
+        if let Some(token) = cache
+            .as_ref()
+            .filter(|t| t.valid_until > Instant::now() && Some(t.value.as_str()) != rejected)
+        {
             return Ok(token.value.clone());
         }
         // Clear before acquisition so a broker failure cannot leave a rejected
@@ -905,7 +906,10 @@ mod tests {
                 .unwrap();
             let requests = requests.lock().await;
             assert_eq!(requests.len(), 2);
-            assert_eq!(requests[0], (method.clone(), "Bearer mock-token".to_owned()));
+            assert_eq!(
+                requests[0],
+                (method.clone(), "Bearer mock-token".to_owned())
+            );
             assert_eq!(requests[1], (method, "Bearer mock-token-2".to_owned()));
             task.abort();
         }
