@@ -622,6 +622,10 @@ criteria = "safe-to-deploy"
 version = "0.1.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.integer-encoding]]
+version = "3.0.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.ipnet]]
 version = "2.5.0"
 criteria = "safe-to-deploy"
@@ -928,6 +932,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
 version = "0.103.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.rusty-leveldb]]
+version = "4.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.schannel]]
