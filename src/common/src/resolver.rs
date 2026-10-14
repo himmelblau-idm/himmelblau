@@ -355,7 +355,8 @@ mod tests {
                 ));
             }
             if matches!(self.user_get_error.load(Ordering::Acquire), 4 | 7) {
-                if matches!(&_pam_next_req, PamAuthRequest::Password { cred } if cred == "direct-totp") {
+                if matches!(&_pam_next_req, PamAuthRequest::Password { cred } if cred == "direct-totp")
+                {
                     return Ok((
                         AuthResult::Next(AuthRequest::HelloTOTP {
                             msg: "Enter local TOTP".to_string(),
@@ -681,24 +682,28 @@ mod tests {
         let token = test_token();
         resolver.client.user_get_error.store(6, Ordering::Release);
 
-        assert!(resolver
-            .get_nssaccount_name(&token.spn)
-            .await
-            .unwrap()
-            .unwrap()
-            .cacheable);
+        assert!(
+            resolver
+                .get_nssaccount_name(&token.spn)
+                .await
+                .unwrap()
+                .unwrap()
+                .cacheable
+        );
         let (expired, cached) = resolver
             .get_cached_usertoken(&Id::Name(token.spn))
             .await
             .unwrap();
         assert!(!expired);
         assert_eq!(cached.unwrap().uuid, token.uuid);
-        assert!(resolver
-            .get_nssaccount_gid(token.gidnumber)
-            .await
-            .unwrap()
-            .unwrap()
-            .cacheable);
+        assert!(
+            resolver
+                .get_nssaccount_gid(token.gidnumber)
+                .await
+                .unwrap()
+                .unwrap()
+                .cacheable
+        );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
     }
 
@@ -721,7 +726,14 @@ mod tests {
                 Id::Name(token.name),
                 Id::Gid(token.gidnumber),
             ] {
-                assert!(resolver.get_nssaccount(id).await.unwrap().unwrap().cacheable);
+                assert!(
+                    resolver
+                        .get_nssaccount(id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .cacheable
+                );
             }
             assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
         }
@@ -763,7 +775,14 @@ mod tests {
                 .unwrap();
             assert_eq!(cached.uuid, token.uuid);
             for id in [Id::Name(token.spn.clone()), Id::Gid(token.gidnumber)] {
-                assert!(!resolver.get_nssaccount(id).await.unwrap().unwrap().cacheable);
+                assert!(
+                    !resolver
+                        .get_nssaccount(id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .cacheable
+                );
             }
             let mut dbtxn = resolver.db.write().await;
             let (_, expiry) = dbtxn.get_account(&Id::Name(token.spn)).unwrap().unwrap();
@@ -1009,8 +1028,7 @@ mod tests {
 
     #[tokio::test]
     async fn older_pin_setup_cannot_replace_newer_password_generation() {
-        for (newer_cache_fails, older_cache_fails) in
-            [(false, false), (true, false), (false, true)]
+        for (newer_cache_fails, older_cache_fails) in [(false, false), (true, false), (false, true)]
         {
             let (resolver, conn) = setup_sql_resolver().await;
             resolver.client.user_get_error.store(4, Ordering::Release);
@@ -1628,7 +1646,10 @@ mod tests {
                 .set_cache_usertoken(&mut cached, false)
                 .await
                 .unwrap();
-            resolver.client.user_get_error.store(mode, Ordering::Release);
+            resolver
+                .client
+                .user_get_error
+                .store(mode, Ordering::Release);
 
             let accounts = resolver.get_unexpired_nssaccounts().await.unwrap();
             assert_eq!(accounts.len(), 1);
@@ -1688,7 +1709,10 @@ mod tests {
         for mode in [0, 1, 2] {
             let resolver = setup_resolver_with_expiry(expiry).await;
             let token = test_token();
-            resolver.client.user_get_error.store(mode, Ordering::Release);
+            resolver
+                .client
+                .user_get_error
+                .store(mode, Ordering::Release);
             let refreshed = resolver
                 .refresh_cached_usertoken(&token.name)
                 .await
@@ -1699,10 +1723,7 @@ mod tests {
             assert_eq!(refreshed.groups[0].uuid, token.groups[0].uuid);
             assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
             let mut dbtxn = resolver.db.write().await;
-            let (_, cached_expiry) = dbtxn
-                .get_account(&Id::Name(token.name))
-                .unwrap()
-                .unwrap();
+            let (_, cached_expiry) = dbtxn.get_account(&Id::Name(token.name)).unwrap().unwrap();
             assert_eq!(cached_expiry, expiry);
             dbtxn.commit().unwrap();
         }
@@ -1719,7 +1740,10 @@ mod tests {
             for change in ["expire", "remove", "uuid", "tenant", "claims"] {
                 let resolver = setup_resolver_with_expiry(expiry).await;
                 let token = test_token();
-                resolver.client.user_get_error.store(mode, Ordering::Release);
+                resolver
+                    .client
+                    .user_get_error
+                    .store(mode, Ordering::Release);
                 // Stop after the initial eligible snapshot, before provider
                 // work resumes, without relying on wall-clock sleeps.
                 let hsm_guard = resolver.hsm.lock().await;
@@ -2259,9 +2283,7 @@ where
         // Provider work can yield while eligibility or memberships change.
         // Use current claims only if the same cached identity is still eligible.
         let (expired, current) = self.get_cached_usertoken(&id).await?;
-        Ok(current.filter(|token| {
-            !expired && token.uuid == uuid && token.tenant_id == tenant_id
-        }))
+        Ok(current.filter(|token| !expired && token.uuid == uuid && token.tenant_id == tenant_id))
     }
 
     async fn get_cached_grouptokens(&self) -> Result<Vec<GroupToken>, ()> {
@@ -3157,8 +3179,7 @@ where
             .map_err(|_| ())
     }
 
-    async fn get_nssaccount(&self, account_id: Id) -> Result<Option<NssUser>,
-()> {
+    async fn get_nssaccount(&self, account_id: Id) -> Result<Option<NssUser>, ()> {
         self.get_usertoken_with_cacheability(account_id)
             .await
             .map(|result| result.map(|(tok, cacheable)| self.nss_user_from_token(tok, cacheable)))
