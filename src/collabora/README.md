@@ -35,6 +35,10 @@ The picker includes **Recovery copies**, which works even when Microsoft 365 is 
 
 Unsaved copies survive service restart and logout so a failed upload is not silently lost. This intentionally differs from the original logout-cleanup criterion; bounded user-managed retention is the policy for this experimental precursor. New copies include a private source-identity sidecar, so the picker and downloads retain the original filename after restart. Older copies without metadata still work, but need their original document filename extension restored after download.
 
+Upload URLs are bound to the document revision at issuance. A delayed or retried URL is rejected before reading its body if another save has succeeded, rather than inheriting the newer save’s eTag.
+
+Only one bridge process may own a state directory. Before writing another recovery copy, it reclaims recognized temporary files left by a crashed write. Cleanup refuses to run while that bridge is active. A private, empty sibling `himmelblau-collabora.lock` file remains after cleanup so concurrent processes always coordinate through the same lock file.
+
 DEB/RPM package removal stops active bridges before running `himmelblau-collabora cleanup` as each applicable profile owner, including logged-out users. If a bridge cannot be stopped or its status is uncertain, removal aborts before any profile cleanup. Cleanup removes only the Himmelblau provider from the provider list, then removes endpoint, diagnostic, and recovery state. Export recovery copies and close Collabora before uninstalling. A locked profile aborts cleanup with a retry instruction rather than claiming success. For custom XDG configuration/state directories, run the cleanup command in that user's session with those environment variables set before uninstalling. Registration is restricted to existing profiles; newly created and existing profile roots/localStorage directories are restricted to 0700, and existing database files to 0600.
 
 ## Arch, Gentoo, and NixOS packaging

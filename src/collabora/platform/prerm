@@ -20,9 +20,6 @@ if [ -n "${DPKG_ROOT:-}" ]; then
     fi
     exit 0
 fi
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl --global disable himmelblau-collabora.service >/dev/null 2>&1 || true
-fi
 for runtime in /run/user/[0-9]*; do
     [ -d "$runtime" ] || continue
     uid=${runtime##*/}
@@ -82,3 +79,9 @@ printf '%s\n' "$passwd_entries" | while IFS=: read -r user password uid gid geco
         fi
     fi
 done
+
+# Keep the installed bridge enabled if stopping or cleaning profiles aborts
+# removal. Only remove its global enablement after all cleanup succeeds.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --global disable himmelblau-collabora.service >/dev/null 2>&1 || true
+fi

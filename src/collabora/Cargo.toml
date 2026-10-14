@@ -14,6 +14,7 @@ base64.workspace = true
 axum = { version = "0.8.6", features = ["ws"] }
 broker-client.workspace = true
 clap.workspace = true
+fs2 = "0.4.3"
 futures-util = "0.3"
 reqwest.workspace = true
 serde.workspace = true

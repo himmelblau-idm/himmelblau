@@ -166,23 +166,52 @@ fn state_dir() -> Result<PathBuf> {
         .join(".local/state/himmelblau-collabora"))
 }
 
+fn lock_state(state: &Path) -> Result<File> {
+    let parent = state.parent().context("Collabora state has no parent")?;
+    std::fs::create_dir_all(parent)?;
+    // Keep the lock outside the removable state directory. Never unlink it:
+    // every bridge and cleanup process must contend on the same inode.
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(state.with_extension("lock"))?;
+    match fs2::FileExt::try_lock_exclusive(&file) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+            anyhow::bail!(
+                "Another Collabora bridge or cleanup owns this state directory. Stop it and retry."
+            );
+        }
+        Err(err) => return Err(err).context("Unable to lock Collabora state"),
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+fn cleanup_state(state: &Path, unregister: impl FnOnce() -> Result<()>) -> Result<()> {
+    let _state_owner = lock_state(state)?;
+    unregister()?;
+    match std::fs::remove_dir_all(state) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.into()),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Serve => serve().await,
-        Command::Cleanup => {
-            profile::remove()?;
-            match std::fs::remove_dir_all(state_dir()?) {
-                Ok(()) => Ok(()),
-                Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(err) => Err(err.into()),
-            }
-        }
+        Command::Cleanup => cleanup_state(&state_dir()?, profile::remove),
     }
 }
 
 async fn serve() -> Result<()> {
     let state = state_dir()?;
+    let _state_owner = lock_state(&state)?;
     std::fs::create_dir_all(&state)?;
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700))?;
     init_logging(&state);
@@ -271,6 +300,68 @@ fn write_endpoint(path: &Path, endpoint: &Endpoint) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn state_owner_lock_is_exclusive_and_reusable() {
+        let root = env::temp_dir().join(format!("collabora-lock-{}", uuid::Uuid::new_v4()));
+        let state = root.join("first");
+        let first = lock_state(&state).unwrap();
+        assert!(lock_state(&state).is_err());
+        let independent = lock_state(&root.join("second")).unwrap();
+        assert_eq!(
+            std::fs::metadata(state.with_extension("lock"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        drop(first);
+        let replacement = lock_state(&state).unwrap();
+        assert!(lock_state(&state).is_err());
+        drop(replacement);
+        drop(independent);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cleanup_requires_state_ownership_and_preserves_lock_inode() {
+        use std::cell::Cell;
+        use std::os::unix::fs::MetadataExt;
+
+        let root = env::temp_dir().join(format!("collabora-lock-{}", uuid::Uuid::new_v4()));
+        let state = root.join("himmelblau-collabora");
+        let owner = lock_state(&state).unwrap();
+        std::fs::create_dir(&state).unwrap();
+        let recovery = state.join("recovery.bin");
+        std::fs::write(&recovery, b"edits").unwrap();
+        let lock_path = state.with_extension("lock");
+        let inode = std::fs::metadata(&lock_path).unwrap().ino();
+        let unregistered = Cell::new(false);
+        assert!(cleanup_state(&state, || {
+            unregistered.set(true);
+            Ok(())
+        })
+        .is_err());
+        assert!(!unregistered.get());
+        assert_eq!(std::fs::read(&recovery).unwrap(), b"edits");
+        drop(owner);
+        cleanup_state(&state, || {
+            unregistered.set(true);
+            Ok(())
+        })
+        .unwrap();
+        assert!(unregistered.get());
+        assert!(!state.exists());
+        assert_eq!(std::fs::metadata(&lock_path).unwrap().ino(), inode);
+        let replacement = lock_state(&state).unwrap();
+        assert!(cleanup_state(&state, || Ok(())).is_err());
+        drop(replacement);
+        // Cleanup remains idempotent when only the stable lockfile remains.
+        cleanup_state(&state, || Ok(())).unwrap();
+        assert_eq!(std::fs::metadata(&lock_path).unwrap().ino(), inode);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn occupied_saved_port_is_replaced() {

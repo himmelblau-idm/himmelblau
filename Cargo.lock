@@ -2342,6 +2342,7 @@ dependencies = [
  "base64 0.23.1",
  "broker-client",
  "clap",
+ "fs2",
  "futures-util",
  "reqwest 0.13.5",
  "rusty-leveldb",

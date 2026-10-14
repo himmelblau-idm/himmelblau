@@ -51,6 +51,7 @@ struct Document {
     item: String,
     name: String,
     etag: String,
+    save_revision: Uuid,
     capability: String,
     expires: Instant,
     recoveries: Vec<PathBuf>,
@@ -73,6 +74,7 @@ struct RecoveryMetadata {
 
 struct OneShot {
     doc: String,
+    save_revision: Option<Uuid>,
     expires: Instant,
     kind: Kind,
 }
@@ -138,11 +140,13 @@ impl App {
     async fn issue(&self, id: String, kind: Kind) -> String {
         let token = Uuid::new_v4().to_string();
         let mut one_shots = self.one_shots.lock().await;
+        let save_revision = self.docs.lock().await.get(&id).map(|doc| doc.save_revision);
         one_shots.retain(|_, entry| entry.expires > Instant::now());
         one_shots.insert(
             token.clone(),
             OneShot {
                 doc: id,
+                save_revision,
                 kind,
                 expires: Instant::now() + ONE_SHOT_LIFETIME,
             },
@@ -162,10 +166,10 @@ impl App {
             one_shots.remove(token);
             return Err(StatusCode::UNAUTHORIZED);
         }
-        let doc = self
-            .docs
-            .lock()
-            .await
+        // Hold the document state through admission so a successful save
+        // cannot advance its revision between validation and acquiring capacity.
+        let docs = self.docs.lock().await;
+        let doc = docs
             .get(&one.doc)
             .filter(|d| d.is_live())
             .cloned();
@@ -173,6 +177,10 @@ impl App {
             one_shots.remove(token);
             return Err(StatusCode::UNAUTHORIZED);
         };
+        if kind == Kind::Upload && one.save_revision != Some(doc.save_revision) {
+            one_shots.remove(token);
+            return Err(StatusCode::CONFLICT);
+        }
         let capacity = match kind {
             Kind::Fetch => &self.downloads,
             Kind::Upload => &self.uploads,
@@ -214,7 +222,22 @@ impl App {
         let mut entries = tokio::fs::read_dir(&self.state).await?;
         let mut count = 0;
         let mut used = 0u64;
+        let mut cleaned = false;
         while let Some(entry) = entries.next_entry().await? {
+            // The state-owner lock excludes other processes; recovery_lock
+            // serializes this process's writers. Reclaim crash leftovers
+            // before allocating another document-sized file,
+            // but never remove ambiguous names, directories, or symlinks.
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(recovery_temporary_name)
+                && entry.file_type().await?.is_file()
+            {
+                tokio::fs::remove_file(entry.path()).await?;
+                cleaned = true;
+                continue;
+            }
             if entry.path() != path
                 && recovery_name(&entry.file_name().to_string_lossy())
                 && entry.file_type().await?.is_file()
@@ -222,6 +245,10 @@ impl App {
                 used = used.saturating_add(entry.metadata().await?.len());
                 count += 1;
             }
+        }
+        if cleaned {
+            // Failed cleanup/durability must leave every complete copy intact.
+            tokio::fs::File::open(&self.state).await?.sync_all().await?;
         }
         if count >= 32 || used.saturating_add(bytes.len() as u64) > limit {
             bail!("Recovery quota reached; export existing recovery copies before removing them");
@@ -333,6 +360,23 @@ fn recovery_disposition(name: &str) -> String {
         "attachment; filename=\"{fallback}\"; filename*=UTF-8''{}",
         enc(&name)
     )
+}
+
+fn recovery_temporary_name(name: &str) -> bool {
+    let Some(stem) = name.strip_prefix(".recovery-").and_then(|name| {
+        name.strip_suffix(".json.tmp")
+            .or_else(|| name.strip_suffix(".tmp"))
+    }) else {
+        return false;
+    };
+    if stem.len() != 73 || stem.get(36..37) != Some("-") {
+        return false;
+    }
+    [stem.get(..36), stem.get(37..)].into_iter().all(|part| {
+        part.is_some_and(|part| {
+            Uuid::parse_str(part).is_ok_and(|id| id.hyphenated().to_string() == part)
+        })
+    })
 }
 
 fn recovery_name(name: &str) -> bool {
@@ -937,6 +981,7 @@ pub async fn open(State(app): State<App>, Query(q): Query<HashMap<String, String
                 item: id,
                 name: item.name,
                 etag,
+                save_revision: Uuid::new_v4(),
                 capability: capability.clone(),
                 expires: Instant::now() + SESSION_LIFETIME,
                 recoveries: Vec::new(),
@@ -1311,6 +1356,8 @@ pub async fn put(
             let recoveries = {
                 let mut docs = app.docs.lock().await;
                 if let Some(current) = docs.values_mut().find(|d| d.capability == doc.capability) {
+                    // Invalidate older upload URLs even if Graph omits eTag.
+                    current.save_revision = Uuid::new_v4();
                     if let Some(tag) = saved.etag {
                         current.etag = tag;
                     }
@@ -1759,6 +1806,8 @@ mod tests {
         mock.uploads.fetch_add(1, Ordering::SeqCst);
         if mock.mode == 2 {
             StatusCode::SERVICE_UNAVAILABLE.into_response()
+        } else if mock.mode == 6 {
+            axum::Json(json!({"id":"item","name":"test.docx"})).into_response()
         } else {
             axum::Json(json!({"id":"item","name":"test.docx","eTag":"saved"})).into_response()
         }
@@ -1818,6 +1867,7 @@ mod tests {
                 item: "item".into(),
                 name: "test.docx".into(),
                 etag: "old".into(),
+                save_revision: Uuid::new_v4(),
                 capability: "cap".into(),
                 expires: Instant::now() + SESSION_LIFETIME,
                 recoveries: Vec::new(),
@@ -2033,6 +2083,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delayed_upload_urls_cannot_inherit_a_newer_save_revision() {
+        let (app, mock, task) = mock_app(3).await;
+        let delayed = app.issue("doc".into(), Kind::Upload).await;
+        let fetch_token = app.issue("doc".into(), Kind::Fetch).await;
+        let initial_revision = app.docs.lock().await.get("doc").unwrap().save_revision;
+        // A busy response must preserve the URL, but not grant it a future revision.
+        let busy = app.uploads.clone().try_acquire_owned().unwrap();
+        assert!(matches!(
+            app.consume(&delayed, Kind::Upload).await,
+            Err(StatusCode::SERVICE_UNAVAILABLE)
+        ));
+        drop(busy);
+        assert_eq!(save(&app).await.status(), StatusCode::OK);
+        assert_ne!(
+            app.docs.lock().await.get("doc").unwrap().save_revision,
+            initial_revision
+        );
+        // A pending body proves rejection happens before buffering stale bytes.
+        let body = axum::body::Body::from_stream(futures_util::stream::pending::<
+            Result<Bytes, std::io::Error>,
+        >());
+        let response = tokio::time::timeout(
+            Duration::from_secs(2),
+            put(
+                State(app.clone()),
+                Query(HashMap::from([("token".into(), delayed.clone())])),
+                Request::new(body),
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_transfer_cors(&response);
+        assert!(!app.one_shots.lock().await.contains_key(&delayed));
+        assert_eq!(mock.sessions.load(Ordering::SeqCst), 1);
+        assert_eq!(mock.uploads.load(Ordering::SeqCst), 1);
+        assert_eq!(app.uploads.available_permits(), 1);
+        // Downloads are still valid, and newly issued saves use the new revision.
+        drop(app.consume(&fetch_token, Kind::Fetch).await.unwrap());
+        let fresh = app.issue("doc".into(), Kind::Upload).await;
+        let (doc, permit) = app.consume(&fresh, Kind::Upload).await.unwrap();
+        assert_eq!(doc.etag, "saved");
+        assert_ne!(doc.save_revision, initial_revision);
+        drop(permit);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn successful_save_without_etag_still_invalidates_older_uploads() {
+        let (app, mock, task) = mock_app(6).await;
+        let delayed = app.issue("doc".into(), Kind::Upload).await;
+        assert_eq!(save(&app).await.status(), StatusCode::OK);
+        assert_eq!(app.docs.lock().await.get("doc").unwrap().etag, "old");
+        assert!(matches!(
+            app.consume(&delayed, Kind::Upload).await,
+            Err(StatusCode::CONFLICT)
+        ));
+        assert_eq!(mock.uploads.load(Ordering::SeqCst), 1);
+        assert_eq!(app.uploads.available_permits(), 1);
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn transfer_error_responses_include_cors_and_no_store() {
         let (app, _, task) = mock_app(5).await;
         for q in [
@@ -2215,15 +2328,21 @@ mod tests {
             ..doc.clone()
         };
         tokio::fs::create_dir_all(&app.state).await.unwrap();
-        // Simulate interrupted writes. These names are not exposed by the
-        // recovery picker and must consume neither the count nor byte quota.
+        // Simulate repeated crashes, including interrupted metadata writes.
+        // These files must be reclaimed before another recovery is written.
+        let mut leftovers = Vec::new();
         for _ in 0..32 {
             let temporary = app.state.join(format!(
                 ".recovery-{}-{}.tmp",
                 Uuid::new_v4(),
                 Uuid::new_v4()
             ));
-            tokio::fs::write(temporary, b"interrupted").await.unwrap();
+            let metadata_temporary = temporary.with_extension("json.tmp");
+            tokio::fs::write(&temporary, b"interrupted").await.unwrap();
+            tokio::fs::write(&metadata_temporary, b"interrupted metadata")
+                .await
+                .unwrap();
+            leftovers.extend([temporary, metadata_temporary]);
             let sidecar = app.state.join(format!("recovery-{}.json", Uuid::new_v4()));
             tokio::fs::write(sidecar, b"metadata").await.unwrap();
         }
@@ -2232,6 +2351,7 @@ mod tests {
             .unwrap();
         let path = app.recovery_with_limit(&doc, b"edits", 5).await.unwrap();
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"edits");
+        assert!(leftovers.iter().all(|path| !path.exists()));
         // Genuine completed copies still enforce both limits.
         assert!(app.recovery_with_limit(&other, b"more", 5).await.is_err());
         for _ in 0..31 {
@@ -2239,6 +2359,90 @@ mod tests {
             tokio::fs::write(app.state.join(name), b"").await.unwrap();
         }
         assert!(app.recovery_with_limit(&other, b"more", 100).await.is_err());
+        tokio::fs::remove_dir_all(&app.state).await.unwrap();
+        task.abort();
+    }
+
+    #[test]
+    fn recovery_temporary_names_require_exact_generated_uuid_format() {
+        let doc = "00000000-0000-0000-0000-000000000001";
+        let nonce = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        for suffix in ["tmp", "json.tmp"] {
+            assert!(recovery_temporary_name(&format!(
+                ".recovery-{doc}-{nonce}.{suffix}"
+            )));
+        }
+        for name in [
+            format!("recovery-{doc}-{nonce}.tmp"),
+            format!(".recovery-{doc}-{nonce}.json"),
+            format!(".recovery-{doc}-{nonce}.tmp.extra"),
+            format!(".recovery-{doc}-{}.tmp", nonce.to_uppercase()),
+            format!(".recovery-{doc}-{}.tmp", nonce.replace('-', "")),
+            format!(".recovery-{doc}-not-a-uuid.tmp"),
+            format!(".recovery-{doc}-{nonce}-extra.tmp"),
+            format!("../.recovery-{doc}-{nonce}.tmp"),
+            format!(".recovery-{}é{}.tmp", "a".repeat(35), "b".repeat(36)),
+            format!(".recovery-💾-{nonce}.tmp"),
+        ] {
+            assert!(!recovery_temporary_name(&name), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_cleanup_preserves_unrelated_files_and_symlinks() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        use std::os::unix::fs::symlink;
+
+        let (app, _, task) = mock_app(3).await;
+        let doc = app.docs.lock().await.get("doc").unwrap().clone();
+        let path = app.recovery(&doc, b"edits").await.unwrap();
+        let malformed = app.state.join(".recovery-not-a-session-or-nonce.tmp");
+        tokio::fs::write(&malformed, b"unrelated").await.unwrap();
+        let non_utf8 = app.state.join(OsString::from_vec(b".recovery-\xff.tmp".to_vec()));
+        tokio::fs::write(&non_utf8, b"unrelated non-UTF-8")
+            .await
+            .unwrap();
+        let target = app.state.join("unrelated.txt");
+        tokio::fs::write(&target, b"keep target").await.unwrap();
+        let mut links = Vec::new();
+        for suffix in ["tmp", "json.tmp"] {
+            let link = app.state.join(format!(
+                ".recovery-{}-{}.{suffix}",
+                doc.id,
+                Uuid::new_v4()
+            ));
+            symlink(&target, &link).unwrap();
+            links.push(link);
+        }
+        let directory = app
+            .state
+            .join(format!(".recovery-{}-{}.tmp", doc.id, Uuid::new_v4()));
+        tokio::fs::create_dir(&directory).await.unwrap();
+        let orphan = app
+            .state
+            .join(format!(".recovery-{}-{}.tmp", doc.id, Uuid::new_v4()));
+        tokio::fs::write(&orphan, b"interrupted").await.unwrap();
+        // Even when quota rejects the new save, cleanup must leave complete
+        // copies and unrelated filesystem entries untouched.
+        assert!(app.recovery_with_limit(&doc, b"too large", 5).await.is_err());
+        assert!(!orphan.exists());
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"edits");
+        assert_eq!(recovery_metadata(&path).await.unwrap().name, doc.name);
+        assert_eq!(tokio::fs::read(&malformed).await.unwrap(), b"unrelated");
+        assert_eq!(
+            tokio::fs::read(&non_utf8).await.unwrap(),
+            b"unrelated non-UTF-8"
+        );
+        assert_eq!(tokio::fs::read(&target).await.unwrap(), b"keep target");
+        assert!(directory.is_dir());
+        for link in links {
+            assert!(tokio::fs::symlink_metadata(link)
+                .await
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        }
         tokio::fs::remove_dir_all(&app.state).await.unwrap();
         task.abort();
     }

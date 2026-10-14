@@ -7668,6 +7668,10 @@ rec {
             features = [ "derive" "env" ];
           }
           {
+            name = "fs2";
+            packageId = "fs2";
+          }
+          {
             name = "futures-util";
             packageId = "futures-util";
           }

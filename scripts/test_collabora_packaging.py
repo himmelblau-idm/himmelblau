@@ -203,6 +203,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Cannot look up user for runtime UID 1000", result.stderr)
                 self.assertFalse(any(event[-1] == "cleanup" for event in self.events()))
+                self.assertNotIn(["system", "--global", "disable", UNIT], self.events())
 
     def test_passwd_enumeration_failure_or_empty_result_prevents_cleanup(self):
         self.user(runtime=False)
@@ -215,6 +216,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Cannot enumerate profile owners", result.stderr)
                 self.assertFalse(any(event[-1] == "cleanup" for event in self.events()))
+                self.assertNotIn(["system", "--global", "disable", UNIT], self.events())
 
     def test_postinst_starts_without_restarting_existing_documents(self):
         self.user()
@@ -224,17 +226,22 @@ class PackagingTests(unittest.TestCase):
             self.assertTrue((self.root / "alice/editor-session").exists())
         self.assertEqual(self.events().count(["alice", "--user", "start", UNIT]), 3)
 
-    def test_removal_stops_all_bridges_before_cleaning_profiles(self):
+    def test_removal_stops_bridges_then_cleans_profiles_then_disables(self):
         self.user()
         self.user("bob", 1001)
         self.user("offline", 1002, runtime=False)
-        result = self.run_script("prerm", "remove")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        events = self.events()
-        for name in ("alice", "bob", "offline"):
-            self.assertIn([name, "cleanup"], events)
-            self.assertLess(events.index(["bob", "--user", "stop", UNIT]),
-                            events.index([name, "cleanup"]))
+        for argument in ("remove", "0"):
+            with self.subTest(argument=argument):
+                before = len(self.events())
+                result = self.run_script("prerm", argument)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                events = self.events()[before:]
+                for name in ("alice", "bob", "offline"):
+                    self.assertIn([name, "cleanup"], events)
+                    self.assertLess(events.index(["bob", "--user", "stop", UNIT]),
+                                    events.index([name, "cleanup"]))
+                self.assertEqual(events[-1], ["system", "--global", "disable", UNIT])
+                self.assertEqual(events.count(["system", "--global", "disable", UNIT]), 1)
 
     def test_removal_cleans_profile_owners_with_low_or_root_uids(self):
         self.user("root", 0)
@@ -252,6 +259,7 @@ class PackagingTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Cannot stop Collabora bridge for bob", result.stderr)
         self.assertFalse(any(event[-1] == "cleanup" for event in self.events()))
+        self.assertNotIn(["system", "--global", "disable", UNIT], self.events())
 
     def test_unloaded_service_can_be_cleaned_without_stopping(self):
         self.user(loaded=False)
@@ -276,6 +284,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Cannot determine Collabora bridge status", result.stderr)
                 self.assertFalse(any(event[-1] == "cleanup" for event in self.events()))
+                self.assertNotIn(["system", "--global", "disable", UNIT], self.events())
 
     def test_missing_systemctl_with_live_runtime_refuses_cleanup(self):
         self.user()
@@ -296,6 +305,7 @@ class PackagingTests(unittest.TestCase):
         result = self.run_script("prerm", "remove")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Collabora cleanup failed for alice", result.stderr)
+        self.assertNotIn(["system", "--global", "disable", UNIT], self.events())
 
     def test_cleanup_pins_discovered_paths_despite_inherited_xdg_environment(self):
         self.user()
