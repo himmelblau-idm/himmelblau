@@ -107,6 +107,25 @@ const THROTTLING_ERROR: u32 = 90055;
 // AADSTS90006: ExternalServerRetryableError - The service is temporarily unavailable.
 const RETRYABLE_ERROR: u32 = 90006;
 
+async fn retry_edge_prt_exchange<T>(
+    result: Result<T, MsalError>,
+    client_id: Option<&str>,
+    retry: impl std::future::Future<Output = Result<T, MsalError>>,
+) -> Result<T, MsalError> {
+    match result {
+        Err(MsalError::AcquireTokenFailed(e)) if e.error_codes.contains(&CONSENT_REQUIRED) => {
+            Err(MsalError::AcquireTokenFailed(e))
+        }
+        Err(MsalError::AcquireTokenFailed(_)) | Err(MsalError::AADSTSError(_))
+            if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
+        {
+            info!("Cached PRT exchange failed with Edge Browser app; retrying with default app ID");
+            retry.await
+        }
+        result => result,
+    }
+}
+
 fn unexpired_prt_entry(prt: SealedData, prt_expired: bool) -> Option<RefreshCacheEntry> {
     (!prt_expired).then_some(RefreshCacheEntry::Prt(prt))
 }
@@ -3005,10 +3024,7 @@ impl IdProvider for HimmelblauProvider {
                                 )
                                 .await
                         }
-                        Err(MsalError::AcquireTokenFailed(_)) | Err(MsalError::AADSTSError(_))
-                            if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
-                        {
-                            info!("Cached PRT exchange failed with Edge Browser app; retrying with default app ID");
+                        result => retry_edge_prt_exchange(result, client_id, async {
                             self.client
                                 .lock()
                                 .await
@@ -3023,8 +3039,7 @@ impl IdProvider for HimmelblauProvider {
                                     None,
                                 )
                                 .await
-                        }
-                        result => result,
+                        }).await,
                     };
                     match exchange_result {
                         Ok(mut token) => {
@@ -3383,7 +3398,7 @@ impl IdProvider for HimmelblauProvider {
                             .await
                             .exchange_prt_for_access_token(
                                 &prt,
-                                scopes,
+                                scopes.clone(),
                                 None,
                                 client_id,
                                 tpm,
@@ -3394,6 +3409,26 @@ impl IdProvider for HimmelblauProvider {
                         // The MutexGuard from .lock() above is dropped here
                         // (before the match), so we can re-lock inside the
                         // match arms without deadlocking.
+                        let prt_exchange_result = retry_edge_prt_exchange(
+                            prt_exchange_result,
+                            client_id,
+                            async {
+                                self.client
+                                    .lock()
+                                    .await
+                                    .exchange_prt_for_access_token(
+                                        &prt,
+                                        scopes,
+                                        None,
+                                        Some(DEFAULT_APP_ID),
+                                        tpm,
+                                        machine_key,
+                                        None,
+                                        None,
+                                    )
+                                    .await
+                            },
+                        ).await;
                         match prt_exchange_result {
                                 Ok(mut token) => {
                                     token.prt = Some(prt);
@@ -5985,6 +6020,114 @@ mod tests {
     };
     use std::{cell::Cell, collections::HashMap};
     use zeroize::Zeroizing;
+
+    fn edge_prt_error() -> MsalError {
+        MsalError::AADSTSError(AADSTSError::new(530003, None))
+    }
+
+    #[tokio::test]
+    async fn retry_edge_prt_exchange_avoids_reauthentication_after_pin_setup() {
+        let retries = Cell::new(0);
+        let result = super::retry_edge_prt_exchange(
+            Err(edge_prt_error()),
+            Some(super::EDGE_BROWSER_CLIENT_ID),
+            async {
+                retries.set(retries.get() + 1);
+                Ok("validated token from default client")
+            },
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), "validated token from default client");
+        assert_eq!(retries.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn retry_edge_prt_exchange_handles_structured_token_errors() {
+        let result = super::retry_edge_prt_exchange(
+            Err(MsalError::AcquireTokenFailed(ErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "Edge client rejected".to_string(),
+                suberror: None,
+                error_codes: vec![530003],
+            })),
+            Some(super::EDGE_BROWSER_CLIENT_ID),
+            async { Ok("validated token") },
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), "validated token");
+    }
+
+    #[tokio::test]
+    async fn retry_edge_prt_exchange_preserves_success_without_retry() {
+        let result = super::retry_edge_prt_exchange(
+            Ok("original token"),
+            Some(super::EDGE_BROWSER_CLIENT_ID),
+            async { panic!("successful exchange must not retry") },
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), "original token");
+    }
+
+    #[tokio::test]
+    async fn retry_edge_prt_exchange_preserves_non_edge_errors() {
+        for client_id in [None, Some(super::DEFAULT_APP_ID), Some("custom-app")] {
+            let result =
+                super::retry_edge_prt_exchange::<()>(Err(edge_prt_error()), client_id, async {
+                    panic!("non-Edge exchange must not retry")
+                })
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(MsalError::AADSTSError(AADSTSError { code: 530003, .. }))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_edge_prt_exchange_preserves_network_and_consent_handling() {
+        for error in [
+            MsalError::RequestFailed("network down".to_string()),
+            MsalError::AcquireTokenFailed(ErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "Consent required".to_string(),
+                suberror: None,
+                error_codes: vec![super::CONSENT_REQUIRED],
+            }),
+        ] {
+            let result = super::retry_edge_prt_exchange::<()>(
+                Err(error),
+                Some(super::EDGE_BROWSER_CLIENT_ID),
+                async { panic!("network/consent errors must keep their existing handling") },
+            )
+            .await;
+
+            assert!(result.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_edge_prt_exchange_propagates_default_client_failure() {
+        let retries = Cell::new(0);
+        let result = super::retry_edge_prt_exchange::<()>(
+            Err(edge_prt_error()),
+            Some(super::EDGE_BROWSER_CLIENT_ID),
+            async {
+                retries.set(retries.get() + 1);
+                Err(MsalError::AADSTSError(AADSTSError::new(50076, None)))
+            },
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(MsalError::AADSTSError(AADSTSError { code: 50076, .. }))
+        ));
+        assert_eq!(retries.get(), 1);
+    }
 
     #[tokio::test]
     async fn entra_authority_response_marks_online_without_following_redirects() {
