@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Himmelblau Collabora integration
+Comment=Start the Microsoft 365 file bridge for Collabora Office
+Exec=systemctl --user start himmelblau-collabora.service
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

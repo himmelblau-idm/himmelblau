@@ -149,9 +149,9 @@ def main() -> int:
         print(f"error: makepkg produced no package in {pkgdest}", file=sys.stderr)
         return 1
 
-    package = packages[-1]
-    print(f"copying {package.name} to {out}")
-    shutil.copy2(package, out / package.name)
+    for package in packages:
+        print(f"copying {package.name} to {out}")
+        shutil.copy2(package, out / package.name)
 
     return 0
 

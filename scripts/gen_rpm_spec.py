@@ -374,6 +374,7 @@ FILE_REPLACE = {
         "usr/share/selinux": "%{_selinux_sharedir}",
         "usr/share/doc/himmelblau-selinux/selinux": "%{_selinux_docdir}",
         "usr/lib/systemd/system": "%{_unitdir}",
+        "usr/lib/systemd/user": "%{_prefix}/lib/systemd/user",
         "usr/lib/himmelblau": "%{_prefix}/lib/himmelblau",
         "usr/share/icons": "%{_iconsdir}",
         "usr/share": "%{_datadir}",
@@ -638,6 +639,7 @@ def main() -> int:
     pam_metadata = merge_metadata(["pam_himmelblau"], metadata, root)
     broker_metadata = merge_metadata(["broker"], metadata, root)
     sso_metadata = merge_metadata(["sso", "o365"], metadata, root)
+    collabora_metadata = merge_metadata(["himmelblau-collabora"], metadata, root)
     sso_policies_metadata = merge_metadata(["sso-policies"], metadata, root)
     sshd_metadata = merge_metadata(["sshd-config"], metadata, root)
     qr_metadata = merge_metadata(["qr-greeter"], metadata, root)
@@ -788,6 +790,15 @@ Firefox, Chromium, Google Chrome, and Microsoft Edge (where installed),
 using native messaging and managed browser policies. It also provides
 web apps for common Office 365 applications (Teams, Outlook, etc).
 
+%package -n himmelblau-collabora
+Summary:        Microsoft 365 integration for Collabora Office
+Requires:       himmelblau-broker = %{{version}}
+{dep_gen(collabora_metadata)}
+
+%description -n himmelblau-collabora
+Connects Collabora Office to Microsoft 365 files through the signed-in
+Himmelblau user session and Microsoft Graph.
+
 %package -n himmelblau-sso-policies
 Summary:        Browser policy files for Himmelblau SSO
 {dep_gen(sso_policies_metadata)}
@@ -901,6 +912,12 @@ install -D -d -m 0755 %{{buildroot}}%{{_datadir}}/applications/
 install -D -d -m 0755 %{{buildroot}}%{{_iconsdir}}/hicolor/256x256/apps
 {generate_install_section(sso_metadata)}
 
+# Collabora Office integration
+strip --strip-unneeded target/release/himmelblau-collabora
+install -D -d -m 0755 %{{buildroot}}%{{_prefix}}/lib/systemd/user
+install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/xdg/autostart
+{generate_install_section(collabora_metadata)}
+
 # SSO Policies
 install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/firefox/policies
 install -D -d -m 0555 %{{buildroot}}%{{chrome_policy_dir}}
@@ -923,6 +940,8 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 
 {generate_script_sections(sso_metadata, name="himmelblau-sso")}
 
+{generate_script_sections(collabora_metadata, name="himmelblau-collabora")}
+
 {generate_script_sections(sso_policies_metadata, name="himmelblau-sso-policies")}
 
 {generate_script_sections(qr_metadata, name="himmelblau-qr-greeter")}
@@ -940,6 +959,8 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 {generate_files_section(broker_metadata, name="himmelblau-broker", extras=["%{_sbindir}/rcbroker"])}
 
 {generate_files_section(sso_metadata, name="himmelblau-sso", dirs=["%{_libdir}/mozilla", "%{_libdir}/mozilla/native-messaging-hosts", "/etc/chromium", "/etc/chromium/native-messaging-hosts", "/usr/share/google-chrome", "%{chrome_nm_dir}", "%{chromium_nm_dir}", "%{chrome_ext_dir}", "%{_iconsdir}/hicolor", "%{_iconsdir}/hicolor/256x256", "%{_iconsdir}/hicolor/256x256/apps"])}
+
+{generate_files_section(collabora_metadata, name="himmelblau-collabora")}
 
 {generate_files_section(sso_policies_metadata, name="himmelblau-sso-policies", dirs=["/etc/firefox", "/etc/firefox/policies", "/etc/chromium/policies", "/etc/chromium/policies/managed", "/etc/opt/chrome", "/etc/opt/chrome/policies", "/etc/opt/chrome/policies/managed", "%attr(0555,root,root) %{chrome_policy_dir}", "%attr(0555,root,root) %{chromium_policy_dir}"])}
 

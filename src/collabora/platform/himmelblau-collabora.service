@@ -1,0 +1,17 @@
+[Unit]
+Description=Himmelblau Collabora Microsoft 365 bridge
+After=himmelblau-broker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/himmelblau-collabora serve
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+# Keep system directories read-only while allowing user state and profile writes,
+# including XDG paths outside the home directory.
+ProtectSystem=full
+
+[Install]
+WantedBy=default.target

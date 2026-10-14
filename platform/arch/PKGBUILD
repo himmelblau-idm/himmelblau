@@ -26,7 +26,8 @@ _workspace_version() {
   done < "$_repo/Cargo.toml"
 }
 
-pkgname=himmelblau
+pkgbase=himmelblau
+pkgname=('himmelblau' 'himmelblau-collabora')
 pkgver="$(_workspace_version)"
 pkgrel=1
 pkgdesc="Azure Entra ID authentication for Linux (daemon, PAM, NSS, broker, SSO)"
@@ -67,8 +68,8 @@ optdepends=(
   'openssh: SSH logon with MFA'
   'tpm2-tools: TPM backed HSM pin'
 )
-# Single package: the DEB/RPM split has no equivalent on Arch, so the
-# subpackage names are recorded as provides.
+# Core authentication components remain together. The experimental Collabora
+# bridge is a separate, optional package.
 provides=(
   'himmelblau-broker'
   'himmelblau-qr-greeter'
@@ -104,6 +105,7 @@ build() {
   cargo build --release --locked --features himmelblau_unix_common/tpm \
     -p aad-tool \
     -p broker \
+    -p himmelblau-collabora \
     -p himmelblaud \
     -p nss_himmelblau \
     -p pam_himmelblau \
@@ -111,7 +113,7 @@ build() {
     -p sso
 }
 
-package() {
+package_himmelblau() {
   cd "$_repo"
 
   # Daemon and CLI. Arch has no /usr/sbin, it is a symlink to /usr/bin, so the
@@ -230,4 +232,21 @@ package() {
     "$pkgdir/etc/apparmor.d/local/unix-chkpwd"
   install -Dm644 platform/debian/apparmor.fusermount3.local \
     "$pkgdir/etc/apparmor.d/local/fusermount3"
+}
+
+package_himmelblau-collabora() {
+  pkgdesc="Experimental Collabora Office Microsoft 365 integration"
+  depends=("himmelblau=$pkgver-$pkgrel")
+  optdepends=()
+  provides=()
+  backup=()
+  install=
+
+  cd "$_repo"
+  install -Dm755 target/release/himmelblau-collabora \
+    "$pkgdir/usr/bin/himmelblau-collabora"
+  install -Dm644 src/collabora/platform/himmelblau-collabora.service \
+    "$pkgdir/usr/lib/systemd/user/himmelblau-collabora.service"
+  install -Dm644 src/collabora/platform/himmelblau-collabora.desktop \
+    "$pkgdir/etc/xdg/autostart/himmelblau-collabora.desktop"
 }
