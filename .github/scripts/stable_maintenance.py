@@ -517,7 +517,7 @@ def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
     error = "locked cargo-vet check failed without parseable requirements"
     try:
         report = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
         raise MaintenanceError(error) from exc
     if not isinstance(report, dict):
         raise MaintenanceError(error)
@@ -563,7 +563,7 @@ def parse_cargo_vet_check_suggestions(result: CommandResult) -> list[VetItem]:
     parse_locked_cargo_vet_report(result)
     try:
         report = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
         raise MaintenanceError(error) from exc
     if not isinstance(report, dict) or report.get("conclusion") != "fail (vetting)":
         raise MaintenanceError(error)
@@ -1506,12 +1506,63 @@ def isolated_vet_command(
         )
 
 
+def report_vet_diagnostics(result: CommandResult, stage: str, *, capture: str = "complete") -> None:
+    """Explain rejected vet reports without printing untrusted tool output."""
+    if stage not in {"locked-check", "review-check"} or capture not in {"complete", "timeout", "output-limit"}:
+        raise MaintenanceError("invalid cargo-vet diagnostic context")
+    report: Any = None
+    shape = "empty"
+    if result.stdout.strip():
+        try:
+            report = json.loads(result.stdout)
+            shape = "object" if isinstance(report, dict) else "non-object"
+        except (ValueError, RecursionError):
+            shape = "invalid-json"
+    conclusion = report.get("conclusion") if isinstance(report, dict) else None
+    if not isinstance(conclusion, str) or conclusion not in {"success", "fail (vetting)", "fail (violation)"}:
+        conclusion = "unknown"
+    text = (result.stdout + "\n" + result.stderr).lower()
+    hints = [label for label, needles in (
+        ("cargo-metadata", ("cargo metadata", "cargo_metadata")),
+        ("offline-or-frozen", ("--frozen", "offline mode", "network is disabled")),
+        ("download", ("failed to download", "failed to fetch", "http request")),
+        ("permission-denied", ("permission denied", "operation not permitted")),
+        ("missing-file", ("no such file or directory",)),
+        ("store-parse", ("toml parse error", "failed to parse", "error parsing")),
+        ("disk-full", ("no space left on device",)),
+        ("container-start", ("cannot connect to the docker daemon", "oci runtime create failed")),
+    ) if any(needle in text for needle in needles)]
+    failures = report.get("failures") if isinstance(report, dict) else None
+    diagnostic = {
+        "stage": stage, "capture": capture, "exit": result.returncode,
+        "stdout_bytes": len(result.stdout.encode()), "stderr_bytes": len(result.stderr.encode()),
+        "stdout_shape": shape, "conclusion": conclusion,
+        "error_object": isinstance(report, dict) and isinstance(report.get("error"), dict),
+        "failure_count": min(len(failures), 1000) if isinstance(failures, list) else None,
+        "hints": hints,
+        "os_errors": sorted({int(n) for n in re.findall(r"os error ([0-9]{1,3})", text)})[:8],
+    }
+    print("vet-diagnostics: " + json.dumps(diagnostic, sort_keys=True), file=sys.stderr)
+
+
+def diagnostic_vet_check(runner: Runner, state_dir: Path, *, locked: bool) -> CommandResult:
+    stage = "locked-check" if locked else "review-check"
+    command = (["cargo", "vet", "--locked", "--frozen", "--output-format=json"] if locked
+               else ["cargo", "vet", "check", "--output-format=json"])
+    try:
+        return isolated_vet_command(runner, command, state_dir, network=not locked)
+    except CommandCaptureError as exc:
+        report_vet_diagnostics(exc.result, stage, capture=exc.reason)
+        raise
+
+
 def locked_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
-    result = isolated_vet_command(
-        runner, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"],
-        state_dir, network=False,
-    )
-    return parse_locked_cargo_vet_report(result)
+    result = diagnostic_vet_check(runner, state_dir, locked=True)
+    try:
+        return parse_locked_cargo_vet_report(result)
+    except MaintenanceError:
+        report_vet_diagnostics(result, "locked-check")
+        raise
 
 
 def reviewable_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
@@ -1519,24 +1570,26 @@ def reviewable_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
     locked = locked_vet_gaps(runner, state_dir)
     if not locked:
         return []
-    suggested = isolated_vet_command(
-        runner, ["cargo", "vet", "check", "--output-format=json"], state_dir, network=True,
-    )
+    suggested = diagnostic_vet_check(runner, state_dir, locked=False)
     # `suggest` removes suggestable exemptions and describes the whole backlog.
     # An unlocked check preserves exemptions and includes the failing targets'
     # suggestions. The separate locked report remains authoritative.
-    suggestions = parse_cargo_vet_check_suggestions(suggested)
-    locked_keys = {(item.crate, item.new) for item in locked}
-    checked_keys = {(item.crate, item.new) for item in parse_locked_cargo_vet_report(suggested)}
-    suggestion_keys = {(item.crate, item.new) for item in suggestions}
-    if checked_keys != locked_keys or suggestion_keys != locked_keys:
-        raise MaintenanceError("cargo-vet locked gaps and review suggestions disagree")
-    by_key: dict[tuple[str, str], list[VetItem]] = {}
-    for item in suggestions:
-        by_key.setdefault((item.crate, item.new), []).append(item)
-    if any(len(matches) != 1 for matches in by_key.values()):
-        raise MaintenanceError("cargo-vet emitted ambiguous review suggestions")
-    return [by_key[(item.crate, item.new)][0] for item in locked]
+    try:
+        suggestions = parse_cargo_vet_check_suggestions(suggested)
+        locked_keys = {(item.crate, item.new) for item in locked}
+        checked_keys = {(item.crate, item.new) for item in parse_locked_cargo_vet_report(suggested)}
+        suggestion_keys = {(item.crate, item.new) for item in suggestions}
+        if checked_keys != locked_keys or suggestion_keys != locked_keys:
+            raise MaintenanceError("cargo-vet locked gaps and review suggestions disagree")
+        by_key: dict[tuple[str, str], list[VetItem]] = {}
+        for item in suggestions:
+            by_key.setdefault((item.crate, item.new), []).append(item)
+        if any(len(matches) != 1 for matches in by_key.values()):
+            raise MaintenanceError("cargo-vet emitted ambiguous review suggestions")
+        return [by_key[(item.crate, item.new)][0] for item in locked]
+    except MaintenanceError:
+        report_vet_diagnostics(suggested, "review-check")
+        raise
 
 
 def permission_error_path_hints(stderr: str) -> list[str]:

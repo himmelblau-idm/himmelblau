@@ -17,6 +17,7 @@ import tempfile
 import tarfile
 import threading
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -51,6 +52,28 @@ VET_CHECK_REPORT = json.dumps({
         "suggested_diff": {"from": "0.9.0", "to": "1.0.0"},
     }]},
 })
+
+
+@contextmanager
+def vet_json_limit_cases():
+    """Inject decoder recursion failure; real nesting thresholds vary by Python."""
+    previous_limit = sys.get_int_max_str_digits()
+    loads = json.loads
+    nested = "[[0]]"
+
+    def decode(payload, *args, **kwargs):
+        if payload == nested:
+            raise RecursionError("simulated JSON nesting limit")
+        return loads(payload, *args, **kwargs)
+
+    try:
+        sys.set_int_max_str_digits(4300)
+        with mock.patch.object(sm.json, "loads", side_effect=decode):
+            yield ((nested, RecursionError),
+                   ('{"integer":' + "9" * 4301 + "}", ValueError))
+    finally:
+        sys.set_int_max_str_digits(previous_limit)
+
 
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 9, 24, 12, tzinfo=UTC)
@@ -1550,6 +1573,145 @@ class CargoVetTests(unittest.TestCase):
         for code, output in invalid:
             with self.subTest(code=code, output=output), self.assertRaises(sm.MaintenanceError):
                 sm.parse_locked_cargo_vet_report(sm.CommandResult(code, output, ""))
+
+    def test_locked_vet_failure_reports_only_bounded_fixed_diagnostics(self):
+        cases = (
+            ('{"error":{"message":"cargo metadata failed: attempting an HTTP request with --frozen; SECRET"}}',
+             "permission denied (os error 13)\n::error::SECRET", "object", True),
+            ("SECRET\n::error::arbitrary", "", "invalid-json", False),
+            ("[]", "SECRET", "non-object", False),
+            ('{"conclusion":[]}', "", "object", False),
+        )
+        for stdout, stderr, shape, error_object in cases:
+            with self.subTest(stdout=stdout):
+                output = io.StringIO()
+                result = sm.CommandResult(255, stdout, stderr)
+                with mock.patch.object(sm, "isolated_vet_command", return_value=result) as command, \
+                     mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError):
+                    sm.locked_vet_gaps(mock.Mock(), Path("state"))
+                command.assert_called_once_with(mock.ANY,
+                    ["cargo", "vet", "--locked", "--frozen", "--output-format=json"], Path("state"), network=False)
+                diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                self.assertEqual(diagnostic["exit"], 255)
+                self.assertEqual(diagnostic["stdout_shape"], shape)
+                self.assertEqual(diagnostic["error_object"], error_object)
+                self.assertEqual(diagnostic["conclusion"], "unknown")
+                if error_object:
+                    self.assertEqual(diagnostic["hints"], ["cargo-metadata", "offline-or-frozen", "download", "permission-denied"])
+                    self.assertEqual(diagnostic["os_errors"], [13])
+                self.assertNotIn("SECRET", output.getvalue())
+                self.assertNotIn("::error::", output.getvalue())
+
+    def test_vet_timeout_retains_primary_error_and_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            (root / "supply-chain/audits.toml").write_text("# unchanged\n")
+            state = sm.State(Path(tmp) / "state")
+            runner = mock.Mock(root=root)
+            failure = sm.CommandCaptureError("timeout", "timeout", sm.CommandResult(-9, "SECRET", ""))
+            stores = []
+            def contained(*args, **kwargs):
+                stores.append(kwargs["vet_store"])
+                raise failure
+            output = io.StringIO()
+            with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                 mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.CommandCaptureError) as caught:
+                sm.locked_vet_gaps(runner, state.directory)
+            self.assertIs(caught.exception, failure)
+            self.assertEqual(json.loads(output.getvalue().removeprefix("vet-diagnostics: "))["capture"], "timeout")
+            self.assertNotIn("SECRET", output.getvalue())
+            self.assertEqual((root / "supply-chain/audits.toml").read_text(), "# unchanged\n")
+            self.assertTrue(stores)
+            self.assertTrue(all(not path.exists() for path in stores))
+
+    def test_review_check_diagnostics_preserve_exact_exit_gate(self):
+        failed = sm.CommandResult(1, VET_CHECK_REPORT, "SECRET")
+        output = io.StringIO()
+        with mock.patch.object(sm, "isolated_vet_command", side_effect=[
+                sm.CommandResult(255, VET_LOCKED_FAILURE, ""), failed]), \
+             mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError):
+            sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
+        diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+        self.assertEqual(diagnostic["stage"], "review-check")
+        self.assertEqual(diagnostic["exit"], 1)
+        self.assertEqual(diagnostic["conclusion"], "fail (vetting)")
+        self.assertNotIn("SECRET", output.getvalue())
+
+    def test_vet_capture_preserves_exception_for_json_interpreter_limits(self):
+        with vet_json_limit_cases() as cases:
+            for payload, error_type in cases:
+                with self.assertRaises(error_type):
+                    json.loads(payload)
+                for capture in ("timeout", "output-limit"):
+                    with self.subTest(error_type=error_type, capture=capture):
+                        failure = sm.CommandCaptureError("capture failed", capture,
+                            sm.CommandResult(-9, payload, "SECRET\n::error::SECRET"))
+                        output = io.StringIO()
+                        with mock.patch.object(sm, "isolated_vet_command", side_effect=failure), \
+                             mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.CommandCaptureError) as caught:
+                            sm.diagnostic_vet_check(mock.Mock(), Path("state"), locked=True)
+                        self.assertIs(caught.exception, failure)
+                        diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                        self.assertEqual(diagnostic["stdout_shape"], "invalid-json")
+                        self.assertEqual(diagnostic["capture"], capture)
+                        self.assertNotIn("SECRET", output.getvalue())
+                        self.assertNotIn("::error::", output.getvalue())
+
+    def test_completed_vet_reports_reject_json_interpreter_limits_with_diagnostics(self):
+        with vet_json_limit_cases() as cases:
+            for payload, error_type in cases:
+                with self.assertRaises(error_type):
+                    json.loads(payload)
+                result = sm.CommandResult(255, payload, "SECRET\n::error::SECRET")
+                for parser in (sm.parse_locked_cargo_vet_report, sm.parse_cargo_vet_check_suggestions):
+                    with self.subTest(error_type=error_type, parser=parser.__name__):
+                        with self.assertRaises(sm.MaintenanceError) as caught:
+                            parser(result)
+                        self.assertIsInstance(caught.exception.__cause__, error_type)
+                for stage in ("locked-check", "review-check"):
+                    with self.subTest(error_type=error_type, stage=stage):
+                        results = [result] if stage == "locked-check" else [
+                            sm.CommandResult(255, VET_LOCKED_FAILURE, ""), result]
+                        check = sm.locked_vet_gaps if stage == "locked-check" else sm.reviewable_vet_gaps
+                        output = io.StringIO()
+                        with mock.patch.object(sm, "isolated_vet_command", side_effect=results), \
+                             mock.patch.object(sm.sys, "stderr", output), \
+                             self.assertRaises(sm.MaintenanceError) as caught:
+                            check(mock.Mock(), Path("state"))
+                        self.assertIsInstance(caught.exception.__cause__, error_type)
+                        diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                        self.assertEqual(diagnostic["stage"], stage)
+                        self.assertEqual(diagnostic["capture"], "complete")
+                        self.assertEqual(diagnostic["stdout_shape"], "invalid-json")
+                        self.assertEqual(diagnostic["exit"], 255)
+                        self.assertNotIn("SECRET", output.getvalue())
+                        self.assertNotIn("::error::", output.getvalue())
+
+    def test_review_check_semantic_rejections_emit_diagnostics(self):
+        for cause in ("checked-set", "suggested-set", "ambiguity"):
+            with self.subTest(cause=cause):
+                report = json.loads(VET_CHECK_REPORT)
+                if cause == "checked-set":
+                    report["failures"].append({"name": "unexpected", "version": "2.0.0",
+                                               "missing_criteria": ["safe-to-deploy"]})
+                elif cause == "suggested-set":
+                    report["suggest"]["suggestions"][0]["name"] = "other"
+                else:
+                    duplicate = json.loads(json.dumps(report["suggest"]["suggestions"][0]))
+                    duplicate["suggested_diff"]["from"] = "0.8.0"
+                    report["suggest"]["suggestions"].append(duplicate)
+                output = io.StringIO()
+                error = "ambiguous" if cause == "ambiguity" else "disagree"
+                with mock.patch.object(sm, "isolated_vet_command", side_effect=[
+                        sm.CommandResult(255, VET_LOCKED_FAILURE, ""),
+                        sm.CommandResult(255, json.dumps(report), "SECRET")]), \
+                     mock.patch.object(sm.sys, "stderr", output), self.assertRaisesRegex(sm.MaintenanceError, error):
+                    sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
+                diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                self.assertEqual(diagnostic["stage"], "review-check")
+                self.assertEqual(diagnostic["conclusion"], "fail (vetting)")
+                self.assertEqual(diagnostic["failure_count"], 2 if cause == "checked-set" else 1)
+                self.assertNotIn("SECRET", output.getvalue())
 
     def test_parser_returns_only_explicit_unvetted_commands(self):
         output = """
