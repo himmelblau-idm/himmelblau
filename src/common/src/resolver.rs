@@ -73,6 +73,7 @@ struct PasswordCacheGeneration {
     password_generation: Option<u64>,
     uuid: Uuid,
     tenant_id: Option<Uuid>,
+    revoked: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1495,6 +1496,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_not_found_cannot_delete_a_newer_refresh() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        let mut refreshed = token.clone();
+        refreshed.groups.clear();
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut refreshed, 2, None)
+                .await
+                .unwrap(),
+            CacheUpdateResult::Updated
+        );
+        assert!(!resolver
+            .delete_cache_usertoken_guarded(&token, 1)
+            .await
+            .unwrap());
+        let cached = resolver.get_cached_usertokens().await.unwrap();
+        assert_eq!(cached.len(), 1);
+        assert!(cached[0].groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_not_found_does_not_tombstone_replacement_name() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver.delete_cache_usertoken(token.uuid).await.unwrap();
+        let mut replacement = token.clone();
+        replacement.uuid = uuid::Uuid::new_v4();
+        resolver
+            .set_cache_usertoken(&mut replacement, false)
+            .await
+            .unwrap();
+
+        assert!(!resolver
+            .delete_cache_usertoken_guarded(&token, 1)
+            .await
+            .unwrap());
+        assert_eq!(
+            resolver.get_cached_usertokens().await.unwrap()[0].uuid,
+            replacement.uuid
+        );
+    }
+
+    #[tokio::test]
+    async fn authoritative_deletion_denies_older_staged_authentication() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        let mut session = stage_test_pin(&resolver, true).await;
+        let generation = resolver.password_generation.fetch_add(1, Ordering::Relaxed);
+        assert!(resolver
+            .delete_cache_usertoken_guarded(&token, generation)
+            .await
+            .unwrap());
+        let response = resolver
+            .pam_account_authenticate_step(
+                &mut session,
+                PamAuthRequest::SetupPin {
+                    pin: "123456".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, PamAuthResponse::Denied(_)));
+        assert!(matches!(session, AuthSession::Denied));
+        assert!(resolver.get_cached_usertokens().await.unwrap().is_empty());
+
+        // A genuinely later successful authentication can repopulate the row.
+        let mut reauthenticated = token.clone();
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut reauthenticated, generation + 1, Some("new"))
+                .await
+                .unwrap(),
+            CacheUpdateResult::Updated
+        );
+        assert!(resolver
+            .check_cache_userpassword(token.uuid, "new")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
     async fn cache_generation_guard_does_not_block_unrelated_identities() {
         let resolver = setup_resolver().await;
         let mut unrelated = test_token();
@@ -2476,6 +2559,13 @@ where
         if keys
             .iter()
             .filter_map(|key| generations.get(key))
+            .any(|latest| latest.revoked && latest.identity_generation >= generation)
+        {
+            return Ok(CacheUpdateResult::IdentityChanged);
+        }
+        if keys
+            .iter()
+            .filter_map(|key| generations.get(key))
             .any(|latest| latest.identity_generation > generation && !same_identity(&latest))
         {
             return Ok(CacheUpdateResult::IdentityChanged);
@@ -2533,6 +2623,7 @@ where
             },
             uuid: token.uuid,
             tenant_id: token.tenant_id,
+            revoked: false,
         };
         generations.extend(keys.into_iter().map(|key| (key, latest)));
         if let Some(password) = password {
@@ -2646,6 +2737,68 @@ where
             .map_err(|_| ResolverError)
     }
 
+    async fn delete_cache_usertoken_guarded(
+        &self,
+        token: &UserToken,
+        generation: u64,
+    ) -> ResolverResult<bool> {
+        let keys = [
+            PasswordCacheKey::Uuid(token.uuid),
+            PasswordCacheKey::Name(token.name.clone()),
+            PasswordCacheKey::Spn(token.spn.clone()),
+            PasswordCacheKey::Gid(token.gidnumber),
+        ];
+        let mut generations = self.password_cache_generations.lock().await;
+        if keys
+            .iter()
+            .filter_map(|key| generations.get(key))
+            .any(|latest| latest.identity_generation > generation)
+        {
+            return Ok(false);
+        }
+
+        let mut dbtxn = self.db.write().await;
+        let current = dbtxn
+            .get_account(&Id::Name(token.uuid.hyphenated().to_string()))
+            .map_err(|_| ResolverError)?;
+        if current.as_ref().is_some_and(|(current, _)| {
+            current.uuid != token.uuid || current.tenant_id != token.tenant_id
+        }) {
+            return Ok(false);
+        }
+        for key in [
+            Id::Name(token.name.clone()),
+            Id::Name(token.spn.clone()),
+            Id::Gid(token.gidnumber),
+        ] {
+            if dbtxn
+                .get_account(&key)
+                .map_err(|_| ResolverError)?
+                .is_some_and(|(current, _)| {
+                    current.uuid != token.uuid || current.tenant_id != token.tenant_id
+                })
+            {
+                return Ok(false);
+            }
+        }
+        if current.is_some() {
+            dbtxn
+                .delete_account(token.uuid)
+                .map_err(|_| ResolverError)?;
+        }
+        dbtxn.commit().map_err(|_| ResolverError)?;
+
+        let tombstone = PasswordCacheGeneration {
+            identity_generation: generation,
+            password_generation: Some(generation),
+            uuid: token.uuid,
+            tenant_id: token.tenant_id,
+            revoked: true,
+        };
+        generations.extend(keys.into_iter().map(|key| (key, tombstone)));
+        Ok(true)
+    }
+
     async fn delete_cache_grouptoken(&self, g_uuid: Uuid) -> ResolverResult<()> {
         let mut dbtxn = self.db.write().await;
         dbtxn
@@ -2726,7 +2879,15 @@ where
             Ok(UserTokenState::NotFound) => {
                 // It previously existed, so now purge it.
                 if let Some((tok, _)) = token {
-                    self.delete_cache_usertoken(tok.uuid).await?;
+                    if !self
+                        .delete_cache_usertoken_guarded(&tok, generation)
+                        .await?
+                    {
+                        return self
+                            .get_cached_usertoken(account_id)
+                            .await
+                            .map(|(expired, token)| token.map(|token| (token, !expired)));
+                    }
                 };
                 // Cache the NX here.
                 self.set_nxcache(account_id).await;
