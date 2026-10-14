@@ -1551,6 +1551,69 @@ class CargoVetTests(unittest.TestCase):
             with self.subTest(code=code, output=output), self.assertRaises(sm.MaintenanceError):
                 sm.parse_locked_cargo_vet_report(sm.CommandResult(code, output, ""))
 
+    def test_locked_vet_failure_reports_only_bounded_fixed_diagnostics(self):
+        cases = (
+            ('{"error":{"message":"cargo metadata failed: attempting an HTTP request with --frozen; SECRET"}}',
+             "permission denied (os error 13)\n::error::SECRET", "object", True),
+            ("SECRET\n::error::arbitrary", "", "invalid-json", False),
+            ("[]", "SECRET", "non-object", False),
+            ('{"conclusion":[]}', "", "object", False),
+        )
+        for stdout, stderr, shape, error_object in cases:
+            with self.subTest(stdout=stdout):
+                output = io.StringIO()
+                result = sm.CommandResult(255, stdout, stderr)
+                with mock.patch.object(sm, "isolated_vet_command", return_value=result) as command, \
+                     mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError):
+                    sm.locked_vet_gaps(mock.Mock(), Path("state"))
+                command.assert_called_once_with(mock.ANY,
+                    ["cargo", "vet", "--locked", "--frozen", "--output-format=json"], Path("state"), network=False)
+                diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                self.assertEqual(diagnostic["exit"], 255)
+                self.assertEqual(diagnostic["stdout_shape"], shape)
+                self.assertEqual(diagnostic["error_object"], error_object)
+                self.assertEqual(diagnostic["conclusion"], "unknown")
+                if error_object:
+                    self.assertEqual(diagnostic["hints"], ["cargo-metadata", "offline-or-frozen", "download", "permission-denied"])
+                    self.assertEqual(diagnostic["os_errors"], [13])
+                self.assertNotIn("SECRET", output.getvalue())
+                self.assertNotIn("::error::", output.getvalue())
+
+    def test_vet_timeout_retains_primary_error_and_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            (root / "supply-chain/audits.toml").write_text("# unchanged\n")
+            state = sm.State(Path(tmp) / "state")
+            runner = mock.Mock(root=root)
+            failure = sm.CommandCaptureError("timeout", "timeout", sm.CommandResult(-9, "SECRET", ""))
+            stores = []
+            def contained(*args, **kwargs):
+                stores.append(kwargs["vet_store"])
+                raise failure
+            output = io.StringIO()
+            with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                 mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.CommandCaptureError) as caught:
+                sm.locked_vet_gaps(runner, state.directory)
+            self.assertIs(caught.exception, failure)
+            self.assertEqual(json.loads(output.getvalue().removeprefix("vet-diagnostics: "))["capture"], "timeout")
+            self.assertNotIn("SECRET", output.getvalue())
+            self.assertEqual((root / "supply-chain/audits.toml").read_text(), "# unchanged\n")
+            self.assertTrue(stores)
+            self.assertTrue(all(not path.exists() for path in stores))
+
+    def test_review_check_diagnostics_preserve_exact_exit_gate(self):
+        failed = sm.CommandResult(1, VET_CHECK_REPORT, "SECRET")
+        output = io.StringIO()
+        with mock.patch.object(sm, "isolated_vet_command", side_effect=[
+                sm.CommandResult(255, VET_LOCKED_FAILURE, ""), failed]), \
+             mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError):
+            sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
+        diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+        self.assertEqual(diagnostic["stage"], "review-check")
+        self.assertEqual(diagnostic["exit"], 1)
+        self.assertEqual(diagnostic["conclusion"], "fail (vetting)")
+        self.assertNotIn("SECRET", output.getvalue())
+
     def test_parser_returns_only_explicit_unvetted_commands(self):
         output = """
         Vetting Failed!

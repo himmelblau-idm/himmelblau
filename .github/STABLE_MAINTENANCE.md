@@ -27,6 +27,12 @@ Cargo.nix regeneration, and a clean worktree. They do not replace distro package
 builds, SELinux policy tests, or runtime authentication testing. PRs still require
 human review and are never automatically merged.
 
+Rejected cargo-vet check reports emit a bounded `vet-diagnostics` record with
+the check stage, capture status, exit code, output sizes, JSON shape, known
+conclusion, error-object presence and fixed failure hints. Raw messages, model
+input, URLs and tool output are never echoed. These hints are diagnostic only;
+malformed reports, audit violations and abnormal exits still fail closed.
+
 Image provisioning retries failed APT downloads three times with 30-second
 connection/data timeouts. An incomplete index refresh fails closed; the native
 package update/install has a 35-minute deadline, and the image-build step has a
