@@ -65,5 +65,3 @@ These packages install the executable, user unit, and XDG autostart entry. They 
 Before removing the Arch package, disabling the Gentoo USE flag, or removing the Nix package/configuration, export recovery copies and close Collabora. Then, in each affected user's session, run `systemctl --user stop himmelblau-collabora.service && himmelblau-collabora cleanup`. Only proceed with removal after cleanup succeeds. This also preserves any custom XDG paths from that user's environment.
 
 On Arch, `make uninstall` additionally runs the repository's stop-and-cleanup helper for all discovered profile owners before invoking pacman. Account lookup, service shutdown, or profile cleanup failure prevents package removal. Direct pacman removal has no such hook, so the per-user cleanup above is required. On DEB/RPM systems, `make uninstall` includes the bridge when installed so its package removal hook runs.
-
-See [MANUAL_TESTING.md](MANUAL_TESTING.md) for the automated fixtures and remaining release gates.
