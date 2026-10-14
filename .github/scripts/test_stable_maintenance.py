@@ -17,6 +17,7 @@ import tempfile
 import tarfile
 import threading
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -51,6 +52,28 @@ VET_CHECK_REPORT = json.dumps({
         "suggested_diff": {"from": "0.9.0", "to": "1.0.0"},
     }]},
 })
+
+
+@contextmanager
+def vet_json_limit_cases():
+    """Inject decoder recursion failure; real nesting thresholds vary by Python."""
+    previous_limit = sys.get_int_max_str_digits()
+    loads = json.loads
+    nested = "[[0]]"
+
+    def decode(payload, *args, **kwargs):
+        if payload == nested:
+            raise RecursionError("simulated JSON nesting limit")
+        return loads(payload, *args, **kwargs)
+
+    try:
+        sys.set_int_max_str_digits(4300)
+        with mock.patch.object(sm.json, "loads", side_effect=decode):
+            yield ((nested, RecursionError),
+                   ('{"integer":' + "9" * 4301 + "}", ValueError))
+    finally:
+        sys.set_int_max_str_digits(previous_limit)
+
 
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 9, 24, 12, tzinfo=UTC)
@@ -1615,12 +1638,8 @@ class CargoVetTests(unittest.TestCase):
         self.assertNotIn("SECRET", output.getvalue())
 
     def test_vet_capture_preserves_exception_for_json_interpreter_limits(self):
-        previous_limit = sys.get_int_max_str_digits()
-        try:
-            sys.set_int_max_str_digits(4300)
-            nested = "[" * 10000 + "0" + "]" * 10000
-            oversized_integer = '{"integer":' + "9" * 4301 + "}"
-            for payload, error_type in ((nested, RecursionError), (oversized_integer, ValueError)):
+        with vet_json_limit_cases() as cases:
+            for payload, error_type in cases:
                 with self.assertRaises(error_type):
                     json.loads(payload)
                 for capture in ("timeout", "output-limit"):
@@ -1637,17 +1656,10 @@ class CargoVetTests(unittest.TestCase):
                         self.assertEqual(diagnostic["capture"], capture)
                         self.assertNotIn("SECRET", output.getvalue())
                         self.assertNotIn("::error::", output.getvalue())
-        finally:
-            sys.set_int_max_str_digits(previous_limit)
 
     def test_completed_vet_reports_reject_json_interpreter_limits_with_diagnostics(self):
-        previous_limit = sys.get_int_max_str_digits()
-        try:
-            sys.set_int_max_str_digits(4300)
-            for payload, error_type in (
-                ("[" * 10000 + "0" + "]" * 10000, RecursionError),
-                ('{"integer":' + "9" * 4301 + "}", ValueError),
-            ):
+        with vet_json_limit_cases() as cases:
+            for payload, error_type in cases:
                 with self.assertRaises(error_type):
                     json.loads(payload)
                 result = sm.CommandResult(255, payload, "SECRET\n::error::SECRET")
@@ -1674,8 +1686,6 @@ class CargoVetTests(unittest.TestCase):
                         self.assertEqual(diagnostic["exit"], 255)
                         self.assertNotIn("SECRET", output.getvalue())
                         self.assertNotIn("::error::", output.getvalue())
-        finally:
-            sys.set_int_max_str_digits(previous_limit)
 
     def test_review_check_semantic_rejections_emit_diagnostics(self):
         for cause in ("checked-set", "suggested-set", "ambiguity"):
