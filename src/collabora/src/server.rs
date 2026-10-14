@@ -169,10 +169,7 @@ impl App {
         // Hold the document state through admission so a successful save
         // cannot advance its revision between validation and acquiring capacity.
         let docs = self.docs.lock().await;
-        let doc = docs
-            .get(&one.doc)
-            .filter(|d| d.is_live())
-            .cloned();
+        let doc = docs.get(&one.doc).filter(|d| d.is_live()).cloned();
         let Some(doc) = doc else {
             one_shots.remove(token);
             return Err(StatusCode::UNAUTHORIZED);
@@ -2399,7 +2396,9 @@ mod tests {
         let path = app.recovery(&doc, b"edits").await.unwrap();
         let malformed = app.state.join(".recovery-not-a-session-or-nonce.tmp");
         tokio::fs::write(&malformed, b"unrelated").await.unwrap();
-        let non_utf8 = app.state.join(OsString::from_vec(b".recovery-\xff.tmp".to_vec()));
+        let non_utf8 = app
+            .state
+            .join(OsString::from_vec(b".recovery-\xff.tmp".to_vec()));
         tokio::fs::write(&non_utf8, b"unrelated non-UTF-8")
             .await
             .unwrap();
@@ -2407,11 +2406,9 @@ mod tests {
         tokio::fs::write(&target, b"keep target").await.unwrap();
         let mut links = Vec::new();
         for suffix in ["tmp", "json.tmp"] {
-            let link = app.state.join(format!(
-                ".recovery-{}-{}.{suffix}",
-                doc.id,
-                Uuid::new_v4()
-            ));
+            let link = app
+                .state
+                .join(format!(".recovery-{}-{}.{suffix}", doc.id, Uuid::new_v4()));
             symlink(&target, &link).unwrap();
             links.push(link);
         }
@@ -2425,7 +2422,10 @@ mod tests {
         tokio::fs::write(&orphan, b"interrupted").await.unwrap();
         // Even when quota rejects the new save, cleanup must leave complete
         // copies and unrelated filesystem entries untouched.
-        assert!(app.recovery_with_limit(&doc, b"too large", 5).await.is_err());
+        assert!(app
+            .recovery_with_limit(&doc, b"too large", 5)
+            .await
+            .is_err());
         assert!(!orphan.exists());
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"edits");
         assert_eq!(recovery_metadata(&path).await.unwrap().name, doc.name);

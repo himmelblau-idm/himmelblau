@@ -27,7 +27,7 @@ Document downloads stream through a 250 MB cap with at most four active download
 
 This precursor uses an eagerly started per-user service to register a dynamic loopback endpoint and retry provisioning while the profile is locked. Socket activation and a stable endpoint lifecycle remain work for #1736. Office/OneDrive trace collection and real-tenant concurrent-save validation have not been completed. A version that preserves recognized message names while changing save semantics cannot be detected by the current protocol. Do not treat this implementation or its mock tests as production compatibility certification.
 
-Site discovery is available only if the broker's delegated token has `Sites.Read.All` or `Sites.ReadWrite.All`; file-only tokens can still browse accessible drives. The SharePoint search link is hidden without that consent. Each broker connection/account/token operation has a 30-second timeout.
+Site discovery is available only if the broker's delegated token has `Sites.Read.All` or `Sites.ReadWrite.All`; file-only tokens can still browse accessible drives. The SharePoint search link is hidden without that consent. Each broker connection/account/token operation has a 30-second timeout. If Graph rejects a cached bearer with HTTP 401, the bridge reacquires through the broker and retries read-only requests once. Writes and sharing-link redemption are not automatically replayed; retry them explicitly after the authentication failure.
 
 ## Recovery and removal
 

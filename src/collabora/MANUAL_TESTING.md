@@ -12,6 +12,8 @@ Distribution fixtures check Arch split-package selection and copying, opt-in ins
 
 Additional transfer fixtures cover capped streaming downloads, admission through response completion/disconnect, upload admission before buffering, idle connected-session retention, missing-session errors, and persistent recovery filenames with safe download headers and legacy-copy fallback.
 
+Authentication fixtures cover early token rejection, one read retry, cache clearing after a failed refresh or repeated 401, preserving a newer concurrent bearer, and avoiding automatic replay of writes or sharing-link redemption.
+
 Recovery fixtures also check state-owner exclusion, reclamation of recognized crash temporaries, and preservation of unrelated files, directories, and symlinks during cleanup.
 
 The tests cover malformed endpoint repair, atomic private endpoint replacement, an occupied saved port, missing profiles, private profile storage, preservation of unrelated providers on repair/removal, delegated file/site scopes, SharePoint drive browsing without personal OneDrive, WebSocket authentication, one-shot token replay/wrong-kind/expiry and stale upload revision rejection (including a successful save without a returned eTag), unsupported messages, handshake timeout and connection admission, stale eTags, HTTP 412 at upload-session creation, network/upload failure, recovery failure, bounded recovery, and cleanup after successful retry. The HTTP 412 fixture represents a concurrent edit between the metadata read and conditional session creation. Microsoft and upload endpoints are loopback mocks only under `cfg(test)`; production origin/HTTPS checks remain enforced.
