@@ -63,4 +63,4 @@ collabora-office = "*"
 "(himmelblau and collabora-office)" = ""
 
 [dev-dependencies]
-tokio-tungstenite = "0.28"
+tokio-tungstenite = "0.29"
