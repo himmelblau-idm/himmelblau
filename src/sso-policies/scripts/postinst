@@ -40,10 +40,11 @@ EOF
 }
 
 # Firefox uses ExtensionSettings rather than Extensions.Install. Firefox runs
-# Extensions.Install once per policy change, so a single failed download
-# (offline, proxy, VPN not up yet) left the extension missing until the URL
-# changed. ExtensionSettings with force_installed installs it on every start
-# while it is missing, and keeps it from being removed.
+# Extensions.Install once per policy value: on Firefox ESR a failed first
+# download (offline, proxy, VPN not up yet) left the extension missing until
+# the URL changed, and no version retries a failed install. ExtensionSettings
+# with force_installed installs it on every start while it is missing, and
+# keeps it from being removed.
 merge_firefox_policy() {
     POLICY_FILE="$1"
     EXTENSION_ID="$2"
