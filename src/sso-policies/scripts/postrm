@@ -13,6 +13,7 @@ THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/d
 # version, add the old URL here (keep postinst and postrm in sync).
 LINUX_ENTRA_SSO_RELEASES="https://github.com/siemens/linux-entra-sso/releases/download"
 FIREFOX_MANAGED_URLS="$LINUX_ENTRA_SSO_RELEASES/v1.1.0/linux_entra_sso-1.1.0.xpi $LINUX_ENTRA_SSO_RELEASES/v1.3.1/linux_entra_sso-1.3.1.xpi $LINUX_ENTRA_SSO_RELEASES/v1.8.0/linux_entra_sso-1.8.0.xpi $LINUX_ENTRA_SSO_RELEASES/v1.9.1/linux_entra_sso-1.9.1.xpi $FIREFOX_EXTENSION_URL"
+THUNDERBIRD_MANAGED_URLS="$LINUX_ENTRA_SSO_RELEASES/v1.8.0/linux_entra_sso-1.8.0.thunderbird.xpi $LINUX_ENTRA_SSO_RELEASES/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi $THUNDERBIRD_EXTENSION_URL"
 
 # Remove the Firefox ExtensionSettings entry added by postinst, and any
 # Extensions.Install URL left by earlier versions of this package.
@@ -53,18 +54,20 @@ remove_firefox_policy() {
     fi
 }
 
-# Function to remove a Mozilla extension from policies.json
+# Function to remove a Mozilla extension from policies.json. Removes every
+# URL in the managed list, not only the current one: a host upgraded without
+# jq can still carry the URL an older version of this package wrote.
 remove_mozilla_policy() {
     POLICY_FILE="$1"
-    EXTENSION_URL="$2"
+    EXTENSION_MANAGED="$2"
 
     if [ -f "$POLICY_FILE" ]; then
         if command -v jq >/dev/null 2>&1; then
-            # Remove the extension URL from the Install array
+            # Remove the package-managed URLs from the Install array
             TEMP_FILE=$(mktemp)
-            jq --arg url "$EXTENSION_URL" '
+            jq --arg managed "$EXTENSION_MANAGED" '
                 if .policies.Extensions.Install then
-                    .policies.Extensions.Install = [.policies.Extensions.Install[] | select(. != $url)]
+                    .policies.Extensions.Install = [.policies.Extensions.Install[] | select((type == "string" and (. as $u | any(($managed | split(" "))[]; . == $u))) | not)]
                 else
                     .
                 end
@@ -89,8 +92,10 @@ remove_mozilla_policy() {
             fi
         else
             echo "Warning: jq not found. Cannot safely remove SSO extension from $POLICY_FILE"
-            echo "Please manually remove the extension URL from policies.Extensions.Install:"
-            echo "  $EXTENSION_URL"
+            echo "Please manually remove these linux_entra_sso URLs from policies.Extensions.Install:"
+            for url in $EXTENSION_MANAGED; do
+                echo "  $url"
+            done
         fi
     fi
 }
@@ -100,9 +105,9 @@ case "$1" in
     remove|purge|0)
         # Remove Firefox and Thunderbird policies
         remove_firefox_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_ID" "$FIREFOX_MANAGED_URLS"
-        remove_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL"
-        remove_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL"
-        remove_mozilla_policy "/opt/betterbird/distribution/policies.json" "$THUNDERBIRD_EXTENSION_URL"
+        remove_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_MANAGED_URLS"
+        remove_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_MANAGED_URLS"
+        remove_mozilla_policy "/opt/betterbird/distribution/policies.json" "$THUNDERBIRD_MANAGED_URLS"
 
         echo "Himmelblau SSO Mozilla policy configuration removed"
         ;;
