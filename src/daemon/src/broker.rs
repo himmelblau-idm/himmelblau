@@ -52,8 +52,15 @@ struct TokenReq {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+struct SsoCookieAuthParametersReq {
+    account: Option<AccountReq>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 struct SsoCookieReq {
-    account: AccountReq,
+    account: Option<AccountReq>,
+    #[serde(rename = "authParameters")]
+    auth_parameters: Option<SsoCookieAuthParametersReq>,
     #[serde(rename = "ssoUrl")]
     sso_url: Option<String>,
 }
@@ -196,7 +203,11 @@ impl HimmelblauBroker for Broker {
             .ok_or("Unable to find account")?;
         let request: SsoCookieReq =
             serde_json::from_str(&request_json).map_err(|e| format!("{:?}", e))?;
-        if request.account.username.to_lowercase() != user.spn.to_lowercase() {
+        let account = request
+            .account
+            .or_else(|| request.auth_parameters.and_then(|params| params.account))
+            .ok_or("Missing account")?;
+        if account.username.to_lowercase() != user.spn.to_lowercase() {
             return Err("Invalid request for user!".into());
         }
         // Extract sso_nonce from the ssoUrl query parameter if present.
@@ -255,5 +266,25 @@ impl HimmelblauBroker for Broker {
             "linuxBrokerVersion": env!("CARGO_PKG_VERSION"),
         });
         Ok(res.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SsoCookieReq;
+    use serde_json::json;
+
+    #[test]
+    fn sso_cookie_accepts_evolution_request() {
+        let request: SsoCookieReq = serde_json::from_value(json!({
+            "authParameters": { "account": { "username": "alice@example.com" } },
+            "ssoUrl": "https://login.microsoftonline.com/common/oauth2/authorize"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request.auth_parameters.unwrap().account.unwrap().username,
+            "alice@example.com"
+        );
     }
 }
