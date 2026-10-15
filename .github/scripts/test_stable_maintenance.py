@@ -2125,6 +2125,7 @@ class CargoVetTests(unittest.TestCase):
                 return sm.CommandResult(1, VET_LOCKED_FAILURE, "")
             with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
                  mock.patch.object(sm, "contained_cargo_update", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "refresh_dependency_vet_imports") as refresh, \
                  mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
                  mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}), \
                  mock.patch.object(sm, "direct_registry_packages", return_value=[]), \
@@ -2135,6 +2136,7 @@ class CargoVetTests(unittest.TestCase):
                     state, runner, mock.Mock(), {sm.VetItem("example", None, "1.0.1")}, "# Audits\n",
                 )
             self.assertEqual(accepted, [])
+            refresh.assert_called_once_with(runner)
             self.assertEqual(rejected, [sm.asdict(sm.VetItem("example", "0.9.0", "1.0.0"))])
             self.assertEqual(decide.call_args.args[2], sm.VetItem("example", "0.9.0", "1.0.0"))
             restore.assert_called_once_with(runner, "baseline")
@@ -2261,6 +2263,134 @@ class ManifestRewriteTests(unittest.TestCase):
             self.assertEqual(changed, ["Cargo.toml"])
             self.assertIn("workspace = true", manifest.read_text())
             self.assertIn('foo = "1.2.1"', (root / "Cargo.toml").read_text())
+
+
+class DependencyImportRefreshTests(unittest.TestCase):
+    @contextmanager
+    def repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            for name, content in {
+                "Cargo.toml": '[dependencies]\nexample = "1.0.0"\n',
+                "Cargo.lock": "1.0.0\n",
+                "supply-chain/config.toml": "# Keep policy and exemptions\n",
+                "supply-chain/audits.toml": "# Keep local audits\n",
+                "supply-chain/imports.lock": "# Baseline imports\n",
+            }.items():
+                (root / name).write_text(content)
+            runner = sm.Runner(root)
+            for command in (["init"], ["config", "user.name", "Maintenance test"],
+                            ["config", "user.email", "test@example.invalid"],
+                            ["add", "."], ["commit", "-m", "Initial metadata"]):
+                runner.git(command)
+            state = sm.State(Path(tmp) / "state")
+            state.save({"started_at": "2026-10-15T00:00:00Z"})
+            yield root, runner, state
+
+    def test_update_records_new_graph_imports_in_the_owned_dependency_commit(self):
+        with self.repository() as (root, runner, state):
+            target = sm.DirectTarget("example-id", "example", "1.0.0", ((str(root / "Cargo.toml"), "example"),))
+            events = []
+            def update(*args):
+                (root / "Cargo.lock").write_text("1.0.1\n")
+                return sm.CommandResult(0, "", "")
+            def build(*args):
+                events.append("build")
+                return sm.CommandResult(0, "", "")
+            def contained(_runner, command, **kwargs):
+                if command == ["cargo", "audit", "--json"]:
+                    return sm.CommandResult(0, '{"vulnerabilities":{"list":[]}}', "")
+                self.assertEqual(command, ["cargo", "vet", "regenerate", "imports"])
+                self.assertEqual(events, ["build"])
+                self.assertEqual((root / "Cargo.lock").read_text(), "1.0.1\n")
+                self.assertIn('example = "1.0.1"', (root / "Cargo.toml").read_text())
+                events.append("refresh")
+                (root / "supply-chain/imports.lock").write_text("# Updated graph imports\n")
+                (root / "supply-chain/config.toml").write_text("# Pruned exemptions\n")
+                (root / "supply-chain/audits.toml").write_text("# Pruned audits\n")
+                return sm.CommandResult(0, "", "")
+            with mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}), \
+                 mock.patch.object(sm, "direct_registry_packages", return_value=[target]), \
+                 mock.patch.object(sm, "crates_releases", return_value=[
+                     {"num": "1.0.1", "created_at": "2020-01-01T00:00:00Z"}]), \
+                 mock.patch.object(sm, "contained_cargo_update", side_effect=update), \
+                 mock.patch.object(sm, "locked_build", side_effect=build), \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=contained):
+                sm.phase_update_dependencies(mock.Mock(), state, runner)
+            self.assertEqual(events, ["build", "refresh"])
+            self.assertTrue(runner.git(["show", "-s", "--format=%s"]).stdout.startswith("deps(rust): bump the all-cargo-updates group"))
+            self.assertEqual(set(runner.git(["diff", "--name-only", "HEAD^", "HEAD"]).stdout.splitlines()),
+                             {"Cargo.lock", "Cargo.toml", "supply-chain/imports.lock"})
+            self.assertEqual((root / "supply-chain/config.toml").read_text(), "# Keep policy and exemptions\n")
+            self.assertEqual((root / "supply-chain/audits.toml").read_text(), "# Keep local audits\n")
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
+    def test_refresh_preserves_pending_work_and_rejects_other_changes(self):
+        for unexpected in (False, True):
+            with self.subTest(unexpected=unexpected), self.repository() as (root, runner, _state):
+                (root / "Cargo.lock").write_text("pending candidate\n")
+                runner.git(["add", "Cargo.lock"])
+                (root / "supply-chain/audits.toml").write_text("pending accepted audit\n")
+                def contained(*args, **kwargs):
+                    (root / "supply-chain/imports.lock").write_text("new imports\n")
+                    (root / "supply-chain/config.toml").write_text("pruned policy\n")
+                    (root / "supply-chain/audits.toml").write_text("pruned audits\n")
+                    if unexpected:
+                        (root / "Cargo.lock").write_text("unexpected rewrite\n")
+                    return sm.CommandResult(0, "", "")
+                with mock.patch.object(sm, "contained_repo_command", side_effect=contained):
+                    if unexpected:
+                        with self.assertRaisesRegex(sm.MaintenanceError, "unexpected path"):
+                            sm.refresh_dependency_vet_imports(runner)
+                    else:
+                        sm.refresh_dependency_vet_imports(runner)
+                        self.assertEqual((root / "Cargo.lock").read_text(), "pending candidate\n")
+                self.assertEqual((root / "supply-chain/audits.toml").read_text(), "pending accepted audit\n")
+                self.assertEqual((root / "supply-chain/config.toml").read_text(), "# Keep policy and exemptions\n")
+
+    def test_fallback_refreshes_lower_candidate_and_rolls_back_rejected_imports(self):
+        for covered in (True, False):
+            with self.subTest(covered=covered), self.repository() as (root, runner, state):
+                baseline = runner.git(["rev-parse", "HEAD"]).stdout
+                (root / "Cargo.lock").write_text("1.1.0\n")
+                (root / "supply-chain/imports.lock").write_text("# Rejected batch imports\n")
+                runner.git(["add", "."])
+                runner.git(["commit", "-m", "deps(rust): bump the all-cargo-updates group across 1 directory with 1 update"])
+                value = state.load()
+                value.update({"dependency_updates": [{"crate": "example", "old": "1.0.0", "new": "1.1.0", "direct": False}],
+                              "dependency_candidates": {"example@1.0.0": ["1.1.0", "1.0.1"]}})
+                state.save(value)
+                def update(*args):
+                    self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Baseline imports\n")
+                    (root / "Cargo.lock").write_text("1.0.1\n")
+                    return sm.CommandResult(0, "", "")
+                def contained(_runner, command, **kwargs):
+                    self.assertEqual(command, ["cargo", "vet", "regenerate", "imports"])
+                    self.assertEqual((root / "Cargo.lock").read_text(), "1.0.1\n")
+                    (root / "supply-chain/imports.lock").write_text("# Lower candidate imports\n")
+                    return sm.CommandResult(0, "", "")
+                def review(*args):
+                    self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Lower candidate imports\n")
+                    return [] if covered else [sm.VetItem("example", "1.0.0", "1.0.1")]
+                with mock.patch.object(sm, "contained_cargo_update", side_effect=update), \
+                     mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}), \
+                     mock.patch.object(sm, "crates_releases", return_value=[]), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     mock.patch.object(sm, "reviewable_vet_gaps", side_effect=review), \
+                     mock.patch.object(sm, "safe_vet_decision", return_value=False):
+                    sm._fallback_after_vet_rejection(state, runner, mock.Mock(),
+                        {sm.VetItem("example", "1.0.0", "1.1.0")}, "# Keep local audits\n")
+                build.assert_called_once()
+                self.assertEqual(len(state.load()["dependency_updates"]), int(covered))
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                if covered:
+                    self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Lower candidate imports\n")
+                    self.assertIn("supply-chain/imports.lock", runner.git(["diff", "--name-only", "HEAD^", "HEAD"]).stdout)
+                else:
+                    self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, baseline)
+                    self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Baseline imports\n")
 
 
 class CommitFilteringTests(unittest.TestCase):
