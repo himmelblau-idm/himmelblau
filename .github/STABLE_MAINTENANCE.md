@@ -43,6 +43,10 @@ indexes and 220 MB of packages at 241 kB/s, plus unpacking and build overhead.
 Persistent service outages still fail the run. The pinned
 Ubuntu snapshot, image digests, signature checks and endpoint allowlist remain
 in force.
+Image logs mark index/update and package/install phases. `apt-download-debug`
+streams each APT worker failure (including failures that will be retried), so
+the reason survives a later provisioning timeout. Worker configuration, request
+and success records are filtered out; the filter preserves APT's failure status.
 
 CI backports, including changes confined to testing jobs, are always rejected.
 A testing-job name cannot guarantee safe permissions, secret access, actions or
