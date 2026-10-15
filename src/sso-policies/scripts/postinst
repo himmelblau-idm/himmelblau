@@ -8,10 +8,12 @@ set -e
 FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.13.0/linux_entra_sso-1.13.0.xpi"
 FIREFOX_EXTENSION_ID="linux-entra-sso@example.com"
 THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.13.0/linux_entra_sso-1.13.0.thunderbird.xpi"
-# Release URLs this package has written, so cleanup never touches an admin's own copy
-MANAGED_URL_PREFIX='^https://github\.com/siemens/linux-entra-sso/releases/download/v[0-9][0-9.]*/linux_entra_sso-[0-9][0-9.]*'
-FIREFOX_URL_PATTERN="${MANAGED_URL_PREFIX}\\.xpi$"
-THUNDERBIRD_URL_PATTERN="${MANAGED_URL_PREFIX}\\.thunderbird\\.xpi$"
+# URLs this package has written, past and current. Cleanup only touches these,
+# so an admin's own pinned release or mirror is left alone. When bumping the
+# version, add the old URL here (keep postinst and postrm in sync).
+LINUX_ENTRA_SSO_RELEASES="https://github.com/siemens/linux-entra-sso/releases/download"
+FIREFOX_MANAGED_URLS="$LINUX_ENTRA_SSO_RELEASES/v1.1.0/linux_entra_sso-1.1.0.xpi $LINUX_ENTRA_SSO_RELEASES/v1.3.1/linux_entra_sso-1.3.1.xpi $LINUX_ENTRA_SSO_RELEASES/v1.8.0/linux_entra_sso-1.8.0.xpi $LINUX_ENTRA_SSO_RELEASES/v1.9.1/linux_entra_sso-1.9.1.xpi $FIREFOX_EXTENSION_URL"
+THUNDERBIRD_MANAGED_URLS="$LINUX_ENTRA_SSO_RELEASES/v1.8.0/linux_entra_sso-1.8.0.thunderbird.xpi $LINUX_ENTRA_SSO_RELEASES/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi $THUNDERBIRD_EXTENSION_URL"
 
 # Browsers run as the user, so the policy file must stay world-readable even
 # when it was written through mktemp (0600) or under a restrictive umask.
@@ -46,7 +48,7 @@ merge_firefox_policy() {
     POLICY_FILE="$1"
     EXTENSION_ID="$2"
     EXTENSION_URL="$3"
-    EXTENSION_PATTERN="$4"
+    EXTENSION_MANAGED="$4"
     POLICY_DIR=$(dirname "$POLICY_FILE")
 
     mkdir -p "$POLICY_DIR"
@@ -54,10 +56,10 @@ merge_firefox_policy() {
     if [ -f "$POLICY_FILE" ]; then
         if command -v jq >/dev/null 2>&1; then
             # Configured when our entry is current and no managed Install URL remains
-            if jq -e --arg id "$EXTENSION_ID" --arg url "$EXTENSION_URL" --arg pattern "$EXTENSION_PATTERN" '
+            if jq -e --arg id "$EXTENSION_ID" --arg url "$EXTENSION_URL" --arg managed "$EXTENSION_MANAGED" '
                 .policies.ExtensionSettings[$id].installation_mode == "force_installed" and
                 .policies.ExtensionSettings[$id].install_url == $url and
-                ([.policies.Extensions.Install[]? | select(type == "string" and test($pattern))] | length == 0)
+                ([.policies.Extensions.Install[]? | select(type == "string" and (. as $u | any(($managed | split(" "))[]; . == $u)))] | length == 0)
             ' "$POLICY_FILE" >/dev/null 2>&1; then
                 make_policy_readable "$POLICY_FILE"
                 echo "Firefox SSO extension already configured in $POLICY_FILE"
@@ -68,13 +70,13 @@ merge_firefox_policy() {
             # keys an admin set on it, and drop the managed Install URLs
             # written by earlier versions of this package.
             TEMP_FILE=$(mktemp)
-            jq --arg id "$EXTENSION_ID" --arg url "$EXTENSION_URL" --arg pattern "$EXTENSION_PATTERN" '
+            jq --arg id "$EXTENSION_ID" --arg url "$EXTENSION_URL" --arg managed "$EXTENSION_MANAGED" '
                 .policies.ExtensionSettings[$id] = (
                     (.policies.ExtensionSettings[$id] // {})
                     + {"installation_mode": "force_installed", "install_url": $url}
                 )
                 | if .policies.Extensions.Install then
-                    .policies.Extensions.Install |= [.[] | select((type == "string" and test($pattern)) | not)]
+                    .policies.Extensions.Install |= [.[] | select((type == "string" and (. as $u | any(($managed | split(" "))[]; . == $u))) | not)]
                   else . end
                 | if .policies.Extensions.Install == [] then del(.policies.Extensions.Install) else . end
                 | if .policies.Extensions == {} then del(.policies.Extensions) else . end
@@ -106,7 +108,7 @@ merge_mozilla_policy() {
     POLICY_FILE="$1"
     EXTENSION_URL="$2"
     APP_NAME="$3"
-    EXTENSION_PATTERN="$4"
+    EXTENSION_MANAGED="$4"
     POLICY_DIR=$(dirname "$POLICY_FILE")
 
     # Ensure directory exists
@@ -116,9 +118,9 @@ merge_mozilla_policy() {
         # Check if jq is available for proper JSON merging
         if command -v jq >/dev/null 2>&1; then
             # Check if the extension URL is already present and no old managed URL remains
-            if jq -e --arg url "$EXTENSION_URL" --arg pattern "$EXTENSION_PATTERN" '
+            if jq -e --arg url "$EXTENSION_URL" --arg managed "$EXTENSION_MANAGED" '
                 (.policies.Extensions.Install[]? | select(. == $url)) and
-                ([.policies.Extensions.Install[]? | select(type == "string" and test($pattern) and . != $url)] | length == 0)
+                ([.policies.Extensions.Install[]? | select(type == "string" and (. as $u | any(($managed | split(" "))[]; . == $u)) and . != $url)] | length == 0)
             ' "$POLICY_FILE" >/dev/null 2>&1; then
                 make_policy_readable "$POLICY_FILE"
                 echo "$APP_NAME SSO extension already configured in $POLICY_FILE"
@@ -127,9 +129,9 @@ merge_mozilla_policy() {
 
             # Replace old managed SSO extension URLs with the current one.
             TEMP_FILE=$(mktemp)
-            jq --arg url "$EXTENSION_URL" --arg pattern "$EXTENSION_PATTERN" '
+            jq --arg url "$EXTENSION_URL" --arg managed "$EXTENSION_MANAGED" '
                 .policies.Extensions.Install = (
-                    ([.policies.Extensions.Install[]? | select((type == "string" and test($pattern)) | not)] + [$url])
+                    ([.policies.Extensions.Install[]? | select((type == "string" and (. as $u | any(($managed | split(" "))[]; . == $u))) | not)] + [$url])
                     | unique
                 )
             ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
@@ -165,12 +167,12 @@ EOF
 }
 
 # Merge Firefox and Thunderbird policies
-merge_firefox_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_ID" "$FIREFOX_EXTENSION_URL" "$FIREFOX_URL_PATTERN"
-merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Thunderbird" "$THUNDERBIRD_URL_PATTERN"
+merge_firefox_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_ID" "$FIREFOX_EXTENSION_URL" "$FIREFOX_MANAGED_URLS"
+merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Thunderbird" "$THUNDERBIRD_MANAGED_URLS"
 # Betterbird is a Thunderbird fork; it does not read /etc/thunderbird/policies.
-merge_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "$THUNDERBIRD_URL_PATTERN"
+merge_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "$THUNDERBIRD_MANAGED_URLS"
 if [ -d /opt/betterbird ]; then
-    merge_mozilla_policy "/opt/betterbird/distribution/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "$THUNDERBIRD_URL_PATTERN"
+    merge_mozilla_policy "/opt/betterbird/distribution/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "$THUNDERBIRD_MANAGED_URLS"
 fi
 
 echo "Himmelblau SSO Mozilla policy configuration complete"
