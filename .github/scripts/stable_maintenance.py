@@ -1525,12 +1525,42 @@ def report_vet_diagnostics(result: CommandResult, stage: str, *, capture: str = 
     hints = [label for label, needles in (
         ("cargo-metadata", ("cargo metadata", "cargo_metadata")),
         ("offline-or-frozen", ("--frozen", "offline mode", "network is disabled")),
-        ("download", ("failed to download", "failed to fetch", "http request")),
+        # Match the pinned cargo-vet errors.rs wording, including errors emitted
+        # before a download starts. Never echo the URL, package or source text.
+        ("download", ("failed to download", "failed to fetch", "http request",
+                      "failed to start download", "failed to read download",
+                      "failed to create file for download", "failed to write download",
+                      "failed to rename download", "download wasn't valid utf8",
+                      "download encoding")),
         ("permission-denied", ("permission denied", "operation not permitted")),
         ("missing-file", ("no such file or directory",)),
         ("store-parse", ("toml parse error", "failed to parse", "error parsing")),
         ("disk-full", ("no space left on device",)),
         ("container-start", ("cannot connect to the docker daemon", "oci runtime create failed")),
+        ("crate-policy", ("issues with your third-party policy entries",
+                          "policies that are missing an associated version",
+                          "versioned policy entries don't correspond")),
+        ("audit-as-crates-io", ("policy.audit-as-crates-io entries",
+                                "non-crates.io-fetched packages match published",
+                                "audit-as-crates-io packages don't match",
+                                "audit-as-crates-io policies don't match")),
+        ("store-consistency", ("store (supply-chain) has consistency errors",
+                               "imports.lock is out-of-date", "not a valid criteria name",
+                               "file in the store is not correctly formatted")),
+        ("store-version", ("store was created with an incompatible version",
+                           "store was created with a newer version")),
+        ("criteria-change", ("imported audits changed their criteria descriptions",
+                             "criteria description mismatch", "criteria is missing a description",
+                             "implied criteria mismatch")),
+        ("cache", ("couldn't acquire cache", "couldn't acquire the cache's lock",
+                   "failed to create cache", "failed to commit cache")),
+        ("package-source", ("failed to unpack", "failed to open cached .crate",
+                            "cannot get source for unknown git commit",
+                            "failed to run 'cargo package --list'")),
+        ("diff", ("failed to diff package", "diff command produced")),
+        ("dns", ("dns error", "failed to lookup address", "name or service not known")),
+        ("tls", ("invalid peer certificate", "certificate verify failed",
+                 "invalidcertificate", "tls handshake")),
     ) if any(needle in text for needle in needles)]
     failures = report.get("failures") if isinstance(report, dict) else None
     diagnostic = {
@@ -1541,6 +1571,10 @@ def report_vet_diagnostics(result: CommandResult, stage: str, *, capture: str = 
         "failure_count": min(len(failures), 1000) if isinstance(failures, list) else None,
         "hints": hints,
         "os_errors": sorted({int(n) for n in re.findall(r"os error ([0-9]{1,3})", text)})[:8],
+        "http_statuses": sorted({int(n) for n in re.findall(
+            r"(?:http status(?: (?:client|server))? error|status code)\s*[:(]?\s*([45][0-9]{2})\b",
+            text,
+        )})[:8],
     }
     print("vet-diagnostics: " + json.dumps(diagnostic, sort_keys=True), file=sys.stderr)
 

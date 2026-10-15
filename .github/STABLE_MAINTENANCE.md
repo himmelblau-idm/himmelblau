@@ -29,7 +29,9 @@ human review and are never automatically merged.
 
 Rejected cargo-vet check reports emit a bounded `vet-diagnostics` record with
 the check stage, capture status, exit code, output sizes, JSON shape, known
-conclusion, error-object presence and fixed failure hints. Raw messages, model
+conclusion, error-object presence and fixed failure hints. Hints distinguish the
+pinned tool's policy, audit-as-crates-io, store, cache, source/diff and transport
+errors; at most eight HTTP error status numbers are included. Raw messages, model
 input, URLs and tool output are never echoed. These hints are diagnostic only;
 malformed reports, audit violations and abnormal exits still fail closed.
 
