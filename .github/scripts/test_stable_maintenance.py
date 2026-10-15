@@ -1602,6 +1602,61 @@ class CargoVetTests(unittest.TestCase):
                 self.assertNotIn("SECRET", output.getvalue())
                 self.assertNotIn("::error::", output.getvalue())
 
+    def test_upstream_vet_runtime_errors_have_fixed_diagnostics(self):
+        # Wording from cargo-vet v0.10.2 errors.rs. These runtime errors can
+        # replace its normal coverage report during the unlocked review check.
+        cases = (
+            ("failed to start download of https://SECRET.invalid/token?SECRET", "download"),
+            ("failed to read download from https://SECRET.invalid", "download"),
+            ("failed to write download to /SECRET", "download"),
+            ("There are some issues with your third-party policy entries", "crate-policy"),
+            ("There are some issues with your policy.audit-as-crates-io entries", "audit-as-crates-io"),
+            ("Your cargo-vet store (supply-chain) has consistency errors", "store-consistency"),
+            ("The supply-chain store was created with a newer version of cargo-vet (SECRET)", "store-version"),
+            ("Failed to initialize the cargo-vet store (supply-chain)", "store-io"),
+            ("Couldn't create the store (supply-chain)", "store-io"),
+            ("Couldn't acquire the store", "store-io"),
+            ("Couldn't acquire the store's (supply-chain's) lock", "store-io"),
+            ("Failed to commit store", "store-io"),
+            ("Some of your imported audits changed their criteria descriptions", "criteria-change"),
+            ("Failed to create cache root dir: /SECRET", "cache"),
+            ("Failed to unpack .crate at /SECRET", "package-source"),
+            ("Failed to diff package", "diff"),
+        )
+        for message, hint in cases:
+            with self.subTest(hint=hint, message=message):
+                result = sm.CommandResult(255, json.dumps({"error": {"message": message,
+                    "causes": ["SECRET\n::error::SECRET"]}}), "")
+                output = io.StringIO()
+                with mock.patch.object(sm, "isolated_vet_command", side_effect=[
+                        sm.CommandResult(255, VET_LOCKED_FAILURE, ""), result]), \
+                     mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError):
+                    sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
+                diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                self.assertEqual(diagnostic["stage"], "review-check")
+                self.assertEqual(diagnostic["hints"], [hint])
+                self.assertEqual(diagnostic["http_statuses"], [])
+                self.assertNotIn("SECRET", output.getvalue())
+                self.assertNotIn("::error::", output.getvalue())
+
+    def test_vet_transport_diagnostics_extract_only_bounded_status_numbers(self):
+        result = sm.CommandResult(255, json.dumps({"error": {"message":
+            "failed to start download of https://SECRET.invalid/401/999; HTTP status server error (503); "
+            "HTTP status client error (403 Forbidden); status code: 502; status code 503; "
+            "status code 200; status code 5030; dns error; invalid peer certificate"}}), "::error::SECRET")
+        output = io.StringIO()
+        with mock.patch.object(sm.sys, "stderr", output):
+            sm.report_vet_diagnostics(result, "review-check")
+        diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+        self.assertEqual(diagnostic["hints"], ["download", "dns", "tls"])
+        self.assertEqual(diagnostic["http_statuses"], [403, 502, 503])
+        self.assertNotIn("SECRET", output.getvalue())
+        self.assertNotIn("::error::", output.getvalue())
+        with mock.patch.object(sm.sys, "stderr", output := io.StringIO()):
+            sm.report_vet_diagnostics(sm.CommandResult(255,
+                " ".join(f"status code {code}" for code in range(400, 500)), ""), "locked-check")
+        self.assertEqual(len(json.loads(output.getvalue().removeprefix("vet-diagnostics: "))["http_statuses"]), 8)
+
     def test_vet_timeout_retains_primary_error_and_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
