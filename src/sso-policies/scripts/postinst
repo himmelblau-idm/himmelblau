@@ -23,6 +23,22 @@ make_policy_readable() {
     fi
 }
 
+# Rewrite a policy file with jq. The temporary file sits next to the policy
+# so the final mv is a rename on the same filesystem. If jq fails (for
+# example, the file is not valid JSON), the policy is left unchanged.
+update_policy() {
+    UPDATE_FILE="$1"
+    shift
+    UPDATE_TMP=$(mktemp "$UPDATE_FILE.XXXXXX") || return 1
+    if jq "$@" "$UPDATE_FILE" > "$UPDATE_TMP"; then
+        mv "$UPDATE_TMP" "$UPDATE_FILE"
+    else
+        rm -f "$UPDATE_TMP"
+        echo "Warning: could not update $UPDATE_FILE (jq failed); left it unchanged" >&2
+        return 1
+    fi
+}
+
 # The policy file postinst creates when none exists
 firefox_policy_json() {
     cat << EOF
@@ -70,8 +86,7 @@ merge_firefox_policy() {
             # Add or update our ExtensionSettings entry, keeping any other
             # keys an admin set on it, and drop the managed Install URLs
             # written by earlier versions of this package.
-            TEMP_FILE=$(mktemp)
-            jq --arg id "$EXTENSION_ID" --arg url "$EXTENSION_URL" --arg managed "$EXTENSION_MANAGED" '
+            if update_policy "$POLICY_FILE" --arg id "$EXTENSION_ID" --arg url "$EXTENSION_URL" --arg managed "$EXTENSION_MANAGED" '
                 .policies.ExtensionSettings[$id] = (
                     (.policies.ExtensionSettings[$id] // {})
                     + {"installation_mode": "force_installed", "install_url": $url}
@@ -81,9 +96,10 @@ merge_firefox_policy() {
                   else . end
                 | if .policies.Extensions.Install == [] then del(.policies.Extensions.Install) else . end
                 | if .policies.Extensions == {} then del(.policies.Extensions) else . end
-            ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
-            make_policy_readable "$POLICY_FILE"
-            echo "Merged Firefox SSO extension into $POLICY_FILE"
+            '; then
+                make_policy_readable "$POLICY_FILE"
+                echo "Merged Firefox SSO extension into $POLICY_FILE"
+            fi
         else
             # Without jq only a file identical to the one postinst creates
             # counts as configured; anything else needs a manual merge.
@@ -95,7 +111,10 @@ merge_firefox_policy() {
             echo "Warning: jq not found. Cannot safely merge into existing $POLICY_FILE"
             echo "Please manually add to policies.ExtensionSettings:"
             echo "  \"$EXTENSION_ID\": {\"installation_mode\": \"force_installed\", \"install_url\": \"$EXTENSION_URL\"}"
-            echo "and remove old linux_entra_sso URLs from policies.Extensions.Install"
+            echo "and remove these linux_entra_sso URLs from policies.Extensions.Install if present:"
+            for url in $EXTENSION_MANAGED; do
+                echo "  $url"
+            done
         fi
     else
         firefox_policy_json "$EXTENSION_ID" "$EXTENSION_URL" > "$POLICY_FILE"
@@ -129,15 +148,15 @@ merge_mozilla_policy() {
             fi
 
             # Replace old managed SSO extension URLs with the current one.
-            TEMP_FILE=$(mktemp)
-            jq --arg url "$EXTENSION_URL" --arg managed "$EXTENSION_MANAGED" '
+            if update_policy "$POLICY_FILE" --arg url "$EXTENSION_URL" --arg managed "$EXTENSION_MANAGED" '
                 .policies.Extensions.Install = (
                     ([.policies.Extensions.Install[]? | select((type == "string" and (. as $u | any(($managed | split(" "))[]; . == $u))) | not)] + [$url])
                     | unique
                 )
-            ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
-            make_policy_readable "$POLICY_FILE"
-            echo "Merged $APP_NAME SSO extension into $POLICY_FILE"
+            '; then
+                make_policy_readable "$POLICY_FILE"
+                echo "Merged $APP_NAME SSO extension into $POLICY_FILE"
+            fi
         else
             # Without jq, check if our extension is already there
             if grep -Fq "$EXTENSION_URL" "$POLICY_FILE" 2>/dev/null; then

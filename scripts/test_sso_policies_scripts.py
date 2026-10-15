@@ -69,7 +69,7 @@ class SsoPoliciesScripts(unittest.TestCase):
                                 capture_output=True, text=True, timeout=30,
                                 preexec_fn=lambda: os.umask(umask))
         self.assertEqual(result.returncode, 0, result.stderr)
-        return result.stdout
+        return result.stdout + result.stderr
 
     def write(self, path, policies, mode=0o644):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -163,6 +163,27 @@ class SsoPoliciesScripts(unittest.TestCase):
         self.assertIn("jq not found", output)
         self.assertNotIn("Firefox SSO extension already configured", output)
         self.assertEqual(self.policies(self.firefox), legacy)
+
+    def test_invalid_json_is_left_unchanged_without_temp_files(self):
+        for path in (self.firefox, self.thunderbird):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{not json")
+        for script, argument in (("postinst", "configure"), ("postrm", "remove")):
+            with self.subTest(script=script):
+                output = self.run_script(script, argument)
+                self.assertIn("could not update", output)
+                self.assertNotIn("Merged Firefox", output)
+                for path in (self.firefox, self.thunderbird):
+                    self.assertEqual(path.read_text(), "{not json")
+                    self.assertEqual(sorted(p.name for p in path.parent.iterdir()),
+                                     ["policies.json"])
+
+    def test_remove_without_jq_lists_managed_firefox_urls(self):
+        self.write(self.firefox, {"Extensions": {"Install": [FIREFOX_OLD]}})
+        output = self.run_script("postrm", "remove", jq=False)
+        self.assertIn(FIREFOX_ID, output)
+        self.assertIn(FIREFOX_OLD, output)
+        self.assertIn(FIREFOX_URL, output)
 
     def test_remove_with_jq_cleans_url_left_by_upgrade_without_jq(self):
         for path in (self.thunderbird, self.betterbird):
