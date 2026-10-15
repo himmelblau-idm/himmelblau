@@ -90,6 +90,9 @@ class SsoPoliciesScripts(unittest.TestCase):
                          {"Extensions": {"Install": [THUNDERBIRD_URL]}})
         for path in (self.firefox, self.thunderbird, self.betterbird):
             self.assertEqual(self.mode(path), 0o644, path)
+            # The browser must be able to reach the file through new directories
+            self.assertEqual(self.mode(path.parent), 0o755, path.parent)
+            self.assertEqual(self.mode(path.parent.parent), 0o755, path.parent.parent)
 
     def test_rerun_leaves_files_unchanged_and_fixes_mode(self):
         self.run_script("postinst", "configure")
@@ -178,10 +181,27 @@ class SsoPoliciesScripts(unittest.TestCase):
                     self.assertEqual(sorted(p.name for p in path.parent.iterdir()),
                                      ["policies.json"])
 
+    def test_empty_policy_file_is_left_unchanged(self):
+        for path in (self.firefox, self.thunderbird):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("")
+        for script, argument in (("postinst", "configure"), ("postrm", "remove")):
+            with self.subTest(script=script):
+                output = self.run_script(script, argument)
+                self.assertIn("could not update", output)
+                self.assertNotIn("Merged", output)
+                for path in (self.firefox, self.thunderbird):
+                    self.assertEqual(path.read_text(), "")
+                    self.assertEqual(sorted(p.name for p in path.parent.iterdir()),
+                                     ["policies.json"])
+
     def test_remove_without_jq_lists_managed_firefox_urls(self):
         self.write(self.firefox, {"Extensions": {"Install": [FIREFOX_OLD]}})
         output = self.run_script("postrm", "remove", jq=False)
         self.assertIn(FIREFOX_ID, output)
+        # Only the package fields, not the whole entry an admin may have extended
+        self.assertIn('"installation_mode" and "install_url"', output)
+        self.assertIn("keep any other keys", output)
         self.assertIn(FIREFOX_OLD, output)
         self.assertIn(FIREFOX_URL, output)
 

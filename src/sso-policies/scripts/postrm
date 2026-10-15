@@ -16,17 +16,18 @@ FIREFOX_MANAGED_URLS="$LINUX_ENTRA_SSO_RELEASES/v1.1.0/linux_entra_sso-1.1.0.xpi
 THUNDERBIRD_MANAGED_URLS="$LINUX_ENTRA_SSO_RELEASES/v1.8.0/linux_entra_sso-1.8.0.thunderbird.xpi $LINUX_ENTRA_SSO_RELEASES/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi $THUNDERBIRD_EXTENSION_URL"
 
 # Rewrite a policy file with jq. The temporary file sits next to the policy
-# so the final mv is a rename on the same filesystem. If jq fails (for
-# example, the file is not valid JSON), the policy is left unchanged.
+# so the final mv is a rename on the same filesystem. If jq fails or
+# produces nothing (invalid or empty JSON), the policy is left unchanged.
 update_policy() {
     UPDATE_FILE="$1"
     shift
     UPDATE_TMP=$(mktemp "$UPDATE_FILE.XXXXXX") || return 1
-    if jq "$@" "$UPDATE_FILE" > "$UPDATE_TMP"; then
+    # jq exits 0 with no output for an empty file; never replace with nothing
+    if jq "$@" "$UPDATE_FILE" > "$UPDATE_TMP" && [ -s "$UPDATE_TMP" ]; then
         mv "$UPDATE_TMP" "$UPDATE_FILE"
     else
         rm -f "$UPDATE_TMP"
-        echo "Warning: could not update $UPDATE_FILE (jq failed); left it unchanged" >&2
+        echo "Warning: could not update $UPDATE_FILE (empty or invalid JSON); left it unchanged" >&2
         return 1
     fi
 }
@@ -41,8 +42,10 @@ remove_firefox_policy() {
     [ -f "$POLICY_FILE" ] || return 0
     if ! command -v jq >/dev/null 2>&1; then
         echo "Warning: jq not found. Cannot safely remove SSO extension from $POLICY_FILE"
-        echo "Please manually remove \"$EXTENSION_ID\" from policies.ExtensionSettings,"
-        echo "and these linux_entra_sso URLs from policies.Extensions.Install if present:"
+        echo "Please manually remove \"installation_mode\" and \"install_url\" from"
+        echo "policies.ExtensionSettings[\"$EXTENSION_ID\"] if install_url is one of the URLs"
+        echo "below (keep any other keys; drop the entry only if it is then empty),"
+        echo "and remove these linux_entra_sso URLs from policies.Extensions.Install if present:"
         for url in $EXTENSION_MANAGED; do
             echo "  $url"
         done

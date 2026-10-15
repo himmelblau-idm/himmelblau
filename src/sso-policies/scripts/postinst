@@ -24,17 +24,18 @@ make_policy_readable() {
 }
 
 # Rewrite a policy file with jq. The temporary file sits next to the policy
-# so the final mv is a rename on the same filesystem. If jq fails (for
-# example, the file is not valid JSON), the policy is left unchanged.
+# so the final mv is a rename on the same filesystem. If jq fails or
+# produces nothing (invalid or empty JSON), the policy is left unchanged.
 update_policy() {
     UPDATE_FILE="$1"
     shift
     UPDATE_TMP=$(mktemp "$UPDATE_FILE.XXXXXX") || return 1
-    if jq "$@" "$UPDATE_FILE" > "$UPDATE_TMP"; then
+    # jq exits 0 with no output for an empty file; never replace with nothing
+    if jq "$@" "$UPDATE_FILE" > "$UPDATE_TMP" && [ -s "$UPDATE_TMP" ]; then
         mv "$UPDATE_TMP" "$UPDATE_FILE"
     else
         rm -f "$UPDATE_TMP"
-        echo "Warning: could not update $UPDATE_FILE (jq failed); left it unchanged" >&2
+        echo "Warning: could not update $UPDATE_FILE (empty or invalid JSON); left it unchanged" >&2
         return 1
     fi
 }
@@ -68,7 +69,9 @@ merge_firefox_policy() {
     EXTENSION_MANAGED="$4"
     POLICY_DIR=$(dirname "$POLICY_FILE")
 
-    mkdir -p "$POLICY_DIR"
+    # Create missing directories 0755 even under a restrictive umask, so the
+    # browser (running as the user) can reach the policy file
+    (umask 022 && mkdir -p "$POLICY_DIR")
 
     if [ -f "$POLICY_FILE" ]; then
         if command -v jq >/dev/null 2>&1; then
@@ -132,7 +135,9 @@ merge_mozilla_policy() {
     POLICY_DIR=$(dirname "$POLICY_FILE")
 
     # Ensure directory exists
-    mkdir -p "$POLICY_DIR"
+    # Create missing directories 0755 even under a restrictive umask, so the
+    # browser (running as the user) can reach the policy file
+    (umask 022 && mkdir -p "$POLICY_DIR")
 
     if [ -f "$POLICY_FILE" ]; then
         # Check if jq is available for proper JSON merging
