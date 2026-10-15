@@ -2163,6 +2163,24 @@ def contained_cargo_update(runner: Runner, crate: str, old: str, candidate: str)
     )
 
 
+def refresh_dependency_vet_imports(runner: Runner) -> None:
+    """Refresh coverage for a changed graph, preserving pending local work."""
+    protected = {
+        name: checkout_regular_file(runner.root, name).read_bytes()
+        for name in ("supply-chain/config.toml", "supply-chain/audits.toml")
+    }
+    # Dependency candidates and earlier accepted audits can be uncommitted.
+    # Only imports.lock may change; compare the rest of the complete HEAD diff.
+    inventory = ["diff", "--binary", "HEAD", "--", ".", ":(top,exclude)supply-chain/imports.lock"]
+    before = runner.git(inventory).stdout
+    contained_repo_command(runner, ["cargo", "vet", "regenerate", "imports"],
+                           network=True, source_rw=True, cache_rw=True, timeout=900)
+    for name, content in protected.items():
+        checkout_regular_file(runner.root, name).write_bytes(content)
+    if runner.git(inventory).stdout != before:
+        raise MaintenanceError("dependency cargo-vet import refresh changed an unexpected path")
+
+
 def phase_update_dependencies(args: argparse.Namespace, state: State, runner: Runner) -> None:
     value = state.load()
     started = parse_rfc3339(value["started_at"])
@@ -2284,7 +2302,10 @@ def phase_update_dependencies(args: argparse.Namespace, state: State, runner: Ru
             if is_advisory:
                 unresolved_advisories.append({"crate": crate, "version": old})
     if accepted:
-        paths = ["Cargo.lock", *sorted(manifest_paths)]
+        # The baseline refresh pruned imports for versions not yet in use.
+        # Record imports for this graph before frozen checks and online review.
+        refresh_dependency_vet_imports(runner)
+        paths = ["Cargo.lock", *sorted(manifest_paths), "supply-chain/imports.lock"]
         runner.git(["add", "--", *paths])
         subject = f"deps(rust): bump the all-cargo-updates group across 1 directory with {len(accepted)} update{'s' if len(accepted) != 1 else ''}"
         runner.git(["commit", "-m", subject])
@@ -2395,7 +2416,7 @@ def _fallback_after_vet_rejection(
     parent = require_sha(runner.git(["rev-parse", "HEAD^"]).stdout.strip())
     runner.git(["reset", "--mixed", parent])
     restore = [
-        "Cargo.lock", *value.get("dependency_manifest_paths", []),
+        "Cargo.lock", *value.get("dependency_manifest_paths", []), "supply-chain/imports.lock",
     ]
     runner.git(["restore", "--worktree", "--source=HEAD", "--", *restore])
     audits_path = checkout_regular_file(runner.root, "supply-chain/audits.toml")
@@ -2441,6 +2462,7 @@ def _fallback_after_vet_rejection(
                 restore_worktree(runner, baseline); continue
             if build.returncode:
                 restore_worktree(runner, baseline); continue
+            refresh_dependency_vet_imports(runner)
             gaps = reviewable_vet_gaps(runner, state.directory)
             decisions, newly_rejected = decide_vet_gaps(
                 ai, runner, gaps, state.directory / "vet-sources", rejected_items,
@@ -2457,7 +2479,7 @@ def _fallback_after_vet_rejection(
             graph_before = graph_after
             break
     if accepted_updates:
-        runner.git(["add", "--", "Cargo.lock", *sorted(manifest_paths)])
+        runner.git(["add", "--", "Cargo.lock", *sorted(manifest_paths), "supply-chain/imports.lock"])
         count = len(accepted_updates)
         runner.git([
             "commit", "-m",
