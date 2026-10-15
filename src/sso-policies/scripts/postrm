@@ -7,6 +7,8 @@ set -e
 
 FIREFOX_EXTENSION_ID="linux-entra-sso@example.com"
 THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.13.0/linux_entra_sso-1.13.0.thunderbird.xpi"
+# Release URLs this package has written, so cleanup never touches an admin's own copy
+FIREFOX_URL_PATTERN='^https://github\.com/siemens/linux-entra-sso/releases/download/v[0-9][0-9.]*/linux_entra_sso-[0-9][0-9.]*\.xpi$'
 
 # Remove the Firefox ExtensionSettings entry added by postinst, and any
 # Extensions.Install URL left by earlier versions of this package.
@@ -23,10 +25,12 @@ remove_firefox_policy() {
     fi
 
     TEMP_FILE=$(mktemp)
-    # Only remove our entry: same ID and an install_url from the managed release URLs
+    # Remove only the fields postinst sets, and only when install_url is one of
+    # our release URLs; keep any other keys an admin added to the entry.
     jq --arg id "$EXTENSION_ID" --arg pattern "$EXTENSION_PATTERN" '
         if (.policies.ExtensionSettings[$id].install_url? // "" | test($pattern)) then
-            del(.policies.ExtensionSettings[$id])
+            .policies.ExtensionSettings[$id] |= del(.installation_mode, .install_url)
+            | if .policies.ExtensionSettings[$id] == {} then del(.policies.ExtensionSettings[$id]) else . end
         else . end
         | if .policies.ExtensionSettings == {} then del(.policies.ExtensionSettings) else . end
         | if .policies.Extensions.Install then
@@ -35,6 +39,7 @@ remove_firefox_policy() {
         | if .policies.Extensions.Install == [] then del(.policies.Extensions.Install) else . end
         | if .policies.Extensions == {} then del(.policies.Extensions) else . end
     ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
+    # mktemp creates 0600; the browser runs as the user and must read it
     chmod 0644 "$POLICY_FILE"
     echo "Removed Firefox SSO extension from $POLICY_FILE"
 
@@ -90,7 +95,7 @@ remove_mozilla_policy() {
 case "$1" in
     remove|purge|0)
         # Remove Firefox and Thunderbird policies
-        remove_firefox_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_ID" "linux_entra_sso-[0-9][0-9.]*\\.xpi$"
+        remove_firefox_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_ID" "$FIREFOX_URL_PATTERN"
         remove_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL"
         remove_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL"
         remove_mozilla_policy "/opt/betterbird/distribution/policies.json" "$THUNDERBIRD_EXTENSION_URL"

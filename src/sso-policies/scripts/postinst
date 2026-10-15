@@ -8,6 +8,34 @@ set -e
 FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.13.0/linux_entra_sso-1.13.0.xpi"
 FIREFOX_EXTENSION_ID="linux-entra-sso@example.com"
 THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.13.0/linux_entra_sso-1.13.0.thunderbird.xpi"
+# Release URLs this package has written, so cleanup never touches an admin's own copy
+MANAGED_URL_PREFIX='^https://github\.com/siemens/linux-entra-sso/releases/download/v[0-9][0-9.]*/linux_entra_sso-[0-9][0-9.]*'
+FIREFOX_URL_PATTERN="${MANAGED_URL_PREFIX}\\.xpi$"
+THUNDERBIRD_URL_PATTERN="${MANAGED_URL_PREFIX}\\.thunderbird\\.xpi$"
+
+# Browsers run as the user, so the policy file must stay world-readable even
+# when it was written through mktemp (0600) or under a restrictive umask.
+make_policy_readable() {
+    if [ -f "$1" ]; then
+        chmod 0644 "$1"
+    fi
+}
+
+# The policy file postinst creates when none exists
+firefox_policy_json() {
+    cat << EOF
+{
+  "policies": {
+    "ExtensionSettings": {
+      "$1": {
+        "installation_mode": "force_installed",
+        "install_url": "$2"
+      }
+    }
+  }
+}
+EOF
+}
 
 # Firefox uses ExtensionSettings rather than Extensions.Install. Firefox runs
 # Extensions.Install once per policy change, so a single failed download
@@ -31,6 +59,7 @@ merge_firefox_policy() {
                 .policies.ExtensionSettings[$id].install_url == $url and
                 ([.policies.Extensions.Install[]? | select(type == "string" and test($pattern))] | length == 0)
             ' "$POLICY_FILE" >/dev/null 2>&1; then
+                make_policy_readable "$POLICY_FILE"
                 echo "Firefox SSO extension already configured in $POLICY_FILE"
                 return 0
             fi
@@ -50,11 +79,13 @@ merge_firefox_policy() {
                 | if .policies.Extensions.Install == [] then del(.policies.Extensions.Install) else . end
                 | if .policies.Extensions == {} then del(.policies.Extensions) else . end
             ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
-            chmod 0644 "$POLICY_FILE"
+            make_policy_readable "$POLICY_FILE"
             echo "Merged Firefox SSO extension into $POLICY_FILE"
         else
-            if grep -Fq "\"$EXTENSION_ID\"" "$POLICY_FILE" 2>/dev/null &&
-                grep -Fq "$EXTENSION_URL" "$POLICY_FILE" 2>/dev/null; then
+            # Without jq only a file identical to the one postinst creates
+            # counts as configured; anything else needs a manual merge.
+            if [ "$(cat "$POLICY_FILE")" = "$(firefox_policy_json "$EXTENSION_ID" "$EXTENSION_URL")" ]; then
+                make_policy_readable "$POLICY_FILE"
                 echo "Firefox SSO extension already configured in $POLICY_FILE"
                 return 0
             fi
@@ -64,18 +95,8 @@ merge_firefox_policy() {
             echo "and remove old linux_entra_sso URLs from policies.Extensions.Install"
         fi
     else
-        cat > "$POLICY_FILE" << EOF
-{
-  "policies": {
-    "ExtensionSettings": {
-      "$EXTENSION_ID": {
-        "installation_mode": "force_installed",
-        "install_url": "$EXTENSION_URL"
-      }
-    }
-  }
-}
-EOF
+        firefox_policy_json "$EXTENSION_ID" "$EXTENSION_URL" > "$POLICY_FILE"
+        make_policy_readable "$POLICY_FILE"
         echo "Created Firefox SSO policy at $POLICY_FILE"
     fi
 }
@@ -99,6 +120,7 @@ merge_mozilla_policy() {
                 (.policies.Extensions.Install[]? | select(. == $url)) and
                 ([.policies.Extensions.Install[]? | select(type == "string" and test($pattern) and . != $url)] | length == 0)
             ' "$POLICY_FILE" >/dev/null 2>&1; then
+                make_policy_readable "$POLICY_FILE"
                 echo "$APP_NAME SSO extension already configured in $POLICY_FILE"
                 return 0
             fi
@@ -111,12 +133,12 @@ merge_mozilla_policy() {
                     | unique
                 )
             ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
-            # mktemp creates 0600; the browser runs as the user and must read it
-            chmod 0644 "$POLICY_FILE"
+            make_policy_readable "$POLICY_FILE"
             echo "Merged $APP_NAME SSO extension into $POLICY_FILE"
         else
             # Without jq, check if our extension is already there
             if grep -Fq "$EXTENSION_URL" "$POLICY_FILE" 2>/dev/null; then
+                make_policy_readable "$POLICY_FILE"
                 echo "$APP_NAME SSO extension already configured in $POLICY_FILE"
                 return 0
             fi
@@ -137,17 +159,18 @@ merge_mozilla_policy() {
   }
 }
 EOF
+        make_policy_readable "$POLICY_FILE"
         echo "Created $APP_NAME SSO policy at $POLICY_FILE"
     fi
 }
 
 # Merge Firefox and Thunderbird policies
-merge_firefox_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_ID" "$FIREFOX_EXTENSION_URL" "linux_entra_sso-[0-9][0-9.]*\\.xpi$"
-merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Thunderbird" "linux_entra_sso-[0-9][0-9.]*\\.thunderbird\\.xpi$"
+merge_firefox_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_ID" "$FIREFOX_EXTENSION_URL" "$FIREFOX_URL_PATTERN"
+merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Thunderbird" "$THUNDERBIRD_URL_PATTERN"
 # Betterbird is a Thunderbird fork; it does not read /etc/thunderbird/policies.
-merge_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "linux_entra_sso-[0-9][0-9.]*\\.thunderbird\\.xpi$"
+merge_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "$THUNDERBIRD_URL_PATTERN"
 if [ -d /opt/betterbird ]; then
-    merge_mozilla_policy "/opt/betterbird/distribution/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "linux_entra_sso-[0-9][0-9.]*\\.thunderbird\\.xpi$"
+    merge_mozilla_policy "/opt/betterbird/distribution/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "$THUNDERBIRD_URL_PATTERN"
 fi
 
 echo "Himmelblau SSO Mozilla policy configuration complete"
