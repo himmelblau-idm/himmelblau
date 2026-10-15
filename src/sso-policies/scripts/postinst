@@ -5,9 +5,9 @@ set -e
 # Merges Firefox/Thunderbird extension configuration into existing policies without overwriting
 # (Chrome/Chromium use separate policy files per application, so no merging needed)
 
-FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.xpi"
+FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.13.0/linux_entra_sso-1.13.0.xpi"
 FIREFOX_EXTENSION_ID="linux-entra-sso@example.com"
-THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi"
+THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.13.0/linux_entra_sso-1.13.0.thunderbird.xpi"
 
 # Firefox uses ExtensionSettings rather than Extensions.Install. Firefox runs
 # Extensions.Install once per policy change, so a single failed download

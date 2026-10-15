@@ -6,7 +6,7 @@ set -e
 # (Chrome/Chromium policy files are handled by package manager directly)
 
 FIREFOX_EXTENSION_ID="linux-entra-sso@example.com"
-THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi"
+THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.13.0/linux_entra_sso-1.13.0.thunderbird.xpi"
 
 # Remove the Firefox ExtensionSettings entry added by postinst, and any
 # Extensions.Install URL left by earlier versions of this package.
