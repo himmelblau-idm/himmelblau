@@ -5,8 +5,44 @@ set -e
 # Removes Firefox/Thunderbird extension configuration that was merged during install
 # (Chrome/Chromium policy files are handled by package manager directly)
 
-FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.xpi"
+FIREFOX_EXTENSION_ID="linux-entra-sso@example.com"
 THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi"
+
+# Remove the Firefox ExtensionSettings entry added by postinst, and any
+# Extensions.Install URL left by earlier versions of this package.
+remove_firefox_policy() {
+    POLICY_FILE="$1"
+    EXTENSION_ID="$2"
+    EXTENSION_PATTERN="$3"
+
+    [ -f "$POLICY_FILE" ] || return 0
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "Warning: jq not found. Cannot safely remove SSO extension from $POLICY_FILE"
+        echo "Please manually remove \"$EXTENSION_ID\" from policies.ExtensionSettings"
+        return 0
+    fi
+
+    TEMP_FILE=$(mktemp)
+    # Only remove our entry: same ID and an install_url from the managed release URLs
+    jq --arg id "$EXTENSION_ID" --arg pattern "$EXTENSION_PATTERN" '
+        if (.policies.ExtensionSettings[$id].install_url? // "" | test($pattern)) then
+            del(.policies.ExtensionSettings[$id])
+        else . end
+        | if .policies.ExtensionSettings == {} then del(.policies.ExtensionSettings) else . end
+        | if .policies.Extensions.Install then
+            .policies.Extensions.Install |= [.[] | select((type == "string" and test($pattern)) | not)]
+          else . end
+        | if .policies.Extensions.Install == [] then del(.policies.Extensions.Install) else . end
+        | if .policies.Extensions == {} then del(.policies.Extensions) else . end
+    ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
+    chmod 0644 "$POLICY_FILE"
+    echo "Removed Firefox SSO extension from $POLICY_FILE"
+
+    if jq -e '.policies == {}' "$POLICY_FILE" >/dev/null 2>&1; then
+        rm -f "$POLICY_FILE"
+        echo "Removed empty policy file $POLICY_FILE"
+    fi
+}
 
 # Function to remove a Mozilla extension from policies.json
 remove_mozilla_policy() {
@@ -38,6 +74,9 @@ remove_mozilla_policy() {
             if jq -e '.policies == {}' "$POLICY_FILE" >/dev/null 2>&1; then
                 rm -f "$POLICY_FILE"
                 echo "Removed empty policy file $POLICY_FILE"
+            else
+                # mktemp creates 0600; the browser runs as the user and must read it
+                chmod 0644 "$POLICY_FILE"
             fi
         else
             echo "Warning: jq not found. Cannot safely remove SSO extension from $POLICY_FILE"
@@ -51,7 +90,7 @@ remove_mozilla_policy() {
 case "$1" in
     remove|purge|0)
         # Remove Firefox and Thunderbird policies
-        remove_mozilla_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_URL"
+        remove_firefox_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_ID" "linux_entra_sso-[0-9][0-9.]*\\.xpi$"
         remove_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL"
         remove_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL"
         remove_mozilla_policy "/opt/betterbird/distribution/policies.json" "$THUNDERBIRD_EXTENSION_URL"

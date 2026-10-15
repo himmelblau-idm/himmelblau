@@ -6,7 +6,79 @@ set -e
 # (Chrome/Chromium use separate policy files per application, so no merging needed)
 
 FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.xpi"
+FIREFOX_EXTENSION_ID="linux-entra-sso@example.com"
 THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi"
+
+# Firefox uses ExtensionSettings rather than Extensions.Install. Firefox runs
+# Extensions.Install once per policy change, so a single failed download
+# (offline, proxy, VPN not up yet) left the extension missing until the URL
+# changed. ExtensionSettings with force_installed installs it on every start
+# while it is missing, and keeps it from being removed.
+merge_firefox_policy() {
+    POLICY_FILE="$1"
+    EXTENSION_ID="$2"
+    EXTENSION_URL="$3"
+    EXTENSION_PATTERN="$4"
+    POLICY_DIR=$(dirname "$POLICY_FILE")
+
+    mkdir -p "$POLICY_DIR"
+
+    if [ -f "$POLICY_FILE" ]; then
+        if command -v jq >/dev/null 2>&1; then
+            # Configured when our entry is current and no managed Install URL remains
+            if jq -e --arg id "$EXTENSION_ID" --arg url "$EXTENSION_URL" --arg pattern "$EXTENSION_PATTERN" '
+                .policies.ExtensionSettings[$id].installation_mode == "force_installed" and
+                .policies.ExtensionSettings[$id].install_url == $url and
+                ([.policies.Extensions.Install[]? | select(type == "string" and test($pattern))] | length == 0)
+            ' "$POLICY_FILE" >/dev/null 2>&1; then
+                echo "Firefox SSO extension already configured in $POLICY_FILE"
+                return 0
+            fi
+
+            # Add or update our ExtensionSettings entry, keeping any other
+            # keys an admin set on it, and drop the managed Install URLs
+            # written by earlier versions of this package.
+            TEMP_FILE=$(mktemp)
+            jq --arg id "$EXTENSION_ID" --arg url "$EXTENSION_URL" --arg pattern "$EXTENSION_PATTERN" '
+                .policies.ExtensionSettings[$id] = (
+                    (.policies.ExtensionSettings[$id] // {})
+                    + {"installation_mode": "force_installed", "install_url": $url}
+                )
+                | if .policies.Extensions.Install then
+                    .policies.Extensions.Install |= [.[] | select((type == "string" and test($pattern)) | not)]
+                  else . end
+                | if .policies.Extensions.Install == [] then del(.policies.Extensions.Install) else . end
+                | if .policies.Extensions == {} then del(.policies.Extensions) else . end
+            ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
+            chmod 0644 "$POLICY_FILE"
+            echo "Merged Firefox SSO extension into $POLICY_FILE"
+        else
+            if grep -Fq "\"$EXTENSION_ID\"" "$POLICY_FILE" 2>/dev/null &&
+                grep -Fq "$EXTENSION_URL" "$POLICY_FILE" 2>/dev/null; then
+                echo "Firefox SSO extension already configured in $POLICY_FILE"
+                return 0
+            fi
+            echo "Warning: jq not found. Cannot safely merge into existing $POLICY_FILE"
+            echo "Please manually add to policies.ExtensionSettings:"
+            echo "  \"$EXTENSION_ID\": {\"installation_mode\": \"force_installed\", \"install_url\": \"$EXTENSION_URL\"}"
+            echo "and remove old linux_entra_sso URLs from policies.Extensions.Install"
+        fi
+    else
+        cat > "$POLICY_FILE" << EOF
+{
+  "policies": {
+    "ExtensionSettings": {
+      "$EXTENSION_ID": {
+        "installation_mode": "force_installed",
+        "install_url": "$EXTENSION_URL"
+      }
+    }
+  }
+}
+EOF
+        echo "Created Firefox SSO policy at $POLICY_FILE"
+    fi
+}
 
 # Function to merge a Mozilla extension into policies.json
 merge_mozilla_policy() {
@@ -39,6 +111,8 @@ merge_mozilla_policy() {
                     | unique
                 )
             ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
+            # mktemp creates 0600; the browser runs as the user and must read it
+            chmod 0644 "$POLICY_FILE"
             echo "Merged $APP_NAME SSO extension into $POLICY_FILE"
         else
             # Without jq, check if our extension is already there
@@ -68,7 +142,7 @@ EOF
 }
 
 # Merge Firefox and Thunderbird policies
-merge_mozilla_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_URL" "Firefox" "linux_entra_sso-[0-9][0-9.]*\\.xpi$"
+merge_firefox_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_ID" "$FIREFOX_EXTENSION_URL" "linux_entra_sso-[0-9][0-9.]*\\.xpi$"
 merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Thunderbird" "linux_entra_sso-[0-9][0-9.]*\\.thunderbird\\.xpi$"
 # Betterbird is a Thunderbird fork; it does not read /etc/thunderbird/policies.
 merge_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "linux_entra_sso-[0-9][0-9.]*\\.thunderbird\\.xpi$"
