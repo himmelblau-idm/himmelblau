@@ -2392,6 +2392,29 @@ class DependencyImportRefreshTests(unittest.TestCase):
                     self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, baseline)
                     self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Baseline imports\n")
 
+    def test_failed_refresh_restores_every_store_file_and_preserves_the_error(self):
+        for reason in ("failure", "timeout", "output-limit"):
+            with self.subTest(reason=reason), self.repository() as (root, runner, _state):
+                (root / "Cargo.lock").write_text("pending candidate\n")
+                runner.git(["add", "Cargo.lock"])
+                (root / "supply-chain/audits.toml").write_text("pending accepted audit\n")
+                originals = {name: (root / "supply-chain" / name).read_bytes()
+                             for name in ("config.toml", "audits.toml", "imports.lock")}
+                before = runner.git(["diff", "--binary", "HEAD"]).stdout
+                error = (sm.MaintenanceError("regeneration failed") if reason == "failure" else
+                         sm.CommandCaptureError("capture failed", reason, sm.CommandResult(-9, "partial", "")))
+                def contained(*args, **kwargs):
+                    for name in originals:
+                        (root / "supply-chain" / name).write_text("partially rewritten store\n")
+                    raise error
+                with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     self.assertRaises(sm.MaintenanceError) as caught:
+                    sm.refresh_dependency_vet_imports(runner)
+                self.assertIs(caught.exception, error)
+                for name, content in originals.items():
+                    self.assertEqual((root / "supply-chain" / name).read_bytes(), content)
+                self.assertEqual(runner.git(["diff", "--binary", "HEAD"]).stdout, before)
+
 
 class CommitFilteringTests(unittest.TestCase):
     def test_obvious_subjects_are_filtered(self):

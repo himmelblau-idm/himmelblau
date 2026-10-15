@@ -2173,10 +2173,20 @@ def refresh_dependency_vet_imports(runner: Runner) -> None:
     # Only imports.lock may change; compare the rest of the complete HEAD diff.
     inventory = ["diff", "--binary", "HEAD", "--", ".", ":(top,exclude)supply-chain/imports.lock"]
     before = runner.git(inventory).stdout
-    contained_repo_command(runner, ["cargo", "vet", "regenerate", "imports"],
-                           network=True, source_rw=True, cache_rw=True, timeout=900)
-    for name, content in protected.items():
-        checkout_regular_file(runner.root, name).write_bytes(content)
+    imports_name = "supply-chain/imports.lock"
+    previous_imports = checkout_regular_file(runner.root, imports_name).read_bytes()
+    regenerated = False
+    try:
+        contained_repo_command(runner, ["cargo", "vet", "regenerate", "imports"],
+                               network=True, source_rw=True, cache_rw=True, timeout=900)
+        regenerated = True
+    finally:
+        # Store files are written separately; even a failed/captured command
+        # can have pruned pending local audits or partly replaced imports.
+        if not regenerated:
+            protected[imports_name] = previous_imports
+        for name, content in protected.items():
+            checkout_regular_file(runner.root, name).write_bytes(content)
     if runner.git(inventory).stdout != before:
         raise MaintenanceError("dependency cargo-vet import refresh changed an unexpected path")
 
