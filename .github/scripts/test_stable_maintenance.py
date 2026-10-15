@@ -1200,11 +1200,14 @@ sys.exit(int(sys.argv[1]))
         self.assertIn('Acquire::https::Timeout "30";', config_text)
         self.assertIn('APT::Update::Error-Mode "any";', config_text)
         install_block = dockerfile.split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
-        self.assertTrue(install_block.startswith("--kill-after=15s 35m /bin/sh -ec "))
+        self.assertTrue(install_block.startswith("--kill-after=15s 35m /bin/bash -o pipefail -ec "))
         install_shell = shlex.split(install_block.replace("\\\n", ""))[-1]
-        self.assertIn('apt-get update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
-        self.assertIn('apt-get install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
-        subprocess.run(["/bin/sh", "-n", "-c", install_shell], check=True)
+        self.assertIn('apt_get update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        self.assertIn('apt_get install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        subprocess.run(["/bin/bash", "-n", "-c", install_shell], check=True)
+        # Exercise the exact production function/filter with real APT transport,
+        # replacing only installation's entry point with apt-helper download-file.
+        probe_shell = install_shell.split('echo "apt-provision: stage=update"', 1)[0] + 'apt_get "$@"'
         build_step = WORKFLOW.read_text().split(
             "      - name: Build pinned maintenance image without credentials\n", 1,
         )[1].split("\n      - name:", 1)[0]
@@ -1215,7 +1218,10 @@ sys.exit(int(sys.argv[1]))
             with self.subTest(failures=failures, valid_hash=valid_hash), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 config_path = root / "apt.conf"
-                config_path.write_text(config_text)
+                config_path.write_text(config_text + 'DiagnosticTest::Canary "SECRET-CONFIG";\n')
+                apt_entry = root / "apt-get"
+                apt_entry.write_text('#!/bin/sh\nexec /usr/lib/apt/apt-helper "$@"\n')
+                apt_entry.chmod(0o700)
                 class Handler(http.server.BaseHTTPRequestHandler):
                     requests = 0
                     def log_message(self, *args): pass
@@ -1234,7 +1240,8 @@ sys.exit(int(sys.argv[1]))
                 try:
                     digest = hashlib.sha256(payload if valid_hash else b"different bytes").hexdigest()
                     result = subprocess.run([
-                        "/usr/lib/apt/apt-helper", "-c", str(config_path),
+                        "/bin/bash", "-o", "pipefail", "-ec", probe_shell, "apt-probe",
+                        "-c", str(config_path),
                         # The loopback fixture uses the test user's private temp
                         # directory; no package installation or production UID
                         # policy is involved, and some test containers prohibit
@@ -1243,10 +1250,21 @@ sys.exit(int(sys.argv[1]))
                         "download-file",
                         f"http://127.0.0.1:{server.server_port}/package.deb", str(root / "package.deb"),
                         f"SHA256:{digest}",
-                    ], capture_output=True, text=True, timeout=25)
+                    ], capture_output=True, text=True, timeout=25,
+                        env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"]})
                 finally:
                     server.shutdown(); server.server_close(); worker.join(timeout=2)
-                self.assertEqual(result.returncode == 0, succeeds, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0 if succeeds else 100, result.stdout + result.stderr)
+                output = result.stdout + result.stderr
+                self.assertNotIn("Config-Item:", output)
+                self.assertNotIn("SECRET-CONFIG", output)
+                self.assertNotIn("600%20URI%20Acquire", output)
+                if failures:
+                    self.assertIn("apt-download-debug:", output)
+                    self.assertRegex(output, "503.*Service Unavailable")
+                    self.assertEqual(output.count("apt-download-debug:"), min(failures, 4))
+                    if succeeds:
+                        self.assertLess(output.index("apt-download-debug:"), output.index("Fetched"))
                 if succeeds:
                     self.assertEqual(Handler.requests, 3)
                     self.assertEqual((root / "package.deb").read_bytes(), payload)

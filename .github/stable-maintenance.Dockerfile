@@ -37,9 +37,19 @@ RUN printf '%s\n' \
 # consuming the whole maintenance job. Never fall back to a live package set.
 # A measured cold build fetched 66.6 MB of indexes at 241 kB/s, then needed
 # another 220 MB of packages. Allow transfer and unpacking time at that rate.
-RUN timeout --kill-after=15s 35m /bin/sh -ec ' \
-    apt-get update --snapshot "$UBUNTU_SNAPSHOT" \
-    && apt-get install --snapshot "$UBUNTU_SNAPSHOT" --yes --no-install-recommends \
+# Worker failures expose the reason before APT retries (ordinary Ign lines do
+# not). Keep only failure messages from worker debug, not its configuration or
+# request dumps. Bash pipefail preserves APT failure through the streaming filter.
+RUN timeout --kill-after=15s 35m /bin/bash -o pipefail -ec ' \
+    apt_get() { \
+        apt-get -o Debug::pkgAcquire::Worker=true "$@" 2>&1 \
+            | sed -u -e "/^ -> /d" \
+                -e "/^ <- /{ /:400%20URI%20Failure/!d; s/%20/ /g; s/^/apt-download-debug: /; }"; \
+    }; \
+    echo "apt-provision: stage=update"; \
+    apt_get update --snapshot "$UBUNTU_SNAPSHOT" \
+    && echo "apt-provision: stage=install" \
+    && apt_get install --snapshot "$UBUNTU_SNAPSHOT" --yes --no-install-recommends \
         autoconf \
         build-essential \
         ca-certificates \
