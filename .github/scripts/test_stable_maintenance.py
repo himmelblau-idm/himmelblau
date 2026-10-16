@@ -2832,7 +2832,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
         ai = object.__new__(sm.AzureAI)
         ai.key, ai.model, ai.url = "secret-do-not-log", "model", "https://example.invalid"
         data = "x" * 1033558
-        for headers, expected in (({"retry-after-ms": "61000"}, 61), ({"retry-after": "65.5"}, 65.5), ({}, 60)):
+        for headers, expected in (({"retry-after-ms": "61000"}, 61), ({"retry-after": "65.5"}, 65.5), ({}, 120)):
             with self.subTest(headers=headers):
                 failure = sm.HTTPStatusError(429, headers)
                 output = io.StringIO()
@@ -2855,7 +2855,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
              self.assertRaisesRegex(sm.MaintenanceError, "bounded retries"):
             ai.call("instructions", data, sm.BOOL_SCHEMA, "result")
         self.assertEqual(request.call_count, sm.MAX_AI_ATTEMPTS)
-        self.assertEqual(sleep.call_args_list, [mock.call(70), mock.call(130)])
+        self.assertEqual(sleep.call_args_list, [mock.call(130), mock.call(250), mock.call(490), *[mock.call(600)] * 6])
         self.assertEqual(sum(line.startswith("azure-debug:") for line in output.getvalue().splitlines()), sm.MAX_AI_ATTEMPTS)
         self.assertIn("limit_tokens=150000 remaining_tokens=0", output.getvalue())
 
@@ -2863,7 +2863,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
         ai = object.__new__(sm.AzureAI)
         ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
         output = io.StringIO()
-        with mock.patch.object(sm, "http_json", side_effect=sm.HTTPStatusError(429, {"retry-after": "301"})) as request, \
+        with mock.patch.object(sm, "http_json", side_effect=sm.HTTPStatusError(429, {"retry-after": "5401"})) as request, \
              mock.patch.object(sm.time, "sleep") as sleep, \
              mock.patch.object(sm.sys, "stderr", output):
             with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget") as caught:
@@ -2871,7 +2871,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
         self.assertEqual(sm.diagnostic_reason(caught.exception), "azure-retry-wait-too-long")
         self.assertEqual(request.call_count, 1)
         sleep.assert_not_called()
-        self.assertIn("retry_after_s=301", output.getvalue())
+        self.assertIn("retry_after_s=5401", output.getvalue())
 
     def test_azure_failure_diagnostics_are_bounded_and_sanitized(self):
         ai = object.__new__(sm.AzureAI)
@@ -3148,6 +3148,39 @@ class MarkerConflictAndAITests(unittest.TestCase):
 
 
 class CratesIOHTTPTests(unittest.TestCase):
+    def test_long_throttle_window_recovers_on_tenth_http_and_native_attempt(self):
+        with registry_clock() as clock, \
+             mock.patch.object(sm, "_http_once", side_effect=[*[sm.HTTPStatusError(429)] * 9, b'{}']) as request:
+            self.assertEqual(sm.http_json("https://example.invalid"), {})
+            self.assertEqual(request.call_count, 10)
+            self.assertEqual(clock[0], 4440)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            failed = sm.CommandResult(255, "", "HTTP status client error (429 Too Many Requests)")
+            passed = sm.CommandResult(0, VET_SUCCESS, "")
+            with registry_clock() as clock, \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=[*[failed] * 9, passed]) as run:
+                self.assertIs(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                     Path(tmp), network=True), passed)
+                self.assertEqual(run.call_count, 10)
+                self.assertEqual(clock[0], 4440)
+
+    def test_azure_long_recovery_and_cumulative_server_wait_budget(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        with registry_clock() as clock, mock.patch.object(sm.secrets, "randbelow", return_value=0), \
+             mock.patch.object(sm, "http_json", side_effect=[*[sm.HTTPStatusError(429)] * 9,
+                               {"output_text": '{"decision":true}'}]) as request:
+            self.assertEqual(ai.call("instructions", "data", sm.BOOL_SCHEMA, "result"), {"decision": True})
+            self.assertEqual(request.call_count, 10)
+            self.assertEqual(clock[0], 4440)
+        with registry_clock() as clock, \
+             mock.patch.object(sm, "http_json", side_effect=sm.HTTPStatusError(429, {"retry-after": "3000"})) as request:
+            with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(clock[0], 3000)
+
     def test_http_error_bodies_close_before_retry_and_on_permanent_failure(self):
         class UnreadBody(io.BytesIO):
             def read(self, *args, **kwargs):
@@ -3226,7 +3259,7 @@ class CratesIOHTTPTests(unittest.TestCase):
         with registry_clock() as clock, mock.patch.object(sm.urllib.request, "urlopen", side_effect=responses) as request:
             self.assertEqual(sm.http_json("https://example.invalid"), {})
             self.assertEqual(request.call_count, 2)
-            self.assertEqual(clock[0], 5)
+            self.assertEqual(clock[0], 30)
 
     def test_truncated_archive_recovers_before_checksum_validation(self):
         archive = b"verified archive bytes"
@@ -3237,7 +3270,7 @@ class CratesIOHTTPTests(unittest.TestCase):
         with registry_clock() as clock, mock.patch.object(sm.urllib.request, "urlopen", side_effect=responses) as request:
             self.assertEqual(sm.download_crate_archive("example", "1.0.0"), archive)
             self.assertEqual(request.call_count, 3)
-            self.assertEqual(clock[0], 5)
+            self.assertEqual(clock[0], 30)
 
     def test_content_length_detection_preserves_size_and_bodyless_cases(self):
         for body, declared in ((b"12345678", 8), (b"12", 8)):
@@ -3264,7 +3297,7 @@ class CratesIOHTTPTests(unittest.TestCase):
              mock.patch("sys.stderr", new_callable=io.StringIO) as output:
             self.assertEqual(sm.http_json("https://example.invalid"), {})
             self.assertEqual(request.call_count, 2)
-            self.assertEqual(clock[0], 5.0)
+            self.assertEqual(clock[0], 30.0)
             self.assertNotIn("SECRET", output.getvalue())
 
     def test_native_vet_network_failures_retry_with_fresh_stores(self):
@@ -3286,14 +3319,14 @@ class CratesIOHTTPTests(unittest.TestCase):
                  mock.patch("sys.stderr", new_callable=io.StringIO) as output:
                 result = sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
                                                  Path(tmp), network=True)
-                self.assertEqual(clock[0], 180.0)
+                self.assertEqual(clock[0], 360.0)
                 self.assertEqual(result.stdout, VET_CHECK_REPORT)
                 self.assertNotIn("SECRET", output.getvalue())
                 # Native throttling also slows the next Python HTTP request.
                 sm._HTTP_NEXT_REQUEST["*"] = clock[0] + 5
                 with mock.patch.object(sm, "_http_once", return_value=b'{}'):
                     sm.http_json("https://api.github.com/resource")
-                self.assertEqual(clock[0], 185.0)
+                self.assertEqual(clock[0], 365.0)
             self.assertEqual(audits.read_text(), "# accepted audit\n")
             self.assertEqual(len(set(stores)), 3)
             self.assertTrue(all(not store.exists() for store in stores))
@@ -3344,7 +3377,7 @@ class CratesIOHTTPTests(unittest.TestCase):
                 self.assertIs(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
                                                      Path(tmp), network=True), success)
                 self.assertEqual(run.call_count, 2)
-                self.assertEqual(clock[0], 5.0)
+                self.assertEqual(clock[0], 30.0)
                 self.assertIn("reason=transport-error", output.getvalue())
                 self.assertNotIn("SECRET", output.getvalue())
             for conclusion in ("fail (vetting)", "fail (violation)"):
@@ -3366,7 +3399,7 @@ class CratesIOHTTPTests(unittest.TestCase):
                     result = sm.http_bytes("https://api.github.com/resource") if binary else sm.http_json("https://api.github.com/resource")
                     self.assertEqual(result, b'{}' if binary else {})
                     self.assertEqual(request.call_count, 3)
-                    self.assertEqual(clock[0], 15.0)
+                    self.assertEqual(clock[0], 90.0)
 
     def test_cooldown_survives_across_json_and_binary_calls(self):
         error = sm.HTTPStatusError(429, {"retry-after": "7"})
@@ -3404,7 +3437,7 @@ class CratesIOHTTPTests(unittest.TestCase):
                     request.assert_called_once()
                     with mock.patch.object(sm, "_http_once", return_value=b'{}'):
                         sm.http_json("https://api.github.com/resource")
-                    self.assertEqual(clock[0], 5.0)
+                    self.assertEqual(clock[0], 30.0)
 
     def test_github_403_reset_time_is_respected(self):
         with mock.patch.object(sm.time, "time", return_value=1000):
@@ -3424,7 +3457,7 @@ class CratesIOHTTPTests(unittest.TestCase):
              mock.patch.object(sm, "http_bytes", return_value=archive) as download:
             self.assertEqual(sm.crates_releases("example"), [])
             self.assertEqual(sm.download_crate_archive("example", "1.0.0"), archive)
-        self.assertEqual([call[0] for call in calls], [0.0, 1.0])
+        self.assertEqual([call[0] for call in calls], [0.0, 5.0])
         self.assertTrue(all(call[2] == sm.CRATES_IO_USER_AGENT for call in calls))
         download.assert_called_once_with("https://static.crates.io/crates/example/example-1.0.0.crate")
 
@@ -3440,7 +3473,7 @@ class CratesIOHTTPTests(unittest.TestCase):
             return result
         with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=request):
             self.assertEqual(sm.crates_releases("example"), [])
-        self.assertEqual(calls, [0.0, 2.0, 5.0])
+        self.assertEqual(calls, [0.0, 5.0, 10.0])
 
     def test_persistent_429_exhausts_and_retains_cross_call_cooldown(self):
         error = sm.HTTPStatusError(429, {"retry-after": "1"})
@@ -3448,14 +3481,14 @@ class CratesIOHTTPTests(unittest.TestCase):
             with self.assertRaises(sm.HTTPStatusError) as caught:
                 sm.crates_releases("example")
             self.assertIs(caught.exception, error)
-            self.assertEqual(request.call_count, 5)
-            self.assertEqual(clock[0], 4.0)
+            self.assertEqual(request.call_count, 10)
+            self.assertEqual(clock[0], 45.0)
             with mock.patch.object(sm, "_http_once", return_value=b'{"versions": []}'):
                 sm.crates_releases("later")
-            self.assertEqual(clock[0], 5.0)
+            self.assertEqual(clock[0], 50.0)
 
     def test_long_retry_after_fails_closed_without_early_cross_call_request(self):
-        error = sm.HTTPStatusError(429, {"retry-after": "301"})
+        error = sm.HTTPStatusError(429, {"retry-after": "5401"})
         with registry_clock(), mock.patch.object(sm, "_http_once", side_effect=error) as request:
             for crate in ("example", "later"):
                 with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
@@ -3463,12 +3496,12 @@ class CratesIOHTTPTests(unittest.TestCase):
             request.assert_called_once()
 
     def test_retry_wait_budget_is_cumulative(self):
-        error = sm.HTTPStatusError(429, {"retry-after": "200"})
+        error = sm.HTTPStatusError(429, {"retry-after": "3000"})
         with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=error) as request:
             with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
                 sm.crates_releases("example")
             self.assertEqual(request.call_count, 2)
-            self.assertEqual(clock[0], 200.0)
+            self.assertEqual(clock[0], 3000.0)
 
     def test_real_http_429_recovers_and_sends_application_user_agent(self):
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -4440,7 +4473,7 @@ class SequentialMaintenanceTests(unittest.TestCase):
         with mock.patch.object(sm, "http_json", side_effect=[error, {"output_text": '{"decision":true}'}]), \
              mock.patch.object(sm.time, "sleep") as sleep, mock.patch.object(sm.secrets, "randbelow", return_value=0):
             ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
-        sleep.assert_called_once_with(60)
+        sleep.assert_called_once_with(120)
 
     def test_sequential_build_failure_keeps_earlier_work_and_continues(self):
         with tempfile.TemporaryDirectory() as tmp:

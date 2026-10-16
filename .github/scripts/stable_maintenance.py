@@ -40,12 +40,13 @@ from typing import Any, Iterable, Mapping, Sequence
 
 STABLE_BRANCHES = ("stable-3.x", "stable-4.x")
 QUARANTINE_HOURS = 252
-MAX_AI_ATTEMPTS = 3
-MAX_AI_RETRY_SECONDS = 300
+MAX_AI_ATTEMPTS = 10
+MAX_AI_RETRY_SECONDS = 90 * 60
 MAX_HTTP_BYTES = 8 * 1024 * 1024
 CRATES_IO_USER_AGENT = "himmelblau-stable-maintenance (https://github.com/himmelblau-idm/himmelblau)"
-MAX_HTTP_ATTEMPTS = 5
-MAX_HTTP_WAIT_SECONDS = 300
+MAX_HTTP_ATTEMPTS = 10
+MAX_HTTP_WAIT_SECONDS = 90 * 60
+MAX_NETWORK_BACKOFF_SECONDS = 10 * 60
 _HTTP_LOCK = threading.Lock()
 _HTTP_NEXT_REQUEST: dict[str, float] = {}
 MAX_REGISTRY_CACHE_DEPTH = 128
@@ -774,7 +775,7 @@ def _http_read(request: urllib.request.Request, timeout: int, max_bytes: int, at
                                           and str(exc) in {"HTTP request failed", "HTTP request timed out"})
                 if not transient:
                     raise
-                cooldown = (60 if throttled else 5) * 2 ** attempt
+                cooldown = min(MAX_NETWORK_BACKOFF_SECONDS, (120 if throttled else 30) * 2 ** attempt)
                 if isinstance(exc, HTTPStatusError) and exc.retry_after is not None:
                     cooldown = max(1.0, exc.retry_after)
                 _HTTP_NEXT_REQUEST[origin] = time.monotonic() + cooldown
@@ -789,7 +790,7 @@ def _http_read(request: urllib.request.Request, timeout: int, max_bytes: int, at
                     raise
             finally:
                 if origin == "crates.io":
-                    _HTTP_NEXT_REQUEST[origin] = max(_HTTP_NEXT_REQUEST.get(origin, 0), time.monotonic() + 1.0)
+                    _HTTP_NEXT_REQUEST[origin] = max(_HTTP_NEXT_REQUEST.get(origin, 0), time.monotonic() + 5.0)
     raise AssertionError("unreachable HTTP retry state")
 
 
@@ -1007,6 +1008,7 @@ class AzureAI:
             "max_output_tokens": 8192,
         }
         last_error: Exception | None = None
+        waited = 0.0
         for attempt in range(MAX_AI_ATTEMPTS):
             stage = "http-request"
             try:
@@ -1044,19 +1046,20 @@ class AzureAI:
                 )
                 last_error = exc
                 if attempt + 1 < MAX_AI_ATTEMPTS:
-                    delay = 5 * 2 ** attempt
+                    delay = min(MAX_NETWORK_BACKOFF_SECONDS, 30 * 2 ** attempt)
                     if isinstance(exc, HTTPStatusError) and exc.status == 429:
                         # Azure's quota window is one minute; rapid retries can
                         # consume quota themselves. Respect server guidance.
-                        fallback = 60 * 2 ** attempt + secrets.randbelow(11)
+                        fallback = min(MAX_NETWORK_BACKOFF_SECONDS, 120 * 2 ** attempt + secrets.randbelow(11))
                         delay = exc.retry_after if exc.retry_after is not None and exc.retry_after > 0 else fallback
                         if exc.rate_limits.get("remaining_tokens") == 0:
                             delay = max(delay, fallback)
-                        if delay > MAX_AI_RETRY_SECONDS:
-                            raise MaintenanceError("Azure retry delay exceeds bounded wait budget") from exc
                         delay = max(1, delay)
+                    if waited + delay > MAX_AI_RETRY_SECONDS:
+                        raise MaintenanceError("Azure retry delay exceeds bounded wait budget") from exc
                     print(f"azure-backoff: attempt={attempt + 1} wait_seconds={delay:g}", file=sys.stderr)
                     time.sleep(delay)
+                    waited += delay
         raise MaintenanceError("Azure failed after bounded retries") from last_error
 
 
@@ -1526,7 +1529,7 @@ def contained_repo_command(
     argv.extend([
         "-w", "/workspace", "-e", "HOME=/tmp", "-e", "XDG_CACHE_HOME=/tmp", "-e", "TMPDIR=/tmp",
         "-e", "CARGO_NET_OFFLINE=true", "-e", "CARGO_TARGET_DIR=/target",
-        "-e", "CARGO_NET_RETRY=5",
+        "-e", "CARGO_NET_RETRY=10",
         "-e", "CARGO_HOME=/opt/project-cargo", "-e", "RUSTUP_HOME=/usr/local/rustup",
         "-e", "O365_GEN_DIR=/target/o365-generated",
         "-e", "PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -1608,7 +1611,7 @@ def isolated_vet_command(
             "temporary failure in name resolution", "connection closed before message completed"))
         if not retry_codes and not transport:
             return result
-        cooldown = (60 if 429 in retry_codes else 5) * 2 ** attempt
+        cooldown = min(MAX_NETWORK_BACKOFF_SECONDS, (120 if 429 in retry_codes else 30) * 2 ** attempt)
         _HTTP_NEXT_REQUEST["*"] = time.monotonic() + cooldown
         reason = f"http-status-{min(retry_codes)}" if retry_codes else "transport-error"
         print(f"vet-network-debug: attempt={attempt + 1} reason={reason}", file=sys.stderr)
