@@ -397,7 +397,6 @@ in
           };
           serviceConfig = {
             Type = "oneshot";
-            RemainAfterExit = true;
             ExecStart = "${cfg.daemonPackage}/libexec/himmelblau-init-hsm-pin";
             RuntimeDirectory = "himmelblau-hsm-pin";
             RuntimeDirectoryMode = "0700";

@@ -15,6 +15,7 @@ test package placeholders; it is not a runtime or VM test.
 Runtime paths, directory defaults, and the tasks service's umask/address-family
 defaults follow the generated units. The HSM initializer runs even when an
 encrypted PIN already exists so the helper can validate and migrate it.
+It remains inactive after success so later daemon starts can retry TPM binding.
 The policy cache tmpfiles rule is written literally in the NixOS module and
 checked for exact equivalence with src/daemon/src/himmelblau-policies.tmpfiles.conf,
 including detection of duplicate or conflicting rules for the same path.
@@ -25,8 +26,8 @@ Known deviations from the generated units and their rationale:
 - Gate HSM initialization, its dependencies, and encrypted credential loading on
   config.security.tpm2.enable, not on whether the daemon needs local TPM devices;
   they remain enabled for remote TCTIs when config.security.tpm2.enable is true.
-- Require and order HSM initialization before the daemon, retaining the successful
-  oneshot so failure to remove plaintext credentials prevents daemon startup.
+- Require and order HSM initialization before the daemon so initialization
+  failures, including failure to remove plaintext credentials, prevent startup.
 - Include NixOS's tpm2-udev-trigger.service in both After and Wants on the HSM
   initializer, following the dependency pattern used by NixOS's tpm2-abrmd
   service to handle TPM udev-rule changes during rebuild activation.
@@ -351,7 +352,8 @@ class NixosServiceTests(unittest.TestCase):
             "/var/lib/private/himmelblaud",
         )
         self.assertIn(name, self.units["himmelblaud.service"]["Unit"]["Requires"].split())
-        self.assertIn(self.units[name]["Service"]["RemainAfterExit"], ["true", "yes"])
+        self.assertNotIn("RemainAfterExit", self.units[name]["Service"])
+        self.assertNotIn("RemainAfterExit", self.generated[name]["Service"])
         self.assert_directives_match(
             name,
             "Service",
