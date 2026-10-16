@@ -134,7 +134,7 @@ class HTTPStatusError(MaintenanceError):
             self.status == 403 and (self.retry_after is not None or integer_header("x-ratelimit-remaining") == 0)
         )
         reset = integer_header("x-ratelimit-reset")
-        if self.rate_limited and reset is not None:
+        if self.rate_limited and integer_header("x-ratelimit-remaining") == 0 and reset is not None:
             self.retry_after = max(self.retry_after or 0, reset - time.time())
         super().__init__("HTTP request failed")
 
@@ -726,6 +726,14 @@ def _http_once(request: urllib.request.Request, timeout: int, max_bytes: int) ->
             if response.status < 200 or response.status >= 300:
                 raise HTTPStatusError(response.status, response.headers)
             raw = response.read(max_bytes + 1)
+            # A bounded HTTPResponse.read can silently return a short body.
+            # Its remaining length distinguishes premature EOF from complete
+            # fixed-length, bodyless, chunked and close-delimited responses.
+            remaining = getattr(response, "length", None)
+            if type(remaining) is int and remaining > 0 and len(raw) <= max_bytes:
+                if len(raw) + remaining > max_bytes:
+                    raise MaintenanceError("HTTP response exceeded size limit")
+                raise http.client.IncompleteRead(b"", remaining)
     except urllib.error.HTTPError as exc:
         raise HTTPStatusError(exc.code, exc.headers) from exc
     except TimeoutError as exc:

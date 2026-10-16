@@ -3148,6 +3148,69 @@ class MarkerConflictAndAITests(unittest.TestCase):
 
 
 class CratesIOHTTPTests(unittest.TestCase):
+    @staticmethod
+    def response(body, *, declared=None, method="GET", status=200, chunked=False):
+        class Socket:
+            def makefile(self, mode):
+                headers = f"HTTP/1.1 {status} Test\r\n".encode()
+                if chunked:
+                    headers += b"Transfer-Encoding: chunked\r\n"
+                elif declared is not None:
+                    headers += f"Content-Length: {declared}\r\n".encode()
+                return io.BytesIO(headers + b"\r\n" + body)
+        response = sm.http.client.HTTPResponse(Socket(), method=method)
+        response.begin()
+        return response
+
+    def test_secondary_throttle_does_not_wait_for_unexhausted_primary_quota(self):
+        for status in (403, 429):
+            for remaining in ("100", None):
+                headers = {"retry-after": "60", "x-ratelimit-reset": "2800"}
+                if remaining is not None:
+                    headers["x-ratelimit-remaining"] = remaining
+                with self.subTest(status=status, remaining=remaining), \
+                     mock.patch.object(sm.time, "time", return_value=1000), registry_clock() as clock:
+                    error = sm.HTTPStatusError(status, headers)
+                    with mock.patch.object(sm, "_http_once", side_effect=[error, b'{}']):
+                        self.assertEqual(error.retry_after, 60)
+                        self.assertEqual(sm.http_json("https://api.github.com/resource"), {})
+                        self.assertEqual(clock[0], 60)
+
+    def test_truncated_content_length_json_recovers_before_parsing(self):
+        # The prefix is valid JSON: checking only parsing would accept it.
+        responses = [self.response(b'{}', declared=5), self.response(b'{}', declared=2)]
+        with registry_clock() as clock, mock.patch.object(sm.urllib.request, "urlopen", side_effect=responses) as request:
+            self.assertEqual(sm.http_json("https://example.invalid"), {})
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(clock[0], 5)
+
+    def test_truncated_archive_recovers_before_checksum_validation(self):
+        archive = b"verified archive bytes"
+        metadata = json.dumps({"version": {"checksum": hashlib.sha256(archive).hexdigest()}}).encode()
+        responses = [self.response(metadata, declared=len(metadata)),
+                     self.response(archive[:4], declared=len(archive)),
+                     self.response(archive, declared=len(archive))]
+        with registry_clock() as clock, mock.patch.object(sm.urllib.request, "urlopen", side_effect=responses) as request:
+            self.assertEqual(sm.download_crate_archive("example", "1.0.0"), archive)
+            self.assertEqual(request.call_count, 3)
+            self.assertEqual(clock[0], 5)
+
+    def test_content_length_detection_preserves_size_and_bodyless_cases(self):
+        for body, declared in ((b"12345678", 8), (b"12", 8)):
+            with self.subTest(body=body), registry_clock(), mock.patch.object(sm.urllib.request, "urlopen",
+                    return_value=self.response(body, declared=declared)) as request:
+                with self.assertRaisesRegex(sm.MaintenanceError, "size limit"):
+                    sm.http_bytes("https://example.invalid", max_bytes=3)
+                request.assert_called_once()
+        for response in (self.response(b"", declared=99, method="HEAD"),
+                         self.response(b"", status=204),
+                         self.response(b"12", declared=2),
+                         self.response(b"12"),
+                         self.response(b"2\r\n12\r\n0\r\n\r\n", chunked=True)):
+            with registry_clock(), mock.patch.object(sm.urllib.request, "urlopen", return_value=response) as request:
+                self.assertIn(sm.http_bytes("https://example.invalid", max_bytes=3), (b"", b"12"))
+                request.assert_called_once()
+
     def test_incomplete_http_body_recovers_without_echoing_partial_data(self):
         response = mock.MagicMock()
         response.__enter__.return_value = response
