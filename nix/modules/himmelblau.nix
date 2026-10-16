@@ -272,10 +272,13 @@ in
 
     systemd.user.services.himmelblau-broker = {
       description = "Himmelblau Authentication Broker";
+      after = [ "graphical-session.target" ];
+      partOf = [ "graphical-session.target" ];
       serviceConfig = {
         Type = "dbus";
         BusName = "com.microsoft.identity.broker1";
         ExecStart = "${cfg.brokerPackage}/bin/himmelblau_broker";
+        PassEnvironment = [ "DISPLAY" "WAYLAND_DISPLAY" "XAUTHORITY" ];
         Slice = "background.slice";
         TimeoutStopSec = 5;
         Restart = "on-failure";
