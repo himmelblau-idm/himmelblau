@@ -52,6 +52,8 @@ class GeneratorTests(unittest.TestCase):
                 unit = read_unit(generate(Path(tmp), version) / "himmelblaud.service")
                 service = unit["Service"]
                 self.assertEqual(service.get("FileDescriptorStoreMax"), "1")
+                self.assertEqual(service.get("LimitMEMLOCK"), "16M")
+                self.assertEqual(service.get("LimitCORE"), "0")
                 expected_preserve = "yes" if version >= 257 else "restart" if version >= 254 else None
                 self.assertEqual(service.get("FileDescriptorStorePreserve"), expected_preserve)
 

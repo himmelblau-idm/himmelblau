@@ -126,6 +126,8 @@ package_himmelblau() {
   install -Dm644 target/config/himmelblau.conf.example \
     "$pkgdir/etc/himmelblau/himmelblau.conf"
 
+  install -Dm644 platform/udev/71-himmelblau-fido.rules \
+    "$pkgdir/usr/lib/udev/rules.d/71-himmelblau-fido.rules"
   install -Dm644 platform/opensuse/himmelblaud.service \
     "$pkgdir/usr/lib/systemd/system/himmelblaud.service"
   install -Dm644 platform/systemd/himmelblaud.socket \

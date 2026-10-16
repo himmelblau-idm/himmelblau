@@ -201,6 +201,9 @@ StartLimitBurst=8
 [Service]
 {os.linesep.join(service_user_block)}
 UMask=0027
+# Fail closed when sensitive mappings cannot be locked; disable core dumps.
+LimitMEMLOCK=16M
+LimitCORE=0
 CacheDirectory=himmelblaud
 StateDirectory=himmelblaud
 ConfigurationDirectory=himmelblau

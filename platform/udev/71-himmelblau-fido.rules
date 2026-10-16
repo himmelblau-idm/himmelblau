@@ -1,0 +1,5 @@
+# Import the standard external FIDO HID usage-page classifier if distribution
+# rules have not already classified this device. Never grant access to arbitrary
+# hidraw devices (keyboards, mice, etc.).
+ACTION!="remove", SUBSYSTEM=="hidraw", ENV{ID_FIDO_TOKEN}!="1", IMPORT{program}="fido_id"
+ACTION!="remove", SUBSYSTEM=="hidraw", ENV{ID_FIDO_TOKEN}=="1", GROUP="tss", MODE="0660"

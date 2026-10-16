@@ -59,10 +59,60 @@ impl Drop for EnrollmentPresentation {
     }
 }
 
+/// A PIN is serialized only for an authorized PAM handoff. Never format its contents.
+#[derive(Serialize, Deserialize)]
+pub struct SecretPin(String);
+impl SecretPin {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl std::fmt::Debug for SecretPin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretPin([REDACTED])")
+    }
+}
+impl Drop for SecretPin {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum FingerprintAction {
+    Enroll,
+    Add,
+    Replace,
+    Remove,
+    Recover,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FingerprintStatus {
+    pub enrolled: bool,
+    pub failures: u8,
+    pub pending: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PamAuthResponse {
     Unknown,
     Success,
+    SuccessWithPin {
+        pin: SecretPin,
+    },
+    Fingerprint {
+        enrollment: bool,
+    },
+    FingerprintWait {
+        msg: String,
+    },
+    FingerprintInput {
+        msg: String,
+        echo_on: bool,
+    },
     Denied(String),
     Password {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -176,6 +226,10 @@ impl PamAuthResponse {
             },
             PamAuthResponse::Unknown
             | PamAuthResponse::Success
+            | PamAuthResponse::SuccessWithPin { .. }
+            | PamAuthResponse::Fingerprint { .. }
+            | PamAuthResponse::FingerprintWait { .. }
+            | PamAuthResponse::FingerprintInput { .. }
             | PamAuthResponse::MFAPollWait
             | PamAuthResponse::Pin
             | PamAuthResponse::Fido { .. } => self,
@@ -184,8 +238,10 @@ impl PamAuthResponse {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub enum PamAuthRequest {
+    Fingerprint,
+    FingerprintCancel,
     Password {
         cred: String,
     },
@@ -217,6 +273,26 @@ pub enum PamAuthRequest {
     WebAuthnUnavailable,
 }
 
+impl std::fmt::Debug for PamAuthRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Fingerprint => "Fingerprint",
+            Self::FingerprintCancel => "FingerprintCancel",
+            Self::Password { .. } => "Password",
+            Self::Input { .. } => "Input",
+            Self::HelloTOTP { .. } => "HelloTOTP",
+            Self::MFAPoll { .. } => "MFAPoll",
+            Self::SetupPin { .. } => "SetupPin",
+            Self::Pin { .. } => "Pin",
+            Self::Fido { .. } => "Fido",
+            Self::FidoUnavailable => "FidoUnavailable",
+            Self::WebAuthn { .. } => "WebAuthn",
+            Self::WebAuthnUnavailable => "WebAuthnUnavailable",
+        };
+        f.write_str(name)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebAuthnOperation {
     Get,
@@ -232,6 +308,12 @@ pub enum ClientRequest {
     NssGroupByGid(u32),
     NssGroupByName(String),
     NssInitgroups(String),
+    FingerprintStatus(String),
+    FingerprintManage {
+        account_id: String,
+        action: FingerprintAction,
+    },
+    PamAuthenticateInitPin(String, String),
     PamAuthenticateInit(String, String, bool, bool),
     PamAuthenticateStep(PamAuthRequest),
     PamAccountAllowed(String),
@@ -256,12 +338,15 @@ impl ClientRequest {
             ClientRequest::NssGroupByGid(id) => format!("NssGroupByGid({})", id),
             ClientRequest::NssGroupByName(id) => format!("NssGroupByName({})", id),
             ClientRequest::NssInitgroups(id) => format!("NssInitgroups({})", id),
+            ClientRequest::PamAuthenticateInitPin(_, _) => "PamAuthenticateInitPin".to_string(),
             ClientRequest::PamAuthenticateInit(id, service, no_hello_pin, force_reauth) => {
                 format!(
                     "PamAuthenticateInit({}, {}, no_hello_pin: {}, force_reauth: {})",
                     id, service, no_hello_pin, force_reauth
                 )
             }
+            ClientRequest::FingerprintStatus(_) => "FingerprintStatus".to_string(),
+            ClientRequest::FingerprintManage { .. } => "FingerprintManage".to_string(),
             ClientRequest::PamAuthenticateStep(_) => "PamAuthenticateStep".to_string(),
             ClientRequest::PamAccountAllowed(id) => {
                 format!("PamAccountAllowed({})", id)
@@ -290,6 +375,7 @@ pub enum ClientResponse {
     NssGroup(Option<NssGroup>),
     NssInitgroups(Option<Vec<u32>>),
 
+    FingerprintStatus(FingerprintStatus),
     PamStatus(Option<bool>),
     PamAuthenticateStepResponse(PamAuthResponse),
 

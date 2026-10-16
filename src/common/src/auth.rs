@@ -74,6 +74,7 @@ pub trait MessagePrinter: Send + Sync {
     fn print_sensitive(&self, msg: &str) {
         self.print_text(msg);
     }
+    fn authentication_secret(&self, _secret: &str) {}
     fn print_error(&self, msg: &str);
     fn prompt_echo_on(&self, prompt: &str) -> Option<String>;
     fn prompt_echo_off(&self, prompt: &str) -> Option<String>;
@@ -290,6 +291,7 @@ fn fido_auth_inner(
         extensions: AuthenticationExtensionsClientInputs::default(),
         pin: None,
         use_ctap1_fallback: false,
+        internal_uv_only: false,
     };
 
     // Perform authentication
@@ -830,6 +832,9 @@ fn handle_pam_auth_response_success() -> PamWhatNext {
 
 fn handle_pam_auth_response_denied(state: &AuthenticateState, msg: &str) -> PamWhatNext {
     state.msg_printer.print_text(msg);
+    if state.management {
+        return PamWhatNext::Finish(PamResultCode::PAM_AUTH_ERR);
+    }
     thread::sleep(Duration::from_secs(2));
     let req = ClientRequest::PamAuthenticateInit(
         state.account_id.to_string(),
@@ -898,6 +903,7 @@ fn handle_pam_auth_response_password(
     };
 
     // Now setup the request for the next loop.
+    state.msg_printer.authentication_secret(&cred);
     let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
     PamWhatNext::Next(req)
 }
@@ -1088,6 +1094,7 @@ fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> P
         .print_text(&tr("Enrolling the Hello PIN. Please wait..."));
 
     // Now setup the request for the next loop.
+    state.msg_printer.authentication_secret(&pin);
     let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin { pin });
     PamWhatNext::Next(req)
 }
@@ -1128,6 +1135,7 @@ fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
     };
 
     // Now setup the request for the next loop.
+    state.msg_printer.authentication_secret(&cred);
     let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
     PamWhatNext::Next(req)
 }
@@ -1394,6 +1402,37 @@ fn authenticate_request_response(
     match response {
         PamAuthResponse::Unknown => handle_pam_auth_response_unknown(state),
         PamAuthResponse::Success => handle_pam_auth_response_success(),
+        PamAuthResponse::SuccessWithPin { pin } => {
+            state.msg_printer.authentication_secret(pin.as_str());
+            handle_pam_auth_response_success()
+        }
+        PamAuthResponse::FingerprintInput { msg, echo_on } => {
+            state.msg_printer.print_text(&msg);
+            let input = if echo_on {
+                state.msg_printer.prompt_echo_on("Choice: ")
+            } else {
+                state.msg_printer.prompt_echo_off("Security key PIN: ")
+            };
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(match input {
+                Some(cred) => PamAuthRequest::Input { cred },
+                None => PamAuthRequest::FingerprintCancel,
+            }))
+        }
+        PamAuthResponse::FingerprintWait { msg } => {
+            state.msg_printer.print_text(&msg);
+            thread::sleep(Duration::from_millis(250));
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(
+                PamAuthRequest::MFAPoll { poll_attempt: 0 },
+            ))
+        }
+        PamAuthResponse::Fingerprint { enrollment } => {
+            state.msg_printer.print_text(&tr(if enrollment {
+                "Enroll your fingerprint on the biometric security key. Touch its fingerprint sensor."
+            } else { "Touch the fingerprint sensor on your security key. PIN fallback is available if verification fails." }));
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(
+                PamAuthRequest::Fingerprint,
+            ))
+        }
         PamAuthResponse::Denied(msg) => handle_pam_auth_response_denied(state, &msg),
         PamAuthResponse::InitDenied { msg } => handle_pam_auth_init_denied(state, &msg),
         PamAuthResponse::Password {
@@ -1458,6 +1497,7 @@ fn authenticate_request_response(
 }
 
 struct AuthenticateState {
+    management: bool,
     daemon_client: DaemonClientBlocking,
     authtok: Option<String>,
     cfg: HimmelblauConfig,
@@ -1561,6 +1601,30 @@ pub fn wait_for_daemon_client(
     )
 }
 
+/// Run interactive authenticator management using an already PIN-authorized connection.
+pub fn fingerprint_manage_with_client(
+    daemon_client: DaemonClientBlocking,
+    cfg: HimmelblauConfig,
+    account_id: &str,
+    action: crate::unix_proto::FingerprintAction,
+    msg_printer: Arc<dyn MessagePrinter>,
+) -> PamResultCode {
+    authenticate_with_client_inner(
+        daemon_client,
+        Some(ClientRequest::FingerprintManage {
+            account_id: account_id.to_owned(),
+            action,
+        }),
+        None,
+        cfg,
+        account_id,
+        "aad-tool",
+        Options::default(),
+        msg_printer,
+    )
+    .1
+}
+
 pub fn authenticate_with_client(
     daemon_client: DaemonClientBlocking,
     authtok: Option<String>,
@@ -1570,8 +1634,56 @@ pub fn authenticate_with_client(
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
 ) -> PamResultCode {
+    authenticate_with_client_inner(
+        daemon_client,
+        None,
+        authtok,
+        cfg,
+        account_id,
+        service,
+        opts,
+        msg_printer,
+    )
+    .1
+}
+
+/// Authenticate with a freshly typed Hello PIN and retain the same authorized
+/// connection for a following enrollment-management request.
+pub fn authenticate_for_fingerprint_management(
+    daemon_client: DaemonClientBlocking,
+    cfg: HimmelblauConfig,
+    account_id: &str,
+    msg_printer: Arc<dyn MessagePrinter>,
+) -> (DaemonClientBlocking, PamResultCode) {
+    authenticate_with_client_inner(
+        daemon_client,
+        Some(ClientRequest::PamAuthenticateInitPin(
+            account_id.to_owned(),
+            "aad-tool".to_owned(),
+        )),
+        None,
+        cfg,
+        account_id,
+        "aad-tool",
+        Options::default(),
+        msg_printer,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn authenticate_with_client_inner(
+    daemon_client: DaemonClientBlocking,
+    initial_request: Option<ClientRequest>,
+    authtok: Option<String>,
+    cfg: HimmelblauConfig,
+    account_id: &str,
+    service: &str,
+    opts: Options,
+    msg_printer: Arc<dyn MessagePrinter>,
+) -> (DaemonClientBlocking, PamResultCode) {
     i18n::init();
     let mut state = AuthenticateState {
+        management: initial_request.is_some(),
         daemon_client,
         authtok,
         cfg,
@@ -1585,12 +1697,14 @@ pub fn authenticate_with_client(
     };
 
     // This is the initial request to the daemon
-    let mut req = ClientRequest::PamAuthenticateInit(
-        state.account_id.to_owned(),
-        state.service.to_owned(),
-        state.opts.no_hello_pin,
-        state.opts.force_reauth,
-    );
+    let mut req = initial_request.unwrap_or_else(|| {
+        ClientRequest::PamAuthenticateInit(
+            state.account_id.to_owned(),
+            state.service.to_owned(),
+            state.opts.no_hello_pin,
+            state.opts.force_reauth,
+        )
+    });
 
     loop {
         let res = authenticate_request_response(&mut state, &req);
@@ -1598,7 +1712,7 @@ pub fn authenticate_with_client(
             PamWhatNext::Next(next_request) => req = next_request,
             PamWhatNext::Finish(pam_result_code) => {
                 state.clear_enrollment_qr();
-                return pam_result_code;
+                return (state.daemon_client, pam_result_code);
             }
         }
     }
@@ -2013,6 +2127,7 @@ mod tests {
         .expect("Failed to connect test socket");
         (
             AuthenticateState {
+                management: false,
                 daemon_client,
                 authtok: None,
                 cfg: test_config(""),
@@ -2026,6 +2141,106 @@ mod tests {
             },
             listener,
         )
+    }
+
+    fn read_fake_request(stream: &mut std::os::unix::net::UnixStream) -> ClientRequest {
+        use std::io::Read;
+        let mut data = Vec::new();
+        loop {
+            let mut bytes = [0; 1024];
+            let count = stream.read(&mut bytes).unwrap();
+            assert!(count > 0);
+            data.extend_from_slice(&bytes[..count]);
+            if let Ok(request) = serde_json::from_slice(&data) {
+                return request;
+            }
+        }
+    }
+
+    #[test]
+    fn fingerprint_management_polls_repeatedly_and_cancels_input() {
+        use std::io::Write;
+        let printer = Arc::new(RecordingPrinter::default());
+        let (state, listener) = test_password_state(printer.clone());
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            assert!(matches!(
+                read_fake_request(&mut socket),
+                ClientRequest::FingerprintManage { .. }
+            ));
+            for _ in 0..2 {
+                let response = ClientResponse::from(PamAuthResponse::FingerprintWait {
+                    msg: "touch fingerprint".to_owned(),
+                });
+                socket
+                    .write_all(&serde_json::to_vec(&response).unwrap())
+                    .unwrap();
+                assert!(matches!(
+                    read_fake_request(&mut socket),
+                    ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { .. })
+                ));
+            }
+            let response = ClientResponse::from(PamAuthResponse::FingerprintInput {
+                msg: "select device".to_owned(),
+                echo_on: true,
+            });
+            socket
+                .write_all(&serde_json::to_vec(&response).unwrap())
+                .unwrap();
+            assert!(matches!(
+                read_fake_request(&mut socket),
+                ClientRequest::PamAuthenticateStep(PamAuthRequest::FingerprintCancel)
+            ));
+            socket
+                .write_all(
+                    &serde_json::to_vec(&ClientResponse::from(PamAuthResponse::Success)).unwrap(),
+                )
+                .unwrap();
+        });
+        assert_eq!(
+            fingerprint_manage_with_client(
+                state.daemon_client,
+                state.cfg,
+                "user@example.com",
+                crate::unix_proto::FingerprintAction::Enroll,
+                printer
+            ),
+            PamResultCode::PAM_SUCCESS
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn fingerprint_management_denial_does_not_restart_login() {
+        use std::io::Write;
+        let printer = Arc::new(RecordingPrinter::default());
+        let (state, listener) = test_password_state(printer.clone());
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            assert!(matches!(
+                read_fake_request(&mut socket),
+                ClientRequest::FingerprintManage { .. }
+            ));
+            socket
+                .write_all(
+                    &serde_json::to_vec(&ClientResponse::from(PamAuthResponse::Denied(
+                        "cancelled".to_owned(),
+                    )))
+                    .unwrap(),
+                )
+                .unwrap();
+        });
+        assert_eq!(
+            fingerprint_manage_with_client(
+                state.daemon_client,
+                state.cfg,
+                "user@example.com",
+                crate::unix_proto::FingerprintAction::Enroll,
+                printer
+            ),
+            PamResultCode::PAM_AUTH_ERR
+        );
+        server.join().unwrap();
     }
 
     #[test]

@@ -1363,7 +1363,7 @@ rec {
         crateName = "authenticator";
         version = "0.5.0";
         edition = "2018";
-        sha256 = "1g6yks1cgcfrmw5cfj9prxsdyic9n9h6aai7vgr90nb7cmrzbmmv";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/authenticator/0.5.0; };
         authors = [
           "Dana Keeler <dkeeler@mozilla.com>"
           "J.C. Jones <jc@mozilla.com>"
@@ -1373,6 +1373,10 @@ rec {
           "Tim Taubert <ttaubert@mozilla.com>"
         ];
         dependencies = [
+          {
+            name = "zeroize";
+            packageId = "zeroize";
+          }
           {
             name = "base64";
             packageId = "base64 0.21.7";
@@ -7935,6 +7939,10 @@ rec {
         ];
         dependencies = [
           {
+            name = "openssl";
+            packageId = "openssl";
+          }
+          {
             name = "anyhow";
             packageId = "anyhow";
           }
@@ -8166,6 +8174,10 @@ rec {
           "David Mulder <dmulder@suse.com>"
         ];
         dependencies = [
+          {
+            name = "zeroize";
+            packageId = "zeroize";
+          }
           {
             name = "async-trait";
             packageId = "async-trait";

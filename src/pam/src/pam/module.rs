@@ -74,8 +74,11 @@ extern "C" {
         item: &mut *const PamItemT,
     ) -> PamResultCode;
 
-    fn pam_set_item(pamh: *mut PamHandle, item_type: PamItemType, item: &PamItemT)
-        -> PamResultCode;
+    fn pam_set_item(
+        pamh: *mut PamHandle,
+        item_type: PamItemType,
+        item: *const libc::c_void,
+    ) -> PamResultCode;
 
     fn pam_get_user(
         pamh: *const PamHandle,
@@ -109,6 +112,17 @@ pub trait PamItem {
     /// called with the constant PAM_CONV, it will return a value of type
     /// `PamConv`.
     fn item_type() -> PamItemType;
+}
+
+fn make_auth_token(item: &str) -> PamResult<himmelblau_unix_common::secret_memory::SecretBuffer> {
+    if item.as_bytes().contains(&0) {
+        return Err(PamResultCode::PAM_AUTHTOK_ERR);
+    }
+    let length = item.len().checked_add(1).ok_or(PAM_BUF_ERR)?;
+    let mut buffer = himmelblau_unix_common::secret_memory::SecretBuffer::new(length)
+        .map_err(|_| PAM_BUF_ERR)?;
+    buffer.as_mut_slice()[..item.len()].copy_from_slice(item.as_bytes());
+    Ok(buffer)
 }
 
 impl PamHandle {
@@ -215,15 +229,31 @@ impl PamHandle {
                 // reference by passing a raw mutable pointer instead.
                 self as *const PamHandle as *mut PamHandle,
                 T::item_type(),
-                // unwrapping is okay here, as c_item will not be a NULL
-                // pointer
-                (c_item.as_ptr() as *const PamItemT).as_ref().unwrap(),
+                c_item.as_ptr().cast(),
             )
         };
         if PamResultCode::PAM_SUCCESS == res {
             Ok(())
         } else {
             Err(res)
+        }
+    }
+
+    /// Pass an authentication token through a locked, zero-on-drop C buffer.
+    /// libpam copies PAM_AUTHTOK; this allocation is wiped after the call.
+    pub fn set_auth_token(&self, item: &str) -> PamResult<()> {
+        let token = make_auth_token(item)?;
+        let result = unsafe {
+            pam_set_item(
+                self as *const PamHandle as *mut PamHandle,
+                PamAuthTok::item_type(),
+                token.as_slice().as_ptr().cast(),
+            )
+        };
+        if result == PamResultCode::PAM_SUCCESS {
+            Ok(())
+        } else {
+            Err(result)
         }
     }
 
@@ -320,5 +350,20 @@ pub trait PamHooks {
     /// authenticated but before a session has been established.
     fn sm_setcred(pamh: &PamHandle, args: Vec<&CStr>, flags: PamFlag) -> PamResultCode {
         PamResultCode::PAM_IGNORE
+    }
+}
+
+#[cfg(test)]
+mod secret_token_tests {
+    use super::*;
+    #[test]
+    fn token_handoff_is_nul_terminated_and_rejects_embedded_nul() -> PamResult<()> {
+        let token = make_auth_token("123456")?;
+        assert_eq!(token.as_slice(), b"123456\0");
+        assert!(matches!(
+            make_auth_token("123\0456"),
+            Err(PamResultCode::PAM_AUTHTOK_ERR)
+        ));
+        Ok(())
     }
 }
