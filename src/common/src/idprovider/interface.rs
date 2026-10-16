@@ -82,6 +82,10 @@ pub struct GroupToken {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserToken {
+    /// True only for a provisional account created before authenticated metadata.
+    /// Old cache entries are treated as authoritative, never guessed from groups.
+    #[serde(default)]
+    pub is_placeholder: bool,
     pub name: String,
     pub spn: String,
     pub uuid: Uuid,
@@ -95,6 +99,19 @@ pub struct UserToken {
     pub tenant_id: Option<Uuid>,
     // Defaults to false.
     pub valid: bool,
+}
+
+impl UserToken {
+    /// Is this a record the provider fabricated for a name it could not reject,
+    /// rather than an authenticated identity? Only the explicit marker counts.
+    /// The shape of a token proves nothing: an authenticated identity without a
+    /// display name and with a synthetic self-group looks just like an old
+    /// placeholder. Rows cached before the marker existed lack it, are taken at
+    /// face value, and are marked stale by the cache migration, so that the
+    /// provider replaces them with a record which carries the marker.
+    pub fn is_provisional(&self) -> bool {
+        self.is_placeholder
+    }
 }
 
 pub enum AuthCredHandler {
@@ -288,6 +305,20 @@ pub enum AuthCacheAction {
     PasswordHashUpdate { cred: String },
 }
 
+/// What a provider can establish, without any user credentials, about whether
+/// a name is a real UPN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpnVerdict {
+    /// The provider confirmed that this UPN exists.
+    Exists,
+    /// The provider definitively rejected this name as a UPN.
+    Absent,
+    /// Neither could be established, for example because the provider cannot
+    /// check, or the check failed for a reason which says nothing about the
+    /// name.
+    Unknown,
+}
+
 #[async_trait]
 pub trait IdProvider {
     async fn configure_hsm_keys<D: KeyStoreTxn + Send>(
@@ -300,6 +331,18 @@ pub trait IdProvider {
     }
 
     async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, _now: SystemTime) -> bool;
+
+    /// Authoritatively check whether `account_id` is a real UPN. Unlike
+    /// `unix_user_get`, which may answer with a placeholder for any name it
+    /// cannot reject, a verdict other than `Unknown` is evidence.
+    async fn unix_user_verify_upn(
+        &self,
+        _account_id: &str,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
+    ) -> UpnVerdict {
+        UpnVerdict::Unknown
+    }
 
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,

@@ -17,7 +17,7 @@
 */
 use super::interface::{
     AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
-    IdProvider, IdpError, UserToken,
+    IdProvider, IdpError, UpnVerdict, UserToken,
 };
 use crate::auth_handle_mfa_resp;
 use crate::config::split_username;
@@ -41,6 +41,7 @@ use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::oidc_router::OidcRouter;
 use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
 use crate::tpm::confidential_client_creds;
+use crate::unix_config::NameAttr;
 use crate::unix_passwd::parse_etc_passwd;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
@@ -165,6 +166,65 @@ fn unseal_refresh_token_with_loaded_hello_key(
                 IdpError::Tpm
             }),
         Err(_) => Ok(None),
+    }
+}
+
+const UNKNOWN_NAME_STATUSES: [u16; 2] = [400, 404];
+
+fn is_unknown_name_status(msg: &str) -> bool {
+    msg.split_whitespace()
+        .next()
+        .and_then(|code| code.parse::<u16>().ok())
+        .is_some_and(|status| UNKNOWN_NAME_STATUSES.contains(&status))
+}
+
+fn normalize_on_premises_sam_account_name(value: Option<&str>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value.is_ascii() && !value.contains('@'))
+}
+
+fn select_local_name(
+    spn: &str,
+    local_name_attr: NameAttr,
+    on_premises_sam_account_name: Option<&str>,
+) -> String {
+    match local_name_attr {
+        NameAttr::Spn => spn.to_string(),
+        NameAttr::OnPremisesSamAccountName => {
+            normalize_on_premises_sam_account_name(on_premises_sam_account_name)
+                .unwrap_or_else(|| spn.to_string())
+        }
+    }
+}
+
+/// Keep SAM names domain-qualified outside the primary domain so the name
+/// advertised by NSS round-trips through the client's CN mapping.
+fn qualify_local_name(spn: &str, name: String, primary_domain: Option<&str>) -> String {
+    if !name.contains('@') {
+        if let Some((_, domain)) = split_username(spn) {
+            if !primary_domain.is_some_and(|primary| primary.eq_ignore_ascii_case(domain)) {
+                return format!("{name}@{domain}");
+            }
+        }
+    }
+    name
+}
+
+/// A failed attribute read must not rename an established account. A successful
+/// read with no SAM value, however, is an authoritative fallback to the SPN.
+fn select_refreshed_local_name(
+    spn: &str,
+    local_name_attr: NameAttr,
+    sam: Result<Option<&str>, ()>,
+    old_local_name: Option<&str>,
+) -> String {
+    match sam {
+        Err(()) if local_name_attr == NameAttr::OnPremisesSamAccountName => old_local_name
+            .filter(|name| name.is_ascii())
+            .unwrap_or(spn)
+            .to_string(),
+        value => select_local_name(spn, local_name_attr, value.ok().flatten()),
     }
 }
 
@@ -661,6 +721,32 @@ impl IdProvider for HimmelblauMultiProvider {
             Providers::Himmelblau(provider) => {
                 provider
                     .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
+                    .await
+            }
+        }
+    }
+
+    async fn unix_user_verify_upn(
+        &self,
+        account_id: &str,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> UpnVerdict {
+        let Ok(domain) = idp_get_domain_for_account!(self, account_id) else {
+            return UpnVerdict::Unknown;
+        };
+        let Ok(provider) = self.find_provider(domain).await else {
+            return UpnVerdict::Unknown;
+        };
+        match provider.as_ref() {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_verify_upn(account_id, tpm, machine_key)
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_verify_upn(account_id, tpm, machine_key)
                     .await
             }
         }
@@ -1432,6 +1518,36 @@ impl IdProvider for HimmelblauProvider {
     }
 
     #[instrument(skip_all)]
+    async fn unix_user_verify_upn(
+        &self,
+        account_id: &str,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> UpnVerdict {
+        if self.delayed_init().await.is_err() {
+            return UpnVerdict::Unknown;
+        }
+        // The device-signed SID lookup needs no user credentials and only
+        // succeeds for a user which exists. `check_user_exists` cannot be used
+        // for this: a federated realm reports every name as existing.
+        let result = self
+            .client
+            .lock()
+            .await
+            .resolve_nametosid(account_id, tpm, machine_key)
+            .await;
+        let verdict = match &result {
+            Ok(_) => UpnVerdict::Exists,
+            Err(MsalError::RequestFailed(msg)) if is_unknown_name_status(msg) => UpnVerdict::Absent,
+            Err(_) => UpnVerdict::Unknown,
+        };
+        if let Err(e) = &result {
+            debug!(?e, ?verdict, "The SID lookup did not confirm the name");
+        }
+        verdict
+    }
+
+    #[instrument(skip_all)]
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
@@ -1615,7 +1731,7 @@ impl IdProvider for HimmelblauProvider {
                                 None => match id_attr_map {
                                     IdAttr::Uuid => {
                                         // Attempt to map the UPN to an Object Id.
-                                        let sidtoname = self.client
+                                        let sid_lookup = self.client
                                             .lock()
                                             .await
                                             .resolve_nametosid(
@@ -1623,11 +1739,23 @@ impl IdProvider for HimmelblauProvider {
                                                 tpm,
                                                 machine_key
                                             )
-                                            .await
-                                            .map_err(|e| {
+                                            .await;
+                                        let sidtoname = match sid_lookup {
+                                            Ok(sidtoname) => sidtoname,
+                                            Err(MsalError::RequestFailed(msg))
+                                                if is_unknown_name_status(&msg) =>
+                                            {
+                                                // The existence probe above reports every
+                                                // name of a federated realm as existing.
+                                                // The directory does not know this one.
+                                                debug!(?msg, "The SID lookup found no such name");
+                                                return Ok(UserTokenState::NotFound);
+                                            }
+                                            Err(e) => {
                                                 error!("Failed mapping UPN to Object Id: {:?}", e);
-                                                IdpError::BadRequest
-                                            })?;
+                                                return Err(IdpError::BadRequest);
+                                            }
+                                        };
                                         let sid = AadSid::from_sid_str(&sidtoname.sid).map_err(|e| {
                                             error!("Failed parsing SID: {:?}", e);
                                             IdpError::BadRequest
@@ -1679,6 +1807,7 @@ impl IdProvider for HimmelblauProvider {
                                     IdpError::BadRequest
                                 })?),
                                 valid: true,
+                                is_placeholder: true,
                             }));
                         } else {
                             // This is the one time we really should return
@@ -5291,9 +5420,55 @@ impl HimmelblauProvider {
                 posix_attrs = HashMap::new();
             }
         };
+        let (local_name_attr, primary_domain) = {
+            let cfg = self.config.lock().await;
+            (
+                cfg.get_local_name_attr(Some(&self.domain)),
+                cfg.get_configured_domains().first().cloned(),
+            )
+        };
+        let sam = match &value {
+            TokenOrObj::UserObj((_, value)) => Ok(normalize_on_premises_sam_account_name(
+                value.on_premises_sam_account_name.as_deref(),
+            )),
+            TokenOrObj::UserToken(_) if local_name_attr == NameAttr::OnPremisesSamAccountName => {
+                match &access_token {
+                    Some(access_token) => {
+                        match self.graph.request_user(access_token, &spn).await {
+                            Ok(user) => Ok(normalize_on_premises_sam_account_name(
+                                user.on_premises_sam_account_name.as_deref(),
+                            )),
+                            Err(e) => {
+                                debug!(?e, "Failed fetching onPremisesSamAccountName; preserving cached name");
+                                Err(())
+                            }
+                        }
+                    }
+                    None => Err(()),
+                }
+            }
+            TokenOrObj::UserToken(_) => Ok(None),
+        };
+        let previous_name = old_token
+            .filter(|old| {
+                old.uuid == uuid && old.spn.eq_ignore_ascii_case(&spn) && !old.is_placeholder
+            })
+            .map(|old| old.name.as_str());
+        let local_name = qualify_local_name(
+            &spn,
+            select_refreshed_local_name(
+                &spn,
+                local_name_attr,
+                sam.as_ref().map(|value| value.as_deref()).map_err(|_| ()),
+                previous_name,
+            ),
+            primary_domain.as_deref(),
+        );
         let valid = true;
         let user_map = UserMap::new(&self.config.lock().await.get_user_map_file());
-        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
+        // User map UPNs are stored lowercased, while the SPN keeps the case of
+        // the directory.
+        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn.to_lowercase()) {
             Some(user) => {
                 let passwd = tokio::fs::read("/etc/passwd").await.map_err(|e| {
                     error!("Failed reading /etc/passwd for mapped user {}: {}", user, e);
@@ -5425,7 +5600,6 @@ impl HimmelblauProvider {
                 TokenOrObj::UserObj((_, value)) => value.displayname.clone(),
                 TokenOrObj::UserToken(value) => value.id_token.name.clone(),
             },
-            //value.id_token.name.clone(),
         };
 
         let displayname = flip_displayname_comma(&displayname);
@@ -5444,7 +5618,7 @@ impl HimmelblauProvider {
         }
 
         Ok(UserToken {
-            name: spn.clone(),
+            name: local_name,
             spn: spn.clone(),
             uuid,
             real_gidnumber: Some(gidnumber),
@@ -5463,6 +5637,7 @@ impl HimmelblauProvider {
                 })?,
             ),
             valid,
+            is_placeholder: false,
         })
     }
 
@@ -5966,16 +6141,20 @@ impl HimmelblauProvider {
 
 #[cfg(test)]
 mod tests {
+    use super::is_unknown_name_status;
     use super::{
         cache_refresh_token_with_loaded_hello_key, cached_prt_or_refresh_token,
         is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
         is_unavailable_mfa_method_error, local_user_ids_from_passwd, mfa_flow_uses_push_hint,
-        password_change_required, unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key,
-        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
+        password_change_required, qualify_local_name, select_local_name,
+        select_refreshed_local_name, unexpired_prt_entry,
+        unseal_refresh_token_with_loaded_hello_key, CONSENT_REQUIRED,
+        PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::db::{CacheError, KeyStoreTxn};
     use crate::idprovider::common::RefreshCacheEntry;
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
+    use crate::unix_config::NameAttr;
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
     use himmelblau::{MFAAuthContinue, MfaMethodInfo};
     use kanidm_hsm_crypto::{
@@ -6123,6 +6302,136 @@ mod tests {
             &MsalError::RequestFailed("network down".to_string()),
             false
         ));
+    }
+
+    #[test]
+    fn local_name_defaults_to_spn() {
+        assert_eq!(
+            select_local_name("user@example.com", NameAttr::Spn, Some("onprem-user")),
+            "user@example.com"
+        );
+    }
+
+    #[test]
+    fn local_name_uses_on_premises_sam_account_name_when_configured() {
+        assert_eq!(
+            select_local_name(
+                "user@example.com",
+                NameAttr::OnPremisesSamAccountName,
+                Some(" onprem-user ")
+            ),
+            "onprem-user"
+        );
+    }
+
+    #[test]
+    fn only_a_rejected_name_is_reported_as_unknown() {
+        assert!(is_unknown_name_status("404 Not Found"));
+        assert!(is_unknown_name_status("400 Bad Request"));
+        // Every other status, and transport failures, say nothing about the
+        // name. Some describe the request or the endpoint rather than the user.
+        for msg in [
+            "405 Method Not Allowed",
+            "410 Gone",
+            "415 Unsupported Media Type",
+            "401 Unauthorized",
+            "403 Forbidden",
+            "408 Request Timeout",
+            "429 Too Many Requests",
+            "500 Internal Server Error",
+            "503 Service Unavailable",
+            "https://login.microsoftonline.com/x: connection refused",
+            "",
+        ] {
+            assert!(!is_unknown_name_status(msg), "{msg}");
+        }
+    }
+
+    #[test]
+    fn local_name_falls_back_to_spn_for_missing_on_premises_sam_account_name() {
+        for value in [
+            None,
+            Some(""),
+            Some("   "),
+            Some("ops@legacy"),
+            Some("MÜLLER"),
+        ] {
+            assert_eq!(
+                select_local_name(
+                    "user@example.com",
+                    NameAttr::OnPremisesSamAccountName,
+                    value
+                ),
+                "user@example.com"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_sam_refresh_preserves_name_but_authoritative_absence_does_not() {
+        let attr = NameAttr::OnPremisesSamAccountName;
+        assert_eq!(
+            select_refreshed_local_name("user@example.com", attr, Err(()), Some("onprem-user")),
+            "onprem-user"
+        );
+        assert_eq!(
+            select_refreshed_local_name("user@example.com", attr, Err(()), None),
+            "user@example.com"
+        );
+        assert_eq!(
+            select_refreshed_local_name("user@example.com", attr, Ok(None), Some("onprem-user")),
+            "user@example.com"
+        );
+        assert_eq!(
+            select_refreshed_local_name(
+                "user@example.com",
+                attr,
+                Ok(Some("renamed")),
+                Some("onprem-user")
+            ),
+            "renamed"
+        );
+        assert_eq!(
+            select_refreshed_local_name(
+                "user@example.com",
+                NameAttr::Spn,
+                Err(()),
+                Some("onprem-user")
+            ),
+            "user@example.com"
+        );
+    }
+
+    #[test]
+    fn secondary_domain_sam_names_stay_qualified() {
+        assert_eq!(
+            qualify_local_name("first.last@primary.com", "sam".into(), Some("PRIMARY.COM")),
+            "sam"
+        );
+        assert_eq!(
+            qualify_local_name(
+                "first.last@secondary.com",
+                "sam".into(),
+                Some("primary.com")
+            ),
+            "sam@secondary.com"
+        );
+        assert_eq!(
+            qualify_local_name(
+                "first.last@secondary.com",
+                "sam@secondary.com".into(),
+                Some("primary.com")
+            ),
+            "sam@secondary.com"
+        );
+        assert_eq!(
+            qualify_local_name(
+                "first.last@secondary.com",
+                "first.last@secondary.com".into(),
+                Some("primary.com")
+            ),
+            "first.last@secondary.com"
+        );
     }
 
     #[test]

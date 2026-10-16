@@ -43,11 +43,11 @@ use himmelblau_unix_common::constants::{
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::{Id, IdProvider};
-use himmelblau_unix_common::resolver::{AuthSession, Resolver};
+use himmelblau_unix_common::resolver::{AuthSession, NssAccountLookup, Resolver, SessionIdentity};
 use himmelblau_unix_common::unix_config::UidAttr;
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{
-    ClientRequest, ClientResponse, PamAuthResponse, TaskRequest, TaskResponse,
+    ClientRequest, ClientResponse, NssUser, PamAuthResponse, TaskRequest, TaskResponse,
 };
 use himmelblau_unix_common::user_map::UserMap;
 use himmelblau_unix_common::{tpm_init, tpm_loadable_machine_key, tpm_machine_key};
@@ -310,27 +310,52 @@ fn peer_may_change_hello_pin(peer_uid: u32, target_uid: Option<u32>) -> bool {
     peer_uid == 0 || target_uid == Some(peer_uid)
 }
 
-async fn is_account_sudoer(
-    cachelayer: &Resolver<HimmelblauMultiProvider>,
-    cfg: &HimmelblauConfig,
-    account_id: &str,
-) -> bool {
-    for sudo_group in cfg.get_sudo_groups() {
-        let sudo_group_uuid = match Uuid::parse_str(&sudo_group) {
-            Ok(uuid) => uuid,
+/// The configured sudo groups, which are identified by their UUIDs.
+fn sudo_group_ids(cfg: &HimmelblauConfig) -> HashSet<Uuid> {
+    cfg.get_sudo_groups()
+        .iter()
+        .filter_map(|sudo_group| match Uuid::parse_str(sudo_group) {
+            Ok(uuid) => Some(uuid),
             Err(e) => {
                 debug!("Failed to parse a sudo group: {}", e);
-                continue;
+                None
             }
-        };
+        })
+        .collect()
+}
 
-        let members = cachelayer.get_groupmembers(sudo_group_uuid).await;
-        if members.iter().any(|member| member == account_id) {
-            return true;
-        }
-    }
+/// The account which local-group and subordinate-ID tasks act on. A user-map
+/// entry names the existing local account of a UPN, and that account is the
+/// target, not the NSS name Himmelblau shows for the directory user (which may
+/// be an onPremisesSamAccountName). Without an entry the NSS name is used, and
+/// the task daemon applies CN/custom name mapping to it as before.
+fn local_task_account(user_map: &UserMap, account: &NssUser) -> String {
+    let canonical = account
+        .canonical_name
+        .as_deref()
+        .unwrap_or(&account.name)
+        .to_lowercase();
+    user_map
+        .get_local_from_upn(&canonical)
+        .unwrap_or_else(|| account.name.clone())
+}
 
-    false
+/// Local-account tasks must never act on a local account which merely shares
+/// the name or uid of a cached user. The task daemon applies CN/custom name
+/// mapping before it modifies local groups or subordinate ids, so the final
+/// mapped name of the task target is checked as well as the NSS name and the
+/// uid.
+async fn is_local_account_excluded(
+    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cfg: &HimmelblauConfig,
+    account: &NssUser,
+    target: &str,
+) -> bool {
+    let local_name = cfg.map_upn_to_name(target);
+    cachelayer
+        .check_nxset(Some(&account.name), Some(account.uid))
+        .await
+        || cachelayer.check_nxset(Some(&local_name), None).await
 }
 
 async fn submit_local_groups_task(
@@ -354,6 +379,20 @@ async fn submit_local_groups_task(
     }
 }
 
+/// The response to a single account lookup from NSS.
+async fn nss_account_response(
+    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    lookup: NssAccountLookup,
+) -> ClientResponse {
+    match lookup {
+        NssAccountLookup::Found(account) => ClientResponse::NssAccount(Some(
+            cachelayer.render_unproved_alias_canonically(account).await,
+        )),
+        NssAccountLookup::Excluded(account) => ClientResponse::NssAccountExcluded(account),
+        NssAccountLookup::Missing => ClientResponse::NssAccount(None),
+    }
+}
+
 async fn reconcile_local_groups_once(
     cachelayer: &Resolver<HimmelblauMultiProvider>,
     task_channel_tx: &Sender<AsyncTaskRequest>,
@@ -365,16 +404,8 @@ async fn reconcile_local_groups_once(
         return;
     }
 
-    let sudo_group_ids: HashSet<Uuid> = sudo_groups
-        .iter()
-        .filter_map(|sudo_group| match Uuid::parse_str(sudo_group) {
-            Ok(uuid) => Some(uuid),
-            Err(e) => {
-                debug!("Failed to parse a sudo group: {}", e);
-                None
-            }
-        })
-        .collect();
+    let sudo_group_ids = sudo_group_ids(cfg);
+    let user_map = UserMap::new(&cfg.get_user_map_file());
 
     let accounts = match cachelayer.get_unexpired_nssaccounts().await {
         Ok(accounts) => accounts,
@@ -384,11 +415,20 @@ async fn reconcile_local_groups_once(
         }
     };
 
-    for account in accounts {
+    for mut account in accounts {
         let is_sudoer = if sudo_group_ids.is_empty() {
+            account = match cachelayer.get_nssaccount_gid(account.uid).await {
+                Ok(Some(account)) => account,
+                _ => continue,
+            };
             false
         } else {
-            let token = match cachelayer.refresh_cached_usertoken(&account.name).await {
+            let token = match cachelayer
+                .refresh_cached_usertoken(
+                    account.canonical_name.as_deref().unwrap_or(&account.name),
+                )
+                .await
+            {
                 Ok(Some(token)) => token,
                 Ok(None) => {
                     trace!(
@@ -406,13 +446,27 @@ async fn reconcile_local_groups_once(
                 }
             };
 
+            // Refresh may have changed the local alias. Re-read by UID so the
+            // group task never uses an old name now owned by another account.
+            account = match cachelayer.get_nssaccount_gid(token.gidnumber).await {
+                Ok(Some(account)) => account,
+                _ => continue,
+            };
             token
                 .groups
                 .iter()
                 .any(|group| sudo_group_ids.contains(&group.uuid))
         };
 
-        if submit_local_groups_task(task_channel_tx, account.name.clone(), is_sudoer)
+        // An alias which NSS cannot resolve right now is no usable task target.
+        let rendered = cachelayer
+            .render_unproved_alias_canonically(account.clone())
+            .await;
+        let target = local_task_account(&user_map, &rendered);
+        if is_local_account_excluded(cachelayer, cfg, &account, &target).await {
+            continue;
+        }
+        if submit_local_groups_task(task_channel_tx, target, is_sudoer)
             .await
             .is_err()
         {
@@ -480,37 +534,44 @@ async fn handle_client(
         let resp = match req {
             ClientRequest::NssAccounts => {
                 trace!("nssaccounts req");
-                cachelayer
-                    .get_nssaccounts()
-                    .await
-                    .map(ClientResponse::NssAccounts)
-                    .unwrap_or_else(|_| {
+                match cachelayer.get_nssaccounts().await {
+                    Ok(accounts) => {
+                        let mut rendered = Vec::with_capacity(accounts.len());
+                        for account in accounts {
+                            rendered
+                                .push(cachelayer.render_unproved_alias_canonically(account).await);
+                        }
+                        ClientResponse::NssAccounts(rendered)
+                    }
+                    Err(_) => {
                         error!("unable to enum accounts");
                         ClientResponse::NssAccounts(Vec::new())
-                    })
+                    }
+                }
             }
             ClientRequest::NssAccountByUid(gid) => {
                 trace!("nssaccountbyuid req");
-                cachelayer
-                    .get_nssaccount_gid(gid)
-                    .await
-                    .map(ClientResponse::NssAccount)
-                    .unwrap_or_else(|_| {
+                match cachelayer.get_nssaccount_gid_lookup(gid).await {
+                    Ok(lookup) => nss_account_response(&cachelayer, lookup).await,
+                    Err(_) => {
                         error!("unable to load account, returning empty.");
                         ClientResponse::NssAccount(None)
-                    })
+                    }
+                }
             }
             ClientRequest::NssAccountByName(account_id) => {
                 let account_id = account_id.to_lowercase();
                 trace!("nssaccountbyname req");
-                cachelayer
-                    .get_nssaccount_name(account_id.as_str())
+                match cachelayer
+                    .get_nssaccount_name_lookup(account_id.as_str())
                     .await
-                    .map(ClientResponse::NssAccount)
-                    .unwrap_or_else(|_| {
+                {
+                    Ok(lookup) => nss_account_response(&cachelayer, lookup).await,
+                    Err(_) => {
                         error!("unable to load account, returning empty.");
                         ClientResponse::NssAccount(None)
-                    })
+                    }
+                }
             }
             ClientRequest::NssGroups => {
                 trace!("nssgroups req");
@@ -854,11 +915,18 @@ async fn handle_client(
                 let span = span!(Level::INFO, "pam account begin session");
                 async {
                     trace!("pam account begin session");
+                    // Resolve the user once. The home directory task can wait,
+                    // and everything after it must still describe the identity
+                    // the home directory was created for.
                     match cachelayer
-                        .pam_account_beginsession(account_id.as_str())
+                        .pam_account_beginsession_identity(account_id.as_str())
                         .await
                     {
-                        Ok(Some(info)) => {
+                        Ok(Some(SessionIdentity {
+                            home: info,
+                            account,
+                            group_ids,
+                        })) => {
                             let (tx, rx) = oneshot::channel();
 
                             let resp1 = match task_channel_tx
@@ -892,67 +960,94 @@ async fn handle_client(
                                 }
                             };
 
-                            let is_sudoer =
-                                is_account_sudoer(&cachelayer, &cfg, account_id.as_str()).await;
+                            // The name the user typed (a UPN, a SAM alias, ...) says
+                            // nothing about which local account the tasks below act
+                            // on. Use the identity resolved above (its name, uid and
+                            // group UUIDs) for every local-account task.
+                            let user_map = UserMap::new(&cfg.get_user_map_file());
+                            // An alias which NSS cannot resolve right now is no
+                            // usable task target.
+                            let rendered = cachelayer
+                                .render_unproved_alias_canonically(account.clone())
+                                .await;
+                            let target = local_task_account(&user_map, &rendered);
+                            let (resp2, subid_name) =
+                                if is_local_account_excluded(&cachelayer, &cfg, &account, &target)
+                                    .await
+                                {
+                                    trace!("Skipping local account tasks for a local user");
+                                    (ClientResponse::Ok, None)
+                                } else {
+                                    let sudo_ids = sudo_group_ids(&cfg);
+                                    let is_sudoer =
+                                        group_ids.iter().any(|id| sudo_ids.contains(id));
 
-                            let resp2 = match submit_local_groups_task(
-                                task_channel_tx,
-                                account_id.to_string(),
-                                is_sudoer,
-                            )
-                            .await
-                            {
-                                Ok(()) => {
-                                    trace!("Task completed, returning to pam ...");
-                                    ClientResponse::Ok
-                                }
-                                Err(()) => ClientResponse::Error,
-                            };
-
-                            // Set up subordinate IDs for container support
-                            let subid_range = cfg.get_subid_range();
-                            let mapped_name = cfg.map_upn_to_name(&account_id);
-                            let subid_start = gen_subid_start(&mapped_name, subid_range);
-
-                            let (tx, rx) = oneshot::channel();
-
-                            let resp3 = match task_channel_tx
-                                .send_timeout(
-                                    (
-                                        TaskRequest::SubordinateIds(
-                                            mapped_name,
-                                            subid_start,
-                                            SUBID_COUNT,
-                                        ),
-                                        tx,
-                                    ),
-                                    Duration::from_millis(100),
-                                )
-                                .await
-                            {
-                                Ok(()) => {
-                                    // Now wait for the other end OR timeout.
-                                    match time::timeout_at(
-                                        time::Instant::now() + Duration::from_millis(1000),
-                                        rx,
+                                    let resp2 = match submit_local_groups_task(
+                                        task_channel_tx,
+                                        target.clone(),
+                                        is_sudoer,
                                     )
                                     .await
                                     {
-                                        Ok(Ok(_)) => {
-                                            trace!("SubordinateIds task completed");
+                                        Ok(()) => {
+                                            trace!("Task completed, returning to pam ...");
                                             ClientResponse::Ok
                                         }
-                                        _ => {
-                                            // Timeout or error - log but don't fail the session
-                                            debug!("SubordinateIds task timed out or failed");
+                                        Err(()) => ClientResponse::Error,
+                                    };
+                                    (resp2, Some(cfg.map_upn_to_name(&target)))
+                                };
+
+                            // Set up subordinate IDs for container support
+                            let resp3 = match subid_name {
+                                None => ClientResponse::Ok,
+                                Some(mapped_name) => {
+                                    let subid_range = cfg.get_subid_range();
+                                    let subid_start = gen_subid_start(&mapped_name, subid_range);
+
+                                    let (tx, rx) = oneshot::channel();
+
+                                    match task_channel_tx
+                                        .send_timeout(
+                                            (
+                                                TaskRequest::SubordinateIds(
+                                                    mapped_name,
+                                                    subid_start,
+                                                    SUBID_COUNT,
+                                                ),
+                                                tx,
+                                            ),
+                                            Duration::from_millis(100),
+                                        )
+                                        .await
+                                    {
+                                        Ok(()) => {
+                                            // Now wait for the other end OR timeout.
+                                            match time::timeout_at(
+                                                time::Instant::now() + Duration::from_millis(1000),
+                                                rx,
+                                            )
+                                            .await
+                                            {
+                                                Ok(Ok(_)) => {
+                                                    trace!("SubordinateIds task completed");
+                                                    ClientResponse::Ok
+                                                }
+                                                _ => {
+                                                    // Timeout or error - log but don't fail the session
+                                                    debug!(
+                                                        "SubordinateIds task timed out or failed"
+                                                    );
+                                                    ClientResponse::Ok
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            // Failed to submit - log but don't fail the session
+                                            debug!("Failed to submit SubordinateIds task: {:?}", e);
                                             ClientResponse::Ok
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    // Failed to submit - log but don't fail the session
-                                    debug!("Failed to submit SubordinateIds task: {:?}", e);
-                                    ClientResponse::Ok
                                 }
                             };
 
@@ -1502,6 +1597,42 @@ mod tests {
     use super::*;
 
     const ACCOUNT_ID: &str = "user@example.com";
+
+    fn test_nss_user(name: &str, canonical: &str) -> NssUser {
+        NssUser {
+            name: name.to_string(),
+            canonical_name: Some(canonical.to_string()),
+            aliases: vec![name.to_string()],
+            uid: 100_000,
+            gid: 100_000,
+            gecos: String::new(),
+            homedir: "/home/test".to_string(),
+            shell: "/bin/bash".to_string(),
+            cacheable: true,
+        }
+    }
+
+    #[test]
+    fn local_tasks_target_the_user_mapped_account_not_the_sam_name() {
+        let path = format!("/tmp/himmelblau_task_map_test_{}.txt", Uuid::new_v4());
+        std::fs::write(&path, "alice:alice@example.com\n").unwrap();
+        let user_map = UserMap::new(&path);
+        std::fs::remove_file(&path).ok();
+
+        // The directory SAM is AADALICE, but the mapped local account is alice,
+        // whatever the case of the canonical UPN.
+        for canonical in ["alice@example.com", "Alice@Example.com"] {
+            let account = test_nss_user("AADALICE", canonical);
+            assert_eq!(local_task_account(&user_map, &account), "alice");
+        }
+        // Without an entry the NSS name is the target.
+        let other = test_nss_user("AADBOB", "bob@example.com");
+        assert_eq!(local_task_account(&user_map, &other), "AADBOB");
+        // A legacy entry without a canonical name falls back to its own name.
+        let mut legacy = test_nss_user("alice@example.com", "x");
+        legacy.canonical_name = None;
+        assert_eq!(local_task_account(&user_map, &legacy), "alice");
+    }
 
     #[test]
     fn default_socket_paths_match_the_systemd_units() {
@@ -2139,7 +2270,9 @@ async fn main() -> ExitCode {
             )
             .await
             {
-                Ok(c) => c,
+                Ok(c) => c
+                    .with_user_map_file(cfg.get_user_map_file())
+                    .with_cn_name_mapping(cfg.get_cn_name_mapping()),
                 Err(_e) => {
                     error!("Failed to build cache layer.");
                     return ExitCode::FAILURE

@@ -18,9 +18,16 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NssUser {
+    /// The configured passwd/shadow name, which may differ from the UPN.
     pub name: String,
+    /// Stable lookup identity, independent of the configured display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_name: Option<String>,
+    /// Other validated lookup keys supplied by the daemon.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
     pub uid: u32,
     pub gid: u32,
     pub gecos: String,
@@ -298,6 +305,10 @@ pub enum ClientResponse {
     NotAuthenticated,
     /// Non-compliant verdict with rule details passed through from Intune.
     NonCompliant(Vec<NoncompliantRule>),
+    /// The account exists but is refused because it collides with a local
+    /// account. Unlike `NssAccount(None)` this is final: clients must drop any
+    /// copy they cached instead of falling back to it.
+    NssAccountExcluded(NssUser),
 }
 
 impl From<PamAuthResponse> for ClientResponse {
@@ -500,4 +511,34 @@ fn enrollment_round_trip_and_translation_preserve_redacted_material() {
         presentation.qr.as_deref(),
         Some("data:image/png;base64,fixture")
     );
+}
+
+#[test]
+fn legacy_nss_user_defaults_lookup_metadata() {
+    let legacy = r#"{"name":"alice@contoso.com","uid":1000,"gid":1000,"gecos":"Alice","homedir":"/home/alice","shell":"/bin/bash"}"#;
+    let user: NssUser = serde_json::from_str(legacy).unwrap();
+    assert!(user.canonical_name.is_none());
+    assert!(user.aliases.is_empty());
+    let serialized = serde_json::to_value(&user).unwrap();
+    assert!(serialized.get("canonical_name").is_none());
+    assert!(serialized.get("aliases").is_none());
+}
+
+#[test]
+fn nss_user_lookup_metadata_round_trips_separately_from_display_name() {
+    let user = NssUser {
+        name: "alice@contoso.com".to_string(),
+        canonical_name: Some("alice.long@contoso.com".to_string()),
+        aliases: vec!["alice@contoso.com".to_string()],
+        uid: 1000,
+        gid: 1000,
+        gecos: "Alice".to_string(),
+        homedir: "/home/alice".to_string(),
+        shell: "/bin/bash".to_string(),
+        cacheable: true,
+    };
+    let decoded: NssUser = serde_json::from_value(serde_json::to_value(&user).unwrap()).unwrap();
+    assert_eq!(decoded.name, user.name);
+    assert_eq!(decoded.canonical_name, user.canonical_name);
+    assert_eq!(decoded.aliases, user.aliases);
 }

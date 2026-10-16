@@ -12,7 +12,7 @@ use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, NSS_CACHE};
 use himmelblau_unix_common::idprovider::interface::Id;
 use himmelblau_unix_common::nss_cache::{Mode, NssCache};
-use himmelblau_unix_common::unix_passwd::parse_etc_group;
+use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
 use himmelblau_unix_common::user_map::UserMap;
 use libnss::group::{Group, GroupHooks};
@@ -67,11 +67,13 @@ macro_rules! fetch_cached_user {
     }};
     ($cache:expr, $cfg:ident, $id:expr, $ret:expr, $local_name:expr) => {{
         match $cache {
-            Some(ref c) => match c.get_user(&$id) {
+            Some(ref c) => match c.get_user_for_fallback(&$id) {
                 Some(nu) => {
-                    let mut passwd = passwd_from_nssuser(nu);
+                    let mut passwd = passwd_from_nssuser(fallback_nssuser(nu));
                     // Use local_name override if provided, otherwise use cn_name_mapping
-                    passwd.name = $local_name.unwrap_or_else(|| $cfg.map_upn_to_name(&passwd.name));
+                    passwd.name = $local_name.unwrap_or_else(|| {
+                        fallback_display_name(&$cfg, &passwd.name, &local_login_names())
+                    });
                     return Response::Success(passwd);
                 }
                 None => return $ret,
@@ -92,22 +94,21 @@ macro_rules! insert_cached_user {
 macro_rules! fetch_all_cached_users {
     ($cache:expr, $cfg:ident, $user_map:expr) => {{
         match $cache {
-            Some(ref c) => c
-                .get_users()
-                .into_iter()
-                .filter_map(|nu| {
-                    // Skip users whose UPN is mapped to a local user
-                    if $user_map
-                        .get_local_from_upn(&nu.name.to_lowercase())
-                        .is_some()
-                    {
-                        return None;
-                    }
-                    let mut passwd = passwd_from_nssuser(nu);
-                    passwd.name = $cfg.map_upn_to_name(&passwd.name);
-                    Some(passwd)
-                })
-                .collect(),
+            Some(ref c) => {
+                let local_logins = local_login_names();
+                c.get_users()
+                    .into_iter()
+                    .filter_map(|nu| {
+                        // Skip users whose UPN is mapped to a local user
+                        if is_mapped_nss_user(&nu, &$user_map) {
+                            return None;
+                        }
+                        let mut passwd = passwd_from_nssuser(fallback_nssuser(nu));
+                        passwd.name = fallback_display_name(&$cfg, &passwd.name, &local_logins);
+                        Some(passwd)
+                    })
+                    .collect()
+            }
             None => Vec::new(),
         }
     }};
@@ -138,6 +139,7 @@ impl PasswdHooks for HimmelblauPasswd {
             }
         };
 
+        let local_logins = local_login_names();
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
@@ -146,15 +148,12 @@ impl PasswdHooks for HimmelblauPasswd {
                     .filter_map(|nu| {
                         // Skip users whose UPN is mapped to a local user
                         // (the local NSS module handles these)
-                        if user_map
-                            .get_local_from_upn(&nu.name.to_lowercase())
-                            .is_some()
-                        {
+                        if is_mapped_nss_user(&nu, &user_map) {
                             return None;
                         }
                         insert_cached_user!(nss_cache, nu);
                         let mut passwd = passwd_from_nssuser(nu);
-                        passwd.name = cfg.map_upn_to_name(&passwd.name);
+                        passwd.name = fallback_display_name(&cfg, &passwd.name, &local_logins);
                         Some(passwd)
                     })
                     .collect(),
@@ -190,11 +189,20 @@ impl PasswdHooks for HimmelblauPasswd {
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
+                ClientResponse::NssAccountExcluded(mut nu) => {
+                    // The daemon refuses this identity for good. Evict its
+                    // fallback rows rather than serving them in its place.
+                    nu.cacheable = false;
+                    insert_cached_user!(nss_cache, nu);
+                    Response::NotFound
+                }
                 ClientResponse::NssAccount(opt) => opt
                     .map(|nu| {
                         insert_cached_user!(nss_cache, nu);
                         let mut passwd = passwd_from_nssuser(nu);
-                        passwd.name = cfg.map_upn_to_name(&passwd.name);
+                        // CN mapping must not shorten the name to a local login.
+                        passwd.name =
+                            fallback_display_name(&cfg, &passwd.name, &local_login_names());
                         Response::Success(passwd)
                     })
                     .unwrap_or_else(|| {
@@ -250,14 +258,26 @@ impl PasswdHooks for HimmelblauPasswd {
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
+                ClientResponse::NssAccountExcluded(mut nu) => {
+                    // The daemon refuses this identity for good. Evict its
+                    // fallback rows rather than serving them in its place.
+                    nu.cacheable = false;
+                    insert_cached_user!(nss_cache, nu);
+                    Response::NotFound
+                }
                 ClientResponse::NssAccount(opt) => opt
                     .map(|nu| {
+                        // Whatever spelling was asked for, a user mapped by its
+                        // canonical UPN is served under its local name.
+                        let mapped = local_name
+                            .clone()
+                            .or_else(|| mapped_local_name(&nu, &user_map));
                         insert_cached_user!(nss_cache, nu);
                         let mut passwd = passwd_from_nssuser(nu);
                         // Use the local name from user_map if present, otherwise use cn_name_mapping
-                        passwd.name = local_name
-                            .clone()
-                            .unwrap_or_else(|| cfg.map_upn_to_name(&passwd.name));
+                        passwd.name = mapped.unwrap_or_else(|| {
+                            fallback_display_name(&cfg, &passwd.name, &local_login_names())
+                        });
                         Response::Success(passwd)
                     })
                     .unwrap_or_else(|| {
@@ -311,6 +331,7 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
+        let local_logins = local_login_names();
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
@@ -322,7 +343,7 @@ impl GroupHooks for HimmelblauGroup {
                         group.members = group
                             .members
                             .into_iter()
-                            .map(|member| cfg.map_upn_to_name(&member))
+                            .map(|member| fallback_display_name(&cfg, &member, &local_logins))
                             .collect();
                         group
                     })
@@ -351,6 +372,7 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
+        let local_logins = local_login_names();
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
@@ -361,7 +383,7 @@ impl GroupHooks for HimmelblauGroup {
                         group.members = group
                             .members
                             .into_iter()
-                            .map(|member| cfg.map_upn_to_name(&member))
+                            .map(|member| fallback_display_name(&cfg, &member, &local_logins))
                             .collect();
                         Response::Success(group)
                     })
@@ -396,6 +418,8 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
+        let local_logins = local_login_names();
+
         // Attempt to respond to a request for the fake primary group name.
         match if upn.contains("@") {
             let req = ClientRequest::NssGroupByName(upn);
@@ -409,7 +433,7 @@ impl GroupHooks for HimmelblauGroup {
                             group.members = group
                                 .members
                                 .into_iter()
-                                .map(|member| cfg.map_upn_to_name(&member))
+                                .map(|member| fallback_display_name(&cfg, &member, &local_logins))
                                 .collect();
                             Response::Success(group)
                         })
@@ -463,6 +487,70 @@ impl GroupHooks for HimmelblauGroup {
     }
 }
 
+/// The local account a user is mapped to by its canonical UPN, whichever
+/// spelling of the name was asked for.
+fn mapped_local_name(nu: &NssUser, user_map: &UserMap) -> Option<String> {
+    let canonical_name = nu.canonical_name.as_deref().unwrap_or(&nu.name);
+    user_map.get_local_from_upn(&canonical_name.to_lowercase())
+}
+
+fn is_mapped_nss_user(nu: &NssUser, user_map: &UserMap) -> bool {
+    mapped_local_name(nu, user_map).is_some()
+}
+
+/// The cache is consulted only when the daemon cannot answer, and then it
+/// resolves a qualified name solely by the canonical UPN: a SAM alias expands
+/// to `<sam>@<domain>`, which the cache refuses as an alias of another account.
+/// Render such an entry under the name which resolves, the canonical UPN
+/// (subject to CN mapping afterwards), so that every name emitted by a UID
+/// lookup or an enumeration can be looked up again.
+fn fallback_nssuser(mut nu: NssUser) -> NssUser {
+    if let Some(canonical) = nu.canonical_name.clone() {
+        nu.name = canonical;
+    }
+    nu
+}
+
+/// The names of the local logins in /etc/passwd.
+fn local_login_names() -> Vec<String> {
+    let mut contents = vec![];
+    if let Ok(mut file) = File::open("/etc/passwd") {
+        let _ = file.read_to_end(&mut contents);
+    }
+    parse_etc_passwd(contents.as_slice())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|user| user.name.to_string())
+        .collect()
+}
+
+/// The name under which a cached user is rendered when the daemon cannot
+/// answer: its canonical UPN after CN mapping. CN mapping shortens a UPN to its
+/// local part, and when that short name is a local login it would duplicate the
+/// local account, while `map_name_to_upn` never expands a local login back to
+/// the cached UPN. Keep the qualified UPN in that case, so that the name can be
+/// looked up again.
+fn fallback_display_name(cfg: &HimmelblauConfig, name: &str, local_logins: &[String]) -> String {
+    let mapped = cfg.map_upn_to_name(name);
+    if mapped != name && local_logins.iter().any(|login| *login == mapped) {
+        name.to_string()
+    } else {
+        mapped
+    }
+}
+
+fn fallback_shadow_from_nssuser(
+    nu: NssUser,
+    cfg: &HimmelblauConfig,
+    local_name: Option<String>,
+    local_logins: &[String],
+) -> Shadow {
+    let nu = fallback_nssuser(nu);
+    let mut shadow = shadow_from_nssuser(&nu);
+    shadow.name = local_name.unwrap_or_else(|| fallback_display_name(cfg, &nu.name, local_logins));
+    shadow
+}
+
 fn passwd_from_nssuser(nu: NssUser) -> Passwd {
     Passwd {
         name: nu.name,
@@ -504,7 +592,8 @@ fn mapped_shadow_from_nssuser(
     local_name: Option<String>,
 ) -> Shadow {
     let mut shadow = shadow_from_nssuser(nu);
-    shadow.name = local_name.unwrap_or_else(|| cfg.map_upn_to_name(&shadow.name));
+    shadow.name = local_name
+        .unwrap_or_else(|| fallback_display_name(cfg, &shadow.name, &local_login_names()));
     shadow
 }
 
@@ -753,6 +842,7 @@ impl ShadowHooks for HimmelblauShadow {
 
         // Load user map to filter out mapped users (they are handled by local NSS)
         let user_map = UserMap::new(&cfg.get_user_map_file());
+        let local_logins = local_login_names();
 
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
@@ -764,13 +854,10 @@ impl ShadowHooks for HimmelblauShadow {
                             .into_iter()
                             .filter_map(|nu| {
                                 // Skip users whose UPN is mapped to a local user
-                                if user_map
-                                    .get_local_from_upn(&nu.name.to_lowercase())
-                                    .is_some()
-                                {
+                                if is_mapped_nss_user(&nu, &user_map) {
                                     return None;
                                 }
-                                Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
+                                Some(fallback_shadow_from_nssuser(nu, &cfg, None, &local_logins))
                             })
                             .collect(),
                     ),
@@ -786,10 +873,7 @@ impl ShadowHooks for HimmelblauShadow {
                     .into_iter()
                     .filter_map(|nu| {
                         // Skip users whose UPN is mapped to a local user
-                        if user_map
-                            .get_local_from_upn(&nu.name.to_lowercase())
-                            .is_some()
-                        {
+                        if is_mapped_nss_user(&nu, &user_map) {
                             return None;
                         }
                         insert_cached_user!(nss_cache, nu);
@@ -802,13 +886,10 @@ impl ShadowHooks for HimmelblauShadow {
                         .into_iter()
                         .filter_map(|nu| {
                             // Skip users whose UPN is mapped to a local user
-                            if user_map
-                                .get_local_from_upn(&nu.name.to_lowercase())
-                                .is_some()
-                            {
+                            if is_mapped_nss_user(&nu, &user_map) {
                                 return None;
                             }
-                            Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
+                            Some(fallback_shadow_from_nssuser(nu, &cfg, None, &local_logins))
                         })
                         .collect(),
                     None => Vec::new(),
@@ -821,13 +902,10 @@ impl ShadowHooks for HimmelblauShadow {
                         .into_iter()
                         .filter_map(|nu| {
                             // Skip users whose UPN is mapped to a local user
-                            if user_map
-                                .get_local_from_upn(&nu.name.to_lowercase())
-                                .is_some()
-                            {
+                            if is_mapped_nss_user(&nu, &user_map) {
                                 return None;
                             }
-                            Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
+                            Some(fallback_shadow_from_nssuser(nu, &cfg, None, &local_logins))
                         })
                         .collect(),
                 ),
@@ -848,6 +926,7 @@ impl ShadowHooks for HimmelblauShadow {
 
         // Handle user mapping just like passwd lookup
         let user_map = UserMap::new(&cfg.get_user_map_file());
+        let local_logins = local_login_names();
         let (upn, local_name) = if let Some(mapped_upn) = user_map.get_upn_from_local(&name) {
             // Local name is mapped to a UPN - look up the UPN
             (mapped_upn, Some(name.clone()))
@@ -871,10 +950,13 @@ impl ShadowHooks for HimmelblauShadow {
             Err(_) => {
                 // Try cache if daemon unavailable
                 return match nss_cache {
-                    Some(ref c) => match c.get_user(&Id::Name(upn)) {
-                        Some(nu) => {
-                            Response::Success(mapped_shadow_from_nssuser(&nu, &cfg, local_name))
-                        }
+                    Some(ref c) => match c.get_user_for_fallback(&Id::Name(upn)) {
+                        Some(nu) => Response::Success(fallback_shadow_from_nssuser(
+                            nu,
+                            &cfg,
+                            local_name,
+                            &local_logins,
+                        )),
                         None => Response::Unavail,
                     },
                     None => Response::Unavail,
@@ -885,19 +967,30 @@ impl ShadowHooks for HimmelblauShadow {
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
+                ClientResponse::NssAccountExcluded(mut nu) => {
+                    // The daemon refuses this identity for good. Evict its
+                    // fallback rows rather than serving them in its place.
+                    nu.cacheable = false;
+                    insert_cached_user!(nss_cache, nu);
+                    Response::NotFound
+                }
                 ClientResponse::NssAccount(opt) => opt
                     .map(|nu| {
+                        let mapped = local_name
+                            .clone()
+                            .or_else(|| mapped_local_name(&nu, &user_map));
                         insert_cached_user!(nss_cache, nu);
-                        Response::Success(mapped_shadow_from_nssuser(&nu, &cfg, local_name.clone()))
+                        Response::Success(mapped_shadow_from_nssuser(&nu, &cfg, mapped))
                     })
                     .unwrap_or_else(|| {
                         // Check cache on NotFound
                         match nss_cache {
-                            Some(ref c) => match c.get_user(&Id::Name(upn.clone())) {
-                                Some(nu) => Response::Success(mapped_shadow_from_nssuser(
-                                    &nu,
+                            Some(ref c) => match c.get_user_for_fallback(&Id::Name(upn.clone())) {
+                                Some(nu) => Response::Success(fallback_shadow_from_nssuser(
+                                    nu,
                                     &cfg,
                                     local_name.clone(),
+                                    &local_logins,
                                 )),
                                 None => Response::NotFound,
                             },
@@ -907,11 +1000,12 @@ impl ShadowHooks for HimmelblauShadow {
                 _ => {
                     // Check cache on unexpected response
                     match nss_cache {
-                        Some(ref c) => match c.get_user(&Id::Name(upn.clone())) {
-                            Some(nu) => Response::Success(mapped_shadow_from_nssuser(
-                                &nu,
+                        Some(ref c) => match c.get_user_for_fallback(&Id::Name(upn.clone())) {
+                            Some(nu) => Response::Success(fallback_shadow_from_nssuser(
+                                nu,
                                 &cfg,
                                 local_name.clone(),
+                                &local_logins,
                             )),
                             None => Response::NotFound,
                         },
@@ -922,10 +1016,13 @@ impl ShadowHooks for HimmelblauShadow {
             .unwrap_or_else(|_| {
                 // Check cache on error
                 match nss_cache {
-                    Some(ref c) => match c.get_user(&Id::Name(upn)) {
-                        Some(nu) => {
-                            Response::Success(mapped_shadow_from_nssuser(&nu, &cfg, local_name))
-                        }
+                    Some(ref c) => match c.get_user_for_fallback(&Id::Name(upn)) {
+                        Some(nu) => Response::Success(fallback_shadow_from_nssuser(
+                            nu,
+                            &cfg,
+                            local_name,
+                            &local_logins,
+                        )),
                         None => Response::NotFound,
                     },
                     None => Response::NotFound,
@@ -970,6 +1067,8 @@ mod tests {
     fn test_nss_user(name: &str) -> NssUser {
         NssUser {
             name: name.to_string(),
+            canonical_name: None,
+            aliases: Vec::new(),
             uid: 1000,
             gid: 1000,
             gecos: "Test User".to_string(),
@@ -1120,6 +1219,137 @@ mod tests {
         };
 
         assert_eq!(status, NSS_STATUS_UNAVAIL);
+    }
+
+    #[test]
+    fn fallback_names_keep_the_upn_when_the_short_name_is_a_local_login() -> Result<(), String> {
+        let cfg = test_config()?;
+        let logins = vec!["root".to_string(), "daemon".to_string()];
+
+        assert_eq!(
+            fallback_display_name(&cfg, "fallbackuser@contoso.com", &logins),
+            "fallbackuser"
+        );
+        // Shortening root@contoso.com would duplicate the local root login.
+        assert_eq!(
+            fallback_display_name(&cfg, "root@contoso.com", &logins),
+            "root@contoso.com"
+        );
+        // Outside the primary domain the name is qualified anyway.
+        assert_eq!(
+            fallback_display_name(&cfg, "root@fabrikam.com", &logins),
+            "root@fabrikam.com"
+        );
+
+        // Passwd and shadow agree, for a UID lookup and for an enumeration.
+        let cloud_root = || {
+            let mut nu = test_nss_user("cloudroot");
+            nu.canonical_name = Some("root@contoso.com".to_string());
+            nu.aliases = vec!["cloudroot".to_string()];
+            nu
+        };
+        let shadow = fallback_shadow_from_nssuser(cloud_root(), &cfg, None, &logins);
+        let mut passwd = passwd_from_nssuser(fallback_nssuser(cloud_root()));
+        passwd.name = fallback_display_name(&cfg, &passwd.name, &logins);
+        assert_eq!(shadow.name, "root@contoso.com");
+        assert_eq!(passwd.name, shadow.name);
+
+        // Every emitted name resolves back to the cached UPN.
+        for (emitted, upn) in [
+            (passwd.name.as_str(), "root@contoso.com"),
+            ("fallbackuser", "fallbackuser@contoso.com"),
+        ] {
+            assert_eq!(cfg.map_name_to_upn(emitted).as_deref(), Some(upn));
+        }
+
+        // A user-map override still wins over the generated name.
+        let shadow =
+            fallback_shadow_from_nssuser(cloud_root(), &cfg, Some("mapped".to_string()), &logins);
+        assert_eq!(shadow.name, "mapped");
+        Ok(())
+    }
+
+    #[test]
+    fn fallback_entries_are_rendered_under_the_canonical_name() -> Result<(), String> {
+        let cfg = test_config()?;
+        let sam_user = || {
+            let mut nu = test_nss_user("bob");
+            nu.canonical_name = Some("alice@contoso.com".to_string());
+            nu.aliases = vec!["bob".to_string()];
+            nu
+        };
+
+        // The daemon resolves the SAM alias, so it is the display name online.
+        let mut online = passwd_from_nssuser(sam_user());
+        online.name = cfg.map_upn_to_name(&online.name);
+        assert_eq!(online.name, "bob");
+
+        // The cache refuses `bob@contoso.com` as the alias of another account.
+        // What it emits must be a name which it resolves again.
+        let mut passwd = passwd_from_nssuser(fallback_nssuser(sam_user()));
+        passwd.name = cfg.map_upn_to_name(&passwd.name);
+        assert_eq!(passwd.name, "alice");
+        assert_eq!(
+            cfg.map_name_to_upn(&passwd.name).as_deref(),
+            Some("alice@contoso.com")
+        );
+        let shadow = mapped_shadow_from_nssuser(&fallback_nssuser(sam_user()), &cfg, None);
+        assert_eq!(shadow.name, "alice");
+
+        // An entry cached before canonical names were stored keeps its name.
+        let legacy = fallback_nssuser(test_nss_user("legacy@contoso.com"));
+        assert_eq!(legacy.name, "legacy@contoso.com");
+        Ok(())
+    }
+
+    #[test]
+    fn cached_lookup_metadata_preserves_passwd_and_shadow_display_names() -> Result<(), String> {
+        let cfg = test_config()?;
+        for (domain, expected) in [
+            ("contoso.com", "alice"),
+            ("fabrikam.com", "alice@fabrikam.com"),
+        ] {
+            let mut nu = test_nss_user(&format!("alice@{domain}"));
+            nu.canonical_name = Some(format!("alice.long@{domain}"));
+            nu.aliases = vec![nu.name.clone()];
+            let shadow = mapped_shadow_from_nssuser(&nu, &cfg, None);
+            let mut passwd = passwd_from_nssuser(nu);
+            passwd.name = cfg.map_upn_to_name(&passwd.name);
+            assert_eq!(passwd.name, expected);
+            assert_eq!(shadow.name, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mapped_user_filter_uses_canonical_identity_instead_of_display_name() -> Result<(), String> {
+        let path = create_temp_config("alice-local:alice.long@contoso.com")?;
+        let user_map = UserMap::new(&path);
+        fs::remove_file(path).ok();
+        let mut nu = test_nss_user("alice@contoso.com");
+        nu.canonical_name = Some("ALICE.LONG@CONTOSO.COM".to_string());
+        assert!(is_mapped_nss_user(&nu, &user_map));
+        assert!(is_mapped_nss_user(
+            &test_nss_user("alice.long@contoso.com"),
+            &user_map
+        ));
+        assert!(!is_mapped_nss_user(
+            &test_nss_user("alice@contoso.com"),
+            &user_map
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn mapped_local_name_applies_to_a_sam_spelling() -> Result<(), String> {
+        let path = create_temp_config("alice:alice@contoso.com")?;
+        let user_map = UserMap::new(&path);
+        fs::remove_file(path).ok();
+        let mut nu = test_nss_user("AADALICE");
+        nu.canonical_name = Some("Alice@Contoso.com".to_string());
+        assert_eq!(mapped_local_name(&nu, &user_map), Some("alice".to_string()));
+        assert_eq!(mapped_local_name(&test_nss_user("AADBOB"), &user_map), None);
+        Ok(())
     }
 
     #[test]

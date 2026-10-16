@@ -27,7 +27,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::config::InitgroupsMode;
+use crate::config::{split_username, InitgroupsMode};
 use crate::constants::SERVER_CONFIG_PATH;
 use crate::db::{Cache, CacheTxn, Db};
 use crate::idprovider::interface::{
@@ -41,11 +41,13 @@ use crate::idprovider::interface::{
     IdProvider,
     IdpError,
     // KeyStore,
+    UpnVerdict,
     UserToken,
     UserTokenState,
 };
 use crate::unix_config::{HomeAttr, UidAttr};
 use crate::unix_proto::{HomeDirectoryInfo, NssGroup, NssUser, PamAuthRequest, PamAuthResponse};
+use crate::user_map::UserMap;
 
 use kanidm_hsm_crypto::{
     provider::BoxedDynTpm, structures::HmacS256Key as HmacKey, structures::StorageKey as MachineKey,
@@ -107,6 +109,16 @@ pub enum AuthSession {
     Denied,
 }
 
+/// Everything the tasks which follow `pam_sm_open_session` need to know about
+/// the user. It is taken from a single token, so that creating the home
+/// directory and every later local-account task describe one identity, even
+/// when the cache changes while a task waits.
+pub struct SessionIdentity {
+    pub home: HomeDirectoryInfo,
+    pub account: NssUser,
+    pub group_ids: Vec<Uuid>,
+}
+
 pub struct Resolver<I>
 where
     I: IdProvider + Sync,
@@ -128,8 +140,20 @@ where
     gid_attr_map: UidAttr,
     initgroups_mode: InitgroupsMode,
     allow_id_overrides: HashSet<Id>,
+    // The user map file, used to render group members as their mapped local account.
+    user_map_file: Option<String>,
+    // Whether clients expand a local name to a name qualified by the domain.
+    cn_name_mapping: bool,
     nxset: Mutex<HashSet<Id>>,
     nxcache: Mutex<LruCache<Id, SystemTime>>,
+    // Only exact, online user lookups with no cached alias may populate this.
+    alias_absence: Mutex<LruCache<String, SystemTime>>,
+    // UPNs which the provider confirmed to exist while only a placeholder of
+    // them is cached. The placeholder owns its name for as long as the proof
+    // lasts, whatever refreshes another account in the meantime. Like
+    // `alias_absence`, this proof expires with cache_timeout and does not
+    // survive a restart.
+    upn_confirmed: Mutex<LruCache<String, SystemTime>>,
     password_generation: AtomicU64,
     // Keep committed identity observations and password invalidations while older sessions exist.
     // Both this map and all pending sessions disappear on daemon restart.
@@ -166,12 +190,12 @@ impl Display for Id {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthSession, CacheUpdateResult, Resolver};
+    use super::{is_placeholder_token, AuthSession, CacheUpdateResult, NssAccountLookup, Resolver};
     use crate::config::InitgroupsMode;
     use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{
         tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
-        IdProvider, IdpError, UserToken, UserTokenState,
+        IdProvider, IdpError, UpnVerdict, UserToken, UserTokenState,
     };
     use crate::unix_config::{HomeAttr, UidAttr};
     use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
@@ -193,6 +217,15 @@ mod tests {
         user_get_calls: AtomicUsize,
         try_unseal_calls: AtomicUsize,
         user_get_error: AtomicUsize,
+        exact_token: RwLock<Option<UserToken>>,
+        exact_not_found: AtomicBool,
+        upn_verdict: RwLock<UpnVerdict>,
+        verify_calls: AtomicUsize,
+        lookup_ids: RwLock<Vec<(Id, Option<String>)>>,
+        credential_ids: RwLock<Vec<String>>,
+        pause_lookup: AtomicBool,
+        lookup_started: tokio::sync::Notify,
+        lookup_continue: tokio::sync::Notify,
         auth_token: RwLock<UserToken>,
     }
 
@@ -207,6 +240,15 @@ mod tests {
                 user_get_calls: AtomicUsize::new(0),
                 try_unseal_calls: AtomicUsize::new(0),
                 user_get_error: AtomicUsize::new(0),
+                exact_token: RwLock::new(None),
+                exact_not_found: AtomicBool::new(false),
+                upn_verdict: RwLock::new(UpnVerdict::Unknown),
+                verify_calls: AtomicUsize::new(0),
+                lookup_ids: RwLock::new(Vec::new()),
+                credential_ids: RwLock::new(Vec::new()),
+                pause_lookup: AtomicBool::new(false),
+                lookup_started: tokio::sync::Notify::new(),
+                lookup_continue: tokio::sync::Notify::new(),
                 auth_token: RwLock::new(test_token()),
             }
         }
@@ -234,6 +276,16 @@ mod tests {
             self.check_online_result.load(Ordering::Acquire)
         }
 
+        async fn unix_user_verify_upn(
+            &self,
+            _account_id: &str,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+        ) -> UpnVerdict {
+            self.verify_calls.fetch_add(1, Ordering::AcqRel);
+            *self.upn_verdict.read().unwrap()
+        }
+
         async fn unix_user_get<D: KeyStoreTxn + Send>(
             &self,
             _id: &Id,
@@ -243,6 +295,22 @@ mod tests {
             _machine_key: &tpm::structures::StorageKey,
         ) -> Result<UserTokenState, IdpError> {
             self.user_get_calls.fetch_add(1, Ordering::AcqRel);
+            self.lookup_ids
+                .write()
+                .unwrap()
+                .push((_id.clone(), _token.map(|token| token.spn.clone())));
+            if _token.is_none() {
+                if self.pause_lookup.load(Ordering::Acquire) {
+                    self.lookup_started.notify_one();
+                    self.lookup_continue.notified().await;
+                }
+                if let Some(token) = self.exact_token.read().unwrap().clone() {
+                    return Ok(UserTokenState::Update(token));
+                }
+                if self.exact_not_found.load(Ordering::Acquire) {
+                    return Ok(UserTokenState::NotFound);
+                }
+            }
             match self.user_get_error.load(Ordering::Acquire) {
                 1 => Err(IdpError::NotFound {
                     what: "user".to_string(),
@@ -253,6 +321,10 @@ mod tests {
                     Ok(UserTokenState::LookupOnly(test_token()))
                 }
                 6 => Ok(UserTokenState::Update(self.auth_token())),
+                8 => Err(IdpError::Transport),
+                9 => Err(IdpError::ProviderUnauthorised),
+                10 => Err(IdpError::KeyStore),
+                11 => Err(IdpError::Tpm),
                 _ => Ok(UserTokenState::UseCached),
             }
         }
@@ -309,6 +381,10 @@ mod tests {
             _tpm: &mut tpm::provider::BoxedDynTpm,
             _machine_key: &tpm::structures::StorageKey,
         ) -> Result<bool, IdpError> {
+            self.credential_ids
+                .write()
+                .unwrap()
+                .push(_account_id.to_string());
             Err(IdpError::BadRequest)
         }
 
@@ -324,6 +400,10 @@ mod tests {
             _machine_key: &tpm::structures::StorageKey,
             _shutdown_rx: &broadcast::Receiver<()>,
         ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+            self.credential_ids
+                .write()
+                .unwrap()
+                .push(_account_id.to_string());
             if matches!(self.user_get_error.load(Ordering::Acquire), 3..=5 | 7) {
                 return Ok((
                     AuthRequest::Password {
@@ -452,6 +532,10 @@ mod tests {
             _no_hello_pin: bool,
             _keystore: &mut D,
         ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+            self.credential_ids
+                .write()
+                .unwrap()
+                .push(_account_id.to_string());
             Ok((AuthRequest::Pin, AuthCredHandler::None))
         }
 
@@ -478,6 +562,10 @@ mod tests {
             _machine_key: &tpm::structures::StorageKey,
             online: bool,
         ) -> Result<bool, IdpError> {
+            self.credential_ids
+                .write()
+                .unwrap()
+                .push(_account_id.to_string());
             self.try_unseal_calls.fetch_add(1, Ordering::AcqRel);
             self.try_unseal_online.store(online, Ordering::Release);
             Ok(true)
@@ -529,6 +617,7 @@ mod tests {
             groups: vec![group],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            is_placeholder: false,
         }
     }
 
@@ -541,8 +630,18 @@ mod tests {
         initgroups_mode: InitgroupsMode,
         extra_groups: Vec<GroupToken>,
     ) -> Resolver<OfflineFallbackProvider> {
+        let allow_groups = vec!["9f8a7a5a-a8e8-5c57-9f4f-7dfe21126c23".to_string()];
+        setup_resolver_allowing(expiry, initgroups_mode, extra_groups, allow_groups).await
+    }
+
+    async fn setup_resolver_allowing(
+        expiry: u64,
+        initgroups_mode: InitgroupsMode,
+        extra_groups: Vec<GroupToken>,
+        pam_allow_groups: Vec<String>,
+    ) -> Resolver<OfflineFallbackProvider> {
         let db = Db::new("").expect("failed to create test db");
-        setup_resolver_with_db(db, expiry, initgroups_mode, extra_groups).await
+        setup_resolver_with_db(db, expiry, initgroups_mode, extra_groups, pam_allow_groups).await
     }
 
     async fn setup_resolver_with_db(
@@ -550,6 +649,7 @@ mod tests {
         expiry: u64,
         initgroups_mode: InitgroupsMode,
         extra_groups: Vec<GroupToken>,
+        pam_allow_groups: Vec<String>,
     ) -> Resolver<OfflineFallbackProvider> {
         let mut dbtxn = db.write().await;
         dbtxn.migrate().expect("failed to migrate test db");
@@ -579,7 +679,7 @@ mod tests {
             hsm,
             machine_key,
             3600,
-            vec!["9f8a7a5a-a8e8-5c57-9f4f-7dfe21126c23".to_string()],
+            pam_allow_groups,
             false,
             "/bin/sh".to_string(),
             "/home/".to_string(),
@@ -605,7 +705,14 @@ mod tests {
         );
         let conn = rusqlite::Connection::open(&uri).unwrap();
         let db = Db::new(&uri).unwrap();
-        let resolver = setup_resolver_with_db(db, 0, InitgroupsMode::Named, Vec::new()).await;
+        let resolver = setup_resolver_with_db(
+            db,
+            0,
+            InitgroupsMode::Named,
+            Vec::new(),
+            vec!["9f8a7a5a-a8e8-5c57-9f4f-7dfe21126c23".to_string()],
+        )
+        .await;
         (resolver, conn)
     }
 
@@ -1236,7 +1343,7 @@ mod tests {
 
     #[tokio::test]
     async fn stale_pin_cannot_restore_identity_replaced_through_any_cache_alias() {
-        for collision in ["all", "name", "spn", "gid", "tenant"] {
+        for collision in ["all", "spn", "tenant"] {
             for replacement in ["password", "failed-password", "passwordless", "refresh"] {
                 let (resolver, conn) = setup_sql_resolver().await;
                 resolver
@@ -1257,9 +1364,7 @@ mod tests {
                         newer_token.spn = test_token().spn;
                         newer_token.gidnumber = test_token().gidnumber;
                     }
-                    "name" => newer_token.name = test_token().name,
                     "spn" => newer_token.spn = test_token().spn,
-                    "gid" => newer_token.gidnumber = test_token().gidnumber,
                     "tenant" => {
                         newer_token.uuid = test_token().uuid;
                         newer_token.tenant_id = Some(uuid::Uuid::new_v4());
@@ -1886,6 +1991,1524 @@ mod tests {
         }
     }
 
+    fn aliased_token() -> UserToken {
+        let mut token = test_token();
+        token.name = "onprem-user".to_string();
+        token.spn = "first.last@example.com".to_string();
+        token.uuid = uuid::uuid!("7d1a52f3-3f4e-4f7e-8f3e-3c3f0b2f9a10");
+        token.real_gidnumber = Some(2001);
+        token.gidnumber = 2001;
+        token
+    }
+
+    async fn seed_aliased_token(resolver: &Resolver<OfflineFallbackProvider>) {
+        let mut dbtxn = resolver.db.write().await;
+        dbtxn
+            .update_account(&aliased_token(), 0)
+            .expect("failed to seed aliased token");
+        dbtxn.commit().expect("failed to commit aliased token");
+    }
+
+    #[tokio::test]
+    async fn cached_usertoken_is_found_by_expanded_local_name() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+
+        for (name, found) in [
+            // The local name itself, and the UPN
+            ("onprem-user", true),
+            ("first.last@example.com", true),
+            // The local name expanded into the same domain by cn_name_mapping
+            ("onprem-user@example.com", true),
+            ("ONPREM-USER@Example.com", true),
+            // Never into another domain
+            ("onprem-user@other.com", false),
+            ("unknown@example.com", false),
+        ] {
+            let (_expired, cached) = resolver
+                .get_cached_usertoken(&Id::Name(name.to_string()))
+                .await
+                .expect("failed to read cached user");
+            assert_eq!(
+                cached.map(|t| t.spn),
+                found.then(|| aliased_token().spn),
+                "lookup of {name}"
+            );
+        }
+    }
+
+    /// What the identity provider caches when the expanded name is tried as a
+    /// UPN before the user is known. Rows written by older builds carry no
+    /// marker, so `marked` selects between the two shapes.
+    fn placeholder_for(name: &str, marked: bool) -> UserToken {
+        let uuid = uuid::uuid!("c0ffee00-0000-4000-8000-000000000001");
+        let mut placeholder = test_token();
+        placeholder.name = name.to_string();
+        placeholder.spn = name.to_string();
+        placeholder.uuid = uuid;
+        placeholder.is_placeholder = marked;
+        placeholder.displayname = String::new();
+        placeholder.real_gidnumber = Some(2002);
+        placeholder.gidnumber = 2002;
+        placeholder.groups = vec![GroupToken {
+            name: placeholder.spn.clone(),
+            spn: placeholder.spn.clone(),
+            uuid,
+            gidnumber: 2002,
+        }];
+        placeholder
+    }
+
+    /// Is any account cached under this SPN? The test resolver also holds the
+    /// default test user, so the number of accounts says nothing here.
+    async fn spn_is_cached(resolver: &Resolver<OfflineFallbackProvider>, spn: &str) -> bool {
+        resolver
+            .get_cached_usertokens()
+            .await
+            .unwrap()
+            .iter()
+            .any(|t| t.spn.eq_ignore_ascii_case(spn))
+    }
+
+    /// Cache a placeholder. An unmarked one is stored as a build without the
+    /// marker did, with the `is_placeholder` key missing from the row.
+    async fn seed_placeholder(resolver: &Resolver<OfflineFallbackProvider>, token: &UserToken) {
+        let mut dbtxn = resolver.db.write().await;
+        dbtxn.update_group(&token.groups[0], 0).unwrap();
+        dbtxn.update_account(token, 0).unwrap();
+        if !token.is_placeholder {
+            dbtxn.strip_placeholder_marker(token.uuid);
+        }
+        dbtxn.commit().unwrap();
+    }
+
+    #[tokio::test]
+    async fn placeholder_does_not_hide_a_local_alias() {
+        // Only a marked placeholder is known to be one. A row without the
+        // marker is taken at face value until the migration's stale mark lets
+        // the provider replace it.
+        {
+            let marked = true;
+            let resolver = setup_resolver().await;
+            seed_aliased_token(&resolver).await;
+            let placeholder = placeholder_for("onprem-user@example.com", marked);
+            // In memory only the marker counts; the legacy shape is recognised
+            // when the row is read back from the cache.
+            assert_eq!(is_placeholder_token(&placeholder), marked);
+            assert!(!is_placeholder_token(&aliased_token()));
+            seed_placeholder(&resolver, &placeholder).await;
+
+            let (_expired, cached) = resolver
+                .get_cached_usertoken(&Id::Name("onprem-user@example.com".to_string()))
+                .await
+                .expect("failed to read cached user");
+            assert_eq!(
+                cached.map(|t| t.spn),
+                Some(aliased_token().spn),
+                "marked: {marked}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn placeholder_of_an_expanded_name_is_not_cached_over_its_alias_owner() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+        let mut placeholder = placeholder_for("onprem-user@example.com", true);
+        resolver
+            .set_cache_usertoken(&mut placeholder, false)
+            .await
+            .unwrap();
+        assert!(!spn_is_cached(&resolver, &placeholder.spn).await);
+    }
+
+    #[tokio::test]
+    async fn authenticated_alias_owner_keeps_its_name_and_drops_stale_placeholders() {
+        {
+            let marked = true;
+            let resolver = setup_resolver().await;
+            seed_placeholder(
+                &resolver,
+                &placeholder_for("onprem-user@example.com", marked),
+            )
+            .await;
+            let mut token = aliased_token();
+            resolver
+                .set_cache_usertoken(&mut token, false)
+                .await
+                .unwrap();
+            assert_eq!(token.name, "onprem-user", "marked: {marked}");
+            assert!(
+                !spn_is_cached(&resolver, "onprem-user@example.com").await,
+                "marked: {marked}"
+            );
+            assert!(spn_is_cached(&resolver, &token.spn).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_placeholder_for_an_expanded_name_does_not_replace_the_alias_owner() {
+        let (resolver, alice, bob) = collision_resolver(false, future_expiry()).await;
+        let mut provisional = bob.clone();
+        provisional.uuid = uuid::uuid!("dddddddd-0000-4000-8000-000000000002");
+        provisional.name.clone_from(&provisional.spn);
+        provisional.is_placeholder = true;
+        *resolver.client.exact_token.write().unwrap() = Some(provisional);
+        // The device-signed lookup rejects the name, so no UPN owns it.
+        *resolver.client.upn_verdict.write().unwrap() = UpnVerdict::Absent;
+        let (_, resolved) = resolver
+            .resolve_cached_usertoken(&Id::Name(bob.spn.clone()))
+            .await
+            .unwrap();
+        assert_eq!(resolved.unwrap().uuid, alice.uuid);
+        assert!(!spn_is_cached(&resolver, &bob.spn).await);
+    }
+
+    #[tokio::test]
+    async fn nss_account_with_groups_resolves_every_spelling_to_one_identity() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+        resolver
+            .client
+            .exact_not_found
+            .store(true, Ordering::Release);
+        let token = aliased_token();
+        let expected: Vec<uuid::Uuid> = token.groups.iter().map(|group| group.uuid).collect();
+        assert!(!expected.is_empty());
+
+        // Whatever the user typed, local-account tasks act on one NSS identity
+        // together with the group memberships of that very token.
+        let mut names = Vec::new();
+        for typed in [token.spn.as_str(), "onprem-user", "onprem-user@example.com"] {
+            let (account, groups) = resolver
+                .get_nssaccount_with_groups(typed)
+                .await
+                .unwrap()
+                .unwrap_or_else(|| panic!("{typed} did not resolve"));
+            assert_eq!(account.uid, token.gidnumber, "{typed}");
+            assert_eq!(groups, expected, "{typed}");
+            names.push(account.name);
+        }
+        assert!(names.windows(2).all(|pair| pair[0] == pair[1]), "{names:?}");
+    }
+
+    #[tokio::test]
+    async fn provisional_probe_with_an_absent_upn_routes_every_caller_to_the_alias_owner() {
+        let (resolver, alice, mut bob) = collision_resolver(false, future_expiry()).await;
+        bob.is_placeholder = true;
+        *resolver.client.exact_token.write().unwrap() = Some(bob.clone());
+        *resolver.client.upn_verdict.write().unwrap() = UpnVerdict::Absent;
+        let key = bob.spn.to_ascii_lowercase();
+
+        // NSS lookups, initgroups and account checks resolve through here.
+        let token = resolver
+            .get_usertoken(Id::Name(bob.spn.clone()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(token.uuid, alice.uuid);
+        assert!(!spn_is_cached(&resolver, &bob.spn).await);
+        // Only a definitive rejection is proof of absence, and it is reused.
+        assert!(resolver.alias_absence.lock().await.get(&key).is_some());
+        let verifications = resolver.client.verify_calls.load(Ordering::Acquire);
+        assert_eq!(verifications, 1);
+
+        let (_tx, rx) = broadcast::channel(1);
+        let (session, _resp) = resolver
+            .pam_account_authenticate_init(&bob.spn, "gdm-password", false, false, rx)
+            .await
+            .expect("auth init failed");
+        match session {
+            AuthSession::InProgress { account_id, .. } => assert_eq!(account_id, alice.spn),
+            _ => panic!("expected an in progress auth session"),
+        }
+        assert_eq!(
+            resolver.client.verify_calls.load(Ordering::Acquire),
+            verifications
+        );
+    }
+
+    #[tokio::test]
+    async fn provisional_probe_with_a_confirmed_upn_keeps_the_name_for_its_owner() {
+        let (resolver, alice, bob) = collision_resolver(false, future_expiry()).await;
+        let alias = alice.name.clone();
+        let mut provisional = bob.clone();
+        provisional.uuid = uuid::uuid!("dddddddd-0000-4000-8000-000000000003");
+        provisional.name.clone_from(&provisional.spn);
+        provisional.is_placeholder = true;
+        *resolver.client.exact_token.write().unwrap() = Some(provisional.clone());
+        *resolver.client.upn_verdict.write().unwrap() = UpnVerdict::Exists;
+
+        let token = resolver
+            .get_usertoken(Id::Name(bob.spn.clone()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(token.uuid, provisional.uuid);
+        assert!(resolver.alias_absence.lock().await.is_empty());
+        // The confirmed UPN is cached and reserves its name; Alice falls back
+        // to her canonical name instead of keeping the alias.
+        assert!(spn_is_cached(&resolver, &bob.spn).await);
+        let alice_now = resolver
+            .get_cached_usertokens()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| t.uuid == alice.uuid)
+            .unwrap();
+        assert_ne!(alice_now.name, alias);
+        assert_eq!(alice_now.name, alice.spn);
+
+        // Refreshing Alice, whose SAM is still the alias, must neither evict
+        // the confirmed reservation nor hand her the name back.
+        let mut refreshed = alice.clone();
+        refreshed.name.clone_from(&alias);
+        resolver
+            .set_cache_usertoken(&mut refreshed, false)
+            .await
+            .unwrap();
+        assert_eq!(refreshed.name, alice.spn);
+        assert!(spn_is_cached(&resolver, &bob.spn).await);
+        // The reservation is served from the cache, without another proof.
+        let verifications = resolver.client.verify_calls.load(Ordering::Acquire);
+        let (_, cached) = resolver
+            .get_cached_usertoken(&Id::Name(bob.spn.clone()))
+            .await
+            .unwrap();
+        assert_eq!(cached.unwrap().uuid, provisional.uuid);
+        assert_eq!(
+            resolver.client.verify_calls.load(Ordering::Acquire),
+            verifications
+        );
+
+        let (_tx, rx) = broadcast::channel(1);
+        let (session, _resp) = resolver
+            .pam_account_authenticate_init(&bob.spn, "gdm-password", false, false, rx)
+            .await
+            .expect("auth init failed");
+        match session {
+            AuthSession::InProgress { account_id, .. } => assert_eq!(account_id, bob.spn),
+            _ => panic!("expected an in progress auth session"),
+        }
+    }
+
+    #[tokio::test]
+    async fn try_unseal_never_reaches_the_provider_for_a_local_collision() {
+        for (name, uid) in [("onprem-user", 99999), ("unrelated", 2001)] {
+            let resolver = setup_resolver().await;
+            seed_aliased_token(&resolver).await;
+            resolver
+                .reload_nxset(vec![(name.to_string(), uid)].into_iter())
+                .await;
+            assert!(!resolver
+                .pam_try_unseal("onprem-user", "123456")
+                .await
+                .unwrap());
+            assert_eq!(resolver.client.try_unseal_calls.load(Ordering::Acquire), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn unproved_alias_is_rendered_canonically_while_offline() {
+        let resolver = setup_resolver().await.with_cn_name_mapping(true);
+        let render = || async {
+            resolver
+                .render_unproved_alias_canonically(
+                    resolver.nss_user_from_token(aliased_token(), true),
+                )
+                .await
+                .name
+        };
+        assert_eq!(render().await, "onprem-user");
+
+        resolver.client.set_cache_state(CacheState::Offline);
+        assert_eq!(render().await, aliased_token().spn);
+
+        // Once the exact name is proved absent, the alias owns it.
+        resolver.alias_absence.lock().await.put(
+            "onprem-user@example.com".to_string(),
+            std::time::SystemTime::now() + std::time::Duration::from_secs(60),
+        );
+        assert_eq!(render().await, "onprem-user");
+
+        // Without cn_name_mapping the alias is looked up as it is.
+        let plain = setup_resolver().await;
+        plain.client.set_cache_state(CacheState::Offline);
+        let user = plain.nss_user_from_token(aliased_token(), true);
+        assert_eq!(
+            plain.render_unproved_alias_canonically(user).await.name,
+            "onprem-user"
+        );
+    }
+
+    #[tokio::test]
+    async fn qualified_alias_is_rendered_canonically_while_offline_without_proof() {
+        for cn_name_mapping in [false, true] {
+            let resolver = setup_resolver().await.with_cn_name_mapping(cn_name_mapping);
+            let mut token = aliased_token();
+            token.name = "ops@secondary.com".into();
+            token.spn = "alice@secondary.com".into();
+            let render = || async {
+                resolver
+                    .render_unproved_alias_canonically(
+                        resolver.nss_user_from_token(token.clone(), true),
+                    )
+                    .await
+                    .name
+            };
+            assert_eq!(render().await, token.name);
+
+            resolver.client.set_cache_state(CacheState::Offline);
+            assert_eq!(render().await, token.spn);
+
+            resolver.alias_absence.lock().await.put(
+                "ops@secondary.com".to_string(),
+                std::time::SystemTime::now() + std::time::Duration::from_secs(60),
+            );
+            assert_eq!(render().await, token.name);
+        }
+    }
+
+    #[tokio::test]
+    async fn placeholder_without_proof_is_reverified_online_and_refused_offline() {
+        let (resolver, _alice, bob) = collision_resolver(false, future_expiry()).await;
+        let mut placeholder = bob.clone();
+        placeholder.uuid = uuid::uuid!("dddddddd-0000-4000-8000-000000000006");
+        placeholder.name.clone_from(&placeholder.spn);
+        placeholder.is_placeholder = true;
+        resolver
+            .cache_usertoken(&mut placeholder, true, false)
+            .await
+            .unwrap();
+        let id = Id::Name(bob.spn.clone());
+        let (_, served) = resolver.resolve_cached_usertoken(&id).await.unwrap();
+        assert_eq!(served.unwrap().uuid, placeholder.uuid);
+
+        resolver.upn_confirmed.lock().await.clear();
+        resolver.client.set_cache_state(CacheState::Offline);
+        assert!(resolver.resolve_cached_usertoken(&id).await.is_err());
+
+        resolver.client.set_cache_state(CacheState::Online);
+        *resolver.client.exact_token.write().unwrap() = Some(placeholder.clone());
+        *resolver.client.upn_verdict.write().unwrap() = UpnVerdict::Absent;
+        assert!(resolver.resolve_cached_usertoken(&id).await.is_err());
+
+        resolver.alias_absence.lock().await.clear();
+        *resolver.client.upn_verdict.write().unwrap() = UpnVerdict::Exists;
+        let (_, token) = resolver.resolve_cached_usertoken(&id).await.unwrap();
+        assert_eq!(token.unwrap().uuid, placeholder.uuid);
+        assert!(resolver.is_confirmed_upn(&bob.spn).await);
+    }
+
+    #[tokio::test]
+    async fn refused_identity_is_reported_as_excluded_not_missing() {
+        let resolver = setup_resolver().await;
+        let mut token = aliased_token();
+        resolver
+            .set_cache_usertoken(&mut token, false)
+            .await
+            .unwrap();
+        assert!(matches!(
+            resolver
+                .get_nssaccount_name_lookup(&token.spn)
+                .await
+                .unwrap(),
+            NssAccountLookup::Found(_)
+        ));
+        resolver
+            .reload_nxset(vec![("unrelated".to_string(), 2001)].into_iter())
+            .await;
+        match resolver
+            .get_nssaccount_name_lookup(&token.spn)
+            .await
+            .unwrap()
+        {
+            NssAccountLookup::Excluded(user) => {
+                assert!(!user.cacheable);
+                assert_eq!(user.uid, token.gidnumber);
+            }
+            _ => panic!("expected the identity to be excluded"),
+        }
+        assert!(matches!(
+            resolver
+                .get_nssaccount_name_lookup("nobody@example.com")
+                .await
+                .unwrap(),
+            NssAccountLookup::Missing
+        ));
+    }
+
+    #[tokio::test]
+    async fn group_member_alias_resolves_again_while_offline_without_proof() {
+        let resolver = setup_resolver().await.with_cn_name_mapping(true);
+        let mut member = test_token();
+        member.name = "AADBOB".into();
+        member.spn = "bob@example.com".into();
+        resolver
+            .set_cache_usertoken(&mut member, false)
+            .await
+            .unwrap();
+        let group = member.groups[0].uuid;
+
+        assert_eq!(
+            resolver.get_groupmembers(group).await,
+            vec!["AADBOB".to_string()]
+        );
+
+        resolver.client.set_cache_state(CacheState::Offline);
+        assert_eq!(
+            resolver.get_groupmembers(group).await,
+            vec!["bob@example.com".to_string()]
+        );
+
+        // Proved absent, the alias owns its qualified name again.
+        resolver.alias_absence.lock().await.put(
+            "aadbob@example.com".to_string(),
+            std::time::SystemTime::now() + std::time::Duration::from_secs(60),
+        );
+        assert_eq!(
+            resolver.get_groupmembers(group).await,
+            vec!["AADBOB".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_reservation_keeps_the_proof_of_an_earlier_one() {
+        let (resolver, _alice, bob) = collision_resolver(false, future_expiry()).await;
+        let mut first = bob.clone();
+        first.uuid = uuid::uuid!("dddddddd-0000-4000-8000-000000000004");
+        first.name.clone_from(&first.spn);
+        first.is_placeholder = true;
+        resolver
+            .cache_usertoken(&mut first, true, false)
+            .await
+            .unwrap();
+        let key = bob.spn.to_ascii_lowercase();
+        assert!(resolver.upn_confirmed.lock().await.peek(&key).is_some());
+
+        // A second placeholder of the same name is not stored over the first.
+        let mut second = first.clone();
+        second.uuid = uuid::uuid!("dddddddd-0000-4000-8000-000000000005");
+        let _ = resolver.cache_usertoken(&mut second, true, false).await;
+        assert!(resolver.upn_confirmed.lock().await.peek(&key).is_some());
+        assert!(spn_is_cached(&resolver, &bob.spn).await);
+    }
+
+    #[tokio::test]
+    async fn placeholders_are_not_enumerated_for_reconciliation() {
+        let resolver = setup_resolver().await;
+        let mut placeholder = placeholder_for("confirmed@example.com", true);
+        resolver
+            .cache_usertoken(&mut placeholder, true, false)
+            .await
+            .unwrap();
+        assert!(spn_is_cached(&resolver, &placeholder.spn).await);
+        for accounts in [
+            resolver.get_unexpired_nssaccounts().await.unwrap(),
+            resolver.get_nssaccounts().await.unwrap(),
+        ] {
+            assert!(accounts
+                .iter()
+                .all(|a| a.canonical_name.as_deref() != Some(placeholder.spn.as_str())));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn confirmed_reservation_survives_a_concurrent_refresh_of_the_alias_owner() {
+        for _ in 0..50 {
+            let (resolver, alice, bob) = collision_resolver(false, future_expiry()).await;
+            let resolver = std::sync::Arc::new(resolver);
+            let alias = alice.name.clone();
+            let mut placeholder = bob.clone();
+            placeholder.uuid = uuid::uuid!("dddddddd-0000-4000-8000-000000000004");
+            placeholder.name.clone_from(&placeholder.spn);
+            placeholder.is_placeholder = true;
+            let mut refreshed = alice.clone();
+            refreshed.name.clone_from(&alias);
+
+            let reserving = resolver.clone();
+            let reserve = tokio::spawn(async move {
+                reserving
+                    .cache_usertoken(&mut placeholder, true, false)
+                    .await
+            });
+            let refreshing = resolver.clone();
+            let refresh =
+                tokio::spawn(
+                    async move { refreshing.set_cache_usertoken(&mut refreshed, false).await },
+                );
+            reserve.await.unwrap().unwrap();
+            refresh.await.unwrap().unwrap();
+
+            // Whichever of the two ran first, the confirmed UPN keeps its name
+            // and Alice holds her canonical name instead of the alias.
+            assert!(spn_is_cached(&resolver, &bob.spn).await);
+            let alice_now = resolver
+                .get_cached_usertokens()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|t| t.uuid == alice.uuid)
+                .unwrap();
+            assert_eq!(alice_now.name, alice.spn);
+        }
+    }
+
+    #[tokio::test]
+    async fn provisional_probe_without_evidence_leaves_the_name_unresolved() {
+        // The default verdict of a provider which cannot tell.
+        let (resolver, _alice, mut bob) = collision_resolver(false, future_expiry()).await;
+        bob.is_placeholder = true;
+        *resolver.client.exact_token.write().unwrap() = Some(bob.clone());
+        assert!(resolver
+            .get_usertoken(Id::Name(bob.spn.clone()))
+            .await
+            .is_err());
+        assert!(resolver.alias_absence.lock().await.is_empty());
+        assert!(!spn_is_cached(&resolver, &bob.spn).await);
+    }
+
+    #[tokio::test]
+    async fn session_identity_describes_one_identity_whatever_the_cache_does_later() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+        resolver
+            .client
+            .exact_not_found
+            .store(true, Ordering::Release);
+        let token = aliased_token();
+        let groups: Vec<uuid::Uuid> = token.groups.iter().map(|group| group.uuid).collect();
+
+        let identity = resolver
+            .pam_account_beginsession_identity("onprem-user@example.com")
+            .await
+            .unwrap()
+            .unwrap();
+        // Home directory, NSS identity and memberships belong together.
+        assert_eq!(identity.home.uid, identity.account.uid);
+        assert_eq!(identity.home.uid, token.gidnumber);
+        assert_eq!(identity.group_ids, groups);
+        let snapshot = (
+            identity.account.name.clone(),
+            identity.account.uid,
+            identity.group_ids.clone(),
+        );
+
+        // While the home directory task waits, a refresh moves the user to
+        // another group.
+        let other_group = uuid::uuid!("c0ffee00-0000-4000-8000-0000000000b1");
+        let mut refreshed = aliased_token();
+        refreshed.groups = vec![GroupToken {
+            name: "other".to_string(),
+            spn: "other@example.com".to_string(),
+            uuid: other_group,
+            gidnumber: 2999,
+        }];
+        resolver
+            .set_cache_usertoken(&mut refreshed, false)
+            .await
+            .unwrap();
+
+        // The snapshot still describes the identity the home directory was
+        // created for, while a fresh resolution sees the change.
+        assert_eq!(
+            snapshot,
+            (
+                identity.account.name.clone(),
+                identity.account.uid,
+                identity.group_ids.clone()
+            )
+        );
+        let later = resolver
+            .pam_account_beginsession_identity(&token.spn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(later.group_ids, vec![other_group]);
+        assert_ne!(later.group_ids, snapshot.2);
+        assert_eq!(later.account.uid, snapshot.1);
+
+        // The wrapper keeps returning the same home directory description.
+        let home = resolver
+            .pam_account_beginsession(&token.spn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(home.uid, later.home.uid);
+        assert_eq!(home.name, later.home.name);
+    }
+
+    #[tokio::test]
+    async fn auth_init_uses_the_upn_of_a_local_name() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+        resolver
+            .client
+            .exact_not_found
+            .store(true, Ordering::Release);
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+
+        let (session, _resp) = resolver
+            .pam_account_authenticate_init(
+                "onprem-user@example.com",
+                "gdm-password",
+                false,
+                false,
+                shutdown_rx,
+            )
+            .await
+            .expect("auth init failed");
+        match session {
+            AuthSession::InProgress { account_id, .. } => {
+                assert_eq!(account_id, "first.last@example.com")
+            }
+            _ => panic!("expected an in progress auth session"),
+        }
+    }
+
+    #[tokio::test]
+    async fn allow_list_matches_the_resolved_user_only() {
+        // "onprem-user@example.com" is the UPN of some other user. Here it is
+        // merely the expanded local name of the cached "first.last@example.com".
+        for (allowed, admitted) in [
+            ("onprem-user@example.com", false),
+            ("first.last@example.com", true),
+        ] {
+            let resolver = setup_resolver_allowing(
+                0,
+                InitgroupsMode::Named,
+                Vec::new(),
+                vec![allowed.to_string()],
+            )
+            .await;
+            seed_aliased_token(&resolver).await;
+            resolver
+                .client
+                .exact_not_found
+                .store(true, Ordering::Release);
+
+            assert_eq!(
+                resolver
+                    .pam_account_allowed("onprem-user@example.com")
+                    .await
+                    .expect("allow-group check failed"),
+                Some(admitted),
+                "allow list {allowed}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn nxset_compares_names_case_insensitively() {
+        let resolver = setup_resolver().await;
+        resolver
+            .reload_nxset(vec![("Admin".to_string(), 4242u32)].into_iter())
+            .await;
+
+        for name in ["admin", "ADMIN", "Admin"] {
+            assert!(resolver.check_nxset(Some(name), None).await, "{name}");
+        }
+        assert!(resolver.check_nxset(None, Some(4242)).await);
+        assert!(!resolver.check_nxset(Some("administrator"), None).await);
+        assert!(!resolver.check_nxset(Some("admin@example.com"), None).await);
+    }
+
+    #[tokio::test]
+    async fn user_colliding_with_a_local_account_is_not_returned() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+        let id = Id::Name("first.last@example.com".to_string());
+
+        let found = resolver
+            .get_usertoken(id.clone())
+            .await
+            .expect("lookup failed");
+        assert_eq!(found.map(|t| t.name), Some("onprem-user".to_string()));
+
+        // A local account appears which has the Entra user's local name.
+        resolver
+            .reload_nxset(vec![("ONPREM-USER".to_string(), 99999u32)].into_iter())
+            .await;
+        assert!(resolver
+            .get_usertoken(id)
+            .await
+            .expect("lookup failed")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn authoritative_upn_with_synthetic_primary_group_wins_over_sam() {
+        let resolver = setup_resolver().await;
+        let mut bob = aliased_token();
+        bob.spn = "bob@example.com".into();
+        bob.name = "robert".into();
+        bob.groups = vec![GroupToken {
+            name: bob.spn.clone(),
+            spn: bob.spn.clone(),
+            uuid: bob.uuid,
+            gidnumber: bob.gidnumber,
+        }];
+        let mut alice = test_token();
+        alice.name = "bob".into();
+        alice.spn = "alice@example.com".into();
+        {
+            let mut txn = resolver.db.write().await;
+            txn.update_group(&bob.groups[0], 0).unwrap();
+            txn.update_account(&bob, 0).unwrap();
+            txn.update_account(&alice, 0).unwrap();
+            txn.commit().unwrap();
+        }
+        let (_, cached) = resolver
+            .get_cached_usertoken(&Id::Name(bob.spn.clone()))
+            .await
+            .unwrap();
+        assert_eq!(cached.unwrap().uuid, bob.uuid);
+        let (_tx, rx) = broadcast::channel(1);
+        let (session, _) = resolver
+            .pam_account_authenticate_init(&bob.spn, "gdm-password", false, false, rx)
+            .await
+            .unwrap();
+        match session {
+            AuthSession::InProgress { account_id, .. } => assert_eq!(account_id, bob.spn),
+            _ => panic!("expected in-progress authentication"),
+        }
+    }
+
+    #[tokio::test]
+    async fn authenticated_token_shaped_like_a_legacy_placeholder_keeps_its_name() {
+        // An OIDC identity without a `name` claim has no display name and one
+        // synthetic self-group, but it is authenticated and carries the marker.
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+        let mut oidc = placeholder_for("onprem-user@example.com", false);
+        assert!(!is_placeholder_token(&oidc));
+        resolver
+            .set_cache_usertoken(&mut oidc, false)
+            .await
+            .unwrap();
+
+        let (_, cached) = resolver
+            .get_cached_usertoken(&Id::Name("onprem-user@example.com".to_string()))
+            .await
+            .unwrap();
+        let cached = cached.unwrap();
+        assert_eq!(cached.uuid, oidc.uuid);
+        assert!(!is_placeholder_token(&cached));
+        // The canonical identity owns the name, the alias owner is restored.
+        assert!(spn_is_cached(&resolver, &aliased_token().spn).await);
+    }
+
+    #[tokio::test]
+    async fn conflicting_sam_falls_back_without_evicting_cached_credentials() {
+        for name in ["onprem-user", "ONPREM-USER"] {
+            let resolver = setup_resolver().await;
+            let mut first = aliased_token();
+            resolver
+                .set_cache_usertoken(&mut first, false)
+                .await
+                .unwrap();
+            resolver
+                .set_cache_userpassword(first.uuid, "keep-me")
+                .await
+                .unwrap();
+            let mut second = test_token();
+            second.name = name.into();
+            second.spn = "second@other.com".into();
+            resolver
+                .set_cache_usertoken(&mut second, false)
+                .await
+                .unwrap();
+            assert_eq!(second.name, second.spn);
+            assert!(resolver
+                .check_cache_userpassword(first.uuid, "keep-me")
+                .await
+                .unwrap());
+            let (_, cached) = resolver
+                .get_cached_usertoken(&Id::Name(first.spn))
+                .await
+                .unwrap();
+            assert_eq!(cached.unwrap().uuid, first.uuid);
+        }
+    }
+
+    #[tokio::test]
+    async fn same_spn_uuid_replacement_keeps_the_sam_name() {
+        let resolver = setup_resolver().await;
+        let mut token = aliased_token();
+        resolver
+            .set_cache_usertoken(&mut token, false)
+            .await
+            .unwrap();
+        let previous_uuid = token.uuid;
+        resolver
+            .set_cache_userpassword(previous_uuid, "old-account-password")
+            .await
+            .unwrap();
+        token.uuid = uuid::Uuid::new_v4();
+        resolver
+            .set_cache_usertoken(&mut token, false)
+            .await
+            .unwrap();
+        assert_eq!(token.name, "onprem-user");
+        let (_, cached) = resolver
+            .get_cached_usertoken(&Id::Name(token.spn.clone()))
+            .await
+            .unwrap();
+        assert_eq!(cached.unwrap().uuid, token.uuid);
+        assert!(!resolver
+            .check_cache_userpassword(token.uuid, "old-account-password")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn canonical_upn_reclaims_expanded_alias_without_deleting_its_owner() {
+        let resolver = setup_resolver().await;
+        let mut alice = aliased_token();
+        alice.name = "bob".into();
+        alice.spn = "alice@example.com".into();
+        resolver
+            .set_cache_usertoken(&mut alice, false)
+            .await
+            .unwrap();
+        resolver
+            .set_cache_userpassword(alice.uuid, "alice-password")
+            .await
+            .unwrap();
+        let mut bob = test_token();
+        bob.name = "robert".into();
+        bob.spn = "bob@example.com".into();
+        resolver.set_cache_usertoken(&mut bob, false).await.unwrap();
+        let (_, cached) = resolver
+            .get_cached_usertoken(&Id::Name(alice.spn.clone()))
+            .await
+            .unwrap();
+        assert_eq!(cached.unwrap().name, alice.spn);
+        assert!(resolver
+            .check_cache_userpassword(alice.uuid, "alice-password")
+            .await
+            .unwrap());
+        let (_, cached) = resolver
+            .get_cached_usertoken(&Id::Name(bob.spn))
+            .await
+            .unwrap();
+        assert_eq!(cached.unwrap().uuid, bob.uuid);
+    }
+
+    #[tokio::test]
+    async fn local_collisions_are_filtered_from_enumeration_refresh_and_members() {
+        for (name, uid) in [("ONPREM-USER", 99999), ("unrelated", 2001)] {
+            let resolver = setup_resolver().await;
+            let mut token = aliased_token();
+            resolver
+                .set_cache_usertoken(&mut token, false)
+                .await
+                .unwrap();
+            assert!(resolver
+                .get_nssaccounts()
+                .await
+                .unwrap()
+                .iter()
+                .any(|user| user.uid == token.gidnumber));
+            resolver
+                .reload_nxset(vec![(name.to_string(), uid)].into_iter())
+                .await;
+            assert!(!resolver
+                .get_nssaccounts()
+                .await
+                .unwrap()
+                .iter()
+                .any(|user| user.uid == token.gidnumber));
+            assert!(resolver
+                .refresh_cached_usertoken(&token.spn)
+                .await
+                .unwrap()
+                .is_none());
+            assert!(!resolver
+                .get_groupmembers(token.groups[0].uuid)
+                .await
+                .contains(&token.name));
+        }
+    }
+
+    #[tokio::test]
+    async fn group_members_use_the_user_map_local_account() {
+        let path = format!(
+            "/tmp/himmelblau_members_map_test_{}.txt",
+            uuid::Uuid::new_v4()
+        );
+        std::fs::write(&path, "alice:Alice@Example.com\ncarol:carol@example.com\n").unwrap();
+        let resolver = setup_resolver().await.with_user_map_file(path.clone());
+        let mut mapped = test_token();
+        mapped.name = "AADALICE".into();
+        mapped.spn = "alice@example.com".into();
+        resolver
+            .set_cache_usertoken(&mut mapped, false)
+            .await
+            .unwrap();
+        let mut unmapped = test_token();
+        unmapped.uuid = uuid::uuid!("1302b99c-f0f6-41ab-9492-852692b0fd16");
+        unmapped.name = "AADBOB".into();
+        unmapped.spn = "bob@example.com".into();
+        unmapped.gidnumber = 2001;
+        unmapped.real_gidnumber = Some(2001);
+        resolver
+            .set_cache_usertoken(&mut unmapped, false)
+            .await
+            .unwrap();
+
+        let mut upn_named = test_token();
+        upn_named.uuid = uuid::uuid!("2302b99c-f0f6-41ab-9492-852692b0fd16");
+        upn_named.name = "carol@example.com".into();
+        upn_named.spn = "carol@example.com".into();
+        upn_named.gidnumber = 2002;
+        upn_named.real_gidnumber = Some(2002);
+        resolver
+            .set_cache_usertoken(&mut upn_named, false)
+            .await
+            .unwrap();
+
+        let mut members = resolver.get_groupmembers(mapped.groups[0].uuid).await;
+        members.sort();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(
+            members,
+            vec![
+                "AADBOB".to_string(),
+                "alice".to_string(),
+                "carol".to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn group_exclusions_are_case_insensitive_during_cache_updates() {
+        let resolver = setup_resolver().await;
+        resolver
+            .reload_nxset(vec![("Admin".into(), 99999)].into_iter())
+            .await;
+        for name in ["Admin", "ADMIN", "admin"] {
+            let mut token = aliased_token();
+            token.groups[0].name = name.into();
+            resolver
+                .set_cache_usertoken(&mut token, false)
+                .await
+                .unwrap();
+            assert!(token.groups.is_empty());
+            assert!(resolver
+                .get_groupmembers(test_token().groups[0].uuid)
+                .await
+                .iter()
+                .all(|name| name != &token.name));
+        }
+    }
+
+    #[tokio::test]
+    async fn newly_excluded_groups_are_not_returned_from_old_cached_tokens() {
+        for mode in [InitgroupsMode::Named, InitgroupsMode::Full] {
+            let resolver = setup_resolver_with(0, mode, Vec::new()).await;
+            let group = &test_token().groups[0];
+            resolver
+                .reload_nxset(vec![("LINUX-USERS".into(), 99999)].into_iter())
+                .await;
+            assert!(resolver
+                .get_nssgroup_gid(group.gidnumber)
+                .await
+                .unwrap()
+                .is_none());
+            assert!(resolver
+                .get_nssgroups()
+                .await
+                .unwrap()
+                .iter()
+                .all(|cached| cached.gid != group.gidnumber));
+            assert!(resolver
+                .get_initgroups("testuser")
+                .await
+                .unwrap()
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn qualified_secondary_sam_resolves_only_with_its_domain() {
+        let resolver = setup_resolver().await;
+        let mut token = aliased_token();
+        token.name = "onprem-user@secondary.com".into();
+        token.spn = "first.last@secondary.com".into();
+        resolver
+            .set_cache_usertoken(&mut token, false)
+            .await
+            .unwrap();
+        let nss = resolver
+            .get_nssaccount_gid(token.gidnumber)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(nss.name, "onprem-user@secondary.com");
+        let path =
+            std::env::temp_dir().join(format!("himmelblau-sam-{}.conf", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            "[global]\ndomains = primary.com,secondary.com\ncn_name_mapping = true\n",
+        )
+        .unwrap();
+        let cfg = crate::config::HimmelblauConfig::new(path.to_str()).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let displayed = cfg.map_upn_to_name(&nss.name);
+        let lookup = cfg.map_name_to_upn(&displayed).unwrap();
+        let (_, roundtrip) = resolver
+            .get_cached_usertoken(&Id::Name(lookup))
+            .await
+            .unwrap();
+        assert_eq!(roundtrip.unwrap().uuid, token.uuid);
+        assert_eq!(
+            nss.canonical_name.as_deref(),
+            Some("first.last@secondary.com")
+        );
+        for (name, found) in [
+            ("onprem-user@secondary.com", true),
+            ("onprem-user@primary.com", false),
+        ] {
+            let (_, cached) = resolver
+                .get_cached_usertoken(&Id::Name(name.into()))
+                .await
+                .unwrap();
+            assert_eq!(cached.is_some(), found);
+        }
+    }
+
+    async fn collision_resolver(
+        qualified: bool,
+        expiry: u64,
+    ) -> (Resolver<OfflineFallbackProvider>, UserToken, UserToken) {
+        let resolver = setup_resolver().await;
+        let domain = if qualified {
+            "secondary.com"
+        } else {
+            "example.com"
+        };
+        let mut alice = aliased_token();
+        alice.name = if qualified {
+            format!("bob@{domain}")
+        } else {
+            "bob".into()
+        };
+        alice.spn = format!("alice@{domain}");
+        {
+            let mut txn = resolver.db.write().await;
+            txn.update_account(&alice, expiry).unwrap();
+            txn.commit().unwrap();
+        }
+        let mut bob = test_token();
+        bob.uuid = uuid::uuid!("cccccccc-0000-4000-8000-000000000001");
+        bob.name = "robert".into();
+        bob.spn = format!("bob@{domain}");
+        bob.gidnumber = 2002;
+        bob.real_gidnumber = Some(2002);
+        (resolver, alice, bob)
+    }
+
+    fn future_expiry() -> u64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600
+    }
+
+    #[tokio::test]
+    async fn uncached_canonical_upn_wins_before_nss_and_authentication() {
+        for qualified in [false, true] {
+            for expiry in [0, future_expiry()] {
+                {
+                    // A placeholder never outranks a cached alias owner, see
+                    // `placeholder_does_not_hide_a_local_alias`.
+                    let placeholder = false;
+                    for authenticate in [false, true] {
+                        let (resolver, alice, mut bob) =
+                            collision_resolver(qualified, expiry).await;
+                        bob.is_placeholder = placeholder;
+                        if placeholder {
+                            bob.name.clone_from(&bob.spn);
+                        }
+                        *resolver.client.exact_token.write().unwrap() = Some(bob.clone());
+                        resolver
+                            .set_cache_userpassword(alice.uuid, "alice-password")
+                            .await
+                            .unwrap();
+                        let requested = bob.spn.to_uppercase();
+                        if authenticate {
+                            let (_tx, rx) = broadcast::channel(1);
+                            let (session, _) = resolver
+                                .pam_account_authenticate_init(
+                                    &requested,
+                                    "gdm-password",
+                                    false,
+                                    false,
+                                    rx,
+                                )
+                                .await
+                                .unwrap();
+                            match session {
+                                AuthSession::InProgress {
+                                    account_id, token, ..
+                                } => {
+                                    assert_eq!(account_id, bob.spn);
+                                    assert_eq!(token.unwrap().uuid, bob.uuid);
+                                }
+                                _ => panic!("expected Bob's authentication session"),
+                            }
+                            assert!(resolver
+                                .client
+                                .credential_ids
+                                .read()
+                                .unwrap()
+                                .iter()
+                                .all(|name| name == &bob.spn));
+                        } else {
+                            let user = resolver
+                                .get_nssaccount_name(&requested)
+                                .await
+                                .unwrap()
+                                .unwrap();
+                            assert_eq!(user.uid, bob.gidnumber);
+                            assert_eq!(user.canonical_name.as_deref(), Some(bob.spn.as_str()));
+                        }
+                        {
+                            let lookups = resolver.client.lookup_ids.read().unwrap();
+                            assert_eq!(lookups.len(), 1);
+                            assert_eq!(lookups[0], (Id::Name(requested), None));
+                        }
+                        assert!(resolver
+                            .check_cache_userpassword(alice.uuid, "alice-password")
+                            .await
+                            .unwrap());
+                        let (_, cached) = resolver
+                            .get_cached_usertoken(&Id::Name(alice.spn.clone()))
+                            .await
+                            .unwrap();
+                        assert_eq!(cached.unwrap().name, alice.spn);
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn placeholder_never_displaces_a_cached_alias_in_either_insertion_order() {
+        for qualified in [false, true] {
+            for placeholder_first in [false, true] {
+                let (resolver, mut alice, mut bob) = collision_resolver(qualified, 0).await;
+                bob.name.clone_from(&bob.spn);
+                bob.is_placeholder = true;
+                let alias = alice.name.clone();
+                if placeholder_first {
+                    resolver.delete_cache_usertoken(alice.uuid).await.unwrap();
+                }
+                resolver.set_cache_usertoken(&mut bob, false).await.unwrap();
+                resolver
+                    .set_cache_usertoken(&mut alice, false)
+                    .await
+                    .unwrap();
+                assert_eq!(alice.name, alias);
+                let (_, cached) = resolver
+                    .get_cached_usertoken(&Id::Name(bob.spn.clone()))
+                    .await
+                    .unwrap();
+                assert_eq!(cached.unwrap().uuid, alice.uuid);
+                assert!(!spn_is_cached(&resolver, &bob.spn).await);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn provisional_exact_probe_never_authorizes_alias_fallback() {
+        let (resolver, _alice, mut bob) = collision_resolver(false, future_expiry()).await;
+        bob.is_placeholder = true;
+        *resolver.client.exact_token.write().unwrap() = Some(bob.clone());
+        assert!(resolver
+            .get_usertoken(Id::Name(bob.spn.clone()))
+            .await
+            .is_err());
+        assert!(resolver.alias_absence.lock().await.get(&bob.spn).is_none());
+        let (_tx, rx) = broadcast::channel(1);
+        assert!(resolver
+            .pam_account_authenticate_init(&bob.spn, "gdm-password", false, false, rx,)
+            .await
+            .is_err());
+        assert!(resolver.client.credential_ids.read().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn alias_requires_explicit_exact_absence_not_generic_negative_cache() {
+        let (resolver, alice, bob) = collision_resolver(false, future_expiry()).await;
+        let id = Id::Name(bob.spn.clone());
+        resolver.set_nxcache(&id).await;
+        for error in 0..=6 {
+            resolver
+                .client
+                .user_get_error
+                .store(error, Ordering::Release);
+            assert!(
+                resolver.get_usertoken(id.clone()).await.is_err(),
+                "error {error}"
+            );
+        }
+        assert!(resolver.client.credential_ids.read().unwrap().is_empty());
+        resolver.client.user_get_error.store(0, Ordering::Release);
+        resolver
+            .client
+            .exact_not_found
+            .store(true, Ordering::Release);
+        assert_eq!(
+            resolver
+                .get_usertoken(id.clone())
+                .await
+                .unwrap()
+                .unwrap()
+                .uuid,
+            alice.uuid
+        );
+        let calls = resolver.client.user_get_calls.load(Ordering::Acquire);
+        resolver.client.set_cache_state(CacheState::Offline);
+        assert_eq!(
+            resolver.get_usertoken(id).await.unwrap().unwrap().uuid,
+            alice.uuid
+        );
+        assert_eq!(
+            resolver.client.user_get_calls.load(Ordering::Acquire),
+            calls
+        );
+    }
+
+    #[tokio::test]
+    async fn unverified_offline_alias_cannot_select_credentials_or_nss_identity() {
+        for state in [
+            CacheState::Offline,
+            CacheState::OfflineNextCheck(SystemTime::now() + Duration::from_secs(60)),
+        ] {
+            let (resolver, alice, bob) = collision_resolver(false, future_expiry()).await;
+            resolver.client.set_cache_state(state);
+            assert!(resolver.get_nssaccount_name(&bob.spn).await.is_err());
+            let (_tx, rx) = broadcast::channel(1);
+            assert!(resolver
+                .pam_account_authenticate_init(&bob.spn, "gdm-password", false, false, rx)
+                .await
+                .is_err());
+            assert!(resolver.pam_try_unseal(&bob.spn, "123456").await.is_err());
+            assert!(resolver.refresh_cached_usertoken(&bob.spn).await.is_err());
+            assert!(resolver.client.credential_ids.read().unwrap().is_empty());
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+            assert_eq!(
+                resolver
+                    .get_usertoken(Id::Name(alice.spn.clone()))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .uuid,
+                alice.uuid
+            );
+            assert_eq!(
+                resolver
+                    .get_usertoken(Id::Name("bob".into()))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .uuid,
+                alice.uuid
+            );
+            assert_eq!(
+                resolver
+                    .get_usertoken(Id::Name(alice.uuid.to_string()))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .uuid,
+                alice.uuid
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_alias_proof_requires_reverification_after_reconnect() {
+        let (resolver, alice, bob) = collision_resolver(false, future_expiry()).await;
+        let id = Id::Name(bob.spn.clone());
+        resolver
+            .client
+            .exact_not_found
+            .store(true, Ordering::Release);
+        assert_eq!(
+            resolver
+                .get_usertoken(id.clone())
+                .await
+                .unwrap()
+                .unwrap()
+                .uuid,
+            alice.uuid
+        );
+        resolver
+            .alias_absence
+            .lock()
+            .await
+            .put(bob.spn.clone(), SystemTime::UNIX_EPOCH);
+        resolver.client.set_cache_state(CacheState::Offline);
+        assert!(resolver.get_usertoken(id.clone()).await.is_err());
+        resolver
+            .client
+            .set_cache_state(CacheState::OfflineNextCheck(SystemTime::UNIX_EPOCH));
+        *resolver.client.exact_token.write().unwrap() = Some(bob.clone());
+        let (_tx, rx) = broadcast::channel(1);
+        let (session, _) = resolver
+            .pam_account_authenticate_init(&bob.spn, "gdm-password", false, false, rx)
+            .await
+            .unwrap();
+        match session {
+            AuthSession::InProgress { account_id, .. } => assert_eq!(account_id, bob.spn),
+            _ => panic!("expected Bob's session after reconnect"),
+        }
+        assert!(resolver
+            .client
+            .credential_ids
+            .read()
+            .unwrap()
+            .iter()
+            .all(|name| name == &bob.spn));
+        assert!(resolver.alias_absence.lock().await.get(&bob.spn).is_none());
+    }
+
+    #[tokio::test]
+    async fn unseal_and_forced_refresh_verify_the_exact_identity() {
+        for unseal in [false, true] {
+            let (resolver, _alice, bob) = collision_resolver(true, 0).await;
+            *resolver.client.exact_token.write().unwrap() = Some(bob.clone());
+            if unseal {
+                assert!(resolver.pam_try_unseal(&bob.spn, "123456").await.unwrap());
+                assert_eq!(
+                    *resolver.client.credential_ids.read().unwrap(),
+                    vec![bob.spn.clone()]
+                );
+            } else {
+                assert_eq!(
+                    resolver
+                        .refresh_cached_usertoken(&bob.spn)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .uuid,
+                    bob.uuid
+                );
+            }
+            assert_eq!(
+                resolver.client.lookup_ids.read().unwrap()[0],
+                (Id::Name(bob.spn), None)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn password_change_verifies_identity_before_selecting_a_provider_account() {
+        let token = UnixUserToken {
+            token_type: "Bearer".into(),
+            scope: None,
+            expires_in: 0,
+            ext_expires_in: 0,
+            access_token: None,
+            refresh_token: String::new(),
+            id_token: Default::default(),
+            client_info: Default::default(),
+            prt: None,
+        };
+        for online in [false, true] {
+            let (resolver, _alice, bob) = collision_resolver(false, future_expiry()).await;
+            if online {
+                *resolver.client.exact_token.write().unwrap() = Some(bob.clone());
+            } else {
+                resolver.client.set_cache_state(CacheState::Offline);
+            }
+            // The mock provider rejects the operation; the destination still
+            // proves that Alice's credential operation was never selected.
+            assert!(resolver
+                .change_auth_token(&bob.spn, &token, "test-password")
+                .await
+                .is_err());
+            let expected = if online { vec![bob.spn] } else { Vec::new() };
+            assert_eq!(*resolver.client.credential_ids.read().unwrap(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_insert_during_exact_probe_precedes_its_stale_result() {
+        for result in 0..3 {
+            let (resolver, _alice, mut bob) = collision_resolver(false, future_expiry()).await;
+            let requested = bob.spn.clone();
+            resolver.client.pause_lookup.store(true, Ordering::Release);
+            resolver
+                .client
+                .exact_not_found
+                .store(result == 1, Ordering::Release);
+            if result == 0 {
+                let mut provisional = bob.clone();
+                provisional.uuid = uuid::uuid!("dddddddd-0000-4000-8000-000000000001");
+                provisional.is_placeholder = true;
+                *resolver.client.exact_token.write().unwrap() = Some(provisional);
+            }
+            let requested_id = Id::Name(requested.clone());
+            let lookup = resolver.resolve_cached_usertoken(&requested_id);
+            let concurrent_insert = async {
+                resolver.client.lookup_started.notified().await;
+                let release = async {
+                    // Let set_cache_usertoken queue for the database lock held
+                    // by the provider lookup before releasing that lookup.
+                    tokio::task::yield_now().await;
+                    resolver.client.lookup_continue.notify_one();
+                };
+                let (inserted, ()) =
+                    tokio::join!(resolver.set_cache_usertoken(&mut bob, false), release);
+                inserted.unwrap();
+            };
+            let (resolved, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(lookup, concurrent_insert)
+            })
+            .await
+            .expect("concurrent identity lookup deadlocked");
+            let (_, resolved) = resolved.unwrap();
+            assert_eq!(resolved.unwrap().uuid, bob.uuid);
+            assert!(resolver
+                .alias_absence
+                .lock()
+                .await
+                .get(&requested)
+                .is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn invalidating_the_cache_discards_alias_absence_proof() {
+        let (resolver, _alice, bob) = collision_resolver(false, future_expiry()).await;
+        resolver
+            .client
+            .exact_not_found
+            .store(true, Ordering::Release);
+        resolver
+            .get_usertoken(Id::Name(bob.spn.clone()))
+            .await
+            .unwrap()
+            .unwrap();
+        resolver.invalidate().await.unwrap();
+        resolver.client.set_cache_state(CacheState::Offline);
+        assert!(resolver.get_usertoken(Id::Name(bob.spn)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn unrelated_probe_identity_never_authorizes_an_alias() {
+        let (resolver, alice, bob) = collision_resolver(false, future_expiry()).await;
+        *resolver.client.exact_token.write().unwrap() = Some(alice);
+        assert!(resolver.get_usertoken(Id::Name(bob.spn)).await.is_err());
+        assert!(resolver.alias_absence.lock().await.is_empty());
+    }
+
     #[tokio::test]
     async fn initgroups_named_omits_gid_with_no_nss_name() {
         let unnamed = GroupToken {
@@ -2117,6 +3740,46 @@ mod tests {
     }
 }
 
+/// The identity provider caches a placeholder for a name which it could not
+/// reject, such as the `<sam>@<domain>` expansion of a local name. A placeholder
+/// is no proof that the name is a UPN of its own, so it never outranks the
+/// account that owns the name as a local alias.
+fn is_placeholder_token(token: &UserToken) -> bool {
+    token.is_provisional()
+}
+
+/// Is `token` the user which `local@domain` was expanded from? That is so if
+/// the token's local name is `local` and its UPN is in `domain`. A token whose
+/// local name is its UPN never matches.
+fn is_expanded_local_name(token: &UserToken, local: &str, domain: &str) -> bool {
+    token.name.eq_ignore_ascii_case(local)
+        && split_username(&token.spn)
+            .map(|(_, spn_domain)| spn_domain.eq_ignore_ascii_case(domain))
+            .unwrap_or(false)
+}
+
+/// Compare a local alias and its domain-qualified form with an account name.
+fn local_name_matches(token: &UserToken, name: &str) -> bool {
+    token.name.eq_ignore_ascii_case(name)
+        || split_username(name)
+            .map(|(local, domain)| is_expanded_local_name(token, local, domain))
+            .unwrap_or(false)
+}
+
+/// The outcome of resolving a user for NSS.
+pub enum NssAccountLookup {
+    Found(NssUser),
+    /// The identity exists but collides with a local account, so it is refused.
+    Excluded(NssUser),
+    Missing,
+}
+
+enum UserTokenLookup {
+    Found((UserToken, bool)),
+    Excluded(UserToken),
+    Missing,
+}
+
 impl<I> Resolver<I>
 where
     I: IdProvider + Sync,
@@ -2214,11 +3877,29 @@ where
             gid_attr_map,
             initgroups_mode,
             allow_id_overrides: allow_id_overrides.into_iter().map(Id::Name).collect(),
+            user_map_file: None,
+            cn_name_mapping: false,
             nxset: Mutex::new(HashSet::new()),
             nxcache: Mutex::new(LruCache::new(NXCACHE_SIZE)),
+            alias_absence: Mutex::new(LruCache::new(NXCACHE_SIZE)),
+            upn_confirmed: Mutex::new(LruCache::new(NXCACHE_SIZE)),
             password_generation: AtomicU64::new(0),
             password_cache_generations: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Render group members whose canonical UPN is listed in the user map file
+    /// as their mapped local account.
+    pub fn with_user_map_file(mut self, user_map_file: String) -> Self {
+        self.user_map_file = Some(user_map_file);
+        self
+    }
+
+    /// Declare that clients expand a local name to `<name>@<domain>` before
+    /// asking for it (cn_name_mapping).
+    pub fn with_cn_name_mapping(mut self, cn_name_mapping: bool) -> Self {
+        self.cn_name_mapping = cn_name_mapping;
+        self
     }
 
     /// Export broker PRTs from the identity provider for fdstore
@@ -2247,6 +3928,8 @@ where
     pub async fn clear_cache(&self) -> ResolverResult<()> {
         let mut nxcache_txn = self.nxcache.lock().await;
         nxcache_txn.clear();
+        self.alias_absence.lock().await.clear();
+        self.upn_confirmed.lock().await.clear();
         let mut dbtxn = self.db.write().await;
         dbtxn
             .clear()
@@ -2265,6 +3948,8 @@ where
     pub async fn invalidate(&self) -> ResolverResult<()> {
         let mut nxcache_txn = self.nxcache.lock().await;
         nxcache_txn.clear();
+        self.alias_absence.lock().await.clear();
+        self.upn_confirmed.lock().await.clear();
         let mut dbtxn = self.db.write().await;
         dbtxn
             .invalidate()
@@ -2283,9 +3968,15 @@ where
         account_id: &str,
     ) -> ResolverResult<Option<UserToken>> {
         let id = Id::Name(account_id.to_string());
-        let (false, Some(token)) = self.get_cached_usertoken(&id).await? else {
+        let (expired, token) = self.resolve_cached_usertoken(&id).await?;
+        let Some(token) = token.filter(|_| !expired) else {
             return Ok(None);
         };
+        if is_placeholder_token(&token) {
+            // A placeholder only reserves a name; it is never an identity which
+            // may be refreshed or reconciled.
+            return Ok(None);
+        }
         let uuid = token.uuid;
         let tenant_id = token.tenant_id;
         // Reconciliation may use only the authenticated identity that made
@@ -2302,7 +3993,18 @@ where
         // Provider work can yield while eligibility or memberships change.
         // Use current claims only if the same cached identity is still eligible.
         let (expired, current) = self.get_cached_usertoken(&id).await?;
-        Ok(current.filter(|token| !expired && token.uuid == uuid && token.tenant_id == tenant_id))
+        let current =
+            current.filter(|token| !expired && token.uuid == uuid && token.tenant_id == tenant_id);
+        match current {
+            Some(token)
+                if self
+                    .check_nxset(Some(&token.name), Some(token.gidnumber))
+                    .await =>
+            {
+                Ok(None)
+            }
+            token => Ok(token),
+        }
     }
 
     async fn get_cached_grouptokens(&self) -> ResolverResult<Vec<GroupToken>> {
@@ -2325,6 +4027,9 @@ where
         let mut nxset_txn = self.nxset.lock().await;
         nxset_txn.clear();
         for (name, gid) in iter {
+            // The local name of an Entra user (an onPremisesSamAccountName) is
+            // case insensitive: a local "admin" must exclude "ADMIN" as well.
+            let key = Id::Name(name.to_ascii_lowercase());
             let name = Id::Name(name);
             let gid = Id::Gid(gid);
 
@@ -2332,7 +4037,7 @@ where
             if !(self.allow_id_overrides.contains(&gid) || self.allow_id_overrides.contains(&name))
             {
                 trace!("Adding {:?}:{:?} to resolver exclusion set", name, gid);
-                nxset_txn.insert(name);
+                nxset_txn.insert(key);
                 nxset_txn.insert(gid);
             }
         }
@@ -2341,7 +4046,7 @@ where
     pub async fn check_nxset(&self, name: Option<&str>, idnumber: Option<u32>) -> bool {
         let nxset_txn = self.nxset.lock().await;
         if let Some(name) = name {
-            if nxset_txn.contains(&Id::Name(name.to_string())) {
+            if nxset_txn.contains(&Id::Name(name.to_ascii_lowercase())) {
                 return true;
             }
         }
@@ -2364,10 +4069,38 @@ where
         //  * uuid
         //  Attempt to search these in the db.
         let mut dbtxn = self.db.write().await;
-        let r = dbtxn.get_account(account_id).map_err(|err| {
+        let mut r = dbtxn.get_account(account_id).map_err(|err| {
             trace!("get_cached_usertoken {:?}", err);
         })?;
 
+        // With cn_name_mapping, a local name such as an onPremisesSamAccountName
+        // reaches us expanded to "<name>@<primary domain>", which matches neither
+        // the cached name nor the cached SPN. Look for the user whose local name
+        // it is. An authenticated exact match always wins, but a placeholder
+        // cached for the expanded name must not hide the user.
+        let exact_is_provisional = match &r {
+            Some((ut, _)) => is_placeholder_token(ut) && !self.is_confirmed_upn(&ut.spn).await,
+            None => true,
+        };
+        if exact_is_provisional {
+            if let Id::Name(name) = account_id {
+                if let Some((local, domain)) = split_username(name) {
+                    let aliased = dbtxn
+                        .get_account(&Id::Name(local.to_string()))
+                        .map_err(|err| {
+                            trace!("get_cached_usertoken {:?}", err);
+                        })?
+                        .filter(|(ut, _)| {
+                            !is_placeholder_token(ut) && is_expanded_local_name(ut, local, domain)
+                        });
+                    if aliased.is_some() {
+                        r = aliased;
+                    }
+                }
+            }
+        }
+
+        drop(dbtxn);
         match r {
             Some((ut, ex)) => {
                 // Are we expired?
@@ -2404,6 +4137,155 @@ where
                 }
             }
         } // end match r
+    }
+
+    /// Does this placeholder still carry a fresh proof that its UPN exists?
+    async fn is_confirmed_upn(&self, spn: &str) -> bool {
+        self.upn_confirmed
+            .lock()
+            .await
+            .get(&spn.to_ascii_lowercase())
+            .is_some_and(|expiry| SystemTime::now() < *expiry)
+    }
+
+    async fn token_owns_name(&self, token: &UserToken, name: &str) -> bool {
+        token.spn.eq_ignore_ascii_case(name)
+            && (!is_placeholder_token(token) || self.is_confirmed_upn(&token.spn).await)
+    }
+
+    async fn cached_owns_name(&self, cached: &(bool, Option<UserToken>), name: &str) -> bool {
+        match cached.1.as_ref() {
+            Some(token) => self.token_owns_name(token, name).await,
+            None => false,
+        }
+    }
+
+    async fn reject_unproved_placeholder(
+        &self,
+        cached: (bool, Option<UserToken>),
+    ) -> ResolverResult<(bool, Option<UserToken>)> {
+        let unproved = match cached.1.as_ref() {
+            Some(token) if is_placeholder_token(token) => !self.is_confirmed_upn(&token.spn).await,
+            _ => false,
+        };
+        if unproved {
+            Err(ResolverError)
+        } else {
+            Ok(cached)
+        }
+    }
+
+    async fn verify_upn(&self, name: &str) -> UpnVerdict {
+        let mut hsm_lock = self.hsm.lock().await;
+        self.client
+            .unix_user_verify_upn(name, hsm_lock.deref_mut(), &self.machine_key)
+            .await
+    }
+
+    /// A domain-qualified local alias is indistinguishable from an uncached
+    /// user's real UPN. Resolve that exact name before using the alias, even if
+    /// the alias owner's cache entry is fresh. Never pass the alias as an old
+    /// token: providers refresh old_token.spn instead of the requested identity.
+    async fn resolve_cached_usertoken(
+        &self,
+        account_id: &Id,
+    ) -> ResolverResult<(bool, Option<UserToken>)> {
+        let cached = self.get_cached_usertoken(account_id).await?;
+        let (Id::Name(name), Some(token)) = (account_id, cached.1.as_ref()) else {
+            return Ok(cached);
+        };
+        if split_username(name).is_none() || self.token_owns_name(token, name).await {
+            return Ok(cached);
+        }
+
+        let key = name.to_ascii_lowercase();
+        let absent_until = self.alias_absence.lock().await.get(&key).copied();
+        if absent_until.is_some_and(|expiry| SystemTime::now() < expiry) {
+            let current = self.get_cached_usertoken(account_id).await?;
+            return self.reject_unproved_placeholder(current).await;
+        }
+
+        let state = self.get_cachestate(Some(name)).await;
+        if !self.test_connection_for_state(state).await {
+            // Being offline says nothing about who owns an uncached UPN. The
+            // caller can still use the cached user's canonical UPN offline.
+            warn!("Cannot verify qualified local alias while offline");
+            return Err(ResolverError);
+        }
+
+        let (lookup, _generation) = self.fetch_usertoken(account_id, None).await?;
+        // Even an unsuccessful lookup must not hide a canonical identity that
+        // another request cached while this provider request was in flight.
+        let current = self.get_cached_usertoken(account_id).await?;
+        if self.cached_owns_name(&current, name).await {
+            self.alias_absence.lock().await.pop(&key);
+            return Ok(current);
+        }
+        let lookup_only = matches!(lookup, Ok(UserTokenState::LookupOnly(_)));
+        match lookup {
+            Ok(UserTokenState::Update(exact) | UserTokenState::LookupOnly(exact))
+                if exact.spn.eq_ignore_ascii_case(name) =>
+            {
+                let mut exact = exact;
+                if is_placeholder_token(&exact) {
+                    // The provider fabricates a placeholder for any name it
+                    // cannot reject, so it proves nothing about this name. Ask
+                    // the provider for evidence which does.
+                    match self.verify_upn(name).await {
+                        UpnVerdict::Exists => {
+                            // A real UPN, which owns its name: an alias may
+                            // not take it. The placeholder reserves the name
+                            // until the user authenticates.
+                            self.cache_usertoken(&mut exact, true, false).await?;
+                            return Ok((false, Some(exact)));
+                        }
+                        UpnVerdict::Absent => {
+                            let expiry =
+                                SystemTime::now() + Duration::from_secs(self.timeout_seconds);
+                            self.alias_absence.lock().await.put(key.clone(), expiry);
+                            // Another lookup may have cached a canonical owner
+                            // while the provider was being asked.
+                            let current = self.get_cached_usertoken(account_id).await?;
+                            if self.cached_owns_name(&current, name).await {
+                                self.alias_absence.lock().await.pop(&key);
+                            }
+                            return self.reject_unproved_placeholder(current).await;
+                        }
+                        UpnVerdict::Unknown => {
+                            // Neither a real UPN nor a free name: leave the
+                            // name unresolved. Never route it to an alias owner
+                            // or to a placeholder on that basis.
+                            warn!("Cannot establish whether a qualified name is a UPN");
+                            return Err(ResolverError);
+                        }
+                    }
+                }
+                if lookup_only {
+                    // Not authenticated for this user: never persist it. Report
+                    // it as stale so that it is not treated as cache eligible.
+                    return Ok((true, Some(exact)));
+                }
+                self.set_cache_usertoken(&mut exact, false).await?;
+                Ok((false, Some(exact)))
+            }
+            Ok(UserTokenState::NotFound) => {
+                let expiry = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
+                self.alias_absence.lock().await.put(key.clone(), expiry);
+                // Another lookup may have cached a canonical owner while the
+                // provider request was in flight. Never return the old alias.
+                let current = self.get_cached_usertoken(account_id).await?;
+                if self.cached_owns_name(&current, name).await {
+                    self.alias_absence.lock().await.pop(&key);
+                }
+                self.reject_unproved_placeholder(current).await
+            }
+            // UseCached and errors (including IdpError::NotFound, which may
+            // mean no matching provider) do not prove that the UPN is absent.
+            _ => {
+                warn!("Cannot establish ownership of qualified local alias");
+                Err(ResolverError)
+            }
+        }
     }
 
     async fn get_cached_grouptoken(
@@ -2552,6 +4434,18 @@ where
         token: &mut UserToken,
         clear_password: bool,
     ) -> ResolverResult<()> {
+        self.cache_usertoken(token, false, clear_password).await
+    }
+
+    /// `verified_upn` marks a placeholder whose UPN the provider confirmed.
+    /// Unlike any other placeholder it owns its name, as an authenticated
+    /// identity does, until the user authenticates.
+    async fn cache_usertoken(
+        &self,
+        token: &mut UserToken,
+        verified_upn: bool,
+        clear_password: bool,
+    ) -> ResolverResult<()> {
         // Set an expiry
         let ex_time = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
         let offset = ex_time
@@ -2588,7 +4482,7 @@ where
             let nxset_txn = self.nxset.lock().await;
             token.groups.retain(|g| {
                 !(nxset_txn.contains(&Id::Gid(g.gidnumber))
-                    || nxset_txn.contains(&Id::Name(g.name.clone())))
+                    || nxset_txn.contains(&Id::Name(g.name.to_ascii_lowercase())))
             });
         }
 
@@ -2600,7 +4494,75 @@ where
                 .is_some_and(|(cached, _)| {
                     cached.uuid == token.uuid && cached.tenant_id != token.tenant_id
                 });
-        token
+        let cached = dbtxn.get_accounts().map_err(|_| ResolverError)?;
+        let mut shadowed = Vec::new();
+        for mut other in cached.into_iter().filter(|other| other.uuid != token.uuid) {
+            if other.spn.eq_ignore_ascii_case(&token.spn) {
+                // Same-SPN authoritative promotion/recreation is handled by the
+                // database; it is not a conflict between different aliases.
+                continue;
+            }
+            // A placeholder whose UPN the provider confirmed owns its name just
+            // as an authenticated identity does.
+            let other_provisional =
+                is_placeholder_token(&other) && !self.is_confirmed_upn(&other.spn).await;
+            if is_placeholder_token(token) && !verified_upn {
+                // A placeholder never displaces anything. While an account owns
+                // its name, as an alias or otherwise, it is not cached at all.
+                if !other_provisional && local_name_matches(&other, &token.spn) {
+                    return Ok(());
+                }
+                continue;
+            }
+            if other_provisional {
+                // A placeholder cached for a name this account now owns is
+                // stale. It must neither rename the account nor survive as a
+                // second passwd entry with an unrelated uid.
+                if token.name.eq_ignore_ascii_case(&other.name)
+                    || local_name_matches(token, &other.spn)
+                {
+                    shadowed.push(other.uuid);
+                }
+                continue;
+            }
+            // Canonical identities own their names before optional local aliases.
+            // Restore a conflicting alias to its canonical name without deleting
+            // the account row (and its password or memberships).
+            if local_name_matches(&other, &token.spn) {
+                other.name.clone_from(&other.spn);
+                let expiry = dbtxn
+                    .get_account(&Id::Name(other.uuid.to_string()))
+                    .map_err(|_| ResolverError)?
+                    .map(|(_, expiry)| expiry)
+                    .unwrap_or(0);
+                dbtxn
+                    .update_account(&other, expiry)
+                    .map_err(|_| ResolverError)?;
+            }
+            if token.name.eq_ignore_ascii_case(&other.name) || local_name_matches(token, &other.spn)
+            {
+                token.name.clone_from(&token.spn);
+            }
+        }
+        for uuid in shadowed {
+            dbtxn.delete_account(uuid).map_err(|_| ResolverError)?;
+        }
+        let spn_key = token.spn.to_ascii_lowercase();
+        // The proof of an earlier reservation of the same name, if any.
+        let mut previous_proof = None;
+        if verified_upn {
+            // Committing releases the database to a refresh which is already
+            // waiting for it, and that refresh decides whether this placeholder
+            // is stale by looking for the proof. Publish the proof first, while
+            // this transaction still holds the database, so that the
+            // reservation and its proof become visible together.
+            previous_proof = self
+                .upn_confirmed
+                .lock()
+                .await
+                .put(spn_key.clone(), ex_time);
+        }
+        let stored = token
             .groups
             .iter()
             // We need to add the groups first
@@ -2618,8 +4580,30 @@ where
                     Ok(())
                 }
             })
-            .and_then(|_| dbtxn.commit())
-            .map_err(|_| ResolverError)
+            .and_then(|_| dbtxn.commit());
+        if stored.is_err() {
+            if verified_upn {
+                // Nothing was cached. Withdraw only the proof published above and
+                // restore the one of an earlier reservation which still owns the
+                // name; it must not be lost with this failed attempt.
+                let mut confirmed = self.upn_confirmed.lock().await;
+                match previous_proof {
+                    Some(proof) => {
+                        confirmed.put(spn_key, proof);
+                    }
+                    None => {
+                        confirmed.pop(&spn_key);
+                    }
+                }
+            }
+            return Err(ResolverError);
+        }
+        self.alias_absence.lock().await.pop(&spn_key);
+        if !verified_upn && !is_placeholder_token(token) {
+            // The user authenticated: the real token owns the name now.
+            self.upn_confirmed.lock().await.pop(&spn_key);
+        }
+        Ok(())
     }
 
     async fn set_cache_grouptoken(&self, token: &GroupToken) -> ResolverResult<()> {
@@ -2672,6 +4656,36 @@ where
             .map_err(|_| ResolverError)
     }
 
+    /// Ask the provider for a user. The returned generation orders this
+    /// observation against every other provider observation and password
+    /// change; it is taken while the provider request still holds the database.
+    async fn fetch_usertoken(
+        &self,
+        account_id: &Id,
+        token: Option<&UserToken>,
+    ) -> ResolverResult<(Result<UserTokenState, IdpError>, u64)> {
+        let mut hsm_lock = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
+
+        let user_get_result = self
+            .client
+            .unix_user_get(
+                account_id,
+                token,
+                &mut dbtxn,
+                hsm_lock.deref_mut(),
+                &self.machine_key,
+            )
+            .await;
+
+        // Order this provider observation before another request can replace it.
+        let generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
+        drop(hsm_lock);
+        dbtxn.commit().map_err(|_| ())?;
+
+        Ok((user_get_result, generation))
+    }
+
     async fn refresh_usertoken(
         &self,
         account_id: &Id,
@@ -2687,24 +4701,9 @@ where
         account_id: &Id,
         token: Option<(UserToken, bool)>,
     ) -> ResolverResult<Option<(UserToken, bool)>> {
-        let mut hsm_lock = self.hsm.lock().await;
-        let mut dbtxn = self.db.write().await;
-
-        let user_get_result = self
-            .client
-            .unix_user_get(
-                account_id,
-                token.as_ref().map(|(token, _)| token),
-                &mut dbtxn,
-                hsm_lock.deref_mut(),
-                &self.machine_key,
-            )
-            .await;
-
-        // Order this provider observation before another request can replace it.
-        let generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
-        drop(hsm_lock);
-        dbtxn.commit().map_err(|_| ())?;
+        let (user_get_result, generation) = self
+            .fetch_usertoken(account_id, token.as_ref().map(|(token, _)| token))
+            .await?;
 
         match user_get_result {
             Ok(UserTokenState::Update(mut n_tok)) => {
@@ -2963,6 +4962,12 @@ where
             return Ok(false);
         }
 
+        let (_expired, cached) = self
+            .resolve_cached_usertoken(&Id::Name(account_id.to_string()))
+            .await?;
+        let account_id = Self::canonical_account_id(account_id, cached.as_ref());
+        let account_id = account_id.as_str();
+
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
 
@@ -3001,6 +5006,16 @@ where
         })
     }
 
+    /// The identity provider needs the UPN: the tenant is derived from its domain,
+    /// and it is the name to sign in with and the tag of the Hello key. A login name
+    /// which passed `resolve_cached_usertoken` is replaced by
+    /// that user's SPN.
+    fn canonical_account_id(account_id: &str, token: Option<&UserToken>) -> String {
+        token
+            .map(|tok| tok.spn.clone())
+            .unwrap_or_else(|| account_id.to_string())
+    }
+
     pub async fn get_usertoken(&self, account_id: Id) -> ResolverResult<Option<UserToken>> {
         self.get_usertoken_with_cacheability(account_id)
             .await
@@ -3013,34 +5028,46 @@ where
         &self,
         account_id: Id,
     ) -> ResolverResult<Option<(UserToken, bool)>> {
+        match self.get_usertoken_checked(account_id).await? {
+            UserTokenLookup::Found(found) => Ok(Some(found)),
+            UserTokenLookup::Excluded(_) | UserTokenLookup::Missing => Ok(None),
+        }
+    }
+
+    /// Like `get_usertoken_with_cacheability`, but tells an identity refused
+    /// because of a local account apart from one which does not exist.
+    async fn get_usertoken_checked(&self, account_id: Id) -> ResolverResult<UserTokenLookup> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
             Id::Name(name) => (Some(name), None),
             Id::Gid(idnumber) => (None, Some(idnumber)),
         };
         if self.check_nxset(name.as_deref(), idnumber).await {
-            return Ok(None);
+            return Ok(UserTokenLookup::Missing);
         }
 
         trace!("get_usertoken");
         // get the item from the cache
-        let (expired, item) = self.get_cached_usertoken(&account_id).await.map_err(|e| {
-            trace!("get_usertoken error -> {:?}", e);
-        })?;
+        let (expired, item) = self
+            .resolve_cached_usertoken(&account_id)
+            .await
+            .map_err(|e| {
+                trace!("get_usertoken error -> {:?}", e);
+            })?;
 
-        let state = match account_id {
-            Id::Name(ref name) => self.get_cachestate(Some(name)).await,
-            Id::Gid(_) => match &item {
-                Some(token) => self.get_cachestate(Some(&token.spn)).await,
-                None => self.get_cachestate(None).await,
-            },
+        // Prefer the SPN of the cached user. The requested name may be a local
+        // name, from which no domain, and so no provider, can be derived.
+        let state = match (&account_id, &item) {
+            (_, Some(token)) => self.get_cachestate(Some(&token.spn)).await,
+            (Id::Name(name), None) => self.get_cachestate(Some(name)).await,
+            (Id::Gid(_), None) => self.get_cachestate(None).await,
         };
 
         // Expired records remain available for offline use, but must not
         // repopulate persistent NSS caches without a trusted refresh.
         let item = item.map(|token| (token, !expired));
 
-        match (expired, state) {
+        let token = match (expired, state) {
             (_, CacheState::Offline) => {
                 trace!("offline, returning cached item");
                 Ok(item)
@@ -3082,7 +5109,22 @@ where
         .map(|t| {
             trace!("token -> {:?}", t);
             t
-        })
+        })?;
+
+        // Only the requested name was checked above, and a UPN can't collide with
+        // a local account. The name and id of the user we return can, and a local
+        // account may have appeared since the user was cached.
+        match token {
+            Some((tok, _)) if self.check_nxset(Some(&tok.name), Some(tok.gidnumber)).await => {
+                warn!(
+                    "Refusing '{}': its name or id collides with a local account",
+                    tok.spn
+                );
+                Ok(UserTokenLookup::Excluded(tok))
+            }
+            Some(found) => Ok(UserTokenLookup::Found(found)),
+            None => Ok(UserTokenLookup::Missing),
+        }
     }
 
     async fn get_grouptoken(&self, grp_id: Id) -> ResolverResult<Option<GroupToken>> {
@@ -3134,14 +5176,37 @@ where
     }
 
     pub async fn get_groupmembers(&self, g_uuid: Uuid) -> Vec<String> {
-        let mut dbtxn = self.db.write().await;
-
-        dbtxn
-            .get_group_members(g_uuid)
-            .unwrap_or_else(|_| Vec::new())
-            .into_iter()
-            .map(|ut| self.token_uidattr(&ut))
-            .collect()
+        let members = {
+            let mut dbtxn = self.db.write().await;
+            dbtxn.get_group_members(g_uuid).unwrap_or_default()
+        };
+        let user_map = self.user_map_file.as_deref().map(UserMap::new);
+        let mut names = Vec::with_capacity(members.len());
+        for token in members {
+            if !self
+                .check_nxset(Some(&token.name), Some(token.gidnumber))
+                .await
+            {
+                let mapped = user_map
+                    .as_ref()
+                    .and_then(|map| map.get_local_from_upn(&token.spn.to_lowercase()));
+                let name = match mapped {
+                    Some(mapped) => mapped,
+                    None => {
+                        // The name must resolve again: an alias which is not
+                        // proved to own its qualified name does not, offline.
+                        let rendered = self.token_uidattr(&token);
+                        if self.alias_unproved_offline(&rendered, &token.spn).await {
+                            token.spn.clone()
+                        } else {
+                            rendered
+                        }
+                    }
+                };
+                names.push(name);
+            }
+        }
+        names
     }
 
     #[inline(always)]
@@ -3185,6 +5250,33 @@ where
         .to_string()
     }
 
+    fn token_to_nssuser(&self, tok: UserToken) -> NssUser {
+        self.nss_user_from_token(tok, true)
+    }
+
+    fn nss_user_from_token(&self, tok: UserToken, cacheable: bool) -> NssUser {
+        // A placeholder is a fabricated identity which only reserves a name. It
+        // must never enter the persistent NSS fallback cache.
+        let cacheable = cacheable && !is_placeholder_token(&tok);
+        let mut aliases = vec![tok.name.clone()];
+        if !tok.name.contains('@') {
+            if let Some((_, domain)) = split_username(&tok.spn) {
+                aliases.push(format!("{}@{}", tok.name, domain));
+            }
+        }
+        NssUser {
+            homedir: self.token_abs_homedirectory(&tok),
+            name: self.token_uidattr(&tok),
+            canonical_name: Some(tok.spn),
+            aliases,
+            uid: tok.gidnumber,
+            gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
+            gecos: tok.displayname,
+            shell: tok.shell.unwrap_or_else(|| self.default_shell.clone()),
+            cacheable,
+        }
+    }
+
     pub async fn get_nssaccounts(&self) -> ResolverResult<Vec<NssUser>> {
         self.get_unexpired_nssaccounts().await
     }
@@ -3194,15 +5286,27 @@ where
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| ResolverError)?
             .as_secs();
-        let mut dbtxn = self.db.write().await;
-        dbtxn
-            .get_unexpired_accounts(now)
-            .map(|l| {
-                l.into_iter()
-                    .map(|tok| self.nss_user_from_token(tok, true))
-                    .collect()
-            })
-            .map_err(|_| ResolverError)
+        let tokens = {
+            let mut dbtxn = self.db.write().await;
+            dbtxn
+                .get_unexpired_accounts(now)
+                .map_err(|_| ResolverError)?
+        };
+        let mut accounts = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            // A placeholder only reserves a name; it is neither enumerated nor
+            // reconciled into local groups.
+            if is_placeholder_token(&token) {
+                continue;
+            }
+            if !self
+                .check_nxset(Some(&token.name), Some(token.gidnumber))
+                .await
+            {
+                accounts.push(self.nss_user_from_token(token, true));
+            }
+        }
+        Ok(accounts)
     }
 
     async fn get_nssaccount(&self, account_id: Id) -> ResolverResult<Option<NssUser>> {
@@ -3211,15 +5315,75 @@ where
             .map(|result| result.map(|(tok, cacheable)| self.nss_user_from_token(tok, cacheable)))
     }
 
-    fn nss_user_from_token(&self, tok: UserToken, cacheable: bool) -> NssUser {
-        NssUser {
-            homedir: self.token_abs_homedirectory(&tok),
-            name: self.token_uidattr(&tok),
-            uid: tok.gidnumber,
-            gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
-            gecos: tok.displayname,
-            shell: tok.shell.unwrap_or_else(|| self.default_shell.clone()),
-            cacheable,
+    async fn get_nssaccount_lookup(&self, account_id: Id) -> ResolverResult<NssAccountLookup> {
+        Ok(match self.get_usertoken_checked(account_id).await? {
+            UserTokenLookup::Found((tok, cacheable)) => {
+                NssAccountLookup::Found(self.nss_user_from_token(tok, cacheable))
+            }
+            // The identity is refused for good: it must not be persisted, and
+            // clients must drop what they persisted before.
+            UserTokenLookup::Excluded(tok) => {
+                NssAccountLookup::Excluded(self.nss_user_from_token(tok, false))
+            }
+            UserTokenLookup::Missing => NssAccountLookup::Missing,
+        })
+    }
+
+    pub async fn get_nssaccount_name_lookup(
+        &self,
+        account_id: &str,
+    ) -> ResolverResult<NssAccountLookup> {
+        self.get_nssaccount_lookup(Id::Name(account_id.to_string()))
+            .await
+    }
+
+    pub async fn get_nssaccount_gid_lookup(&self, gid: u32) -> ResolverResult<NssAccountLookup> {
+        self.get_nssaccount_lookup(Id::Gid(gid)).await
+    }
+
+    /// An alias which is not (yet) proved to own its qualified name cannot be
+    /// looked up again by that name while the provider is offline. Render
+    /// such an account under its canonical name, which can be.
+    pub async fn render_unproved_alias_canonically(&self, mut user: NssUser) -> NssUser {
+        if let Some(spn) = user.canonical_name.clone() {
+            if self.alias_unproved_offline(&user.name, &spn).await {
+                user.name = spn;
+            }
+        }
+        user
+    }
+
+    /// Whether `name`, an alias of the user `spn`, cannot be looked up again
+    /// right now: clients expand it to its qualified form, which is refused
+    /// while the provider is offline unless the name is proved absent.
+    async fn alias_unproved_offline(&self, name: &str, spn: &str) -> bool {
+        let qualified = if name.contains('@') {
+            name.to_string()
+        } else if self.cn_name_mapping {
+            let Some((_, domain)) = split_username(spn) else {
+                return false;
+            };
+            format!("{}@{}", name, domain)
+        } else {
+            return false;
+        };
+        if qualified.eq_ignore_ascii_case(spn) {
+            return false;
+        }
+        let proved_absent = self
+            .alias_absence
+            .lock()
+            .await
+            .get(&qualified.to_ascii_lowercase())
+            .copied()
+            .is_some_and(|expiry| SystemTime::now() < expiry);
+        if proved_absent {
+            return false;
+        }
+        match self.get_cachestate(Some(&qualified)).await {
+            CacheState::Online => false,
+            CacheState::Offline => true,
+            CacheState::OfflineNextCheck(time) => SystemTime::now() < time,
         }
     }
 
@@ -3229,6 +5393,21 @@ where
 
     pub async fn get_nssaccount_gid(&self, gid: u32) -> ResolverResult<Option<NssUser>> {
         self.get_nssaccount(Id::Gid(gid)).await
+    }
+
+    /// Resolve an account to its final NSS identity (name and uid as nss shows
+    /// them) together with the UUIDs of the groups it belongs to. Both come from
+    /// the same token, so callers acting on local accounts never combine the
+    /// name of one identity with the memberships of another.
+    pub async fn get_nssaccount_with_groups(
+        &self,
+        account_id: &str,
+    ) -> ResolverResult<Option<(NssUser, Vec<Uuid>)>> {
+        let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
+        Ok(token.map(|token| {
+            let groups = token.groups.iter().map(|group| group.uuid).collect();
+            (self.token_to_nssuser(token), groups)
+        }))
     }
 
     #[inline(always)]
@@ -3244,6 +5423,9 @@ where
         let l = self.get_cached_grouptokens().await?;
         let mut r: Vec<_> = Vec::with_capacity(l.len());
         for tok in l.into_iter() {
+            if self.check_nxset(Some(&tok.name), Some(tok.gidnumber)).await {
+                continue;
+            }
             let members = self.get_groupmembers(tok.uuid).await;
             r.push(NssGroup {
                 name: self.token_gidattr(&tok),
@@ -3258,6 +5440,7 @@ where
         let token = self.get_grouptoken(grp_id).await?;
         // Get members set.
         match token {
+            Some(tok) if self.check_nxset(Some(&tok.name), Some(tok.gidnumber)).await => Ok(None),
             Some(tok) => {
                 let members = self.get_groupmembers(tok.uuid).await;
                 Ok(Some(NssGroup {
@@ -3284,7 +5467,16 @@ where
             return Ok(None);
         };
         if self.initgroups_mode == InitgroupsMode::Full {
-            return Ok(Some(tok.groups.iter().map(|g| g.gidnumber).collect()));
+            let mut groups = Vec::with_capacity(tok.groups.len());
+            for group in &tok.groups {
+                if !self
+                    .check_nxset(Some(&group.name), Some(group.gidnumber))
+                    .await
+                {
+                    groups.push(group.gidnumber);
+                }
+            }
+            return Ok(Some(groups));
         }
         let mut named = Vec::with_capacity(tok.groups.len());
         for group in &tok.groups {
@@ -3327,16 +5519,16 @@ where
                         }
                         ids
                     })
-                    .chain(std::iter::once(account_id.to_string()))
+                    // The name the user typed is only an alias when it is a local
+                    // name, and may spell the UPN of another user. Match on the
+                    // user the cache resolved it to.
+                    .chain(std::iter::once(tok.spn.clone()))
                     .collect();
 
                 debug!(
                     "Checking if user is in allowed groups ({:?}) -> {:?}",
                     self.pam_allow_groups,
-                    user_set
-                        .iter()
-                        .filter(|s| s.as_str() != account_id)
-                        .cloned(),
+                    user_set.iter().filter(|s| s.as_str() != tok.spn).cloned(),
                 );
                 let intersection_count = user_set.intersection(&self.pam_allow_groups).count();
                 debug!("Number of intersecting groups: {}", intersection_count);
@@ -3370,13 +5562,15 @@ where
         // An offline session must not overwrite an identity replaced after its lookup.
         let cache_generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
         let id = Id::Name(account_id.to_string());
-        let (_expired, token) = self.get_cached_usertoken(&id).await?;
+        let (_expired, token) = self.resolve_cached_usertoken(&id).await?;
         // If we don't have a token here, then NSS has yet to be called. Failing
         // to request a token now will result in an auth failure in pam_account_authenticate_step.
         let token = match token {
             Some(token) => Some(token),
             None => self.refresh_usertoken(&id, None).await?,
         };
+        let account_id = Self::canonical_account_id(account_id, token.as_ref());
+        let account_id = account_id.as_str();
         let state = self.get_cachestate(Some(account_id)).await;
 
         let online_at_init = if !matches!(state, CacheState::Online) {
@@ -3852,13 +6046,30 @@ where
     /// online. A cached user record is refreshed online only when cache_timeout
     /// has elapsed.
     pub async fn pam_try_unseal(&self, account_id: &str, cred: &str) -> ResolverResult<bool> {
+        // A local account must never reach the provider, neither by the name it
+        // was asked for nor by the name or id it resolves to.
+        if self.check_nxset(Some(account_id), None).await {
+            return Ok(false);
+        }
         let id = Id::Name(account_id.to_string());
-        let (expired, token) = self.get_cached_usertoken(&id).await?;
+        let (expired, token) = self.resolve_cached_usertoken(&id).await?;
         let Some(token) = token else {
             debug!("pam_try_unseal: no cached user token");
             return Ok(false);
         };
+        if self
+            .check_nxset(Some(&token.name), Some(token.gidnumber))
+            .await
+        {
+            warn!(
+                "pam_try_unseal: refusing '{}': its name or id collides with a local account",
+                token.spn
+            );
+            return Ok(false);
+        }
 
+        let account_id = Self::canonical_account_id(account_id, Some(&token));
+        let account_id = account_id.as_str();
         let state = self.get_cachestate(Some(account_id)).await;
         let online_at_init = self.test_connection_for_state(state).await;
 
@@ -3902,12 +6113,8 @@ where
         }
     }
 
-    pub async fn pam_account_beginsession(
-        &self,
-        account_id: &str,
-    ) -> ResolverResult<Option<HomeDirectoryInfo>> {
-        let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
-        Ok(token.as_ref().map(|tok| HomeDirectoryInfo {
+    fn home_directory_info(&self, tok: &UserToken) -> HomeDirectoryInfo {
+        HomeDirectoryInfo {
             uid: tok.gidnumber,
             gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
             name: self.token_homedirectory_attr(tok),
@@ -3915,6 +6122,37 @@ where
                 .token_homedirectory_alias(tok)
                 .map(|s| vec![s])
                 .unwrap_or_default(),
+        }
+    }
+
+    pub async fn pam_account_beginsession(
+        &self,
+        account_id: &str,
+    ) -> ResolverResult<Option<HomeDirectoryInfo>> {
+        Ok(self
+            .pam_account_beginsession_identity(account_id)
+            .await?
+            .map(|identity| identity.home))
+    }
+
+    /// Resolve the user once for the whole of `pam_sm_open_session`: the home
+    /// directory, the NSS identity (name and uid) and the group memberships all
+    /// come from the same token. Resolving again after the home directory task
+    /// has waited could return another identity, for example after the cache
+    /// was refreshed or a name conflict was resolved in the meantime.
+    pub async fn pam_account_beginsession_identity(
+        &self,
+        account_id: &str,
+    ) -> ResolverResult<Option<SessionIdentity>> {
+        let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
+        Ok(token.map(|tok| {
+            let home = self.home_directory_info(&tok);
+            let group_ids = tok.groups.iter().map(|group| group.uuid).collect();
+            SessionIdentity {
+                home,
+                account: self.token_to_nssuser(tok),
+                group_ids,
+            }
         }))
     }
 
