@@ -41,7 +41,37 @@ in
   assertions = map (assertion: assertion.message) (
     builtins.filter (assertion: !assertion.assertion) cfg.assertions
   );
+  # Independent paths for projecting packaged commands and NixOS's environment.
+  paths = {
+    daemon = toString cfg.services.himmelblau.daemonPackage;
+    broker = toString cfg.services.himmelblau.brokerPackage;
+    config = toString cfg.environment.etc."himmelblau/himmelblau.conf".source;
+    localeArchive = "${cfg.i18n.glibcLocales}/lib/locale/locale-archive";
+    timezone = "${pkgs.tzdata}/share/zoneinfo";
+    defaultTools = map toString [
+      pkgs.coreutils
+      pkgs.findutils
+      pkgs.gnugrep
+      pkgs.gnused
+      pkgs.systemd
+    ];
+    initializerTools = map toString [
+      pkgs.coreutils
+      pkgs.gnugrep
+      pkgs.openssl
+      pkgs.systemd
+      pkgs.tpm2-tools
+    ];
+    tasksTools = map toString [
+      pkgs.shadow
+      pkgs.bash
+      pkgs.util-linux
+    ];
+  };
   units = pkgs.lib.mapAttrs (name: unit: unit.text) (
     pkgs.lib.filterAttrs (name: unit: pkgs.lib.hasPrefix "himmelblau" name) cfg.systemd.units
+  );
+  userUnits = pkgs.lib.mapAttrs (name: unit: unit.text) (
+    pkgs.lib.filterAttrs (name: unit: pkgs.lib.hasPrefix "himmelblau" name) cfg.systemd.user.units
   );
 }
