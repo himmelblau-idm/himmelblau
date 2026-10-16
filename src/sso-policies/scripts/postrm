@@ -21,13 +21,20 @@ THUNDERBIRD_MANAGED_URLS="$LINUX_ENTRA_SSO_RELEASES/v1.8.0/linux_entra_sso-1.8.0
 update_policy() {
     UPDATE_FILE="$1"
     shift
-    UPDATE_TMP=$(mktemp "$UPDATE_FILE.XXXXXX") || return 1
+    if ! UPDATE_TMP=$(mktemp "$UPDATE_FILE.XXXXXX"); then
+        echo "Warning: could not create a temporary file next to $UPDATE_FILE; left it unchanged" >&2
+        return 1
+    fi
     # jq exits 0 with no output for an empty file; never replace with nothing
-    if jq "$@" "$UPDATE_FILE" > "$UPDATE_TMP" && [ -s "$UPDATE_TMP" ]; then
-        mv "$UPDATE_TMP" "$UPDATE_FILE"
-    else
+    if ! jq "$@" "$UPDATE_FILE" > "$UPDATE_TMP" || [ ! -s "$UPDATE_TMP" ]; then
         rm -f "$UPDATE_TMP"
         echo "Warning: could not update $UPDATE_FILE (empty or invalid JSON); left it unchanged" >&2
+        return 1
+    fi
+    # The rename can fail too, for example when the policy is a bind mount
+    if ! mv "$UPDATE_TMP" "$UPDATE_FILE"; then
+        rm -f "$UPDATE_TMP"
+        echo "Warning: could not replace $UPDATE_FILE; left it unchanged" >&2
         return 1
     fi
 }

@@ -55,7 +55,7 @@ class SsoPoliciesScripts(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_script(self, name, *arguments, jq=True, umask=0o022):
+    def run_script(self, name, *arguments, jq=True, umask=0o022, fail_mv=False):
         # Point the absolute policy paths into the temporary root
         script = self.root / name
         text = (SCRIPTS / name).read_text()
@@ -65,6 +65,13 @@ class SsoPoliciesScripts(unittest.TestCase):
         env = dict(os.environ)
         if not jq:
             env["PATH"] = str(self.nojq)
+        if fail_mv:
+            # Simulate a policy that cannot be replaced, e.g. a bind mount
+            stub = self.root / "failmv-bin"
+            stub.mkdir(exist_ok=True)
+            (stub / "mv").write_text("#!/bin/sh\necho 'mv: Device or resource busy' >&2\nexit 1\n")
+            (stub / "mv").chmod(0o755)
+            env["PATH"] = f"{stub}:{env['PATH']}"
         result = subprocess.run(["/bin/sh", str(script), *arguments], env=env,
                                 capture_output=True, text=True, timeout=30,
                                 preexec_fn=lambda: os.umask(umask))
@@ -180,6 +187,23 @@ class SsoPoliciesScripts(unittest.TestCase):
                     self.assertEqual(path.read_text(), "{not json")
                     self.assertEqual(sorted(p.name for p in path.parent.iterdir()),
                                      ["policies.json"])
+
+    def test_failed_rename_leaves_policy_unchanged_without_temp_files(self):
+        self.write(self.firefox, {"Extensions": {"Install": [FIREFOX_OLD]}})
+        before = self.firefox.read_bytes()
+        output = self.run_script("postinst", "configure", fail_mv=True)
+        self.assertIn("could not replace", output)
+        self.assertNotIn("Merged Firefox", output)
+        self.assertEqual(self.firefox.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in self.firefox.parent.iterdir()), ["policies.json"])
+
+        self.run_script("postinst", "configure")
+        before = self.firefox.read_bytes()
+        output = self.run_script("postrm", "remove", fail_mv=True)
+        self.assertIn("could not replace", output)
+        self.assertNotIn("Removed Firefox", output)
+        self.assertEqual(self.firefox.read_bytes(), before)
+        self.assertEqual(sorted(p.name for p in self.firefox.parent.iterdir()), ["policies.json"])
 
     def test_empty_policy_file_is_left_unchanged(self):
         for path in (self.firefox, self.thunderbird):
