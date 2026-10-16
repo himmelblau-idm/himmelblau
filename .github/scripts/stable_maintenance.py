@@ -40,12 +40,13 @@ from typing import Any, Iterable, Mapping, Sequence
 
 STABLE_BRANCHES = ("stable-3.x", "stable-4.x")
 QUARANTINE_HOURS = 252
-MAX_AI_ATTEMPTS = 3
-MAX_AI_RETRY_SECONDS = 300
+MAX_AI_ATTEMPTS = 10
+MAX_AI_RETRY_SECONDS = 90 * 60
 MAX_HTTP_BYTES = 8 * 1024 * 1024
 CRATES_IO_USER_AGENT = "himmelblau-stable-maintenance (https://github.com/himmelblau-idm/himmelblau)"
-MAX_HTTP_ATTEMPTS = 5
-MAX_HTTP_WAIT_SECONDS = 300
+MAX_HTTP_ATTEMPTS = 10
+MAX_HTTP_WAIT_SECONDS = 90 * 60
+MAX_NETWORK_BACKOFF_SECONDS = 10 * 60
 _HTTP_LOCK = threading.Lock()
 _HTTP_NEXT_REQUEST: dict[str, float] = {}
 MAX_REGISTRY_CACHE_DEPTH = 128
@@ -752,44 +753,67 @@ def _http_once(request: urllib.request.Request, timeout: int, max_bytes: int) ->
     return raw
 
 
-def _http_read(request: urllib.request.Request, timeout: int, max_bytes: int, attempts: int) -> bytes:
+class NetworkWaitBudgetExceeded(MaintenanceError):
+    """The cumulative network wait allowance cannot cover the next delay."""
+
+
+@dataclass
+class NetworkWaitBudget:
+    limit: float
+    waited: float = 0.0
+
+    def sleep(self, delay: float, message: str) -> None:
+        if self.waited + delay > self.limit:
+            raise NetworkWaitBudgetExceeded(message)
+        time.sleep(delay)
+        self.waited += delay
+
+
+def _http_read(request: urllib.request.Request, timeout: int, max_bytes: int, attempts: int,
+               wait_budget: NetworkWaitBudget | None = None) -> bytes:
     origin = urllib.parse.urlsplit(request.full_url).netloc.lower()
     service = origin if origin in {"crates.io", "static.crates.io", "api.github.com"} else "remote"
-    waited = 0.0
-    with _HTTP_LOCK:
-        for attempt in range(attempts):
-            delay = max(0.0, max(_HTTP_NEXT_REQUEST.get(origin, 0), _HTTP_NEXT_REQUEST.get("*", 0)) - time.monotonic())
-            if waited + delay > MAX_HTTP_WAIT_SECONDS:
-                raise MaintenanceError("HTTP retry delay exceeds bounded wait budget")
-            if delay:
-                print(f"http-backoff: service={service} attempt={attempt + 1} wait_seconds={delay:g}", file=sys.stderr)
-                time.sleep(delay)
-                waited += delay
-            try:
-                return _http_once(request, timeout, max_bytes)
-            except MaintenanceError as exc:
-                throttled = isinstance(exc, HTTPStatusError) and exc.rate_limited
-                transient = throttled or (isinstance(exc, HTTPStatusError) and exc.status in {408, 500, 502, 503, 504})
-                transient = transient or (not isinstance(exc, HTTPStatusError)
-                                          and str(exc) in {"HTTP request failed", "HTTP request timed out"})
-                if not transient:
-                    raise
-                cooldown = (60 if throttled else 5) * 2 ** attempt
-                if isinstance(exc, HTTPStatusError) and exc.retry_after is not None:
-                    cooldown = max(1.0, exc.retry_after)
-                _HTTP_NEXT_REQUEST[origin] = time.monotonic() + cooldown
+    budget = wait_budget if wait_budget is not None else NetworkWaitBudget(MAX_HTTP_WAIT_SECONDS)
+    for attempt in range(attempts):
+        while True:
+            with _HTTP_LOCK:
+                now = time.monotonic()
+                delay = max(0.0, max(_HTTP_NEXT_REQUEST.get(origin, 0), _HTTP_NEXT_REQUEST.get("*", 0)) - now)
+                if not delay:
+                    # Reserve the next registry slot atomically, then release
+                    # the state lock before any network IO or wait.
+                    if origin == "crates.io":
+                        _HTTP_NEXT_REQUEST[origin] = now + 5.0
+                    break
+            print(f"http-backoff: service={service} attempt={attempt + 1} wait_seconds={delay:g}", file=sys.stderr)
+            budget.sleep(delay, "HTTP retry delay exceeds bounded wait budget")
+            # Another caller may have extended a cooldown while we waited.
+        try:
+            return _http_once(request, timeout, max_bytes)
+        except MaintenanceError as exc:
+            throttled = isinstance(exc, HTTPStatusError) and exc.rate_limited
+            transient = throttled or (isinstance(exc, HTTPStatusError) and exc.status in {408, 500, 502, 503, 504})
+            transient = transient or (not isinstance(exc, HTTPStatusError)
+                                      and str(exc) in {"HTTP request failed", "HTTP request timed out"})
+            if not transient:
+                raise
+            cooldown = min(MAX_NETWORK_BACKOFF_SECONDS, (120 if throttled else 30) * 2 ** attempt)
+            if isinstance(exc, HTTPStatusError) and exc.retry_after is not None:
+                cooldown = max(1.0, exc.retry_after)
+            with _HTTP_LOCK:
+                _HTTP_NEXT_REQUEST[origin] = max(_HTTP_NEXT_REQUEST.get(origin, 0), time.monotonic() + cooldown)
                 if throttled:
-                    # Native tools may contact the same service next. A job
-                    # that is throttled must slow those callers down as well.
+                    # Native tools must slow down after a job is throttled too.
                     _HTTP_NEXT_REQUEST["*"] = max(_HTTP_NEXT_REQUEST.get("*", 0), _HTTP_NEXT_REQUEST[origin])
-                print(f"http-debug: service={service} reason={diagnostic_reason(exc)}", file=sys.stderr)
-                # An explicit throttle rejects a mutation. A transport/5xx
-                # failure can follow a successful write: never blindly replay it.
-                if attempt + 1 == attempts or (request.get_method() not in {"GET", "HEAD"} and not throttled):
-                    raise
-            finally:
-                if origin == "crates.io":
-                    _HTTP_NEXT_REQUEST[origin] = max(_HTTP_NEXT_REQUEST.get(origin, 0), time.monotonic() + 1.0)
+            print(f"http-debug: service={service} reason={diagnostic_reason(exc)}", file=sys.stderr)
+            # An explicit throttle rejects a mutation. A transport/5xx failure
+            # can follow a successful write: never blindly replay it.
+            if attempt + 1 == attempts or (request.get_method() not in {"GET", "HEAD"} and not throttled):
+                raise
+        finally:
+            if origin == "crates.io":
+                with _HTTP_LOCK:
+                    _HTTP_NEXT_REQUEST[origin] = max(_HTTP_NEXT_REQUEST.get(origin, 0), time.monotonic() + 5.0)
     raise AssertionError("unreachable HTTP retry state")
 
 
@@ -797,6 +821,7 @@ def http_json(
     url: str, *, method: str = "GET", headers: Mapping[str, str] | None = None,
     body: Mapping[str, Any] | None = None, timeout: int = 60, max_bytes: int = MAX_HTTP_BYTES,
     attempts: int = MAX_HTTP_ATTEMPTS,
+    wait_budget: NetworkWaitBudget | None = None,
 ) -> Any:
     data = json.dumps(body).encode() if body is not None else None
     request_headers = {"User-Agent": CRATES_IO_USER_AGENT}
@@ -804,7 +829,7 @@ def http_json(
         request_headers["Content-Type"] = "application/json"
     request_headers.update(headers or {})
     request = urllib.request.Request(url, data=data, method=method, headers=request_headers)
-    raw = _http_read(request, timeout, max_bytes, attempts)
+    raw = _http_read(request, timeout, max_bytes, attempts, wait_budget)
     try:
         return json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -1007,12 +1032,13 @@ class AzureAI:
             "max_output_tokens": 8192,
         }
         last_error: Exception | None = None
+        wait_budget = NetworkWaitBudget(MAX_AI_RETRY_SECONDS)
         for attempt in range(MAX_AI_ATTEMPTS):
             stage = "http-request"
             try:
                 response = http_json(
                     self.url, method="POST", headers={"Content-Type": "application/json", "api-key": self.key},
-                    body=body, timeout=300, max_bytes=MAX_AI_OUTPUT_BYTES, attempts=1,
+                    body=body, timeout=300, max_bytes=MAX_AI_OUTPUT_BYTES, attempts=1, wait_budget=wait_budget,
                 )
                 stage = "structured-output"
                 text = response.get("output_text") if isinstance(response, dict) else None
@@ -1043,20 +1069,26 @@ class AzureAI:
                     file=sys.stderr,
                 )
                 last_error = exc
+                if stage == "http-request":
+                    if isinstance(exc, NetworkWaitBudgetExceeded):
+                        raise MaintenanceError("Azure retry delay exceeds bounded wait budget") from exc
+                    transient = (exc.rate_limited or exc.status in {408, 500, 502, 503, 504}
+                                 if isinstance(exc, HTTPStatusError) else
+                                 str(exc) in {"HTTP request failed", "HTTP request timed out"})
+                    if not transient:
+                        raise
                 if attempt + 1 < MAX_AI_ATTEMPTS:
-                    delay = 5 * 2 ** attempt
+                    delay = min(MAX_NETWORK_BACKOFF_SECONDS, 30 * 2 ** attempt)
                     if isinstance(exc, HTTPStatusError) and exc.status == 429:
                         # Azure's quota window is one minute; rapid retries can
                         # consume quota themselves. Respect server guidance.
-                        fallback = 60 * 2 ** attempt + secrets.randbelow(11)
+                        fallback = min(MAX_NETWORK_BACKOFF_SECONDS, 120 * 2 ** attempt + secrets.randbelow(11))
                         delay = exc.retry_after if exc.retry_after is not None and exc.retry_after > 0 else fallback
                         if exc.rate_limits.get("remaining_tokens") == 0:
                             delay = max(delay, fallback)
-                        if delay > MAX_AI_RETRY_SECONDS:
-                            raise MaintenanceError("Azure retry delay exceeds bounded wait budget") from exc
                         delay = max(1, delay)
                     print(f"azure-backoff: attempt={attempt + 1} wait_seconds={delay:g}", file=sys.stderr)
-                    time.sleep(delay)
+                    wait_budget.sleep(delay, "Azure retry delay exceeds bounded wait budget")
         raise MaintenanceError("Azure failed after bounded retries") from last_error
 
 
@@ -1526,7 +1558,7 @@ def contained_repo_command(
     argv.extend([
         "-w", "/workspace", "-e", "HOME=/tmp", "-e", "XDG_CACHE_HOME=/tmp", "-e", "TMPDIR=/tmp",
         "-e", "CARGO_NET_OFFLINE=true", "-e", "CARGO_TARGET_DIR=/target",
-        "-e", "CARGO_NET_RETRY=5",
+        "-e", "CARGO_NET_RETRY=10",
         "-e", "CARGO_HOME=/opt/project-cargo", "-e", "RUSTUP_HOME=/usr/local/rustup",
         "-e", "O365_GEN_DIR=/target/o365-generated",
         "-e", "PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -1608,7 +1640,7 @@ def isolated_vet_command(
             "temporary failure in name resolution", "connection closed before message completed"))
         if not retry_codes and not transport:
             return result
-        cooldown = (60 if 429 in retry_codes else 5) * 2 ** attempt
+        cooldown = min(MAX_NETWORK_BACKOFF_SECONDS, (120 if 429 in retry_codes else 30) * 2 ** attempt)
         _HTTP_NEXT_REQUEST["*"] = time.monotonic() + cooldown
         reason = f"http-status-{min(retry_codes)}" if retry_codes else "transport-error"
         print(f"vet-network-debug: attempt={attempt + 1} reason={reason}", file=sys.stderr)
