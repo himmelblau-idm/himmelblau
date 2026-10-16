@@ -29,6 +29,7 @@ Local changes:
   PIN/UV tokens and authentication parameters, and PRF outputs. Native-backend
   ECDH/decryption buffers wipe on error and digest temporaries wipe after use. Existing
   protocol-required token/shared-key clones wipe their own allocations on drop.
+* Remove the raw PIN-hash trace so secret-derived material is not retained in logs.
 * Keep the existing malformed-length HMAC protocol fixtures and add fake-device
   tests proving biometric-only policy rejects PIN substitution before CTAP I/O.
 

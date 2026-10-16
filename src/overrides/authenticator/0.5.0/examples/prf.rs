@@ -292,8 +292,8 @@ fn main() {
                     .expect("Expected PRF output to contain results");
 
                 assert_eq!(
-                    Some(prf_results.first),
-                    prf_results.second,
+                    Some(&prf_results.first),
+                    prf_results.second.as_ref(),
                     "Expected PRF results to be equal for equal input"
                 );
 

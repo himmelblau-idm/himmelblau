@@ -1374,10 +1374,6 @@ rec {
         ];
         dependencies = [
           {
-            name = "zeroize";
-            packageId = "zeroize";
-          }
-          {
             name = "base64";
             packageId = "base64 0.21.7";
           }
@@ -1461,6 +1457,10 @@ rec {
             packageId = "winapi";
             target = { target, features }: ("windows" == target."os" or null);
             features = [ "handleapi" "hidclass" "hidpi" "hidusage" "setupapi" ];
+          }
+          {
+            name = "zeroize";
+            packageId = "zeroize";
           }
         ];
         features = {
@@ -7939,10 +7939,6 @@ rec {
         ];
         dependencies = [
           {
-            name = "openssl";
-            packageId = "openssl";
-          }
-          {
             name = "anyhow";
             packageId = "anyhow";
           }
@@ -8051,6 +8047,10 @@ rec {
           {
             name = "openidconnect";
             packageId = "openidconnect";
+          }
+          {
+            name = "openssl";
+            packageId = "openssl";
           }
           {
             name = "qrcodegen";
@@ -8174,10 +8174,6 @@ rec {
           "David Mulder <dmulder@suse.com>"
         ];
         dependencies = [
-          {
-            name = "zeroize";
-            packageId = "zeroize";
-          }
           {
             name = "async-trait";
             packageId = "async-trait";
@@ -8310,6 +8306,10 @@ rec {
           {
             name = "zbus";
             packageId = "zbus";
+          }
+          {
+            name = "zeroize";
+            packageId = "zeroize";
           }
         ];
         features = {
