@@ -2578,7 +2578,10 @@ def _fallback_after_vet_rejection(
                 for name, version in set(graph_after) - set(graph_before):
                     row = next((x for x in crates_releases(name) if x.get("num") == version), None)
                     if row and isinstance(row.get("created_at"), str):
-                        published[(name, version)] = parse_rfc3339(row["created_at"])
+                        try:
+                            published[(name, version)] = parse_rfc3339(row["created_at"])
+                        except ValueError as exc:
+                            raise MaintenanceError("invalid dependency publication timestamp") from exc
                 if transitive_freshness_violations(
                     graph_before, graph_after, published, started, {(crate, candidate)},
                 ):

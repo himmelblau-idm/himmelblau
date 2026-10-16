@@ -2267,7 +2267,7 @@ class ManifestRewriteTests(unittest.TestCase):
 
 class DependencyImportRefreshTests(unittest.TestCase):
     def test_review_service_failures_revert_one_candidate_and_keep_independent_updates(self):
-        for stage in ("versions", "imports", "report", "timeout", "outage", "rollback"):
+        for stage in ("versions", "timestamp", "timezone", "imports", "report", "timeout", "outage", "rollback"):
             with self.subTest(stage=stage), self.repository() as (root, runner, state):
                 names = ("alpha", "broken", "gamma")
                 initial = {name: "1.0.0" for name in names}
@@ -2311,7 +2311,10 @@ class DependencyImportRefreshTests(unittest.TestCase):
                 def releases(crate):
                     if crate == "broken" and stage == "versions":
                         raise sm.HTTPStatusError(429)
-                    return [{"num": "1.1.0", "created_at": "2025-01-01T00:00:00Z"}]
+                    return [{"num": "1.1.0", "created_at": (
+                        "not-a-date" if crate == "broken" and stage == "timestamp" else
+                        "2025-01-01T00:00:00" if crate == "broken" and stage == "timezone" else
+                        "2025-01-01T00:00:00Z")}]
 
                 def refresh(*args):
                     (root / "supply-chain/imports.lock").write_text(f"{active} imports\n")
@@ -2362,7 +2365,7 @@ class DependencyImportRefreshTests(unittest.TestCase):
                 self.assertEqual((root / "supply-chain/config.toml").read_text(), "# Keep policy and exemptions\n")
                 self.assertEqual((root / "supply-chain/imports.lock").read_text(),
                                  baseline_imports if stage == "outage" else "gamma imports\n")
-                self.assertEqual(build.call_count, 2 if stage == "versions" else 3)
+                self.assertEqual(build.call_count, 2 if stage in ("versions", "timestamp", "timezone") else 3)
 
     @contextmanager
     def repository(self):
