@@ -1902,6 +1902,94 @@ class CargoVetTests(unittest.TestCase):
         with self.assertRaises(sm.MaintenanceError):
             sm.serialize_audit('serde]]\nwho="attacker', None, "1.0.0")
 
+    def test_approved_audits_are_formatted_offline_before_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            first = sm.serialize_audit("cc", "1.4.2", "1.4.4")
+            last = sm.serialize_audit("zzz", None, "1.0.0")
+            baseline = "# cargo-vet audits file\n\n" + first + "\n" + last
+            originals = {"audits.toml": baseline, "config.toml": "# policy\n", "imports.lock": "# imports\n"}
+            for name, data in originals.items():
+                (root / "supply-chain" / name).write_text(data)
+            items = [sm.VetItem("cc", "1.4.4", "1.4.7"), sm.VetItem("aaa", None, "2.0.0")]
+            formatted = ("# cargo-vet audits file\n\n" + sm.serialize_audit("aaa", None, "2.0.0")
+                         + "\n" + first + "\n" + sm.serialize_audit("cc", "1.4.4", "1.4.7") + "\n" + last)
+            stores = []
+
+            def fmt(_runner, command, **kwargs):
+                self.assertEqual(command, ["cargo", "vet", "fmt"])
+                self.assertFalse(kwargs["network"])
+                self.assertFalse(kwargs["source_rw"])
+                self.assertFalse(kwargs["cache_rw"])
+                store = kwargs["vet_store"]
+                stores.append(store)
+                self.assertNotIn(root, store.parents)
+                pending = (store / "audits.toml").read_text()
+                self.assertEqual(pending, baseline + "\n" + sm.serialize_audit("cc", "1.4.4", "1.4.7")
+                                 + "\n" + sm.serialize_audit("aaa", None, "2.0.0"))
+                for name, data in originals.items():
+                    self.assertEqual((root / "supply-chain" / name).read_text(), data)
+                (store / "audits.toml").write_text(formatted)
+                for name in ("config.toml", "imports.lock"):
+                    (store / name).write_text("# Disposable formatting rewrite\n")
+                return sm.CommandResult(0, "", "")
+
+            with mock.patch.object(sm, "contained_repo_command", side_effect=fmt) as command:
+                runner = mock.Mock(root=root)
+                sm.append_reviewed_audits(runner, Path(tmp), [])
+                command.assert_not_called()
+                sm.append_reviewed_audits(runner, Path(tmp), items)
+                command.assert_called_once()
+            self.assertEqual((root / "supply-chain/audits.toml").read_text(), formatted)
+            for name in ("config.toml", "imports.lock"):
+                self.assertEqual((root / "supply-chain" / name).read_text(), originals[name])
+            self.assertTrue(all(not store.exists() for store in stores))
+
+    def test_audit_formatter_cannot_publish_partial_or_changed_certifications(self):
+        for outcome in ("removed", "added", "duplicate", "criteria", "who", "notes", "policy", "malformed", "symlink", "error", "timeout"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                (root / "supply-chain").mkdir(parents=True)
+                baseline = '# Keep local audits\n[criteria.local]\ndescription="Local criterion"\n'
+                originals = {"audits.toml": baseline, "config.toml": "# Policy\n", "imports.lock": "# Imports\n"}
+                for name, data in originals.items():
+                    (root / "supply-chain" / name).write_text(data)
+                stores = []
+                failure = (sm.CommandCaptureError("bounded capture failed", "timeout", sm.CommandResult(-9, "", ""))
+                           if outcome == "timeout" else sm.MaintenanceError("formatter failed"))
+
+                def fmt(_runner, command, **kwargs):
+                    store = kwargs["vet_store"]
+                    stores.append(store)
+                    pending = store / "audits.toml"
+                    text = pending.read_text()
+                    if outcome == "removed": text = baseline
+                    elif outcome == "added": text += "\n" + sm.serialize_audit("unreviewed", None, "9.0.0")
+                    elif outcome == "duplicate": text += "\n" + sm.serialize_audit("cc", "1.4.4", "1.4.7")
+                    elif outcome == "criteria": text = text.replace('criteria = "safe-to-deploy"', 'criteria = "safe-to-run"')
+                    elif outcome == "who": text = text.replace(sm.AUDIT_WHO, "Someone else")
+                    elif outcome == "notes": text += 'notes = "Changed rationale"\n'
+                    elif outcome == "policy": text = text.replace('description="Local criterion"', 'description="Weaker criterion"')
+                    elif outcome == "malformed": text = "not valid TOML"
+                    elif outcome == "symlink":
+                        pending.unlink()
+                        pending.symlink_to(root / "supply-chain/audits.toml")
+                        return sm.CommandResult(0, "", "")
+                    pending.write_text(text)
+                    if outcome in ("error", "timeout"):
+                        raise failure
+                    return sm.CommandResult(0, "", "")
+
+                with mock.patch.object(sm, "contained_repo_command", side_effect=fmt), \
+                     self.assertRaises(sm.MaintenanceError) as caught:
+                    sm.append_reviewed_audits(mock.Mock(root=root), Path(tmp), [sm.VetItem("cc", "1.4.4", "1.4.7")])
+                if outcome in ("error", "timeout"):
+                    self.assertIs(caught.exception, failure)
+                for name, data in originals.items():
+                    self.assertEqual((root / "supply-chain" / name).read_text(), data)
+                self.assertTrue(all(not store.exists() for store in stores))
+
     def test_rejection_only_vet_run_does_not_create_empty_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
@@ -1977,6 +2065,10 @@ class CargoVetTests(unittest.TestCase):
                     store = kwargs["vet_store"]
                     calls.append(store)
                     audits = (root / "supply-chain/audits.toml").read_text()
+                    if command == ["cargo", "vet", "fmt"]:
+                        self.assertIn('[[audits.example]]', (store / "audits.toml").read_text())
+                        self.assertNotIn('[[audits.example]]', audits)
+                        return sm.CommandResult(0, "", "")
                     self.assertEqual((store / "audits.toml").read_text(), audits)
                     if command == ["cargo", "vet", "check", "--output-format=json"]:
                         return sm.CommandResult(255, VET_CHECK_REPORT, "")
@@ -2267,7 +2359,7 @@ class ManifestRewriteTests(unittest.TestCase):
 
 class DependencyImportRefreshTests(unittest.TestCase):
     def test_review_service_failures_revert_one_candidate_and_keep_independent_updates(self):
-        for stage in ("versions", "timestamp", "timezone", "imports", "report", "timeout", "outage", "rollback"):
+        for stage in ("versions", "timestamp", "timezone", "imports", "report", "timeout", "format", "format-timeout", "format-mutation", "batch-format", "outage", "rollback"):
             with self.subTest(stage=stage), self.repository() as (root, runner, state):
                 names = ("alpha", "broken", "gamma")
                 initial = {name: "1.0.0" for name in names}
@@ -2326,12 +2418,29 @@ class DependencyImportRefreshTests(unittest.TestCase):
                     nonlocal reviews
                     reviews += 1
                     if reviews == 1:
+                        if stage == "batch-format":
+                            return [sm.VetItem("broken", "1.0.0", "1.1.0")]
                         raise sm.MaintenanceError("HTTP request failed")
                     if stage == "outage" or (active == "broken" and stage in ("report", "timeout")):
                         if stage == "timeout":
                             raise sm.CommandCaptureError("SECRET", "timeout", sm.CommandResult(-9, "", ""))
                         raise sm.MaintenanceError("SECRET malformed report")
                     return [sm.VetItem(active, "1.0.0", "1.1.0")]
+
+                def fmt(_runner, command, **kwargs):
+                    self.assertEqual(command, ["cargo", "vet", "fmt"])
+                    if (active in (None, "broken") and stage == "batch-format") or (active == "broken" and stage.startswith("format")):
+                        # Even partial formatter writes are disposable. The
+                        # earlier accepted alpha audit and imports survive.
+                        pending = kwargs["vet_store"] / "audits.toml"
+                        if stage == "format-mutation":
+                            pending.write_text(pending.read_text().replace('criteria = "safe-to-deploy"', 'criteria = "safe-to-run"'))
+                            return sm.CommandResult(0, "", "")
+                        pending.write_text("partial formatter write\n")
+                        if stage == "format-timeout":
+                            raise sm.CommandCaptureError("SECRET", "timeout", sm.CommandResult(-9, "", ""))
+                        raise sm.MaintenanceError("SECRET formatter failed")
+                    return sm.CommandResult(0, "", "")
 
                 with mock.patch.object(sm, "cargo_metadata", side_effect=metadata), \
                      mock.patch.object(sm, "direct_registry_packages", return_value=[]), \
@@ -2342,6 +2451,7 @@ class DependencyImportRefreshTests(unittest.TestCase):
                      mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
                      mock.patch.object(sm, "AzureAI", return_value=mock.Mock()), \
                      mock.patch.object(sm, "safe_vet_decision", side_effect=lambda *args: not (stage == "rollback" and active == "broken")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=fmt), \
                      mock.patch.object(sm, "locked_vet_gaps", return_value=[]) as final, \
                      mock.patch("sys.stderr", new_callable=io.StringIO) as output:
                     if stage == "rollback":

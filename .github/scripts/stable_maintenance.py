@@ -2720,6 +2720,44 @@ def decide_vet_gaps(
     return decisions, newly_rejected
 
 
+def append_reviewed_audits(runner: Runner, state_dir: Path, items: Sequence[VetItem]) -> None:
+    """Publish approved audits only after offline, content-preserving formatting."""
+    if not items:
+        return
+
+    def contents(raw: bytes) -> str:
+        try:
+            parsed = tomllib.loads(raw.decode("utf-8"))
+            # cargo-vet sorts audit entries as well as crate names. Permit
+            # that ordering change, but preserve every entry and field,
+            # including duplicates, criteria, attribution and notes.
+            for entries in parsed.get("audits", {}).values():
+                entries.sort(key=lambda entry: json.dumps(entry, sort_keys=True))
+            return json.dumps(parsed, sort_keys=True)
+        except (UnicodeError, ValueError, TypeError, AttributeError, RecursionError) as exc:
+            raise MaintenanceError("cargo-vet audit formatting has invalid contents") from exc
+
+    audits = checkout_regular_file(runner.root, "supply-chain/audits.toml")
+    original = audits.read_bytes()
+    with tempfile.TemporaryDirectory(prefix="vet-format-", dir=state_dir) as tmp:
+        store = Path(tmp) / "supply-chain"
+        shutil.copytree(runner.root / "supply-chain", store)
+        pending = checkout_regular_file(store, "audits.toml")
+        for item in items:
+            _append_audit(pending, item)
+        expected = contents(pending.read_bytes())
+        # fmt does not fetch imports or prune audits. Never grant it write
+        # access to the checkout/cache or copy its other store files back.
+        contained_repo_command(runner, ["cargo", "vet", "fmt"], network=False,
+                               source_rw=False, cache_rw=False, vet_store=store, timeout=120)
+        formatted = checkout_regular_file(store, "audits.toml").read_bytes()
+        if contents(formatted) != expected:
+            raise MaintenanceError("cargo-vet audit formatting changed audit contents")
+        if audits.read_bytes() != original:
+            raise MaintenanceError("cargo-vet audit formatting changed the source checkout")
+        audits.write_bytes(formatted)
+
+
 def _fallback_after_vet_rejection(
     state: State, runner: Runner, ai: AzureAI | None, rejected_items: set[VetItem], audits_baseline: str,
 ) -> tuple[list[dict[str, str | None]], list[dict[str, str | None]]]:
@@ -2800,6 +2838,7 @@ def _fallback_after_vet_rejection(
                     restoring = True
                     restore_worktree(runner, baseline)
                     continue
+                append_reviewed_audits(runner, state.directory, [item for item, _ in decisions])
             except MaintenanceError as exc:
                 if restoring:
                     raise  # A failed rollback is fatal, never a candidate rejection.
@@ -2811,7 +2850,6 @@ def _fallback_after_vet_rejection(
                       f"reason={diagnostic_reason(exc)}", file=sys.stderr)
                 continue
             for item, _ in decisions:
-                _append_audit(audits_path, item)
                 certified.append(asdict(item))
             accepted_updates.append({**update, "new": candidate})
             manifest_paths.update(candidate_manifests)
@@ -2868,8 +2906,17 @@ def phase_vet_dependencies(args: argparse.Namespace, state: State, runner: Runne
         )
         rejected.extend(fallback_rejected)
     else:
-        for item, _ in decisions:
-            _append_audit(audits_path, item)
+        try:
+            append_reviewed_audits(runner, state.directory, [item for item, _ in decisions])
+        except MaintenanceError as exc:
+            if not state.load().get("dependency_updates"):
+                raise
+            print(f"dependency-review-debug: stage=batch result=fallback "
+                  f"reason={diagnostic_reason(exc)}", file=sys.stderr)
+            accepted, fallback_rejected = _fallback_after_vet_rejection(
+                state, runner, ai, set(), audits_baseline,
+            )
+            rejected.extend(fallback_rejected)
     if locked_vet_gaps(runner, state.directory):
         raise MaintenanceError("cargo-vet still reports uncovered dependencies")
     changed = runner.git(["diff", "--name-only"]).stdout.splitlines()
