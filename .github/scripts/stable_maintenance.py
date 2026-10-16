@@ -1221,7 +1221,11 @@ def dependency_is_workspace_inherited(text: str, alias: str) -> bool:
 def crates_releases(crate: str) -> list[dict[str, Any]]:
     if not PACKAGE_RE.fullmatch(crate):
         raise MaintenanceError("invalid crate name")
-    value = http_json(f"https://crates.io/api/v1/crates/{urllib.parse.quote(crate, safe='')}/versions")
+    try:
+        value = http_json(f"https://crates.io/api/v1/crates/{urllib.parse.quote(crate, safe='')}/versions")
+    except MaintenanceError as exc:
+        print(f"registry-debug: operation=versions crate={crate} reason={diagnostic_reason(exc)}", file=sys.stderr)
+        raise
     versions = value.get("versions") if isinstance(value, dict) else None
     if not isinstance(versions, list):
         raise MaintenanceError("crates.io response lacks versions")
@@ -2381,7 +2385,11 @@ def _vet_decision(ai: AzureAI, runner: Runner, item: VetItem, source_cache: Path
 def safe_vet_decision(ai: AzureAI, runner: Runner, item: VetItem, source_cache: Path) -> bool:
     try:
         return _vet_decision(ai, runner, item, source_cache)
-    except MaintenanceError:
+    except MaintenanceError as exc:
+        # Review material/service failures must remain rejections, but should
+        # not silently look like completed negative AI reviews.
+        crate = item.crate if PACKAGE_RE.fullmatch(item.crate) else "invalid"
+        print(f"vet-review-debug: crate={crate} reason={diagnostic_reason(exc)}", file=sys.stderr)
         return False
 
 
