@@ -2892,7 +2892,8 @@ class MarkerConflictAndAITests(unittest.TestCase):
                 with self.assertRaises(sm.MaintenanceError):
                     ai.call(secret, secret, sm.BOOL_SCHEMA, secret)
             lines = output.getvalue().splitlines()
-            self.assertEqual(sum(line.startswith("azure-debug:") for line in lines), sm.MAX_AI_ATTEMPTS)
+            self.assertEqual(sum(line.startswith("azure-debug:") for line in lines),
+                             1 if stage == "http-request" else sm.MAX_AI_ATTEMPTS)
             self.assertIn("stage=" + stage, lines[-1])
             self.assertIn("reason=" + reason, lines[-1])
             self.assertNotIn(secret, output.getvalue())
@@ -3148,6 +3149,44 @@ class MarkerConflictAndAITests(unittest.TestCase):
 
 
 class CratesIOHTTPTests(unittest.TestCase):
+    def test_azure_permanent_http_failures_stop_without_retrying_or_sleeping(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        for status in (400, 401, 403, 404, 422):
+            error = sm.HTTPStatusError(status)
+            with self.subTest(status=status), registry_clock() as clock, \
+                 mock.patch.object(sm, "_http_once", side_effect=error) as request:
+                with self.assertRaises(sm.HTTPStatusError) as caught:
+                    ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+                self.assertIs(caught.exception, error)
+                request.assert_called_once()
+                self.assertEqual(clock[0], 0)
+
+        for status in (408, 429, 500, 502, 503, 504):
+            with self.subTest(transient=status), registry_clock() as clock, \
+                 mock.patch.object(sm.secrets, "randbelow", return_value=0), \
+                 mock.patch.object(sm, "_http_once", side_effect=[sm.HTTPStatusError(status),
+                     b'{"output_text":"{\\"decision\\":true}"}']) as request:
+                self.assertEqual(ai.call("instructions", "data", sm.BOOL_SCHEMA, "result"), {"decision": True})
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(clock[0], 120 if status == 429 else 30)
+
+    def test_azure_and_http_share_one_cumulative_wait_budget(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=[
+                sm.HTTPStatusError(503, {"retry-after": "3000"}),
+                sm.HTTPStatusError(503, {"retry-after": "3000"}),
+                b'{"output_text":"{\\"decision\\":true}"}']) as request:
+            with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            self.assertEqual(request.call_count, 2)
+            self.assertLessEqual(clock[0], 5400)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["example.invalid"], 6000)
+            with mock.patch.object(sm, "_http_once", return_value=b'{}'):
+                sm.http_json("https://example.invalid/another-operation")
+            self.assertEqual(clock[0], 6000)
+
     def test_long_throttle_window_recovers_on_tenth_http_and_native_attempt(self):
         with registry_clock() as clock, \
              mock.patch.object(sm, "_http_once", side_effect=[*[sm.HTTPStatusError(429)] * 9, b'{}']) as request:

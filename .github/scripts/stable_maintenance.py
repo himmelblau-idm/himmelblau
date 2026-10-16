@@ -753,19 +753,31 @@ def _http_once(request: urllib.request.Request, timeout: int, max_bytes: int) ->
     return raw
 
 
-def _http_read(request: urllib.request.Request, timeout: int, max_bytes: int, attempts: int) -> bytes:
+@dataclass
+class NetworkWaitBudget:
+    limit: float
+    waited: float = 0.0
+
+    def sleep(self, delay: float, message: str) -> None:
+        if self.waited + delay > self.limit:
+            raise MaintenanceError(message)
+        time.sleep(delay)
+        self.waited += delay
+
+
+def _http_read(request: urllib.request.Request, timeout: int, max_bytes: int, attempts: int,
+               wait_budget: NetworkWaitBudget | None = None) -> bytes:
     origin = urllib.parse.urlsplit(request.full_url).netloc.lower()
     service = origin if origin in {"crates.io", "static.crates.io", "api.github.com"} else "remote"
-    waited = 0.0
+    budget = wait_budget if wait_budget is not None else NetworkWaitBudget(MAX_HTTP_WAIT_SECONDS)
     with _HTTP_LOCK:
         for attempt in range(attempts):
             delay = max(0.0, max(_HTTP_NEXT_REQUEST.get(origin, 0), _HTTP_NEXT_REQUEST.get("*", 0)) - time.monotonic())
-            if waited + delay > MAX_HTTP_WAIT_SECONDS:
+            if budget.waited + delay > budget.limit:
                 raise MaintenanceError("HTTP retry delay exceeds bounded wait budget")
             if delay:
                 print(f"http-backoff: service={service} attempt={attempt + 1} wait_seconds={delay:g}", file=sys.stderr)
-                time.sleep(delay)
-                waited += delay
+                budget.sleep(delay, "HTTP retry delay exceeds bounded wait budget")
             try:
                 return _http_once(request, timeout, max_bytes)
             except MaintenanceError as exc:
@@ -798,6 +810,7 @@ def http_json(
     url: str, *, method: str = "GET", headers: Mapping[str, str] | None = None,
     body: Mapping[str, Any] | None = None, timeout: int = 60, max_bytes: int = MAX_HTTP_BYTES,
     attempts: int = MAX_HTTP_ATTEMPTS,
+    wait_budget: NetworkWaitBudget | None = None,
 ) -> Any:
     data = json.dumps(body).encode() if body is not None else None
     request_headers = {"User-Agent": CRATES_IO_USER_AGENT}
@@ -805,7 +818,7 @@ def http_json(
         request_headers["Content-Type"] = "application/json"
     request_headers.update(headers or {})
     request = urllib.request.Request(url, data=data, method=method, headers=request_headers)
-    raw = _http_read(request, timeout, max_bytes, attempts)
+    raw = _http_read(request, timeout, max_bytes, attempts, wait_budget)
     try:
         return json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -1008,13 +1021,13 @@ class AzureAI:
             "max_output_tokens": 8192,
         }
         last_error: Exception | None = None
-        waited = 0.0
+        wait_budget = NetworkWaitBudget(MAX_AI_RETRY_SECONDS)
         for attempt in range(MAX_AI_ATTEMPTS):
             stage = "http-request"
             try:
                 response = http_json(
                     self.url, method="POST", headers={"Content-Type": "application/json", "api-key": self.key},
-                    body=body, timeout=300, max_bytes=MAX_AI_OUTPUT_BYTES, attempts=1,
+                    body=body, timeout=300, max_bytes=MAX_AI_OUTPUT_BYTES, attempts=1, wait_budget=wait_budget,
                 )
                 stage = "structured-output"
                 text = response.get("output_text") if isinstance(response, dict) else None
@@ -1045,6 +1058,14 @@ class AzureAI:
                     file=sys.stderr,
                 )
                 last_error = exc
+                if stage == "http-request":
+                    if str(exc) == "HTTP retry delay exceeds bounded wait budget":
+                        raise MaintenanceError("Azure retry delay exceeds bounded wait budget") from exc
+                    transient = (exc.rate_limited or exc.status in {408, 500, 502, 503, 504}
+                                 if isinstance(exc, HTTPStatusError) else
+                                 str(exc) in {"HTTP request failed", "HTTP request timed out"})
+                    if not transient:
+                        raise
                 if attempt + 1 < MAX_AI_ATTEMPTS:
                     delay = min(MAX_NETWORK_BACKOFF_SECONDS, 30 * 2 ** attempt)
                     if isinstance(exc, HTTPStatusError) and exc.status == 429:
@@ -1055,11 +1076,10 @@ class AzureAI:
                         if exc.rate_limits.get("remaining_tokens") == 0:
                             delay = max(delay, fallback)
                         delay = max(1, delay)
-                    if waited + delay > MAX_AI_RETRY_SECONDS:
+                    if wait_budget.waited + delay > wait_budget.limit:
                         raise MaintenanceError("Azure retry delay exceeds bounded wait budget") from exc
                     print(f"azure-backoff: attempt={attempt + 1} wait_seconds={delay:g}", file=sys.stderr)
-                    time.sleep(delay)
-                    waited += delay
+                    wait_budget.sleep(delay, "Azure retry delay exceeds bounded wait budget")
         raise MaintenanceError("Azure failed after bounded retries") from last_error
 
 
