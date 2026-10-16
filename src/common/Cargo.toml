@@ -57,7 +57,7 @@ oauth2 = "5.0.0"
 totp-rs = { version = "5.7.1", features = ["gen_secret", "otpauth", "qr", "serde_support", "zeroize"] }
 hostname = "0.4.2"
 qrcodegen = "1.8.0"
-image = { version = "=0.25.6", default-features = false, features = ["png"] }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 rqrr = { version = "0.11.0", default-features = false }
 urlencoding = { workspace = true }
 zbus = "5.14"
