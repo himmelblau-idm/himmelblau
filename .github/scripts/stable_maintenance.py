@@ -14,6 +14,7 @@ import base64
 import datetime as dt
 import email.utils
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -42,6 +43,11 @@ QUARANTINE_HOURS = 252
 MAX_AI_ATTEMPTS = 3
 MAX_AI_RETRY_SECONDS = 300
 MAX_HTTP_BYTES = 8 * 1024 * 1024
+CRATES_IO_USER_AGENT = "himmelblau-stable-maintenance (https://github.com/himmelblau-idm/himmelblau)"
+MAX_HTTP_ATTEMPTS = 5
+MAX_HTTP_WAIT_SECONDS = 300
+_HTTP_LOCK = threading.Lock()
+_HTTP_NEXT_REQUEST: dict[str, float] = {}
 MAX_REGISTRY_CACHE_DEPTH = 128
 MAX_AI_INPUT_BYTES = 4 * 1024 * 1024
 MAX_AI_OUTPUT_BYTES = 256 * 1024
@@ -124,6 +130,12 @@ class HTTPStatusError(MaintenanceError):
             number = integer_header(name)
             if number is not None:
                 self.rate_limits[label] = number
+        self.rate_limited = self.status == 429 or (
+            self.status == 403 and (self.retry_after is not None or integer_header("x-ratelimit-remaining") == 0)
+        )
+        reset = integer_header("x-ratelimit-reset")
+        if self.rate_limited and integer_header("x-ratelimit-remaining") == 0 and reset is not None:
+            self.retry_after = max(self.retry_after or 0, reset - time.time())
         super().__init__("HTTP request failed")
 
 
@@ -147,6 +159,7 @@ def diagnostic_reason(exc: Exception) -> str:
         "AI input exceeds size limit": "ai-input-too-large",
         "Azure failed after bounded retries": "azure-retries-exhausted",
         "Azure retry delay exceeds bounded wait budget": "azure-retry-wait-too-long",
+        "HTTP retry delay exceeds bounded wait budget": "http-retry-wait-too-long",
         "main commit context exceeds budget": "main-context-too-large",
         "stable branch context exceeds bounded AI input": "stable-context-too-large",
         "combined relevance context exceeds budget": "combined-context-too-large",
@@ -707,20 +720,22 @@ def validate_schema_result(value: Any, schema: Mapping[str, Any]) -> dict[str, A
     return value
 
 
-def http_json(
-    url: str, *, method: str = "GET", headers: Mapping[str, str] | None = None,
-    body: Mapping[str, Any] | None = None, timeout: int = 60, max_bytes: int = MAX_HTTP_BYTES,
-) -> Any:
-    data = json.dumps(body).encode() if body is not None else None
-    request_headers = {"Content-Type": "application/json"} if body is not None else {}
-    request_headers.update(headers or {})
-    request = urllib.request.Request(url, data=data, method=method, headers=request_headers)
+def _http_once(request: urllib.request.Request, timeout: int, max_bytes: int) -> bytes:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             if response.status < 200 or response.status >= 300:
                 raise HTTPStatusError(response.status, response.headers)
             raw = response.read(max_bytes + 1)
+            # A bounded HTTPResponse.read can silently return a short body.
+            # Its remaining length distinguishes premature EOF from complete
+            # fixed-length, bodyless, chunked and close-delimited responses.
+            remaining = getattr(response, "length", None)
+            if type(remaining) is int and remaining > 0 and len(raw) <= max_bytes:
+                if len(raw) + remaining > max_bytes:
+                    raise MaintenanceError("HTTP response exceeded size limit")
+                raise http.client.IncompleteRead(b"", remaining)
     except urllib.error.HTTPError as exc:
+        exc.close()
         raise HTTPStatusError(exc.code, exc.headers) from exc
     except TimeoutError as exc:
         raise MaintenanceError("HTTP request timed out") from exc
@@ -730,8 +745,66 @@ def http_json(
         raise MaintenanceError("HTTP request failed") from exc
     except OSError as exc:
         raise MaintenanceError("HTTP request failed") from exc
+    except http.client.HTTPException as exc:
+        raise MaintenanceError("HTTP request failed") from exc
     if len(raw) > max_bytes:
         raise MaintenanceError("HTTP response exceeded size limit")
+    return raw
+
+
+def _http_read(request: urllib.request.Request, timeout: int, max_bytes: int, attempts: int) -> bytes:
+    origin = urllib.parse.urlsplit(request.full_url).netloc.lower()
+    service = origin if origin in {"crates.io", "static.crates.io", "api.github.com"} else "remote"
+    waited = 0.0
+    with _HTTP_LOCK:
+        for attempt in range(attempts):
+            delay = max(0.0, max(_HTTP_NEXT_REQUEST.get(origin, 0), _HTTP_NEXT_REQUEST.get("*", 0)) - time.monotonic())
+            if waited + delay > MAX_HTTP_WAIT_SECONDS:
+                raise MaintenanceError("HTTP retry delay exceeds bounded wait budget")
+            if delay:
+                print(f"http-backoff: service={service} attempt={attempt + 1} wait_seconds={delay:g}", file=sys.stderr)
+                time.sleep(delay)
+                waited += delay
+            try:
+                return _http_once(request, timeout, max_bytes)
+            except MaintenanceError as exc:
+                throttled = isinstance(exc, HTTPStatusError) and exc.rate_limited
+                transient = throttled or (isinstance(exc, HTTPStatusError) and exc.status in {408, 500, 502, 503, 504})
+                transient = transient or (not isinstance(exc, HTTPStatusError)
+                                          and str(exc) in {"HTTP request failed", "HTTP request timed out"})
+                if not transient:
+                    raise
+                cooldown = (60 if throttled else 5) * 2 ** attempt
+                if isinstance(exc, HTTPStatusError) and exc.retry_after is not None:
+                    cooldown = max(1.0, exc.retry_after)
+                _HTTP_NEXT_REQUEST[origin] = time.monotonic() + cooldown
+                if throttled:
+                    # Native tools may contact the same service next. A job
+                    # that is throttled must slow those callers down as well.
+                    _HTTP_NEXT_REQUEST["*"] = max(_HTTP_NEXT_REQUEST.get("*", 0), _HTTP_NEXT_REQUEST[origin])
+                print(f"http-debug: service={service} reason={diagnostic_reason(exc)}", file=sys.stderr)
+                # An explicit throttle rejects a mutation. A transport/5xx
+                # failure can follow a successful write: never blindly replay it.
+                if attempt + 1 == attempts or (request.get_method() not in {"GET", "HEAD"} and not throttled):
+                    raise
+            finally:
+                if origin == "crates.io":
+                    _HTTP_NEXT_REQUEST[origin] = max(_HTTP_NEXT_REQUEST.get(origin, 0), time.monotonic() + 1.0)
+    raise AssertionError("unreachable HTTP retry state")
+
+
+def http_json(
+    url: str, *, method: str = "GET", headers: Mapping[str, str] | None = None,
+    body: Mapping[str, Any] | None = None, timeout: int = 60, max_bytes: int = MAX_HTTP_BYTES,
+    attempts: int = MAX_HTTP_ATTEMPTS,
+) -> Any:
+    data = json.dumps(body).encode() if body is not None else None
+    request_headers = {"User-Agent": CRATES_IO_USER_AGENT}
+    if body is not None:
+        request_headers["Content-Type"] = "application/json"
+    request_headers.update(headers or {})
+    request = urllib.request.Request(url, data=data, method=method, headers=request_headers)
+    raw = _http_read(request, timeout, max_bytes, attempts)
     try:
         return json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -739,32 +812,28 @@ def http_json(
 
 
 def http_bytes(url: str, *, timeout: int = 60, max_bytes: int = 32 * 1024 * 1024) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "himmelblau-stable-maintenance"})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            if response.status < 200 or response.status >= 300:
-                raise MaintenanceError(f"HTTP request failed with status {response.status}")
-            raw = response.read(max_bytes + 1)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise MaintenanceError("HTTP download failed") from exc
-    if len(raw) > max_bytes:
-        raise MaintenanceError("HTTP download exceeded size limit")
-    return raw
+    request = urllib.request.Request(url, headers={"User-Agent": CRATES_IO_USER_AGENT})
+    return _http_read(request, timeout, max_bytes, MAX_HTTP_ATTEMPTS)
+
+
+def crates_io_json(path: str) -> Any:
+    return http_json("https://crates.io/api/v1/" + path)
 
 
 def download_crate_archive(crate: str, version: str) -> bytes:
     if not PACKAGE_RE.fullmatch(crate):
         raise MaintenanceError("invalid crate name for source review")
     SemVer.parse(version)
-    metadata = http_json(
-        f"https://crates.io/api/v1/crates/{urllib.parse.quote(crate, safe='')}/{urllib.parse.quote(version, safe='')}"
+    metadata = crates_io_json(
+        f"crates/{urllib.parse.quote(crate, safe='')}/{urllib.parse.quote(version, safe='')}"
     )
     version_data = metadata.get("version") if isinstance(metadata, dict) else None
     checksum = version_data.get("checksum") if isinstance(version_data, dict) else None
     if not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum):
         raise MaintenanceError("crates.io omitted the crate checksum")
     archive = http_bytes(
-        f"https://crates.io/api/v1/crates/{urllib.parse.quote(crate, safe='')}/{urllib.parse.quote(version, safe='')}/download"
+        f"https://static.crates.io/crates/{urllib.parse.quote(crate, safe='')}/"
+        f"{urllib.parse.quote(crate, safe='')}-{urllib.parse.quote(version, safe='')}.crate"
     )
     if not secrets.compare_digest(hashlib.sha256(archive).hexdigest(), checksum):
         raise MaintenanceError("downloaded crate checksum mismatch")
@@ -943,7 +1012,7 @@ class AzureAI:
             try:
                 response = http_json(
                     self.url, method="POST", headers={"Content-Type": "application/json", "api-key": self.key},
-                    body=body, timeout=300, max_bytes=MAX_AI_OUTPUT_BYTES,
+                    body=body, timeout=300, max_bytes=MAX_AI_OUTPUT_BYTES, attempts=1,
                 )
                 stage = "structured-output"
                 text = response.get("output_text") if isinstance(response, dict) else None
@@ -1222,7 +1291,7 @@ def crates_releases(crate: str) -> list[dict[str, Any]]:
     if not PACKAGE_RE.fullmatch(crate):
         raise MaintenanceError("invalid crate name")
     try:
-        value = http_json(f"https://crates.io/api/v1/crates/{urllib.parse.quote(crate, safe='')}/versions")
+        value = crates_io_json(f"crates/{urllib.parse.quote(crate, safe='')}/versions")
     except MaintenanceError as exc:
         print(f"registry-debug: operation=versions crate={crate} reason={diagnostic_reason(exc)}", file=sys.stderr)
         raise
@@ -1457,6 +1526,7 @@ def contained_repo_command(
     argv.extend([
         "-w", "/workspace", "-e", "HOME=/tmp", "-e", "XDG_CACHE_HOME=/tmp", "-e", "TMPDIR=/tmp",
         "-e", "CARGO_NET_OFFLINE=true", "-e", "CARGO_TARGET_DIR=/target",
+        "-e", "CARGO_NET_RETRY=5",
         "-e", "CARGO_HOME=/opt/project-cargo", "-e", "RUSTUP_HOME=/usr/local/rustup",
         "-e", "O365_GEN_DIR=/target/o365-generated",
         "-e", "PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -1499,15 +1569,51 @@ def isolated_vet_command(
     runner: Runner, command: Sequence[str], state_dir: Path, *, network: bool,
     cache_rw: bool = False,
 ) -> CommandResult:
-    # cargo-vet opens a writable store even with --locked. Let it lock and
-    # serialize a disposable copy without changing checkout policy or audits.
-    with tempfile.TemporaryDirectory(prefix="vet-baseline-", dir=state_dir) as tmp:
-        vet_store = Path(tmp) / "supply-chain"
-        shutil.copytree(runner.root / "supply-chain", vet_store)
-        return contained_repo_command(
-            runner, command, network=network, source_rw=False, cache_rw=cache_rw,
-            timeout=900, check=False, vet_store=vet_store,
-        )
+    waited = 0.0
+    result: CommandResult | None = None
+    for attempt in range(MAX_HTTP_ATTEMPTS if network else 1):
+        delay = max(0.0, _HTTP_NEXT_REQUEST.get("*", 0) - time.monotonic()) if network else 0.0
+        if waited + delay > MAX_HTTP_WAIT_SECONDS:
+            if result is not None:
+                return result
+            raise MaintenanceError("HTTP retry delay exceeds bounded wait budget")
+        if delay:
+            print(f"vet-network-backoff: attempt={attempt + 1} wait_seconds={delay:g}", file=sys.stderr)
+            time.sleep(delay)
+            waited += delay
+        # Every retry uses a fresh store, even if a failed check wrote to it.
+        # The checkout, policy and accepted local audits stay read-only.
+        with tempfile.TemporaryDirectory(prefix="vet-baseline-", dir=state_dir) as tmp:
+            vet_store = Path(tmp) / "supply-chain"
+            shutil.copytree(runner.root / "supply-chain", vet_store)
+            result = contained_repo_command(
+                runner, command, network=network, source_rw=False, cache_rw=cache_rw,
+                timeout=900, check=False, vet_store=vet_store,
+            )
+        if not network or not result.returncode:
+            return result
+        try:
+            report = json.loads(result.stdout)
+        except (ValueError, RecursionError):
+            report = None
+        # Coverage/violation results are decisions, never transport failures.
+        if isinstance(report, dict) and report.get("conclusion") in ("fail (vetting)", "fail (violation)"):
+            return result
+        text = (result.stdout + "\n" + result.stderr).lower()
+        codes = {int(n) for n in re.findall(
+            r"(?:http status(?: (?:client|server))? error|status code)\s*[:(]?\s*([45][0-9]{2})\b", text)}
+        retry_codes = codes & {408, 429, 500, 502, 503, 504}
+        transport = any(needle in text for needle in (
+            "connection reset", "connection timed out", "operation timed out",
+            "temporary failure in name resolution", "connection closed before message completed"))
+        if not retry_codes and not transport:
+            return result
+        cooldown = (60 if 429 in retry_codes else 5) * 2 ** attempt
+        _HTTP_NEXT_REQUEST["*"] = time.monotonic() + cooldown
+        reason = f"http-status-{min(retry_codes)}" if retry_codes else "transport-error"
+        print(f"vet-network-debug: attempt={attempt + 1} reason={reason}", file=sys.stderr)
+    assert result is not None
+    return result
 
 
 def report_vet_diagnostics(result: CommandResult, stage: str, *, capture: str = "complete") -> None:
