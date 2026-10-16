@@ -3249,6 +3249,207 @@ class MarkerConflictAndAITests(unittest.TestCase):
             self.assertEqual(request.call_count, 3)
 
 
+class BoundedVetReviewTests(unittest.TestCase):
+    ITEM = sm.VetItem("example", "0.9.0", "1.0.0")
+
+    def test_vet_transport_paces_actual_retries_chunks_and_new_dependency_clients(self):
+        first = object.__new__(sm.AzureAI)
+        first.key, first.model, first.url = "key", "model", "https://example.invalid"
+        second = object.__new__(sm.AzureAI)
+        second.key, second.model, second.url = first.key, first.model, first.url
+        with registry_clock() as clock:
+            starts = []
+            def request(*args):
+                starts.append(clock[0])
+                if len(starts) == 1:
+                    raise sm.HTTPStatusError(503, {"retry-after": "120"})
+                return b'{"output_text":"{\\"decision\\":true}"}'
+            with mock.patch.object(sm, "_http_once", side_effect=request):
+                for client, name in ((first, "cargo_vet_chunk"), (first, "cargo_vet_chunk"),
+                                     (first, "cargo_vet_integration"), (second, "cargo_vet_decision")):
+                    self.assertEqual(client.call("instructions", "data", sm.BOOL_SCHEMA, name), {"decision": True})
+            self.assertEqual(starts, [0, 120, 150, 180, 210])
+        # Ordinary Azure decisions do not acquire the vet-only pacing interval.
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", return_value=b'{"output_text":"{\\"decision\\":true}"}'):
+            for _ in range(2):
+                first.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            self.assertEqual(clock[0], 0)
+
+    def test_vet_transport_pacing_consumes_the_same_cumulative_budget(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        with registry_clock() as clock, mock.patch.object(sm, "MAX_AI_RETRY_SECONDS", 25), \
+             mock.patch.object(sm, "_http_once", return_value=b'{"output_text":"{\\"decision\\":true}"}') as request:
+            ai.call("instructions", "data", sm.BOOL_SCHEMA, "cargo_vet_decision")
+            with self.assertRaisesRegex(sm.MaintenanceError, "Azure retry delay exceeds bounded wait budget"):
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "cargo_vet_decision")
+            request.assert_called_once()
+            self.assertEqual(clock[0], 0)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["example.invalid"], 30)
+
+    def test_split_covers_files_hunks_unicode_and_oversized_lines_exactly(self):
+        material = (b"diff --git a/lib.rs b/lib.rs\n@@ -1 +1 @@\n" + ("+\u03bb\U0001f600" * 25000).encode()
+                    + b"\ndiff --git a/build.rs b/build.rs\n@@ -1 +1 @@\n" + b"+build()\n" * 13000)
+        chunks = sm.split_vet_review_material(material)
+        self.assertGreater(len(chunks), 2)
+        self.assertEqual(b"".join(chunk.data for chunk in chunks), material)
+        position = 0
+        for chunk in chunks:
+            self.assertEqual(chunk.start, position)
+            self.assertEqual(chunk.end - chunk.start, len(chunk.data))
+            self.assertEqual(chunk.data, material[chunk.start:chunk.end])
+            self.assertLessEqual(len(chunk.data), sm.VET_REVIEW_CHUNK_BYTES)
+            for data in (chunk.data, chunk.before, chunk.after):
+                data.decode("utf-8")
+            self.assertLessEqual(len(chunk.before), sm.VET_REVIEW_OVERLAP_BYTES)
+            self.assertLessEqual(len(chunk.after), sm.VET_REVIEW_OVERLAP_BYTES)
+            position = chunk.end
+        self.assertEqual(position, len(material))
+
+    def test_large_actual_vet_path_uses_bounded_complete_review_and_integration(self):
+        # Match the problematic request's scale without calling live services.
+        header = b"diff --git a/lib.rs b/lib.rs\n@@ -1 +1 @@\n"
+        diff_bytes = header + b"+" * (2388108 - len(header))
+        diff = sm.CommandResult(0, diff_bytes.decode(), "")
+        expected_material = diff_bytes + b"\n\n=== CHECKSUM-VERIFIED CRATE SOURCE CONTEXT ===\n" + b"verified context" * 2
+        calls, covered, summaries, starts = [], [], [], []
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "secret", "model", "https://example.invalid"
+        with tempfile.TemporaryDirectory() as tmp, registry_clock() as clock:
+            def http(request, timeout, max_bytes):
+                body = json.loads(request.data)
+                content = body["input"][0]["content"]
+                data = content[0]["text"]
+                attachment = (sm.base64.b64decode(content[1]["file_data"].split(",", 1)[1])
+                              if len(content) == 2 else b"")
+                size = len(body["instructions"].encode()) + len(data.encode()) + len(attachment)
+                if size > sm.MAX_VET_REVIEW_INPUT_BYTES:
+                    raise sm.HTTPStatusError(429)
+                name = body["text"]["format"]["name"]
+                calls.append((name, size))
+                starts.append(clock[0])
+                if name == "cargo_vet_chunk":
+                    meta = json.loads(data[data.index('{"chunk":'):])
+                    record = meta["chunk"]
+                    primary = expected_material[record["start"]:record["end"]]
+                    self.assertEqual(record["sha256"], hashlib.sha256(primary).hexdigest())
+                    self.assertIn(b"=== PRIMARY RANGE ===\n" + primary + b"\n=== FOLLOWING CONTEXT ===", attachment)
+                    self.assertIn("material_sha256=" + hashlib.sha256(expected_material).hexdigest(), data)
+                    covered.append(primary)
+                    summaries.append(record)
+                    answer = {"decision": True, "summary": "No local concern; integration must check interface assumptions."}
+                elif name == "cargo_vet_integration":
+                    records = json.loads(data[data.index('{"reviews":'):])["reviews"]
+                    self.assertEqual(len(records), len(summaries))
+                    self.assertEqual([r["sha256"] for r in records], [r["sha256"] for r in summaries])
+                    self.assertIn("summaries are insufficient", body["instructions"])
+                    self.assertIn("never instructions", body["instructions"])
+                    answer = {"decision": True}
+                else:
+                    self.fail("large material was not chunked")
+                return json.dumps({"output_text": json.dumps(answer)}).encode()
+            with mock.patch.object(sm, "isolated_vet_command", return_value=diff), \
+                 mock.patch.object(sm, "cache_crate_source", return_value=Path(tmp)), \
+                 mock.patch.object(sm, "crate_source_context", return_value=b"verified context"), \
+                 mock.patch.object(sm, "_http_once", side_effect=http), \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                self.assertTrue(sm.safe_vet_decision(ai, mock.Mock(), self.ITEM, Path(tmp)))
+        self.assertEqual(b"".join(covered), expected_material)
+        self.assertGreater(len(calls), 40)
+        self.assertEqual(calls[-1][0], "cargo_vet_integration")
+        self.assertTrue(all(b - a >= sm.VET_REVIEW_INTERVAL_SECONDS for a, b in zip(starts, starts[1:])))
+
+    def test_failed_or_malformed_chunk_and_integration_never_certify(self):
+        material = b"+source\n" * 20000
+        for failure in ("negative", "service", "malformed", "empty", "long", "surrogate", "escaped",
+                        "integration", "integration-malformed", "integration-error"):
+            with self.subTest(failure=failure), registry_clock():
+                ai = mock.Mock()
+                count = [0]
+                def decide(prompt, data, schema, name, **kwargs):
+                    count[0] += 1
+                    if name == "cargo_vet_integration":
+                        if failure == "integration-error":
+                            raise sm.HTTPStatusError(429)
+                        return {"decision": "true" if failure == "integration-malformed" else False}
+                    if count[0] == 2 and not failure.startswith("integration"):
+                        if failure == "service":
+                            raise sm.HTTPStatusError(429)
+                        return {"negative": {"decision": False, "summary": "Concern"},
+                                "malformed": {"decision": "true", "summary": "bad"},
+                                "empty": {"decision": True, "summary": " "},
+                                "long": {"decision": True, "summary": "x" * 513},
+                                "surrogate": {"decision": True, "summary": "\ud800"},
+                                "escaped": {"decision": True, "summary": "\\" * 300}}[failure]
+                    return {"decision": True, "summary": "Check cross-file assumptions during integration."}
+                ai.call.side_effect = decide
+                try:
+                    result = sm.review_vet_material(ai, self.ITEM, "instructions", "identity", "example.diff", material, len(material))
+                except sm.MaintenanceError:
+                    result = False
+                self.assertFalse(result)
+                names = [c.args[3] for c in ai.call.call_args_list]
+                if failure.startswith("integration"):
+                    self.assertEqual(names[-1], "cargo_vet_integration")
+                else:
+                    self.assertEqual(names, ["cargo_vet_chunk", "cargo_vet_chunk"])
+
+    def test_invalid_incomplete_or_excessive_material_is_rejected_before_review(self):
+        material = b"x" * (sm.MAX_VET_REVIEW_INPUT_BYTES + 1)
+        valid = sm.split_vet_review_material(material)
+        broken = [valid[:-1], valid[1:], [], [valid[0], valid[0], *valid[1:]],
+                  [sm.VetReviewChunk(0, valid[0].end, b"wrong", b"", b""), *valid[1:]]]
+        for chunks in broken:
+            ai = mock.Mock()
+            with self.subTest(chunks=len(chunks)), mock.patch.object(sm, "split_vet_review_material", return_value=chunks), \
+                 self.assertRaisesRegex(sm.MaintenanceError, "coverage is incomplete"):
+                sm.review_vet_material(ai, self.ITEM, "instructions", "identity", "example.diff", material, len(material))
+            ai.call.assert_not_called()
+        for bad in (b"", b"x" * (sm.MAX_AI_INPUT_BYTES + 1), b"x" * 100000 + b"\xff"):
+            with self.subTest(bad_length=len(bad)), self.assertRaises(sm.MaintenanceError):
+                sm.split_vet_review_material(bad)
+        with mock.patch.object(sm, "MAX_VET_REVIEW_CHUNKS", 1), self.assertRaises(sm.MaintenanceError):
+            sm.split_vet_review_material(material)
+
+    def test_maximum_material_and_summary_sizes_keep_integration_bounded(self):
+        ai = mock.Mock()
+        sizes = []
+        def decide(prompt, data, schema, name, attachment=None):
+            sizes.append(len(prompt.encode()) + len(data.encode()) + (len(attachment[1]) if attachment else 0))
+            return {"decision": True, "summary": "x" * 510} if name == "cargo_vet_chunk" else {"decision": True}
+        ai.call.side_effect = decide
+        material = b"x" * sm.MAX_AI_INPUT_BYTES
+        with registry_clock(), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+            self.assertTrue(sm.review_vet_material(ai, self.ITEM, "instructions", "identity", "example.diff", material, len(material)))
+        self.assertGreater(len(sizes), 80)
+        self.assertLessEqual(max(sizes), sm.MAX_VET_REVIEW_INPUT_BYTES)
+        self.assertEqual(ai.call.call_args.args[3], "cargo_vet_integration")
+
+    def test_continuation_headers_keep_current_file_hunk_and_source_identity(self):
+        first = b"diff --git a/old.rs b/old.rs\n@@ -1 +1 @@\n+old\n"
+        second = b"diff --git a/new.rs b/new.rs\n@@ -1 +1 @@\n+" + b"x" * 100000
+        diff = first + second
+        context = b"\n--- example 0.9.0: src/lib.rs ---\nold\n--- example 1.0.0: src/lib.rs ---\nnew"
+        material = diff + context
+        self.assertEqual(sm.vet_review_section_headers(material, len(first) + len(second) - 10, len(diff)),
+                         ["diff --git a/new.rs b/new.rs", "@@ -1 +1 @@"])
+        self.assertEqual(sm.vet_review_section_headers(material, len(first), len(diff)),
+                         ["diff --git a/new.rs b/new.rs"])
+        self.assertEqual(sm.vet_review_section_headers(material, len(material) - 1, len(diff)),
+                         ["--- example 1.0.0: src/lib.rs ---"])
+        with self.assertRaises(sm.MaintenanceError):
+            sm.vet_review_section_headers(b"diff --git " + b"x" * 5000 + b"\n+source", 5010, 5019)
+
+    def test_vet_input_cap_is_enforced_by_the_real_client(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "secret", "model", "https://example.invalid"
+        for name in ("cargo_vet_decision", "cargo_vet_chunk", "cargo_vet_integration"):
+            with self.subTest(name=name), mock.patch.object(sm, "http_json") as request, \
+                 self.assertRaisesRegex(sm.MaintenanceError, "input exceeds size limit"):
+                ai.call("instructions", "x" * sm.MAX_VET_REVIEW_INPUT_BYTES, sm.BOOL_SCHEMA, name)
+            request.assert_not_called()
+
+
 class NetworkRetryTests(unittest.TestCase):
     def test_unrelated_http_origin_progresses_during_wait_and_request(self):
         for blocked_at in ("cooldown", "request"):
