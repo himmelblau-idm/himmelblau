@@ -2266,6 +2266,104 @@ class ManifestRewriteTests(unittest.TestCase):
 
 
 class DependencyImportRefreshTests(unittest.TestCase):
+    def test_review_service_failures_revert_one_candidate_and_keep_independent_updates(self):
+        for stage in ("versions", "imports", "report", "timeout", "outage", "rollback"):
+            with self.subTest(stage=stage), self.repository() as (root, runner, state):
+                names = ("alpha", "broken", "gamma")
+                initial = {name: "1.0.0" for name in names}
+                lock = root / "Cargo.lock"
+                lock.write_text(json.dumps(initial))
+                runner.git(["add", "Cargo.lock"])
+                runner.git(["commit", "-m", "Fixture baseline graph"])
+                baseline_imports = (root / "supply-chain/imports.lock").read_text()
+                lock.write_text(json.dumps({name: "1.1.0" for name in names}))
+                (root / "supply-chain/imports.lock").write_text("batch imports\n")
+                runner.git(["add", "."])
+                runner.git(["commit", "-m", "deps(rust): bump the all-cargo-updates group across 1 directory with 3 updates"])
+                value = state.load()
+                value.update({"dependency_updates": [
+                    {"crate": name, "old": "1.0.0", "new": "1.1.0", "direct": False} for name in names],
+                    "dependency_candidates": {f"{name}@1.0.0": ["1.1.0"] for name in names}})
+                state.save(value)
+                active = None
+                reviews = 0
+                rollback_error = sm.MaintenanceError("rollback failed")
+
+                def metadata(*args):
+                    graph = json.loads(lock.read_text())
+                    return {"packages": [{"name": name, "version": version,
+                        "source": "registry+https://github.com/rust-lang/crates.io-index", "id": name}
+                        for name, version in graph.items()]}
+
+                def update(_runner, crate, old, candidate):
+                    nonlocal active
+                    active = crate
+                    graph = json.loads(lock.read_text())
+                    if crate == "gamma" and stage != "outage":
+                        self.assertEqual(graph["alpha"], "1.1.0")
+                        self.assertEqual(graph["broken"], "1.0.0")
+                        self.assertIn("audits.alpha", (root / "supply-chain/audits.toml").read_text())
+                        self.assertEqual((root / "supply-chain/imports.lock").read_text(), "alpha imports\n")
+                    graph[crate] = candidate
+                    lock.write_text(json.dumps(graph))
+                    return sm.CommandResult(0, "", "")
+
+                def releases(crate):
+                    if crate == "broken" and stage == "versions":
+                        raise sm.HTTPStatusError(429)
+                    return [{"num": "1.1.0", "created_at": "2025-01-01T00:00:00Z"}]
+
+                def refresh(*args):
+                    (root / "supply-chain/imports.lock").write_text(f"{active} imports\n")
+                    if active == "broken" and stage == "imports":
+                        (root / "supply-chain/audits.toml").write_text("partial SECRET rewrite\n")
+                        raise sm.MaintenanceError("HTTP request failed")
+
+                def review(*args):
+                    nonlocal reviews
+                    reviews += 1
+                    if reviews == 1:
+                        raise sm.MaintenanceError("HTTP request failed")
+                    if stage == "outage" or (active == "broken" and stage in ("report", "timeout")):
+                        if stage == "timeout":
+                            raise sm.CommandCaptureError("SECRET", "timeout", sm.CommandResult(-9, "", ""))
+                        raise sm.MaintenanceError("SECRET malformed report")
+                    return [sm.VetItem(active, "1.0.0", "1.1.0")]
+
+                with mock.patch.object(sm, "cargo_metadata", side_effect=metadata), \
+                     mock.patch.object(sm, "direct_registry_packages", return_value=[]), \
+                     mock.patch.object(sm, "contained_cargo_update", side_effect=update), \
+                     mock.patch.object(sm, "crates_releases", side_effect=releases), \
+                     mock.patch.object(sm, "refresh_dependency_vet_imports", side_effect=refresh), \
+                     mock.patch.object(sm, "reviewable_vet_gaps", side_effect=review), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
+                     mock.patch.object(sm, "AzureAI", return_value=mock.Mock()), \
+                     mock.patch.object(sm, "safe_vet_decision", side_effect=lambda *args: not (stage == "rollback" and active == "broken")), \
+                     mock.patch.object(sm, "locked_vet_gaps", return_value=[]) as final, \
+                     mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                    if stage == "rollback":
+                        with mock.patch.object(sm, "restore_worktree", side_effect=rollback_error) as restore:
+                            with self.assertRaises(sm.MaintenanceError) as caught:
+                                sm.phase_vet_dependencies(mock.Mock(), state, runner)
+                        self.assertIs(caught.exception, rollback_error)
+                        restore.assert_called_once()
+                        final.assert_not_called()
+                        continue
+                    sm.phase_vet_dependencies(mock.Mock(), state, runner)
+                    final.assert_called_once()
+                graph = json.loads(lock.read_text())
+                self.assertEqual(graph, initial if stage == "outage" else {"alpha": "1.1.0", "broken": "1.0.0", "gamma": "1.1.0"})
+                expected = [] if stage == "outage" else ["alpha", "gamma"]
+                self.assertEqual([x["crate"] for x in state.load()["dependency_updates"]], expected)
+                self.assertEqual([x["crate"] for x in state.load()["vet_accepted"]], expected)
+                self.assertIn("broken", [x["crate"] for x in state.load()["vet_rejected"]])
+                self.assertNotIn("SECRET", output.getvalue())
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertEqual((root / "supply-chain/config.toml").read_text(), "# Keep policy and exemptions\n")
+                self.assertEqual((root / "supply-chain/imports.lock").read_text(),
+                                 baseline_imports if stage == "outage" else "gamma imports\n")
+                self.assertEqual(build.call_count, 2 if stage == "versions" else 3)
+
     @contextmanager
     def repository(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -2510,7 +2510,7 @@ def safe_vet_decision(ai: AzureAI, runner: Runner, item: VetItem, source_cache: 
 
 
 def decide_vet_gaps(
-    ai: AzureAI, runner: Runner, gaps: Sequence[VetItem], source_cache: Path,
+    ai: AzureAI | None, runner: Runner, gaps: Sequence[VetItem], source_cache: Path,
     rejected_items: set[VetItem],
 ) -> tuple[list[tuple[VetItem, bool]], list[VetItem]]:
     decisions: list[tuple[VetItem, bool]] = []
@@ -2519,7 +2519,7 @@ def decide_vet_gaps(
         if item in rejected_items:
             decision = False
         else:
-            decision = safe_vet_decision(ai, runner, item, source_cache)
+            decision = safe_vet_decision(ai, runner, item, source_cache) if ai else False
             if not decision:
                 rejected_items.add(item)
                 newly_rejected.append(item)
@@ -2528,7 +2528,7 @@ def decide_vet_gaps(
 
 
 def _fallback_after_vet_rejection(
-    state: State, runner: Runner, ai: AzureAI, rejected_items: set[VetItem], audits_baseline: str,
+    state: State, runner: Runner, ai: AzureAI | None, rejected_items: set[VetItem], audits_baseline: str,
 ) -> tuple[list[dict[str, str | None]], list[dict[str, str | None]]]:
     value = state.load()
     updates = value.get("dependency_updates", [])
@@ -2562,38 +2562,57 @@ def _fallback_after_vet_rejection(
         start = choices.index(selected) + (1 if crate in rejected_crates else 0)
         for candidate in choices[start:]:
             baseline = snapshot_worktree(runner)
-            candidate_manifests = (
-                update_direct_dependency_manifests(
-                    runner.root, cargo_metadata(runner), crate, candidate, direct_by_id.get(package_id),
-                ) if update.get("direct") else []
-            )
-            result = contained_cargo_update(runner, crate, old, candidate)
-            if result.returncode:
-                restore_worktree(runner, baseline); continue
-            graph_after = registry_packages(cargo_metadata(runner))
-            published: dict[tuple[str, str], dt.datetime] = {}
-            for name, version in set(graph_after) - set(graph_before):
-                row = next((x for x in crates_releases(name) if x.get("num") == version), None)
-                if row and isinstance(row.get("created_at"), str):
-                    published[(name, version)] = parse_rfc3339(row["created_at"])
-            if transitive_freshness_violations(
-                graph_before, graph_after, published, started, {(crate, candidate)},
-            ):
-                restore_worktree(runner, baseline); continue
+            restoring = False
             try:
-                build = locked_build(runner)
-            except MaintenanceError:
-                restore_worktree(runner, baseline); continue
-            if build.returncode:
-                restore_worktree(runner, baseline); continue
-            refresh_dependency_vet_imports(runner)
-            gaps = reviewable_vet_gaps(runner, state.directory)
-            decisions, newly_rejected = decide_vet_gaps(
-                ai, runner, gaps, state.directory / "vet-sources", rejected_items,
-            )
-            rejected.extend(asdict(item) for item in newly_rejected)
-            if not all(decision for _, decision in decisions):
+                candidate_manifests = (
+                    update_direct_dependency_manifests(
+                        runner.root, cargo_metadata(runner), crate, candidate, direct_by_id.get(package_id),
+                    ) if update.get("direct") else []
+                )
+                result = contained_cargo_update(runner, crate, old, candidate)
+                if result.returncode:
+                    restoring = True
+                    restore_worktree(runner, baseline); continue
+                graph_after = registry_packages(cargo_metadata(runner))
+                published: dict[tuple[str, str], dt.datetime] = {}
+                for name, version in set(graph_after) - set(graph_before):
+                    row = next((x for x in crates_releases(name) if x.get("num") == version), None)
+                    if row and isinstance(row.get("created_at"), str):
+                        published[(name, version)] = parse_rfc3339(row["created_at"])
+                if transitive_freshness_violations(
+                    graph_before, graph_after, published, started, {(crate, candidate)},
+                ):
+                    restoring = True
+                    restore_worktree(runner, baseline); continue
+                try:
+                    build = locked_build(runner)
+                except MaintenanceError:
+                    restoring = True
+                    restore_worktree(runner, baseline); continue
+                if build.returncode:
+                    restoring = True
+                    restore_worktree(runner, baseline); continue
+                refresh_dependency_vet_imports(runner)
+                gaps = reviewable_vet_gaps(runner, state.directory)
+                if gaps and ai is None:
+                    ai = AzureAI()
+                decisions, newly_rejected = decide_vet_gaps(
+                    ai, runner, gaps, state.directory / "vet-sources", rejected_items,
+                )
+                rejected.extend(asdict(item) for item in newly_rejected)
+                if not all(decision for _, decision in decisions):
+                    restoring = True
+                    restore_worktree(runner, baseline)
+                    continue
+            except MaintenanceError as exc:
+                if restoring:
+                    raise  # A failed rollback is fatal, never a candidate rejection.
                 restore_worktree(runner, baseline)
+                rejected.append({"crate": crate, "old": old, "new": candidate,
+                                 "reason": diagnostic_reason(exc)})
+                safe_crate = crate if PACKAGE_RE.fullmatch(crate) else "invalid"
+                print(f"dependency-review-debug: crate={safe_crate} result=reverted "
+                      f"reason={diagnostic_reason(exc)}", file=sys.stderr)
                 continue
             for item, _ in decisions:
                 _append_audit(audits_path, item)
@@ -2619,14 +2638,26 @@ def _fallback_after_vet_rejection(
 def phase_vet_dependencies(args: argparse.Namespace, state: State, runner: Runner) -> None:
     if runner.git(["status", "--porcelain"]).stdout:
         raise MaintenanceError("tracked worktree must be clean before cargo-vet certification")
-    items = reviewable_vet_gaps(runner, state.directory)
     accepted: list[dict[str, str | None]] = []
     rejected: list[dict[str, str | None]] = []
-    ai = AzureAI() if items else None
+    ai: AzureAI | None = None
     audits_path = checkout_regular_file(runner.root, "supply-chain/audits.toml")
     audits_baseline = audits_path.read_text(encoding="utf-8")
+    review_failed = False
+    items: list[VetItem] = []
+    try:
+        items = reviewable_vet_gaps(runner, state.directory)
+        ai = AzureAI() if items else None
+    except MaintenanceError as exc:
+        # Only an automation-owned update batch can be recovered here. A
+        # failure on the unchanged baseline remains a fatal validation error.
+        if not state.load().get("dependency_updates"):
+            raise
+        review_failed = True
+        print(f"dependency-review-debug: stage=batch result=fallback "
+              f"reason={diagnostic_reason(exc)}", file=sys.stderr)
     decisions: list[tuple[VetItem, bool]] = []
-    for item in items:
+    for item in items if not review_failed else []:
         answer = safe_vet_decision(ai, runner, item, state.directory / "vet-sources") if ai else False
         decisions.append((item, answer))
         record = asdict(item)
@@ -2634,7 +2665,7 @@ def phase_vet_dependencies(args: argparse.Namespace, state: State, runner: Runne
             accepted.append(record)
         else:
             rejected.append(record)
-    if rejected:
+    if rejected or review_failed:
         rejected_items = {item for item, decision in decisions if not decision}
         accepted, fallback_rejected = _fallback_after_vet_rejection(
             state, runner, ai, rejected_items, audits_baseline,
