@@ -3271,6 +3271,47 @@ class CratesIOHTTPTests(unittest.TestCase):
                 self.assertIs(caught.exception, failure)
                 run.assert_called_once()
 
+    def test_native_vet_malformed_conclusions_reach_sanitized_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            for conclusion in ([], {}):
+                malformed = sm.CommandResult(255, json.dumps({"conclusion": conclusion}), "SECRET")
+                with self.subTest(conclusion=conclusion), registry_clock(), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=[
+                         sm.CommandResult(255, VET_LOCKED_FAILURE, ""), malformed]) as run, \
+                     mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                    with self.assertRaises(sm.MaintenanceError):
+                        sm.reviewable_vet_gaps(mock.Mock(root=root), Path(tmp))
+                    self.assertEqual(run.call_count, 2)
+                    diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                    self.assertEqual(diagnostic["stage"], "review-check")
+                    self.assertEqual(diagnostic["conclusion"], "unknown")
+                    self.assertNotIn("SECRET", output.getvalue())
+
+    def test_native_vet_operation_timeout_retries_but_coverage_remains_a_decision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            failure = sm.CommandResult(255, json.dumps({"error": {"message":
+                "error sending request: operation timed out at SECRET"}}), "")
+            success = sm.CommandResult(0, VET_SUCCESS, "")
+            with registry_clock() as clock, \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=[failure, success]) as run, \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                self.assertIs(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                     Path(tmp), network=True), success)
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(clock[0], 5.0)
+                self.assertIn("reason=transport-error", output.getvalue())
+                self.assertNotIn("SECRET", output.getvalue())
+            for conclusion in ("fail (vetting)", "fail (violation)"):
+                decision = sm.CommandResult(255, json.dumps({"conclusion": conclusion}), "operation timed out")
+                with self.subTest(conclusion=conclusion), registry_clock() as clock, \
+                     mock.patch.object(sm, "contained_repo_command", return_value=decision) as run:
+                    self.assertIs(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                         Path(tmp), network=True), decision)
+                    run.assert_called_once()
+                    self.assertEqual(clock[0], 0)
+
     def test_json_and_binary_reads_recover_from_transient_failures(self):
         for error in (sm.HTTPStatusError(408), sm.HTTPStatusError(500), sm.HTTPStatusError(502),
                       sm.HTTPStatusError(503), sm.HTTPStatusError(504),

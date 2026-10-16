@@ -1596,14 +1596,15 @@ def isolated_vet_command(
         except (ValueError, RecursionError):
             report = None
         # Coverage/violation results are decisions, never transport failures.
-        if isinstance(report, dict) and report.get("conclusion") in {"fail (vetting)", "fail (violation)"}:
+        if isinstance(report, dict) and report.get("conclusion") in ("fail (vetting)", "fail (violation)"):
             return result
         text = (result.stdout + "\n" + result.stderr).lower()
         codes = {int(n) for n in re.findall(
             r"(?:http status(?: (?:client|server))? error|status code)\s*[:(]?\s*([45][0-9]{2})\b", text)}
         retry_codes = codes & {408, 429, 500, 502, 503, 504}
         transport = any(needle in text for needle in (
-            "connection reset", "connection timed out", "temporary failure in name resolution", "connection closed before message completed"))
+            "connection reset", "connection timed out", "operation timed out",
+            "temporary failure in name resolution", "connection closed before message completed"))
         if not retry_codes and not transport:
             return result
         cooldown = (60 if 429 in retry_codes else 5) * 2 ** attempt
