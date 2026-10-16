@@ -2697,26 +2697,37 @@ class MutationBoundaryTests(unittest.TestCase):
             runner.git.assert_any_call(["reset", "--hard", pre_head])
 
 
+@contextmanager
+def registry_clock():
+    clock = [0.0]
+    def sleep(delay):
+        clock[0] += delay
+    with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}, create=True), \
+         mock.patch.object(sm.time, "monotonic", side_effect=lambda: clock[0]), \
+         mock.patch.object(sm.time, "sleep", side_effect=sleep):
+        yield clock
+
+
 class MarkerConflictAndAITests(unittest.TestCase):
     SHA = "a" * 40
 
     def test_registry_failure_reports_context_without_exposing_response_or_url(self):
         secret = "SECRET-URL-HEADER-ERROR"
         failures = [
-            (sm.urllib.error.HTTPError("https://host/" + secret, 429, secret, {}, None), "http-status-429"),
+            (sm.urllib.error.HTTPError("https://host/" + secret, 429, secret, {"retry-after": "1"}, None), "http-status-429"),
             (sm.urllib.error.HTTPError("https://host/" + secret, 503, secret, {}, None), "http-status-503"),
             (sm.urllib.error.URLError(secret), "transport-error"),
             (sm.urllib.error.URLError(TimeoutError(secret)), "transport-timeout"),
         ]
         for failure, reason in failures:
-            with self.subTest(reason=reason), \
+            with self.subTest(reason=reason), registry_clock(), \
                  mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure), \
                  mock.patch("sys.stderr", new_callable=io.StringIO) as output:
                 with self.assertRaises(sm.MaintenanceError) as caught:
                     sm.crates_releases("example")
                 self.assertIs(caught.exception.__cause__, failure)
-                self.assertEqual(output.getvalue(),
-                                 f"registry-debug: operation=versions crate=example reason={reason}\n")
+                self.assertEqual(output.getvalue().splitlines()[-1],
+                                 f"registry-debug: operation=versions crate=example reason={reason}")
                 self.assertNotIn(secret, output.getvalue())
 
     def test_vet_review_errors_are_distinct_from_negative_decisions(self):
@@ -2749,9 +2760,9 @@ class MarkerConflictAndAITests(unittest.TestCase):
             (sm.urllib.error.URLError(TimeoutError(secret)), "transport-timeout"),
         ]
         for failure, reason in failures:
-            with self.subTest(reason=reason), mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
+            with self.subTest(reason=reason), registry_clock(), mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
                 with self.assertRaises(sm.MaintenanceError) as caught:
-                    sm.http_json("https://example.invalid")
+                    sm.http_json("https://example.invalid", attempts=1)
                 self.assertEqual(sm.diagnostic_reason(caught.exception), reason)
                 self.assertNotIn(secret, str(caught.exception))
 
@@ -2775,9 +2786,9 @@ class MarkerConflictAndAITests(unittest.TestCase):
         headers["x-ratelimit-remaining-requests"] = "secret-do-not-log"
         headers["x-private-header"] = "secret-do-not-log"
         failure = sm.urllib.error.HTTPError("https://secret-do-not-log", 429, "secret-do-not-log", headers, None)
-        with mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
+        with registry_clock(), mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
             with self.assertRaises(sm.HTTPStatusError) as caught:
-                sm.http_json("https://example.invalid")
+                sm.http_json("https://example.invalid", attempts=1)
         error = caught.exception
         self.assertEqual(error.status, 429)
         self.assertEqual(error.retry_after, 61)
@@ -3134,6 +3145,261 @@ class MarkerConflictAndAITests(unittest.TestCase):
         with mock.patch.object(sm, "http_json", side_effect=responses) as request, mock.patch.object(sm.time, "sleep"):
             self.assertEqual(ai.call("instructions", "data", sm.BOOL_SCHEMA, "decision"), {"decision": True})
             self.assertEqual(request.call_count, 3)
+
+
+class CratesIOHTTPTests(unittest.TestCase):
+    def test_incomplete_http_body_recovers_without_echoing_partial_data(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.read.side_effect = [sm.http.client.IncompleteRead(b"SECRET partial body"), b'{}']
+        with registry_clock() as clock, mock.patch.object(sm.urllib.request, "urlopen", return_value=response) as request, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+            self.assertEqual(sm.http_json("https://example.invalid"), {})
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(clock[0], 5.0)
+            self.assertNotIn("SECRET", output.getvalue())
+
+    def test_native_vet_network_failures_retry_with_fresh_stores(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            audits = root / "supply-chain/audits.toml"; audits.write_text("# accepted audit\n")
+            stores = []
+            def command(runner, argv, **kwargs):
+                store = kwargs["vet_store"]
+                stores.append(store)
+                self.assertEqual((store / "audits.toml").read_text(), "# accepted audit\n")
+                self.assertFalse(kwargs["source_rw"])
+                (store / "audits.toml").write_text("# discarded partial write\n")
+                if len(stores) < 3:
+                    return sm.CommandResult(255, json.dumps({"error": {"message":
+                        "HTTP status client error (429 Too Many Requests) at SECRET"}}), "")
+                return sm.CommandResult(255, VET_CHECK_REPORT, "")
+            with registry_clock() as clock, mock.patch.object(sm, "contained_repo_command", side_effect=command), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                result = sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                 Path(tmp), network=True)
+                self.assertEqual(clock[0], 180.0)
+                self.assertEqual(result.stdout, VET_CHECK_REPORT)
+                self.assertNotIn("SECRET", output.getvalue())
+                # Native throttling also slows the next Python HTTP request.
+                sm._HTTP_NEXT_REQUEST["*"] = clock[0] + 5
+                with mock.patch.object(sm, "_http_once", return_value=b'{}'):
+                    sm.http_json("https://api.github.com/resource")
+                self.assertEqual(clock[0], 185.0)
+            self.assertEqual(audits.read_text(), "# accepted audit\n")
+            self.assertEqual(len(set(stores)), 3)
+            self.assertTrue(all(not store.exists() for store in stores))
+
+    def test_native_vet_permanent_coverage_offline_and_capture_errors_are_not_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            for network, result in ((False, sm.CommandResult(255, "", "status code: 429")),
+                                    (True, sm.CommandResult(255, VET_CHECK_REPORT, "status code: 429")),
+                                    (True, sm.CommandResult(255, '{"error": {"message": "invalid policy"}}', ""))):
+                with registry_clock(), mock.patch.object(sm, "contained_repo_command", return_value=result) as run:
+                    self.assertIs(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                         Path(tmp), network=network), result)
+                    run.assert_called_once()
+            failure = sm.CommandCaptureError("timeout", "timeout", sm.CommandResult(-9, "status code: 429", ""))
+            with registry_clock(), mock.patch.object(sm, "contained_repo_command", side_effect=failure) as run:
+                with self.assertRaises(sm.CommandCaptureError) as caught:
+                    sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"], Path(tmp), network=True)
+                self.assertIs(caught.exception, failure)
+                run.assert_called_once()
+
+    def test_json_and_binary_reads_recover_from_transient_failures(self):
+        for error in (sm.HTTPStatusError(408), sm.HTTPStatusError(500), sm.HTTPStatusError(502),
+                      sm.HTTPStatusError(503), sm.HTTPStatusError(504),
+                      sm.MaintenanceError("HTTP request failed"), sm.MaintenanceError("HTTP request timed out")):
+            for binary in (False, True):
+                with self.subTest(error=sm.diagnostic_reason(error), binary=binary), registry_clock() as clock, \
+                     mock.patch.object(sm, "_http_once", side_effect=[error, error, b'{}']) as request:
+                    result = sm.http_bytes("https://api.github.com/resource") if binary else sm.http_json("https://api.github.com/resource")
+                    self.assertEqual(result, b'{}' if binary else {})
+                    self.assertEqual(request.call_count, 3)
+                    self.assertEqual(clock[0], 15.0)
+
+    def test_cooldown_survives_across_json_and_binary_calls(self):
+        error = sm.HTTPStatusError(429, {"retry-after": "7"})
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=[error, b'bytes']):
+            with self.assertRaises(sm.HTTPStatusError):
+                sm.http_json("https://api.github.com/one", attempts=1)
+            self.assertEqual(sm.http_bytes("https://api.github.com/two"), b'bytes')
+            self.assertEqual(clock[0], 7.0)
+
+    def test_http_throttle_also_delays_the_next_native_vet_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            with registry_clock() as clock, \
+                 mock.patch.object(sm, "_http_once", side_effect=sm.HTTPStatusError(429, {"retry-after": "7"})), \
+                 mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")):
+                with self.assertRaises(sm.HTTPStatusError):
+                    sm.http_json("https://crates.io/api/v1/example", attempts=1)
+                self.assertEqual(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                       Path(tmp), network=True).returncode, 0)
+                self.assertEqual(clock[0], 7.0)
+
+    def test_mutations_retry_explicit_throttles_but_not_ambiguous_writes(self):
+        for method in ("POST", "PATCH", "DELETE"):
+            with self.subTest(method=method), registry_clock() as clock, \
+                 mock.patch.object(sm, "_http_once", side_effect=[sm.HTTPStatusError(429, {"retry-after": "2"}), b'{}']) as request:
+                self.assertEqual(sm.http_json("https://api.github.com/resource", method=method, body={"safe": True}), {})
+                self.assertEqual(clock[0], 2.0)
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(request.call_args.args[0].data, b'{"safe": true}')
+            for error in (sm.HTTPStatusError(503), sm.MaintenanceError("HTTP request failed")):
+                with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=error) as request:
+                    with self.assertRaises(sm.MaintenanceError) as caught:
+                        sm.http_json("https://api.github.com/resource", method=method)
+                    self.assertIs(caught.exception, error)
+                    request.assert_called_once()
+                    with mock.patch.object(sm, "_http_once", return_value=b'{}'):
+                        sm.http_json("https://api.github.com/resource")
+                    self.assertEqual(clock[0], 5.0)
+
+    def test_github_403_reset_time_is_respected(self):
+        with mock.patch.object(sm.time, "time", return_value=1000):
+            error = sm.HTTPStatusError(403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1011"})
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=[error, b'{}']):
+            self.assertEqual(sm.http_json("https://api.github.com/resource"), {})
+            self.assertEqual(clock[0], 11.0)
+
+    def test_versions_and_source_metadata_share_pacing_and_identity(self):
+        calls = []
+        archive = b"verified crate bytes"
+        def request(req, timeout, max_bytes):
+            calls.append((clock[0], req.full_url, req.get_header("User-agent")))
+            return json.dumps({"versions": []} if req.full_url.endswith("/versions") else {
+                "version": {"checksum": hashlib.sha256(archive).hexdigest()}}).encode()
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=request), \
+             mock.patch.object(sm, "http_bytes", return_value=archive) as download:
+            self.assertEqual(sm.crates_releases("example"), [])
+            self.assertEqual(sm.download_crate_archive("example", "1.0.0"), archive)
+        self.assertEqual([call[0] for call in calls], [0.0, 1.0])
+        self.assertTrue(all(call[2] == sm.CRATES_IO_USER_AGENT for call in calls))
+        download.assert_called_once_with("https://static.crates.io/crates/example/example-1.0.0.crate")
+
+    def test_429_honors_retry_after_and_then_recovers(self):
+        calls = []
+        responses = [sm.HTTPStatusError(429, {"retry-after": "2"}),
+                     sm.HTTPStatusError(429, {"retry-after": "3"}), b'{"versions": []}']
+        def request(*args, **kwargs):
+            calls.append(clock[0])
+            result = responses.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=request):
+            self.assertEqual(sm.crates_releases("example"), [])
+        self.assertEqual(calls, [0.0, 2.0, 5.0])
+
+    def test_persistent_429_exhausts_and_retains_cross_call_cooldown(self):
+        error = sm.HTTPStatusError(429, {"retry-after": "1"})
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=error) as request:
+            with self.assertRaises(sm.HTTPStatusError) as caught:
+                sm.crates_releases("example")
+            self.assertIs(caught.exception, error)
+            self.assertEqual(request.call_count, 5)
+            self.assertEqual(clock[0], 4.0)
+            with mock.patch.object(sm, "_http_once", return_value=b'{"versions": []}'):
+                sm.crates_releases("later")
+            self.assertEqual(clock[0], 5.0)
+
+    def test_long_retry_after_fails_closed_without_early_cross_call_request(self):
+        error = sm.HTTPStatusError(429, {"retry-after": "301"})
+        with registry_clock(), mock.patch.object(sm, "_http_once", side_effect=error) as request:
+            for crate in ("example", "later"):
+                with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
+                    sm.crates_releases(crate)
+            request.assert_called_once()
+
+    def test_retry_wait_budget_is_cumulative(self):
+        error = sm.HTTPStatusError(429, {"retry-after": "200"})
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=error) as request:
+            with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
+                sm.crates_releases("example")
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(clock[0], 200.0)
+
+    def test_real_http_429_recovers_and_sends_application_user_agent(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            calls = []
+            def log_message(self, *args): pass
+            def do_GET(self):
+                self.calls.append((__import__("time").monotonic(), self.headers.get("User-Agent")))
+                if len(self.calls) < 3:
+                    self.send_response(429)
+                    self.send_header("Retry-After", "0")
+                    body = b"SECRET server response"
+                else:
+                    self.send_response(200)
+                    body = b'{"versions": []}'
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        real_http = sm.http_json
+        def loopback(url, **kwargs):
+            self.assertEqual(url, "https://crates.io/api/v1/crates/example/versions")
+            return real_http(f"http://127.0.0.1:{server.server_port}/versions", **kwargs)
+        try:
+            with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}), \
+                 mock.patch.object(sm, "http_json", side_effect=loopback), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                self.assertEqual(sm.crates_releases("example"), [])
+                self.assertNotIn("SECRET", output.getvalue())
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+        self.assertEqual(len(Handler.calls), 3)
+        self.assertTrue(all(b[0] - a[0] >= 1.0 for a, b in zip(Handler.calls, Handler.calls[1:])))
+        self.assertTrue(all(row[1] == sm.CRATES_IO_USER_AGENT for row in Handler.calls))
+
+    def test_real_binary_download_recovers_from_503(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            requests = 0
+            def log_message(self, *args): pass
+            def do_GET(self):
+                Handler.requests += 1
+                self.send_response(503 if Handler.requests < 3 else 200)
+                self.send_header("Retry-After", "0")
+                body = b"temporary" if Handler.requests < 3 else b"verified archive bytes"
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}):
+                self.assertEqual(sm.http_bytes(f"http://127.0.0.1:{server.server_port}/archive"), b"verified archive bytes")
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+        self.assertEqual(Handler.requests, 3)
+
+    def test_permanent_errors_are_not_retried(self):
+        for error in (sm.HTTPStatusError(403), sm.HTTPStatusError(400), sm.HTTPStatusError(404),
+                      sm.MaintenanceError("HTTP response exceeded size limit"),
+                      sm.MaintenanceError("HTTP endpoint returned invalid JSON")):
+            with self.subTest(error=type(error).__name__), registry_clock(), \
+                 mock.patch.object(sm, "_http_once", side_effect=error) as request:
+                with self.assertRaises(sm.MaintenanceError) as caught:
+                    sm.crates_io_json("crates/example/versions")
+                self.assertIs(caught.exception, error)
+                request.assert_called_once()
+
+    def test_archive_still_rejects_mismatched_bytes(self):
+        with registry_clock(), mock.patch.object(sm, "http_json", return_value={
+            "version": {"checksum": hashlib.sha256(b"expected").hexdigest()}}), \
+             mock.patch.object(sm, "http_bytes", return_value=b"altered"):
+            with self.assertRaisesRegex(sm.MaintenanceError, "checksum mismatch"):
+                sm.download_crate_archive("example", "1.0.0")
 
 
 class CrateArchiveTests(unittest.TestCase):
