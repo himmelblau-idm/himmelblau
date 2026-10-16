@@ -3148,7 +3148,77 @@ class MarkerConflictAndAITests(unittest.TestCase):
             self.assertEqual(request.call_count, 3)
 
 
-class CratesIOHTTPTests(unittest.TestCase):
+class NetworkRetryTests(unittest.TestCase):
+    def test_unrelated_http_origin_progresses_during_wait_and_request(self):
+        for blocked_at in ("cooldown", "request"):
+            entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+            errors = []
+            def pause():
+                entered.set()
+                if not release.wait(3):
+                    raise AssertionError("test did not release blocked operation")
+            def request(req, *args):
+                if "slow.invalid" in req.full_url and blocked_at == "request":
+                    pause()
+                return b'{}'
+            def sleep(delay):
+                pause()
+                sm._HTTP_NEXT_REQUEST.clear()
+            def run(url, done=None):
+                try:
+                    sm.http_json(url)
+                except BaseException as exc:
+                    errors.append(exc)
+                finally:
+                    if done is not None:
+                        done.set()
+            with self.subTest(blocked_at=blocked_at), mock.patch.dict(sm._HTTP_NEXT_REQUEST, {}, clear=True), \
+                 mock.patch.object(sm, "_http_once", side_effect=request), mock.patch.object(sm.time, "sleep", side_effect=sleep):
+                if blocked_at == "cooldown":
+                    sm._HTTP_NEXT_REQUEST["slow.invalid"] = sm.time.monotonic() + 60
+                slow = threading.Thread(target=run, args=("https://slow.invalid",))
+                fast = threading.Thread(target=run, args=("https://fast.invalid", completed))
+                slow.start()
+                try:
+                    self.assertTrue(entered.wait(1))
+                    fast.start()
+                    self.assertTrue(completed.wait(1), "unrelated origin blocked by HTTP lock")
+                finally:
+                    release.set()
+                    slow.join(3)
+                    if fast.ident is not None:
+                        fast.join(3)
+                self.assertFalse(slow.is_alive())
+                self.assertFalse(fast.is_alive())
+                self.assertEqual(errors, [])
+
+    def test_http_rechecks_extended_cooldown_before_reserving_registry_slot(self):
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", return_value=b'{}') as request:
+            delays = []
+            def sleep(delay):
+                delays.append(delay)
+                clock[0] += delay
+                if len(delays) == 1:
+                    sm._HTTP_NEXT_REQUEST["*"] = clock[0] + 7
+            sm._HTTP_NEXT_REQUEST["crates.io"] = 5
+            with mock.patch.object(sm.time, "sleep", side_effect=sleep):
+                self.assertEqual(sm.http_json("https://crates.io/api/v1/crates/example"), {})
+            self.assertEqual(delays, [5, 7])
+            self.assertEqual(clock[0], 12)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["crates.io"], 17)
+            request.assert_called_once()
+
+    def test_azure_wait_exhaustion_uses_type_independent_of_message(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        with registry_clock(), mock.patch.object(sm.NetworkWaitBudget, "sleep", \
+                side_effect=sm.NetworkWaitBudgetExceeded("changed diagnostic wording")), \
+             mock.patch.object(sm, "_http_once") as request:
+            sm._HTTP_NEXT_REQUEST["example.invalid"] = 1
+            with self.assertRaisesRegex(sm.MaintenanceError, "Azure retry delay exceeds bounded wait budget"):
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            request.assert_not_called()
+
     def test_azure_permanent_http_failures_stop_without_retrying_or_sleeping(self):
         ai = object.__new__(sm.AzureAI)
         ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
