@@ -146,6 +146,18 @@ in
 
     assertions = [
       {
+        assertion =
+          !config.security.tpm2.enable
+          || cfg.settings.hsm_pin_path == null
+          || cfg.settings.hsm_pin_path == "/var/lib/himmelblaud/hsm-pin"
+          || cfg.settings.hsm_pin_path == "/var/lib/private/himmelblaud/hsm-pin";
+        message =
+          "services.himmelblau: when TPM2 encryption is enabled, `settings.hsm_pin_path` must "
+          + "currently be set to `null` or \"/var/lib/himmelblaud/hsm-pin\"; custom paths "
+          + "break hard-coded path assumptions in (e.g.) `aad-tool`. Please move any existing "
+          + "credentials to the default path and reconfigure your himmelblaud settings.";
+      }
+      {
         assertion = !(
           cfg.settings.hsm_type == "tpm"
           && mayUseLocalTpmDevice
