@@ -3148,6 +3148,50 @@ class MarkerConflictAndAITests(unittest.TestCase):
 
 
 class CratesIOHTTPTests(unittest.TestCase):
+    def test_http_error_bodies_close_before_retry_and_on_permanent_failure(self):
+        class UnreadBody(io.BytesIO):
+            def read(self, *args, **kwargs):
+                raise AssertionError("error bodies must not be read")
+
+        for binary in (False, True):
+            for status in (429, 503, 403):
+                body = UnreadBody(b"SECRET response body")
+                error = sm.urllib.error.HTTPError("https://example.invalid/SECRET", status,
+                                                 "SECRET", {"retry-after": "1"} if status != 403 else {}, body)
+                response = mock.MagicMock()
+                response.__enter__.return_value = response
+                response.status = 200
+                response.read.return_value = b'{}'
+                calls = []
+
+                def request(*args, **kwargs):
+                    calls.append(True)
+                    if len(calls) == 1:
+                        raise error
+                    self.assertTrue(body.closed)
+                    return response
+
+                try:
+                    with self.subTest(binary=binary, status=status), registry_clock() as clock, \
+                         mock.patch.object(sm.urllib.request, "urlopen", side_effect=request), \
+                         mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                        read = sm.http_bytes if binary else sm.http_json
+                        if status == 403:
+                            with self.assertRaises(sm.HTTPStatusError) as caught:
+                                read("https://example.invalid")
+                            self.assertEqual(caught.exception.status, 403)
+                            self.assertIs(caught.exception.__cause__, error)
+                            self.assertEqual(len(calls), 1)
+                            self.assertEqual(clock[0], 0)
+                        else:
+                            self.assertEqual(read("https://example.invalid"), b'{}' if binary else {})
+                            self.assertEqual(len(calls), 2)
+                            self.assertEqual(clock[0], 1)
+                        self.assertTrue(body.closed)
+                        self.assertNotIn("SECRET", output.getvalue())
+                finally:
+                    error.close()
+
     @staticmethod
     def response(body, *, declared=None, method="GET", status=200, chunked=False):
         class Socket:

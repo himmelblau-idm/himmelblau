@@ -735,6 +735,7 @@ def _http_once(request: urllib.request.Request, timeout: int, max_bytes: int) ->
                     raise MaintenanceError("HTTP response exceeded size limit")
                 raise http.client.IncompleteRead(b"", remaining)
     except urllib.error.HTTPError as exc:
+        exc.close()
         raise HTTPStatusError(exc.code, exc.headers) from exc
     except TimeoutError as exc:
         raise MaintenanceError("HTTP request timed out") from exc
