@@ -2677,6 +2677,47 @@ class MutationBoundaryTests(unittest.TestCase):
 class MarkerConflictAndAITests(unittest.TestCase):
     SHA = "a" * 40
 
+    def test_registry_failure_reports_context_without_exposing_response_or_url(self):
+        secret = "SECRET-URL-HEADER-ERROR"
+        failures = [
+            (sm.urllib.error.HTTPError("https://host/" + secret, 429, secret, {}, None), "http-status-429"),
+            (sm.urllib.error.HTTPError("https://host/" + secret, 503, secret, {}, None), "http-status-503"),
+            (sm.urllib.error.URLError(secret), "transport-error"),
+            (sm.urllib.error.URLError(TimeoutError(secret)), "transport-timeout"),
+        ]
+        for failure, reason in failures:
+            with self.subTest(reason=reason), \
+                 mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                with self.assertRaises(sm.MaintenanceError) as caught:
+                    sm.crates_releases("example")
+                self.assertIs(caught.exception.__cause__, failure)
+                self.assertEqual(output.getvalue(),
+                                 f"registry-debug: operation=versions crate=example reason={reason}\n")
+                self.assertNotIn(secret, output.getvalue())
+
+    def test_vet_review_errors_are_distinct_from_negative_decisions(self):
+        item = sm.VetItem("example", "0.9.0", "1.0.0")
+        for error, reason in ((sm.HTTPStatusError(503), "http-status-503"),
+                              (sm.MaintenanceError("HTTP request failed"), "transport-error"),
+                              (sm.MaintenanceError("SECRET ::error:: source content"), "unclassified-error")):
+            with self.subTest(reason=reason), \
+                 mock.patch.object(sm, "_vet_decision", side_effect=error), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                self.assertFalse(sm.safe_vet_decision(mock.Mock(), mock.Mock(), item, Path("cache")))
+                self.assertEqual(output.getvalue(), f"vet-review-debug: crate=example reason={reason}\n")
+                self.assertNotIn("SECRET", output.getvalue())
+        for decision in (True, False):
+            with mock.patch.object(sm, "_vet_decision", return_value=decision), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                self.assertIs(sm.safe_vet_decision(mock.Mock(), mock.Mock(), item, Path("cache")), decision)
+                self.assertEqual(output.getvalue(), "")
+        with mock.patch.object(sm, "_vet_decision", side_effect=sm.MaintenanceError("SECRET")), \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+            self.assertFalse(sm.safe_vet_decision(mock.Mock(), mock.Mock(),
+                             sm.VetItem("SECRET\n::error:: injected", None, "1.0.0"), Path("cache")))
+            self.assertEqual(output.getvalue(), "vet-review-debug: crate=invalid reason=unclassified-error\n")
+
     def test_http_status_and_transport_diagnostics_do_not_echo_secrets(self):
         secret = "credential-model-content"
         failures = [
