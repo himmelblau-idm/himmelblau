@@ -3252,6 +3252,41 @@ class MarkerConflictAndAITests(unittest.TestCase):
 class BoundedVetReviewTests(unittest.TestCase):
     ITEM = sm.VetItem("example", "0.9.0", "1.0.0")
 
+    def test_vet_transport_paces_actual_retries_chunks_and_new_dependency_clients(self):
+        first = object.__new__(sm.AzureAI)
+        first.key, first.model, first.url = "key", "model", "https://example.invalid"
+        second = object.__new__(sm.AzureAI)
+        second.key, second.model, second.url = first.key, first.model, first.url
+        with registry_clock() as clock:
+            starts = []
+            def request(*args):
+                starts.append(clock[0])
+                if len(starts) == 1:
+                    raise sm.HTTPStatusError(503, {"retry-after": "120"})
+                return b'{"output_text":"{\\"decision\\":true}"}'
+            with mock.patch.object(sm, "_http_once", side_effect=request):
+                for client, name in ((first, "cargo_vet_chunk"), (first, "cargo_vet_chunk"),
+                                     (first, "cargo_vet_integration"), (second, "cargo_vet_decision")):
+                    self.assertEqual(client.call("instructions", "data", sm.BOOL_SCHEMA, name), {"decision": True})
+            self.assertEqual(starts, [0, 120, 150, 180, 210])
+        # Ordinary Azure decisions do not acquire the vet-only pacing interval.
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", return_value=b'{"output_text":"{\\"decision\\":true}"}'):
+            for _ in range(2):
+                first.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            self.assertEqual(clock[0], 0)
+
+    def test_vet_transport_pacing_consumes_the_same_cumulative_budget(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        with registry_clock() as clock, mock.patch.object(sm, "MAX_AI_RETRY_SECONDS", 25), \
+             mock.patch.object(sm, "_http_once", return_value=b'{"output_text":"{\\"decision\\":true}"}') as request:
+            ai.call("instructions", "data", sm.BOOL_SCHEMA, "cargo_vet_decision")
+            with self.assertRaisesRegex(sm.MaintenanceError, "Azure retry delay exceeds bounded wait budget"):
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "cargo_vet_decision")
+            request.assert_called_once()
+            self.assertEqual(clock[0], 0)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["example.invalid"], 30)
+
     def test_split_covers_files_hunks_unicode_and_oversized_lines_exactly(self):
         material = (b"diff --git a/lib.rs b/lib.rs\n@@ -1 +1 @@\n" + ("+\u03bb\U0001f600" * 25000).encode()
                     + b"\ndiff --git a/build.rs b/build.rs\n@@ -1 +1 @@\n" + b"+build()\n" * 13000)
@@ -3281,8 +3316,8 @@ class BoundedVetReviewTests(unittest.TestCase):
         ai = object.__new__(sm.AzureAI)
         ai.key, ai.model, ai.url = "secret", "model", "https://example.invalid"
         with tempfile.TemporaryDirectory() as tmp, registry_clock() as clock:
-            def http(url, **kwargs):
-                body = kwargs["body"]
+            def http(request, timeout, max_bytes):
+                body = json.loads(request.data)
                 content = body["input"][0]["content"]
                 data = content[0]["text"]
                 attachment = (sm.base64.b64decode(content[1]["file_data"].split(",", 1)[1])
@@ -3312,11 +3347,11 @@ class BoundedVetReviewTests(unittest.TestCase):
                     answer = {"decision": True}
                 else:
                     self.fail("large material was not chunked")
-                return {"output_text": json.dumps(answer)}
+                return json.dumps({"output_text": json.dumps(answer)}).encode()
             with mock.patch.object(sm, "isolated_vet_command", return_value=diff), \
                  mock.patch.object(sm, "cache_crate_source", return_value=Path(tmp)), \
                  mock.patch.object(sm, "crate_source_context", return_value=b"verified context"), \
-                 mock.patch.object(sm, "http_json", side_effect=http), \
+                 mock.patch.object(sm, "_http_once", side_effect=http), \
                  mock.patch.object(sm.sys, "stderr", io.StringIO()):
                 self.assertTrue(sm.safe_vet_decision(ai, mock.Mock(), self.ITEM, Path(tmp)))
         self.assertEqual(b"".join(covered), expected_material)
