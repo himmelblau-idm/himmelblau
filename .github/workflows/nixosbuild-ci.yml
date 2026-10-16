@@ -28,7 +28,8 @@ jobs:
       - name: Check NixOS service definitions
         run: |
           command -v nix-instantiate
-          export NIX_PATH="nixpkgs=$(nix eval --impure --raw --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')"
+          NIX_PATH="nixpkgs=$(nix eval --impure --raw --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')"
+          export NIX_PATH
           python3 scripts/test_nixos_services.py -v
       - run: nix flake check
       - run: nix build .#daemon .#sso .#broker .#pam .#nss .#aad-tool .#o365 .#collabora 2>&1
