@@ -4,6 +4,7 @@
   tpmEnabled ? true,
   tcti ? "device:/dev/tpmrm0",
   tssGroup ? "tss",
+  pinPath ? "/var/lib/himmelblaud/hsm-pin",
 }:
 let
   pkgs = import nixpkgs { };
@@ -20,6 +21,7 @@ let
           pamPackage = pkgs.emptyDirectory // { lib = pkgs.emptyDirectory; };
           nssPackage = pkgs.emptyDirectory;
           settings.tpm_tcti_name = tcti;
+          settings.hsm_pin_path = pinPath;
         };
         security.tpm2 = {
           enable = tpmEnabled;
@@ -33,6 +35,7 @@ in
 {
   version = cfg.systemd.package.version;
   nscdEnabled = cfg.services.nscd.enable;
+  hsmPinPath = cfg.services.himmelblau.settings.hsm_pin_path;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
   warnings = cfg.warnings;
   assertions = map (assertion: assertion.message) (

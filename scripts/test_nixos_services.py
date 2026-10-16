@@ -427,6 +427,73 @@ class NixosServiceTests(unittest.TestCase):
                             name in parse_unit(text)["Unit"]["After"].split(), enabled
                         )
 
+    def test_standard_pin_paths_use_default_encrypted_credential(self):
+        for pin in [
+            None,
+            "/var/lib/himmelblaud/hsm-pin",
+            "/var/lib/private/himmelblaud/hsm-pin",
+        ]:
+            with self.subTest(pin=pin):
+                evaluated = evaluate(pinPath=pin)
+                daemon = parse_unit(evaluated["units"]["himmelblaud.service"])
+                initializer = parse_unit(
+                    evaluated["units"]["himmelblau-hsm-pin-init.service"]
+                )
+                self.assertFalse(
+                    [
+                        message
+                        for message in evaluated["assertions"]
+                        if message.startswith("services.himmelblau:")
+                    ]
+                )
+                self.assertEqual(
+                    daemon["Service"]["LoadCredentialEncrypted"],
+                    "hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc",
+                )
+                self.assertEqual(
+                    initializer["Unit"]["RequiresMountsFor"],
+                    "/var/lib/private/himmelblaud",
+                )
+                self.assertTrue(
+                    initializer["Service"]["ExecStart"].endswith(
+                        "/libexec/himmelblau-init-hsm-pin"
+                    )
+                )
+
+    def test_custom_encrypted_pin_paths_are_rejected(self):
+        for pin in [
+            '/etc/custom directory/pin %$"name',
+            "/var/lib/private/himmelblaud/custom-pin",
+        ]:
+            for tcti in ["device:/dev/tpmrm0", "swtpm:host=127.0.0.1,port=2321"]:
+                with self.subTest(pin=pin, tcti=tcti):
+                    evaluated = evaluate(pinPath=pin, tpmEnabled=True, tcti=tcti)
+                    self.assertTrue(
+                        any(
+                            "custom paths break hard-coded path assumptions in (e.g.) `aad-tool`."
+                            in message
+                            for message in evaluated["assertions"]
+                        )
+                    )
+
+    def test_custom_plaintext_pin_path_is_retained(self):
+        pin = '/etc/custom directory/pin %$"name'
+        evaluated = evaluate(pinPath=pin, tpmEnabled=False)
+        self.assertFalse(
+            [
+                message
+                for message in evaluated["assertions"]
+                if message.startswith("services.himmelblau:")
+            ]
+        )
+        self.assertEqual(evaluated["hsmPinPath"], pin)
+        self.assertNotIn("himmelblau-hsm-pin-init.service", evaluated["units"])
+        daemon = parse_unit(evaluated["units"]["himmelblaud.service"])
+        self.assertNotIn("LoadCredentialEncrypted", daemon["Service"])
+        self.assertNotIn(
+            "HIMMELBLAU_HSM_PIN_PATH=", evaluated["units"]["himmelblaud.service"]
+        )
+
     def test_custom_tpm_group_is_retained(self):
         evaluated = evaluate(tssGroup="custom-tss")
         daemon = parse_unit(evaluated["units"]["himmelblaud.service"])
