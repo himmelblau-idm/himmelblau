@@ -1691,6 +1691,14 @@ mod tests {
                 assert_eq!(cached.uuid, cached_uuid);
                 assert_eq!(cached.tenant_id, cached_tenant);
                 assert!(cached.groups.is_empty());
+            } else {
+                // A trusted response for a different identity must not be
+                // written before reconciliation rejects it.
+                let cached_tokens = resolver.get_cached_usertokens().await.unwrap();
+                assert_eq!(cached_tokens.len(), 1);
+                assert_eq!(cached_tokens[0].uuid, cached_uuid);
+                assert_eq!(cached_tokens[0].tenant_id, cached_tenant);
+                assert!(cached_tokens[0].groups.is_empty());
             }
         }
     }
@@ -2291,7 +2299,7 @@ where
         // Reconciliation may use only the authenticated identity that made
         // this account eligible, never a lookup-only or replacement identity.
         let Some((refreshed, true)) = self
-            .refresh_usertoken_with_cacheability(&id, Some((token, true)))
+            .refresh_usertoken_with_cacheability(&id, Some((token, true)), Some((uuid, tenant_id)))
             .await?
         else {
             return Ok(None);
@@ -2677,15 +2685,20 @@ where
         account_id: &Id,
         token: Option<UserToken>,
     ) -> ResolverResult<Option<UserToken>> {
-        self.refresh_usertoken_with_cacheability(account_id, token.map(|token| (token, false)))
-            .await
-            .map(|result| result.map(|(token, _)| token))
+        self.refresh_usertoken_with_cacheability(
+            account_id,
+            token.map(|token| (token, false)),
+            None,
+        )
+        .await
+        .map(|result| result.map(|(token, _)| token))
     }
 
     async fn refresh_usertoken_with_cacheability(
         &self,
         account_id: &Id,
         token: Option<(UserToken, bool)>,
+        expected_identity: Option<(Uuid, Option<Uuid>)>,
     ) -> ResolverResult<Option<(UserToken, bool)>> {
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
@@ -2708,6 +2721,11 @@ where
 
         match user_get_result {
             Ok(UserTokenState::Update(mut n_tok)) => {
+                if expected_identity.is_some_and(|(uuid, tenant_id)| {
+                    n_tok.uuid != uuid || n_tok.tenant_id != tenant_id
+                }) {
+                    return Ok(None);
+                }
                 match self
                     .set_cache_usertoken_guarded(&mut n_tok, generation, None)
                     .await?
@@ -3064,7 +3082,7 @@ where
                 // Return it.
                 if SystemTime::now() >= time && self.test_connection().await {
                     // We brought ourselves online, lets go
-                    self.refresh_usertoken_with_cacheability(&account_id, item)
+                    self.refresh_usertoken_with_cacheability(&account_id, item, None)
                         .await
                 } else {
                     // Unable to bring up connection, return cache.
@@ -3075,7 +3093,7 @@ where
                 trace!("online expired, refresh cache");
                 // Attempt to refresh the item
                 // Return it.
-                self.refresh_usertoken_with_cacheability(&account_id, item)
+                self.refresh_usertoken_with_cacheability(&account_id, item, None)
                     .await
             }
         }
