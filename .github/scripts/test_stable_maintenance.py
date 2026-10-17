@@ -4514,6 +4514,7 @@ class CheckpointMaintenanceTests(unittest.TestCase):
                 self.assertIn(f"needs.{previous}.outputs.{field}", block)
         self.assertEqual(branch.count("uses: ./.github/workflows/stable-maintenance-stage.yml"), 7)
         self.assertIn("MAINTENANCE_TOOLING_COMMIT: ${{ github.sha }}", stage)
+        self.assertIn("run: env -u MAINTENANCE_TOOLING_COMMIT python3 tooling/.github/scripts/test_stable_maintenance.py", stage)
         self.assertNotIn("workflow_run:", stage + branch + WORKFLOW.read_text())
         self.assertNotIn("continue-on-error:", stage + branch)
         for name in ("Release —", "Validate —", "Create scoped publication token", "Publish —"):
@@ -4627,6 +4628,93 @@ class CheckpointMaintenanceTests(unittest.TestCase):
                     sm.phase_checkpoint(mock.Mock(branch="stable-4.x", stage="backports-1"), state, runner)
                 push.assert_not_called()
                 if problem == "dirty": (runner.root / "untracked.rs").unlink()
+
+    def test_cooldown_survives_separate_phase_processes_and_job_handoff(self):
+        # Exercise main(), not only phase functions: the workflow starts a new
+        # interpreter for each phase, including checkpoint, resume and prepare.
+        harness = r'''
+import hashlib, importlib.util, json, os, sys
+from pathlib import Path
+from unittest import mock
+spec = importlib.util.spec_from_file_location("stable_maintenance", sys.argv[1])
+sm = importlib.util.module_from_spec(spec); sys.modules[spec.name] = sm; spec.loader.exec_module(sm)
+repo, directory, phase, mode = sys.argv[2:6]
+clock = [100.0]
+sleeps = []
+def sleep(delay):
+    sleeps.append(delay); clock[0] += delay
+def work(args, state, runner):
+    sm._HTTP_NEXT_REQUEST["secret.azure.invalid"] = clock[0] + 120
+    state.event("backports", "completed candidate processing")
+    if mode == "failure": raise sm.MaintenanceError("fixture failure")
+def push(runner, directory, repo, ref, token, *, source_sha="HEAD"):
+    runner.git(["push", "origin", f"{source_sha}:refs/heads/{ref}"])
+args = ["--repo-dir", repo, "--state-dir", directory, phase, "--branch", "stable-4.x"]
+if phase in {"checkpoint", "resume"}: args += ["--stage", "backports-1"]
+if phase == "resume":
+    outputs = dict(line.split("=", 1) for line in Path(os.environ["GITHUB_OUTPUT"]).read_text().splitlines())
+    args += ["--expected-head", outputs["head"], "--expected-digest", outputs["digest"], "--checkpoint-ref", outputs["ref"]]
+with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=lambda: 1000 + clock[0] - 100, sleep=sleep)), \
+     mock.patch.dict(sm.PHASES, {"backports": work}), \
+     mock.patch.object(sm, "secure_github_push", side_effect=push), \
+     mock.patch.object(sm, "contained_repo_command") as command:
+    result = sm.main(args)
+    print(json.dumps({"result": result, "sleeps": sleeps, "commands": command.call_count,
+                      "deadline": sm.State(Path(directory)).load().get("network_not_before")}))
+'''
+        for mode in ("success", "failure"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); runner = self.repository(root / "repo")
+                head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                remote = root / "remote.git"
+                runner.git(["clone", "--bare", str(runner.root), str(remote)])
+                runner.git(["remote", "set-url", "origin", str(remote)])
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(root / "state")
+                state.save({"branch": "stable-4.x", "main_head": head, "original_head": head, "cutoff": head})
+                env = dict(os.environ, GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1",
+                           MAINTENANCE_TOOLING_COMMIT=head, MAINTENANCE_TOOLING_SHA256=hashlib.sha256(SCRIPT.read_bytes()).hexdigest(),
+                           GITHUB_OUTPUT=str(root / "output"), GITHUB_REPOSITORY="himmelblau-idm/himmelblau")
+                def run(phase, source=runner.root, progress=state.directory):
+                    result = subprocess.run([sys.executable, "-B", "-c", harness, str(SCRIPT), str(source), str(progress), phase, mode],
+                                            env=env, text=True, capture_output=True, check=True)
+                    return json.loads(result.stdout.splitlines()[-1])
+                result = run("backports")
+                self.assertEqual(result["result"], 0 if mode == "success" else 1)
+                self.assertEqual(result["deadline"], 1120)
+                self.assertNotIn("secret.azure.invalid", state.path.read_text())
+                if mode == "failure":
+                    self.assertEqual(state.load()["failed_phase"], "backports")
+                    # Even the failure-report process must not erase cooldown.
+                    self.assertEqual(run("report")["deadline"], 1120)
+                    continue
+                self.assertEqual(run("checkpoint")["result"], 0)
+                payload = (state.directory / "checkpoint.json").read_bytes()
+                self.assertEqual(json.loads(payload)["state"]["network_not_before"], 1120)
+                clone = root / "fresh"
+                runner.git(["clone", "--branch", "stable-4.x", str(remote), str(clone)])
+                resumed = sm.State(root / "resumed")
+                (resumed.directory / "checkpoint.json").write_bytes(payload)
+                self.assertEqual(run("resume", clone, resumed.directory)["result"], 0)
+                result = run("prepare", clone, resumed.directory)
+                self.assertEqual(result["result"], 0)
+                self.assertEqual(result["sleeps"], [120])
+                self.assertEqual(result["commands"], 1)
+
+    def test_cooldown_snapshot_keeps_later_deadline_and_rejects_invalid_state(self):
+        with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}), \
+             mock.patch.object(sm, "time", mock.Mock(time=lambda: 1000, monotonic=lambda: 100)):
+            value = {"network_not_before": 1500}
+            self.assertEqual(sm.snapshot_network_deadline(value), 1500)
+            sm._HTTP_NEXT_REQUEST["service.invalid"] = 200
+            self.assertEqual(sm.snapshot_network_deadline(value), 1500)
+            sm._HTTP_NEXT_REQUEST["service.invalid"] = 700
+            self.assertEqual(sm.snapshot_network_deadline(value), 1600)
+            sm.restore_network_cooldown(value)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["*"], 600)
+            for invalid in (True, None, "1500", -1, float("nan"), float("inf")):
+                with self.subTest(invalid=invalid), self.assertRaises(sm.MaintenanceError):
+                    sm.restore_network_cooldown({"network_not_before": invalid})
 
     def test_batch_deadline_reverts_only_inflight_and_next_batch_sees_prefix(self):
         for expired_at in ("review", "build", "format"):

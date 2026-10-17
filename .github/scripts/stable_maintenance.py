@@ -4083,6 +4083,29 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
         print(report, end="")
 
 
+def persisted_network_deadline(value: Mapping[str, Any]) -> float:
+    deadline = value.get("network_not_before", 0)
+    if type(deadline) not in (int, float) or not 0 <= deadline < float("inf"):
+        raise MaintenanceError("invalid checkpoint cooldown")
+    return deadline
+
+
+def restore_network_cooldown(value: Mapping[str, Any]) -> None:
+    deadline = persisted_network_deadline(value)
+    with _HTTP_LOCK:
+        _HTTP_NEXT_REQUEST["*"] = max(_HTTP_NEXT_REQUEST.get("*", 0),
+                                      time.monotonic() + max(0, deadline - time.time()))
+
+
+def snapshot_network_deadline(value: Mapping[str, Any]) -> float:
+    # Phases run in separate interpreters. Never shorten a persisted deadline
+    # merely because this process has not made a network request yet.
+    persisted = persisted_network_deadline(value)
+    with _HTTP_LOCK:
+        cooldown = max(0.0, max(_HTTP_NEXT_REQUEST.values(), default=0) - time.monotonic())
+    return max(persisted, time.time() + cooldown)
+
+
 def phase_prepare(args: argparse.Namespace, state: State, runner: Runner) -> None:
     """Recreate only pinned source payloads, never carry build artifacts/gates."""
     delay = max(0.0, _HTTP_NEXT_REQUEST.get("*", 0) - time.monotonic())
@@ -4142,9 +4165,7 @@ def phase_checkpoint(args: argparse.Namespace, state: State, runner: Runner) -> 
     snapshot = {key: value[key] for key in CHECKPOINT_KEYS if key in value}
     # Carry only the most conservative deadline, not secret Azure hostnames.
     # Monotonic epochs differ between runners; the handoff uses wall time.
-    with _HTTP_LOCK:
-        cooldown = max(0.0, max(_HTTP_NEXT_REQUEST.values(), default=0) - time.monotonic())
-    snapshot["network_not_before"] = time.time() + cooldown
+    snapshot["network_not_before"] = snapshot_network_deadline(value)
     payload = json.dumps({"schema": 1, "run": run, "stage": stage, "tooling": tooling,
                           "head": head, "transport": transport, "state": snapshot}, sort_keys=True, separators=(",", ":")).encode() + b"\n"
     if len(payload) > 4 * 1024 * 1024:
@@ -4186,9 +4207,7 @@ def phase_resume(args: argparse.Namespace, state: State, runner: Runner) -> None
     require_sha(value["main_head"]); require_sha(value["cutoff"])
     if value["main_head"] != tooling:
         raise MaintenanceError("checkpoint main inventory differs from trusted tooling snapshot")
-    not_before = value.get("network_not_before", 0)
-    if type(not_before) not in (int, float) or not 0 <= not_before < float("inf"):
-        raise MaintenanceError("invalid checkpoint cooldown")
+    persisted_network_deadline(value)
     transport = require_sha(data.get("transport"))
     if runner.git(["status", "--porcelain"]).stdout:
         raise MaintenanceError("resume requires a clean checkout")
@@ -4207,8 +4226,7 @@ def phase_resume(args: argparse.Namespace, state: State, runner: Runner) -> None
     # Never carry approval of a former tree or a previous job's final gates.
     value["checkpointed"] = True
     state.save(value)
-    with _HTTP_LOCK:
-        _HTTP_NEXT_REQUEST["*"] = max(_HTTP_NEXT_REQUEST.get("*", 0), time.monotonic() + max(0, not_before - time.time()))
+    restore_network_cooldown(value)
     state.event("resume", "verified immutable checkpoint", stage=args.stage, head=expected)
 
 
@@ -4291,11 +4309,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         verify_tooling_integrity()
         state = State(Path(args.state_dir))
         runner = Runner(Path(args.repo_dir))
-        # A guard skip is a successful no-op for every later phase. Report is
-        # still allowed so the reason remains visible in the Actions summary.
-        if state.load().get("skip") and args.command not in {"select", "guard", "report"}:
-            return 0
-        PHASES[args.command](args, state, runner)
+        restore_network_cooldown(state.load())
+        try:
+            # A guard skip is a successful no-op for every later phase. Report is
+            # still allowed so the reason remains visible in the Actions summary.
+            if state.load().get("skip") and args.command not in {"select", "guard", "report"}:
+                return 0
+            PHASES[args.command](args, state, runner)
+        finally:
+            primary_error = sys.exc_info()[0] is not None
+            try:
+                value = state.load()
+                value["network_not_before"] = snapshot_network_deadline(value)
+                state.save(value)
+            except Exception:
+                if not primary_error:
+                    raise
+                # A persistence failure must not hide the original phase error.
+                print("error: could not persist maintenance cooldown", file=sys.stderr)
         return 0
     except (MaintenanceError, ValueError, KeyError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
         if state is not None:

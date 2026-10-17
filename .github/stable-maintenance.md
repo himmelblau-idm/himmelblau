@@ -46,9 +46,10 @@ All scripts, reusable workflows and the pinned image definition come from the
 original trusted workflow commit, never from the mutable staged tree. Each fresh
 runner fetches only locked dependency payloads into a new private Cargo cache.
 Validated service cooldowns survive runner changes as one conservative UTC
-not-before deadline (no secret Azure hostname is exported). Resume restores that
-deadline before API work or dependency preparation; a fresh runner does not reset
-server-requested backoff.
+not-before deadline (no secret Azure hostname is exported). Every phase process
+restores that deadline before work and saves the later persisted/current deadline
+on exit, including failure. Checkpoint and resume preserve it between jobs, so
+neither a new process nor a fresh runner resets server-requested backoff.
 
 ## Completion, retry and publication
 
