@@ -796,7 +796,16 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             };
 
-            let graph = match Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None, Duration::from_secs($cfg.get_request_timeout())).await {
+            let graph = match Graph::new(
+                DEFAULT_ODC_PROVIDER,
+                &domain,
+                None,
+                None,
+                None,
+                Duration::from_secs($cfg.get_request_timeout()),
+            )
+            .await
+            {
                 Ok(graph) => graph,
                 Err(e) => {
                     error!("Failed discovering tenant: {:?}", e);
