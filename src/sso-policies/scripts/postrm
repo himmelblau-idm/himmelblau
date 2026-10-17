@@ -37,6 +37,10 @@ remove_firefox_policy() {
                 rm -f "$POLICY_FILE"
                 echo "Removed empty policy file $POLICY_FILE"
             fi
+        else
+            echo "Warning: jq not found. Cannot safely remove SSO extension from $POLICY_FILE"
+            echo "Please manually remove the extension URL from policies.Extensions.Install:"
+            echo "  $FIREFOX_EXTENSION_URL"
         fi
     fi
 }
