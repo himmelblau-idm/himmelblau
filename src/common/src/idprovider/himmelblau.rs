@@ -1562,11 +1562,14 @@ impl IdProvider for HimmelblauProvider {
             }};
         }
 
-        // If we have ConfidentialClient creds, use those
-        if let Ok(Some((client_id, creds))) =
-            confidential_client_creds(tpm, keystore, machine_key, &self.domain)
-        {
-            fetch_user_confidential_client!(&client_id, creds)
+        // An existing cached account must use its user-backed refresh below.
+        // App credentials only establish a directory lookup.
+        if old_token.is_none() {
+            if let Ok(Some((client_id, creds))) =
+                confidential_client_creds(tpm, keystore, machine_key, &self.domain)
+            {
+                fetch_user_confidential_client!(&client_id, creds)
+            }
         }
 
         let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
