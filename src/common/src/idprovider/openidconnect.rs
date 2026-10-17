@@ -332,6 +332,8 @@ fn pam_auth_request_kind(pam_next_req: &PamAuthRequest) -> &'static str {
         PamAuthRequest::FidoUnavailable => "fido_unavailable",
         PamAuthRequest::WebAuthn { .. } => "webauthn",
         PamAuthRequest::WebAuthnUnavailable => "webauthn_unavailable",
+        PamAuthRequest::Fingerprint => "fingerprint",
+        PamAuthRequest::FingerprintCancel => "fingerprint_cancel",
     }
 }
 

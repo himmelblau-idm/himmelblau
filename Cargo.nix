@@ -1363,7 +1363,7 @@ rec {
         crateName = "authenticator";
         version = "0.5.0";
         edition = "2018";
-        sha256 = "1g6yks1cgcfrmw5cfj9prxsdyic9n9h6aai7vgr90nb7cmrzbmmv";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/authenticator/0.5.0; };
         authors = [
           "Dana Keeler <dkeeler@mozilla.com>"
           "J.C. Jones <jc@mozilla.com>"
@@ -1457,6 +1457,10 @@ rec {
             packageId = "winapi";
             target = { target, features }: ("windows" == target."os" or null);
             features = [ "handleapi" "hidclass" "hidpi" "hidusage" "setupapi" ];
+          }
+          {
+            name = "zeroize";
+            packageId = "zeroize";
           }
         ];
         features = {
@@ -8045,6 +8049,10 @@ rec {
             packageId = "openidconnect";
           }
           {
+            name = "openssl";
+            packageId = "openssl";
+          }
+          {
             name = "qrcodegen";
             packageId = "qrcodegen";
           }
@@ -8298,6 +8306,10 @@ rec {
           {
             name = "zbus";
             packageId = "zbus";
+          }
+          {
+            name = "zeroize";
+            packageId = "zeroize";
           }
         ];
         features = {

@@ -11,76 +11,42 @@
 use std::error::Error;
 use std::io::Error as IoError;
 
-use bytes::{BufMut, BytesMut};
-use futures::{SinkExt, StreamExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
-// use tokio::runtime::Builder;
 use tokio::time::{self, Duration};
-use tokio_util::codec::Framed;
-use tokio_util::codec::{Decoder, Encoder};
+use zeroize::Zeroizing;
 
+use crate::secret_memory::{encode_json, extend_secret};
 use crate::unix_proto::{ClientRequest, ClientResponse};
-
-struct ClientCodec;
-
-impl Decoder for ClientCodec {
-    type Error = IoError;
-    type Item = ClientResponse;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        match serde_json::from_slice::<ClientResponse>(src) {
-            Ok(msg) => {
-                // Clear the buffer for the next message.
-                src.clear();
-                Ok(Some(msg))
-            }
-            _ => Ok(None),
-        }
-    }
-}
-
-impl Encoder<ClientRequest> for ClientCodec {
-    type Error = IoError;
-
-    fn encode(&mut self, msg: ClientRequest, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let data = serde_json::to_vec(&msg).map_err(|e| {
-            error!("socket encoding error -> {:?}", e);
-            IoError::other("JSON encode error")
-        })?;
-        debug!("Attempting to send request -> {}", msg.as_safe_string());
-        dst.put(data.as_slice());
-        Ok(())
-    }
-}
-
-impl ClientCodec {
-    fn new() -> Self {
-        ClientCodec
-    }
-}
 
 async fn call_daemon_inner(
     path: &str,
     req: ClientRequest,
 ) -> Result<ClientResponse, Box<dyn Error>> {
-    trace!(?path, ?req);
-    let stream = UnixStream::connect(path).await?;
-    trace!("connected");
+    trace!(?path, "calling daemon");
+    let mut stream = UnixStream::connect(path).await?;
+    let data = encode_json(&req).map_err(|_| IoError::other("JSON encode error"))?;
+    stream.write_all(&data).await?;
+    stream.flush().await?;
+    drop(data);
 
-    let mut reqs = Framed::new(stream, ClientCodec::new());
-
-    reqs.send(req).await?;
-    reqs.flush().await?;
-    trace!("flushed, waiting ...");
-
-    match reqs.next().await {
-        Some(Ok(res)) => {
-            debug!("Response -> {:?}", res);
-            Ok(res)
+    // Direct I/O avoids Framed retaining sent or consumed secret-bearing bytes
+    // in BytesMut spare capacity. Both buffers wipe on cancellation and error.
+    let mut data = Zeroizing::new(Vec::with_capacity(1024));
+    let mut buffer = Zeroizing::new([0_u8; 1024]);
+    loop {
+        let count = stream.read(buffer.as_mut()).await?;
+        if count == 0 {
+            return Err(Box::new(IoError::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "socket closed before a complete response was received",
+            )));
         }
-        _ => {
-            error!("Error making request to kanidm_unixd");
-            Err(Box::new(IoError::other("oh no!")))
+        extend_secret(&mut data, &buffer[..count]);
+        match serde_json::from_slice::<ClientResponse>(&data) {
+            Ok(response) => return Ok(response),
+            Err(error) if error.is_eof() => {}
+            Err(_) => return Err(Box::new(IoError::other("JSON decode error"))),
         }
     }
 }
@@ -102,5 +68,42 @@ pub async fn call_daemon(
         res = call_daemon_inner(path, req) => {
             res
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::UnixListener;
+
+    #[tokio::test]
+    async fn direct_client_reads_fragmented_response() -> Result<(), Box<dyn Error>> {
+        let path = std::env::temp_dir().join(format!("himmelblau-client-{}", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&path)?;
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await?;
+            let mut pending = Vec::new();
+            loop {
+                let mut buffer = [0; 128];
+                let count = socket.read(&mut buffer).await?;
+                if count == 0 {
+                    return Err(IoError::other("truncated request"));
+                }
+                pending.extend_from_slice(&buffer[..count]);
+                if let Ok(request) = serde_json::from_slice::<ClientRequest>(&pending) {
+                    assert!(matches!(request, ClientRequest::Status));
+                    break;
+                }
+            }
+            socket.write_all(b"\"O").await?;
+            tokio::task::yield_now().await;
+            socket.write_all(b"k\"").await?;
+            Ok::<(), IoError>(())
+        });
+        let response = call_daemon(&path.to_string_lossy(), ClientRequest::Status, 2).await;
+        server.await??;
+        std::fs::remove_file(path)?;
+        assert!(matches!(response?, ClientResponse::Ok));
+        Ok(())
     }
 }

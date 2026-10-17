@@ -57,6 +57,7 @@ pub const DEFAULT_SELINUX: bool = true;
 pub const DEFAULT_HSM_PIN_PATH: &str = "/var/lib/himmelblaud/hsm-pin";
 pub const DEFAULT_HSM_PIN_PATH_ENC: &str = "/var/lib/himmelblaud/hsm-pin-nopcr.enc";
 pub const DEFAULT_HELLO_ENABLED: bool = true;
+pub const DEFAULT_HELLO_FINGERPRINT_ENABLED: bool = true;
 pub const DEFAULT_ALLOW_REMOTE_HELLO: bool = false;
 pub const DEFAULT_SFA_FALLBACK_ENABLED: bool = false;
 pub const DEFAULT_CONSOLE_PASSWORD_ONLY: bool = true;

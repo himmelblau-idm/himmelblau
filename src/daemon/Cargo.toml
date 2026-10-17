@@ -26,6 +26,7 @@ path = "src/tasks_daemon.rs"
 console = ["dep:console-subscriber"]
 
 [dependencies]
+zeroize = { workspace = true }
 himmelblau_unix_common = { workspace = true }
 idmap = { workspace = true }
 tokio = { workspace = true, features = ["tracing"] }
@@ -62,9 +63,10 @@ zbus = { workspace = true }
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 depends = ["$auto"]
-recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron", "tpm2-tools", "himmelblau-apparmor"]
+recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron", "tpm2-tools", "himmelblau-apparmor", "udev"]
 suggests = ["himmelblau-orchestrator"]
 assets = [
+  ["../../platform/udev/71-himmelblau-fido.rules", "usr/lib/udev/rules.d/", "644"],
   ["../../target/debian/himmelblau.conf.example", "usr/lib/himmelblau/himmelblau.conf", "644"],
   ["../../src/config/gdm3_service_override.conf", "usr/lib/systemd/system/gdm3.service.d/himmelblau-override.conf", "644"],
   ["target/release/aad-tool", "usr/bin/", "755"],
@@ -139,6 +141,7 @@ maintainer-scripts = "scripts"
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
+  { source = "../../platform/udev/71-himmelblau-fido.rules", dest = "/usr/lib/udev/rules.d/", mode = "644" },
   { source = "../../target/config/himmelblau.conf.example", dest = "/usr/lib/himmelblau/himmelblau.conf", mode = "644" },
   { source = "../../src/config/gdm3_service_override.conf", dest = "/usr/lib/systemd/system/display-manager.service.d/override.conf", mode = "644" },
   { source = "target/release/aad-tool", dest = "/usr/bin/", mode = "755" },
@@ -213,6 +216,7 @@ pre_uninstall_script = "scripts/prerm"
 post_uninstall_script = "scripts/postrm"
 
 [package.metadata.generate-rpm.recommends]
+"(udev or systemd-udev)" = "*"
 nss-himmelblau = "*"
 pam-himmelblau = "*"
 himmelblau-selinux = "*"
