@@ -33,8 +33,8 @@ use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
-use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::common::PRT_REFRESH_AGE;
+use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
 use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
@@ -1020,8 +1020,10 @@ impl IdProvider for HimmelblauProvider {
         };
         if let Some(age) = self.refresh_cache.prt_age(&account_id).await {
             if age >= PRT_REFRESH_AGE {
-                debug!("PRT for {} is {:?} old (>= {:?}), attempting renewal",
-                       account_id, age, PRT_REFRESH_AGE);
+                debug!(
+                    "PRT for {} is {:?} old (>= {:?}), attempting renewal",
+                    account_id, age, PRT_REFRESH_AGE
+                );
                 if let Ok(RefreshCacheEntry::Prt(old_prt)) =
                     self.refresh_cache.refresh_token(&account_id).await
                 {
@@ -5394,8 +5396,8 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, password_change_required,
-        CONSENT_REQUIRED, is_sspr_required, PASSWORD_RESET_REGISTRATION_REQUIRED,
+        is_mfa_required_for_enrollment, is_sspr_required, is_unavailable_mfa_method_error,
+        password_change_required, CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};

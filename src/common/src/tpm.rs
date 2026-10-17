@@ -272,9 +272,9 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
         CONFIDENTIAL_CLIENT_SECRET_TAG,
     };
     use crate::idprovider::interface::IdpError;
+    use serde_json::Value;
     use x509_cert::der::asn1::Utf8StringRef;
     use x509_cert::der::Decode;
-    use serde_json::Value;
 
     let secret_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_SECRET_TAG);
     if let Ok(Some(sealed_secret)) = keystore.get_tagged_hsm_key(&secret_tag) {
