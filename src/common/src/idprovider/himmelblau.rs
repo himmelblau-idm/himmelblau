@@ -5694,8 +5694,7 @@ mod tests {
         is_mfa_required_for_enrollment, is_sspr_required, is_unavailable_mfa_method_error,
         local_user_ids_from_passwd, mfa_flow_uses_push_hint, password_change_required,
         seal_refresh_token_with_loaded_hello_key, unseal_refresh_token_with_loaded_hello_key,
-        CONSENT_REQUIRED,
-        PASSWORD_RESET_REGISTRATION_REQUIRED,
+        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
@@ -5941,4 +5940,3 @@ mod tests {
         }
     }
 }
-

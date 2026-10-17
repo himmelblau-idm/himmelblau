@@ -1528,4 +1528,3 @@ mod tests {
         assert_eq!(try_unseal_policy_denial(true, false, 1, 2), None);
     }
 }
-
