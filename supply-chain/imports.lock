@@ -161,8 +161,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.compact_jwt]]
-version = "0.5.3-dev"
-when = "2025-07-10"
+version = "0.5.7"
+when = "2026-08-12"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -708,8 +708,8 @@ user-login = "BurntSushi"
 user-name = "Andrew Gallant"
 
 [[publisher.reqwest]]
-version = "0.12.24"
-when = "2025-10-13"
+version = "0.12.28"
+when = "2025-12-22"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
@@ -1845,6 +1845,12 @@ who = "Alex Crichton <alex@alexcrichton.com>"
 criteria = "safe-to-deploy"
 version = "0.1.0"
 notes = "Well-scoped crate do doing LEB encoding with no `unsafe` code and does what it says on the tin."
+
+[[audits.bytecode-alliance.audits.libc]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+delta = "0.2.189 -> 0.2.190"
+notes = "All in line with changes one would expect from `libc`"
 
 [[audits.bytecode-alliance.audits.log]]
 who = "Alex Crichton <alex@alexcrichton.com>"
@@ -3169,6 +3175,21 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.44 -> 0.4.45"
 
+[[audits.himmelblau.audits.clap]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "4.6.6 -> 4.6.7"
+
+[[audits.himmelblau.audits.clap_builder]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "4.6.6 -> 4.6.7"
+
+[[audits.himmelblau.audits.clap_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "4.6.4 -> 4.6.7"
+
 [[audits.himmelblau.audits.configparser]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3593,6 +3614,11 @@ delta = "1.23.4 -> 1.24.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.24.0 -> 1.24.1"
+
+[[audits.himmelblau.audits.uuid]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.26.0 -> 1.26.1"
 
 [[audits.himmelblau.audits.zbus]]
 who = "David Mulder <dmulder@samba.org>"
@@ -4417,6 +4443,12 @@ criteria = "safe-to-deploy"
 delta = "1.2.0 -> 1.2.1"
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
 
+[[audits.mozilla.audits.form_urlencoded]]
+who = "edgul <ed.guloien@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "1.2.1 -> 1.2.2"
+aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
 [[audits.mozilla.audits.futures-core]]
 who = "Mike Hommey <mh+mozilla@glandium.org>"
 criteria = "safe-to-deploy"
@@ -4619,6 +4651,12 @@ criteria = "safe-to-deploy"
 delta = "1.0.2 -> 1.0.3"
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
 
+[[audits.mozilla.audits.idna]]
+who = "edgul <ed.guloien@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "1.0.3 -> 1.1.0"
+aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
 [[audits.mozilla.audits.idna_adapter]]
 who = "Valentin Gosu <valentin.gosu@gmail.com>"
 criteria = "safe-to-deploy"
@@ -4788,6 +4826,12 @@ aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/mai
 who = "Valentin Gosu <valentin.gosu@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "2.3.0 -> 2.3.1"
+aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.percent-encoding]]
+who = "edgul <ed.guloien@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "2.3.1 -> 2.3.2"
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.pin-project-lite]]
@@ -5300,6 +5344,12 @@ aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/mai
 who = "Valentin Gosu <valentin.gosu@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "2.5.1 -> 2.5.4"
+aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.url]]
+who = "edgul <ed.guloien@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "2.5.4 -> 2.5.7"
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.utf8parse]]
