@@ -58,6 +58,7 @@ pub mod module;
 
 use std::convert::TryFrom;
 use std::ffi::CStr;
+use std::io::IsTerminal;
 
 use himmelblau::error::MsalError;
 use himmelblau::{AuthOption, PublicClientApplication};
@@ -158,15 +159,23 @@ pam_hooks!(PamKanidm);
 
 pub struct PamConvMessagePrinter {
     conv: Arc<Mutex<PamConv>>,
+    supports_terminal_qr: bool,
 }
 
 impl PamConvMessagePrinter {
-    pub fn new(conv: Arc<Mutex<PamConv>>) -> Self {
-        Self { conv }
+    pub fn new(conv: Arc<Mutex<PamConv>>, supports_terminal_qr: bool) -> Self {
+        Self {
+            conv,
+            supports_terminal_qr,
+        }
     }
 }
 
 impl MessagePrinter for PamConvMessagePrinter {
+    fn supports_terminal_qr(&self) -> bool {
+        self.supports_terminal_qr
+    }
+
     fn print_text(&self, msg: &str) {
         if let Ok(conv) = self.conv.lock() {
             if let Err(e) = conv.send(PAM_TEXT_INFO, msg) {
@@ -211,6 +220,15 @@ fn should_capture_keyring_secret(prompt: &str) -> bool {
     prompt.contains("pin") || prompt.contains("password")
 }
 
+fn should_render_terminal_qr(
+    service: &str,
+    is_remote: bool,
+    stdout_is_terminal: bool,
+    stderr_is_terminal: bool,
+) -> bool {
+    !is_remote && !service.contains("gdm") && (stdout_is_terminal || stderr_is_terminal)
+}
+
 pub struct KeyringCaptureMessagePrinter {
     inner: Arc<dyn MessagePrinter>,
     captured: Arc<Mutex<Option<String>>>,
@@ -223,8 +241,16 @@ impl KeyringCaptureMessagePrinter {
 }
 
 impl MessagePrinter for KeyringCaptureMessagePrinter {
+    fn supports_terminal_qr(&self) -> bool {
+        self.inner.supports_terminal_qr()
+    }
+
     fn print_text(&self, msg: &str) {
         self.inner.print_text(msg);
+    }
+
+    fn print_sensitive(&self, msg: &str) {
+        self.inner.print_sensitive(msg);
     }
 
     fn print_error(&self, msg: &str) {
@@ -457,7 +483,15 @@ impl PamHooks for PamKanidm {
 
         let set_authtok = opts.set_authtok;
         let keyring_secret = Arc::new(Mutex::new(authtok.clone()));
-        let base_printer: Arc<dyn MessagePrinter> = Arc::new(PamConvMessagePrinter::new(conv));
+        let base_printer: Arc<dyn MessagePrinter> = Arc::new(PamConvMessagePrinter::new(
+            conv,
+            should_render_terminal_qr(
+                &service,
+                is_remote,
+                std::io::stdout().is_terminal(),
+                std::io::stderr().is_terminal(),
+            ),
+        ));
         let daemon_client =
             match wait_for_daemon_client(cfg.get_socket_path().as_str(), &base_printer) {
                 Ok(client) => client,
@@ -806,7 +840,7 @@ impl PamHooks for PamKanidm {
                         }
                     };
 
-                    let msg_printer = Arc::new(PamConvMessagePrinter::new(conv));
+                    let msg_printer = Arc::new(PamConvMessagePrinter::new(conv, false));
                     let fido_timeout_ms = cfg.get_fido_timeout().saturating_mul(1000);
                     let fido_prompt = cfg.get_fido_prompt();
                     let fido_presence_prompt = cfg.get_fido_presence_prompt();
@@ -819,6 +853,7 @@ impl PamHooks for PamKanidm {
                         &fido_presence_prompt,
                     ) {
                         Ok(assertion) => assertion,
+                        Err(PamResultCode::PAM_ABORT) => return PamResultCode::PAM_ABORT,
                         Err(e) => {
                             msg_printer.print_text(&tr_fmt(
                                 "{code}: {message}\nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
@@ -1103,6 +1138,20 @@ impl PamHooks for PamKanidm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_should_render_terminal_qr_only_for_local_terminal_pam() {
+        assert!(should_render_terminal_qr("login", false, true, false));
+        assert!(should_render_terminal_qr("login", false, false, true));
+        assert!(!should_render_terminal_qr("login", false, false, false));
+        assert!(!should_render_terminal_qr("remote:sshd", true, true, true));
+        assert!(!should_render_terminal_qr(
+            "gdm-password",
+            false,
+            true,
+            true
+        ));
+    }
 
     #[test]
     fn test_should_capture_keyring_secret_pin_prompts() {
