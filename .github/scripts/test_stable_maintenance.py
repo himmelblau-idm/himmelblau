@@ -26,6 +26,8 @@ SCRIPT = Path(__file__).with_name("stable_maintenance.py")
 DOCKERFILE = SCRIPT.parent.parent / "stable-maintenance.Dockerfile"
 ORPHAN_FIXTURE_FAILURE = "grandchild {orphan} survived the process-group kill"
 WORKFLOW = SCRIPT.parent.parent / "workflows" / "stable-maintenance.yml"
+STAGE_WORKFLOW = WORKFLOW.with_name("stable-maintenance-stage.yml")
+BRANCH_WORKFLOW = WORKFLOW.with_name("stable-maintenance-branch.yml")
 SPEC = importlib.util.spec_from_file_location("stable_maintenance", SCRIPT)
 assert SPEC and SPEC.loader
 sm = importlib.util.module_from_spec(SPEC)
@@ -1133,7 +1135,7 @@ sys.exit(int(sys.argv[1]))
         )
 
     def test_workflow_uses_runtime_paths_and_containerized_tools(self):
-        workflow = WORKFLOW.read_text()
+        workflow = STAGE_WORKFLOW.read_text()
         self.assertNotIn("MAINTENANCE_PROJECT_CARGO_HOME: ${{ runner.temp }}", workflow)
         self.assertNotIn("STATE_DIR: ${{ runner.temp }}/stable-maintenance\n", workflow)
         self.assertIn("MAINTENANCE_PROJECT_CARGO_HOME=%s", workflow)
@@ -1172,7 +1174,7 @@ sys.exit(int(sys.argv[1]))
         self.assertIn("permission-workflows: write", workflow)
         self.assertIn("GITHUB_TOKEN: ${{ steps.publish-token.outputs.token }}", workflow)
 
-        concurrency = maintain_job.split("    concurrency:\n", 1)[1].split("    env:\n", 1)[0]
+        concurrency = WORKFLOW.read_text().split("    concurrency:\n", 1)[1].split("    uses:", 1)[0]
         self.assertIn("group: stable-maintenance-azure-quota\n", concurrency)
         self.assertNotIn("${{", concurrency)
         self.assertIn("cancel-in-progress: false\n", concurrency)
@@ -1208,7 +1210,7 @@ sys.exit(int(sys.argv[1]))
         # Exercise the exact production function/filter with real APT transport,
         # replacing only installation's entry point with apt-helper download-file.
         probe_shell = install_shell.split('echo "apt-provision: stage=update"', 1)[0] + 'apt_get "$@"'
-        build_step = WORKFLOW.read_text().split(
+        build_step = STAGE_WORKFLOW.read_text().split(
             "      - name: Build pinned maintenance image without credentials\n", 1,
         )[1].split("\n      - name:", 1)[0]
         self.assertIn("timeout-minutes: 45", build_step)
@@ -4494,6 +4496,359 @@ class MaintenanceHistoryTests(unittest.TestCase):
                     candidates = runner.git(["rev-list", f"{through}..{main}"]).stdout.splitlines()
                     self.assertEqual(candidates, [main] if pending_key else [])
                     self.assertIn('version = "4.0.5"', (root / "Cargo.toml").read_text())
+
+
+class CheckpointMaintenanceTests(unittest.TestCase):
+    repository = MaintenanceHistoryTests.repository
+    commit = MaintenanceHistoryTests.commit
+
+    def test_workflow_has_ordered_fresh_jobs_and_only_final_publication(self):
+        branch = BRANCH_WORKFLOW.read_text()
+        stage = STAGE_WORKFLOW.read_text()
+        stages = (*sm.CHECKPOINT_STAGES, "final")
+        for previous, current in zip(stages, stages[1:]):
+            block = branch.split(f"\n  {current}:\n", 1)[1].split("\n\n", 1)[0]
+            self.assertIn(f"needs: {previous}", block)
+            self.assertIn(f"previous-stage: {previous}", block)
+            for field in ("head", "digest", "ref", "artifact"):
+                self.assertIn(f"needs.{previous}.outputs.{field}", block)
+        self.assertEqual(branch.count("uses: ./.github/workflows/stable-maintenance-stage.yml"), 7)
+        self.assertIn("MAINTENANCE_TOOLING_COMMIT: ${{ github.sha }}", stage)
+        self.assertIn("run: env -u MAINTENANCE_TOOLING_COMMIT python3 tooling/.github/scripts/test_stable_maintenance.py", stage)
+        self.assertNotIn("workflow_run:", stage + branch + WORKFLOW.read_text())
+        self.assertNotIn("continue-on-error:", stage + branch)
+        for name in ("Release —", "Validate —", "Create scoped publication token", "Publish —"):
+            block = stage.split("      - name: " + name, 1)[1].split("\n      - name:", 1)[0]
+            self.assertIn("inputs.stage == 'final'", block)
+        checkpoint = stage.split("      - name: Create scoped checkpoint token", 1)[1].split("      - name: Checkpoint", 1)[0]
+        self.assertNotIn("permission-pull-requests: write", checkpoint)
+        self.assertIn("if-no-files-found: error", stage)
+        self.assertIn("ref: ${{ github.sha }}", stage)
+        self.assertNotIn("ref: ${{ inputs.checkpoint-ref }}", stage)
+
+    def test_checkpoint_round_trip_exact_commit_and_data_only_state(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}):
+            root = Path(tmp); runner = self.repository(root / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "fix.rs").write_text("fn fixed() {}\n")
+            main = self.commit(runner, "Fix source")
+            remote = root / "remote.git"
+            runner.git(["clone", "--bare", str(runner.root), str(remote)])
+            runner.git(["remote", "set-url", "origin", str(remote)])
+            runner.git(["checkout", "stable-4.x"])
+            runner.git(["cherry-pick", "-x", main])
+            staged = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state = sm.State(root / "state")
+            state.save({"branch": "stable-4.x", "main_head": main, "original_head": baseline,
+                        "cutoff": baseline, "started_at": "2026-10-17T00:00:00Z", "last_phase": "backports",
+                        "automation_branch": sm.AUTOMATION_PREFIX + "test", "vet_accepted": [{"crate": "ok", "old": "1.0.0", "new": "1.0.1"}],
+                        "gate_results": ["fake gates"], "validated_head": staged, "raw_model": "SECRET"})
+            output = root / "output"
+            env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "MAINTENANCE_TOOLING_COMMIT": main,
+                   "GITHUB_TOKEN": "SECRET", "GITHUB_OUTPUT": str(output), "GITHUB_REPOSITORY": "himmelblau-idm/himmelblau"}
+            def push(current, directory, repo, ref, token, *, source_sha="HEAD"):
+                current.git(["push", "origin", f"{source_sha}:refs/heads/{ref}"])
+            args = mock.Mock(branch="stable-4.x", stage="backports-1")
+            sm._HTTP_NEXT_REQUEST["secret.cognitiveservices.azure.com"] = sm.time.monotonic() + 120
+            with mock.patch.dict(os.environ, env), mock.patch.object(sm, "secure_github_push", side_effect=push):
+                sm.phase_checkpoint(args, state, runner)
+            outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+            payload = (state.directory / "checkpoint.json").read_bytes()
+            transport = json.loads(payload)["transport"]
+            self.assertEqual(runner.git(["ls-tree", "-r", transport]).stdout, "")
+            self.assertEqual(runner.git(["rev-parse", transport + "^"]).stdout.strip(), staged)
+            self.assertNotIn(b"SECRET", payload)
+            self.assertNotIn(b"secret.cognitiveservices", payload)
+            self.assertNotIn(b"gate_results", payload)
+            self.assertNotIn(b"validated_head", payload)
+            clone = root / "fresh"
+            runner.git(["clone", "--branch", "stable-4.x", str(remote), str(clone)])
+            fresh = sm.Runner(clone)
+            resumed = sm.State(root / "resumed")
+            (resumed.directory / "checkpoint.json").write_bytes(payload)
+            resume = mock.Mock(branch="stable-4.x", stage="backports-1", expected_head=outputs["head"],
+                               expected_digest=outputs["digest"], checkpoint_ref=outputs["ref"])
+            sm._HTTP_NEXT_REQUEST.clear()
+            with mock.patch.dict(os.environ, env):
+                sm.phase_resume(resume, resumed, fresh)
+            self.assertEqual(fresh.git(["rev-parse", "HEAD"]).stdout.strip(), staged)
+            self.assertEqual(fresh.git(["branch", "--show-current"]).stdout.strip(), "stable-4.x")
+            self.assertEqual(resumed.load()["vet_accepted"], state.load()["vet_accepted"])
+            self.assertTrue(resumed.load()["checkpointed"])
+            self.assertNotIn("gate_results", resumed.load())
+            self.assertGreater(sm._HTTP_NEXT_REQUEST["*"] - sm.time.monotonic(), 100)
+            # Matching artifact name is insufficient: changed bytes, another
+            # stage/run/tooling snapshot, changed remote refs, and gate claims fail.
+            for change in ("bytes", "stage", "run", "tooling", "ref", "ref-moved", "stable", "gates", "transport-tree", "transport-parent", "cooldown"):
+                with self.subTest(change=change):
+                    candidate = json.loads(payload)
+                    altered_env = dict(env)
+                    args2 = mock.Mock(branch="stable-4.x", stage="backports-1", expected_head=outputs["head"],
+                                      expected_digest=outputs["digest"], checkpoint_ref=outputs["ref"])
+                    if change == "stage": args2.stage = "vet"
+                    if change == "run": altered_env["GITHUB_RUN_ID"] = "124"
+                    if change == "tooling": altered_env["MAINTENANCE_TOOLING_COMMIT"] = "a" * 40
+                    if change == "ref": args2.expected_head = baseline
+                    if change == "ref-moved":
+                        sm.Runner(remote).git(["update-ref", f"refs/heads/{outputs['ref']}", main])
+                    if change == "stable":
+                        fresh.git(["push", "origin", f"{main}:refs/heads/stable-4.x"])
+                    if change == "gates": candidate["state"]["gate_results"] = ["forged"]
+                    if change == "cooldown": candidate["state"]["network_not_before"] = float("nan")
+                    if change.startswith("transport-"):
+                        tree = runner.git(["rev-parse", staged + "^{tree}"]).stdout.strip() if change == "transport-tree" else runner.git(["mktree"], input_text="").stdout.strip()
+                        parent = staged if change == "transport-tree" else baseline
+                        candidate["transport"] = runner.git(["commit-tree", tree, "-p", parent, "-m", "Invalid transport"]).stdout.strip()
+                        runner.git(["push", "--force", "origin", f"{candidate['transport']}:refs/heads/{outputs['ref']}"])
+                    raw = json.dumps(candidate).encode() if change in {"bytes", "gates", "transport-tree", "transport-parent", "cooldown"} else payload
+                    if change in {"gates", "transport-tree", "transport-parent", "cooldown"}: args2.expected_digest = hashlib.sha256(raw).hexdigest()
+                    (resumed.directory / "checkpoint.json").write_bytes(raw)
+                    with mock.patch.dict(os.environ, altered_env), self.assertRaises(sm.MaintenanceError):
+                        sm.phase_resume(args2, resumed, fresh)
+                    if change == "stable":
+                        fresh.git(["push", "--force", "origin", f"{baseline}:refs/heads/stable-4.x"])
+                    if change == "ref-moved" or change.startswith("transport-"):
+                        sm.Runner(remote).git(["update-ref", f"refs/heads/{outputs['ref']}", transport])
+
+    def test_checkpoint_rejects_failed_inflight_dirty_and_incomplete_phases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(root / "state")
+            env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "MAINTENANCE_TOOLING_COMMIT": head}
+            for problem in ("failed_phase", "backport_inflight", "dirty", "wrong-phase"):
+                value = {"branch": "stable-4.x", "main_head": head, "original_head": head, "last_phase": "backports"}
+                if problem in {"failed_phase", "backport_inflight"}: value[problem] = "failed"
+                if problem == "dirty": (runner.root / "untracked.rs").write_text("dirty\n")
+                if problem == "wrong-phase": value["last_phase"] = "resume"
+                state.save(value)
+                with self.subTest(problem=problem), mock.patch.dict(os.environ, env), \
+                     mock.patch.object(sm, "secure_github_push") as push, self.assertRaises(sm.MaintenanceError):
+                    sm.phase_checkpoint(mock.Mock(branch="stable-4.x", stage="backports-1"), state, runner)
+                push.assert_not_called()
+                if problem == "dirty": (runner.root / "untracked.rs").unlink()
+
+    def test_cooldown_survives_separate_phase_processes_and_job_handoff(self):
+        # Exercise main(), not only phase functions: the workflow starts a new
+        # interpreter for each phase, including checkpoint, resume and prepare.
+        harness = r'''
+import hashlib, importlib.util, json, os, sys
+from pathlib import Path
+from unittest import mock
+spec = importlib.util.spec_from_file_location("stable_maintenance", sys.argv[1])
+sm = importlib.util.module_from_spec(spec); sys.modules[spec.name] = sm; spec.loader.exec_module(sm)
+repo, directory, phase, mode = sys.argv[2:6]
+clock = [100.0]
+sleeps = []
+def sleep(delay):
+    sleeps.append(delay); clock[0] += delay
+def work(args, state, runner):
+    sm._HTTP_NEXT_REQUEST["secret.azure.invalid"] = clock[0] + 120
+    state.event("backports", "completed candidate processing")
+    if mode == "failure": raise sm.MaintenanceError("fixture failure")
+def push(runner, directory, repo, ref, token, *, source_sha="HEAD"):
+    runner.git(["push", "origin", f"{source_sha}:refs/heads/{ref}"])
+args = ["--repo-dir", repo, "--state-dir", directory, phase, "--branch", "stable-4.x"]
+if phase in {"checkpoint", "resume"}: args += ["--stage", "backports-1"]
+if phase == "resume":
+    outputs = dict(line.split("=", 1) for line in Path(os.environ["GITHUB_OUTPUT"]).read_text().splitlines())
+    args += ["--expected-head", outputs["head"], "--expected-digest", outputs["digest"], "--checkpoint-ref", outputs["ref"]]
+with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=lambda: 1000 + clock[0] - 100, sleep=sleep)), \
+     mock.patch.dict(sm.PHASES, {"backports": work}), \
+     mock.patch.object(sm, "secure_github_push", side_effect=push), \
+     mock.patch.object(sm, "contained_repo_command") as command:
+    result = sm.main(args)
+    print(json.dumps({"result": result, "sleeps": sleeps, "commands": command.call_count,
+                      "deadline": sm.State(Path(directory)).load().get("network_not_before")}))
+'''
+        for mode in ("success", "failure"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); runner = self.repository(root / "repo")
+                head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                remote = root / "remote.git"
+                runner.git(["clone", "--bare", str(runner.root), str(remote)])
+                runner.git(["remote", "set-url", "origin", str(remote)])
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(root / "state")
+                state.save({"branch": "stable-4.x", "main_head": head, "original_head": head, "cutoff": head})
+                env = dict(os.environ, GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1",
+                           MAINTENANCE_TOOLING_COMMIT=head, MAINTENANCE_TOOLING_SHA256=hashlib.sha256(SCRIPT.read_bytes()).hexdigest(),
+                           GITHUB_OUTPUT=str(root / "output"), GITHUB_REPOSITORY="himmelblau-idm/himmelblau")
+                def run(phase, source=runner.root, progress=state.directory):
+                    result = subprocess.run([sys.executable, "-B", "-c", harness, str(SCRIPT), str(source), str(progress), phase, mode],
+                                            env=env, text=True, capture_output=True, check=True)
+                    return json.loads(result.stdout.splitlines()[-1])
+                result = run("backports")
+                self.assertEqual(result["result"], 0 if mode == "success" else 1)
+                self.assertEqual(result["deadline"], 1120)
+                self.assertNotIn("secret.azure.invalid", state.path.read_text())
+                if mode == "failure":
+                    self.assertEqual(state.load()["failed_phase"], "backports")
+                    # Even the failure-report process must not erase cooldown.
+                    self.assertEqual(run("report")["deadline"], 1120)
+                    continue
+                self.assertEqual(run("checkpoint")["result"], 0)
+                payload = (state.directory / "checkpoint.json").read_bytes()
+                self.assertEqual(json.loads(payload)["state"]["network_not_before"], 1120)
+                clone = root / "fresh"
+                runner.git(["clone", "--branch", "stable-4.x", str(remote), str(clone)])
+                resumed = sm.State(root / "resumed")
+                (resumed.directory / "checkpoint.json").write_bytes(payload)
+                self.assertEqual(run("resume", clone, resumed.directory)["result"], 0)
+                result = run("prepare", clone, resumed.directory)
+                self.assertEqual(result["result"], 0)
+                self.assertEqual(result["sleeps"], [120])
+                self.assertEqual(result["commands"], 1)
+
+    def test_cooldown_snapshot_keeps_later_deadline_and_rejects_invalid_state(self):
+        with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}), \
+             mock.patch.object(sm, "time", mock.Mock(time=lambda: 1000, monotonic=lambda: 100)):
+            value = {"network_not_before": 1500}
+            self.assertEqual(sm.snapshot_network_deadline(value), 1500)
+            sm._HTTP_NEXT_REQUEST["service.invalid"] = 200
+            self.assertEqual(sm.snapshot_network_deadline(value), 1500)
+            sm._HTTP_NEXT_REQUEST["service.invalid"] = 700
+            self.assertEqual(sm.snapshot_network_deadline(value), 1600)
+            sm.restore_network_cooldown(value)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["*"], 600)
+            for invalid in (True, None, "1500", -1, float("nan"), float("inf")):
+                with self.subTest(invalid=invalid), self.assertRaises(sm.MaintenanceError):
+                    sm.restore_network_cooldown({"network_not_before": invalid})
+
+    def test_batch_deadline_reverts_only_inflight_and_next_batch_sees_prefix(self):
+        for expired_at in ("review", "build", "format"):
+            with self.subTest(expired_at=expired_at), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                (runner.root / "first.rs").write_text("fn first() {}\n")
+                first = self.commit(runner, "Fix first")
+                (runner.root / "next.rs").write_text("fn next() {}\n")
+                second = self.commit(runner, "Fix next")
+                (runner.root / "later.rs").write_text("fn later() {}\n")
+                third = self.commit(runner, "Fix independent later")
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": base, "main_head": third})
+                ai = mock.Mock()
+                def review(instructions, data, schema, name):
+                    if "Fix next" in data and expired_at == "review":
+                        raise sm.BackportBatchExpired()
+                    return {"decision": True, "reason": "bug-fix"}
+                ai.call.side_effect = review
+                def build(current):
+                    if (current.root / "next.rs").exists() and expired_at == "build":
+                        raise sm.BackportBatchExpired()
+                    return sm.CommandResult(0, "", "")
+                def fmt(current, pre):
+                    if (current.root / "next.rs").exists() and expired_at == "format":
+                        raise sm.BackportBatchExpired()
+                with mock.patch.object(sm, "AzureAI", return_value=ai), mock.patch.object(sm, "locked_build", side_effect=build), \
+                     mock.patch.object(sm, "format_backport", side_effect=fmt), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                    sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                saved = state.load()
+                self.assertEqual(saved["backports_applied"], [first])
+                self.assertEqual(saved["backport_cursor"], 2)
+                self.assertEqual(saved["backport_remaining"], [third])
+                self.assertEqual(saved["backports_deferred"], [second])
+                self.assertNotIn("backport_inflight", saved)
+                self.assertFalse((runner.root / "next.rs").exists())
+                self.assertEqual(sm.maintenance_main_through(saved), base)
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                with mock.patch.object(sm, "AzureAI", return_value=mock.Mock(call=mock.Mock(return_value={"decision": True, "reason": "bug-fix"}))), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as builds, \
+                     mock.patch.object(sm, "format_backport"), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                    sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                self.assertEqual(state.load()["backports_applied"], [first, third])
+                self.assertEqual(state.load()["backport_remaining"], [])
+                self.assertEqual(state.load()["backports_deferred"], [second])
+                self.assertEqual(sm.maintenance_main_through(state.load()), base)
+                self.assertEqual(builds.call_count, 2)  # Fresh baseline plus new attempt.
+
+    def test_batch_budget_prevents_long_sleep_and_restores_global_deadline(self):
+        with mock.patch.object(sm, "BACKPORT_BATCH_DEADLINE", 10), mock.patch.object(sm.time, "monotonic", return_value=5), \
+             mock.patch.object(sm.time, "sleep") as sleep:
+            with self.assertRaises(sm.BackportBatchExpired):
+                sm.NetworkWaitBudget(5400).sleep(6, "network budget")
+            sleep.assert_not_called()
+        with mock.patch.object(sm, "_phase_backport_batch", side_effect=sm.MaintenanceError("fatal")):
+            with self.assertRaises(sm.MaintenanceError):
+                sm.phase_backports(mock.Mock(budget_seconds=3), mock.Mock(), mock.Mock())
+        self.assertIsNone(sm.BACKPORT_BATCH_DEADLINE)
+
+    def test_unstarted_candidate_is_handed_off_without_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "fix.rs").write_text("fn fixed() {}\n")
+            fix = self.commit(runner, "Fix source")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": base, "main_head": fix})
+            with mock.patch.object(sm, "backport_time_remaining", side_effect=sm.BackportBatchExpired), \
+                 mock.patch.object(sm, "AzureAI") as ai, mock.patch.object(sm, "locked_build") as build:
+                sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(state.load()["backport_remaining"], [fix])
+            self.assertEqual(state.load()["backport_cursor"], 0)
+            self.assertFalse(state.load().get("backports_deferred"))
+            self.assertFalse(state.load().get("backport_outcomes"))
+            ai.assert_not_called(); build.assert_not_called()
+
+    def test_batch_deadline_bounds_container_and_still_disposes_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            cache = root / "cargo"; (cache / "registry").mkdir(parents=True)
+            clock = [0.0]
+            calls = []
+            def run(argv, **kwargs):
+                calls.append((argv, kwargs))
+                if "run" in argv:
+                    self.assertEqual(kwargs["timeout"], 3)
+                    clock[0] = 4
+                    raise sm.CommandCaptureError("timeout", "timeout", sm.CommandResult(-9, "", ""))
+                return sm.CommandResult(0, "", "")
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cache), "MAINTENANCE_BUILD_IMAGE": "test"}), \
+                 mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                 mock.patch.object(sm, "BACKPORT_BATCH_DEADLINE", 3), \
+                 mock.patch.object(sm.time, "monotonic", side_effect=lambda: clock[0]), \
+                 mock.patch.object(runner, "run", side_effect=run):
+                with self.assertRaises(sm.BackportBatchExpired):
+                    sm.contained_repo_command(runner, ["cargo", "fmt", "--all"], network=False,
+                                              source_rw=True, cache_rw=False)
+            self.assertEqual(calls[-1][0][1:3], ["rm", "-f"])
+            self.assertEqual(calls[-1][1]["timeout"], 60)
+
+    def test_checkpointed_publication_rejects_unvalidated_or_changed_tree(self):
+        runner = mock.Mock()
+        runner.git.return_value = sm.CommandResult(0, "a" * 40 + "\n", "")
+        state = mock.Mock()
+        for head in (None, "b" * 40):
+            state.load.return_value = {"checkpointed": True, "validated_head": head}
+            with self.assertRaisesRegex(sm.MaintenanceError, "exact clean HEAD"), \
+                 mock.patch.object(sm, "secure_github_push") as push:
+                sm.phase_publish(mock.Mock(), state, runner)
+            push.assert_not_called()
+
+    def test_fresh_final_validation_binds_approval_to_exact_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            state = sm.State(Path(tmp) / "state")
+            state.save({"checkpointed": True, "gate_results": ["old-tree"], "validated_head": "b" * 40})
+            with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "locked_vet_gaps", return_value=[]):
+                sm.phase_validate(mock.Mock(), state, runner)
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            self.assertEqual(state.load()["validated_head"], head)
+            self.assertNotIn("old-tree", state.load()["gate_results"])
+            (runner.root / "late.rs").write_text("unvalidated change\n")
+            for committed in (False, True):
+                if committed: self.commit(runner, "Later unvalidated change")
+                with self.subTest(committed=committed), self.assertRaisesRegex(sm.MaintenanceError, "exact clean HEAD"), \
+                     mock.patch.object(sm, "secure_github_push") as push:
+                    sm.phase_publish(mock.Mock(), state, runner)
+                push.assert_not_called()
 
 
 class SequentialMaintenanceTests(unittest.TestCase):

@@ -92,6 +92,34 @@ NON_FIX_SUBJECTS = (
     re.compile(r"^feat\(i18n\): add\b", re.I),
 )
 SENSITIVE_ENV = re.compile(r"(?i)(token|secret|password|api[_-]?key|authorization)")
+BACKPORT_BATCH_DEADLINE: float | None = None
+CHECKPOINT_STAGES = ("dependencies", "vet", "backports-1", "backports-2", "backports-3", "backports-4")
+# Only structured progress needed by later phases leaves the runner. In
+# particular, do not transfer subprocess/model captures, errors or gate claims.
+CHECKPOINT_KEYS = {
+    "branch", "original_head", "main_head", "cutoff", "started_at", "automation_branch",
+    "backports_already_present", "post_import_unvetted", "post_import_covered_count", "already_covered",
+    "dependency_updates", "dependency_candidates", "dependency_manifest_paths", "unresolved_advisories",
+    "quarantine_exclusions", "dependency_rejected", "vet_accepted", "vet_rejected",
+    "dependabot_imported", "dependabot_skipped", "backport_candidates", "backport_skipped",
+    "backport_review_required", "backports_applied", "backports_conflict_skipped", "backports_build_failed",
+    "backports_deferred", "backports_adapted", "backports_repair_failed", "backports_conflict_details",
+    "backport_summaries", "backport_outcomes", "backport_cursor", "backport_remaining",
+    "network_not_before",
+}
+
+
+class BackportBatchExpired(BaseException):
+    """A handoff, not a rejected fix; bypass ordinary service-error handlers."""
+
+
+def backport_time_remaining() -> float | None:
+    if BACKPORT_BATCH_DEADLINE is None:
+        return None
+    remaining = BACKPORT_BATCH_DEADLINE - time.monotonic()
+    if remaining <= 0:
+        raise BackportBatchExpired()
+    return remaining
 
 
 class MaintenanceError(RuntimeError):
@@ -379,7 +407,7 @@ def require_branch(value: str | None) -> str:
 
 
 def require_sha(value: str) -> str:
-    if not SHA_RE.fullmatch(value):
+    if not isinstance(value, str) or not SHA_RE.fullmatch(value):
         raise MaintenanceError("invalid commit SHA")
     return value
 
@@ -734,6 +762,9 @@ def validate_schema_result(value: Any, schema: Mapping[str, Any]) -> dict[str, A
 
 
 def _http_once(request: urllib.request.Request, timeout: int, max_bytes: int) -> bytes:
+    remaining = backport_time_remaining()
+    if remaining is not None:
+        timeout = min(timeout, remaining)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             if response.status < 200 or response.status >= 300:
@@ -775,6 +806,9 @@ class NetworkWaitBudget:
     waited: float = 0.0
 
     def sleep(self, delay: float, message: str) -> None:
+        remaining = backport_time_remaining()
+        if remaining is not None and delay >= remaining:
+            raise BackportBatchExpired()
         if self.waited + delay > self.limit:
             raise NetworkWaitBudgetExceeded(message)
         time.sleep(delay)
@@ -787,6 +821,7 @@ def _http_read(request: urllib.request.Request, timeout: int, max_bytes: int, at
     service = origin if origin in {"crates.io", "static.crates.io", "api.github.com"} else "remote"
     budget = wait_budget if wait_budget is not None else NetworkWaitBudget(MAX_HTTP_WAIT_SECONDS)
     for attempt in range(attempts):
+        backport_time_remaining()
         while True:
             with _HTTP_LOCK:
                 now = time.monotonic()
@@ -1596,13 +1631,18 @@ def contained_repo_command(
         # Workspace JSON includes warnings and artifact metadata as well as
         # errors. Give that command headroom without lifting all output limits.
         kwargs = {"retain_tail": True} if workspace_tests else {}
+        remaining = backport_time_remaining()
+        if remaining is not None:
+            timeout = min(timeout, remaining)
         result = runner.run(argv, timeout=timeout, check=check,
                             max_output=MAX_BUILD_OUTPUT_BYTES if json_build else 4 * 1024 * 1024,
                             **kwargs)
+        backport_time_remaining()
         if workspace_tests and result.returncode:
             report_test_container_state(runner, engine, container_name)
         return result
     except MaintenanceError:
+        backport_time_remaining()
         if workspace_tests:
             report_test_container_state(runner, engine, container_name)
         raise
@@ -2240,7 +2280,7 @@ def phase_initialize(args: argparse.Namespace, state: State, runner: Runner) -> 
     remote_stable = require_sha(runner.git(["rev-parse", f"origin/{branch}"]).stdout.strip())
     if current != remote_stable:
         raise MaintenanceError("local stable HEAD does not exactly match the fetched remote branch")
-    main = require_sha(runner.git(["rev-parse", "origin/main"]).stdout.strip())
+    main = require_sha(os.environ.get("MAINTENANCE_TOOLING_COMMIT") or runner.git(["rev-parse", "origin/main"]).stdout.strip())
     previous = runner.git(["log", "--format=%B%x00", f"origin/{branch}"], max_output=8 * 1024 * 1024).stdout
     cutoff = latest_marker_sha(previous)
     if cutoff is None:
@@ -3560,6 +3600,21 @@ def phase_apply_backports(
 
 
 def phase_backports(args: argparse.Namespace, state: State, runner: Runner) -> None:
+    global BACKPORT_BATCH_DEADLINE
+    budget = getattr(args, "budget_seconds", None)
+    if type(budget) is not int:
+        budget = 7200
+    if not 1 <= budget <= 7200:
+        raise MaintenanceError("backport batch budget must be between 1 and 7200 seconds")
+    previous = BACKPORT_BATCH_DEADLINE
+    BACKPORT_BATCH_DEADLINE = time.monotonic() + budget
+    try:
+        _phase_backport_batch(args, state, runner)
+    finally:
+        BACKPORT_BATCH_DEADLINE = previous
+
+
+def _phase_backport_batch(args: argparse.Namespace, state: State, runner: Runner) -> None:
     """Classify, adapt, validate and format one commit before considering the next."""
     branch = require_branch(args.branch)
     runner.git(["diff", "--quiet"]); runner.git(["diff", "--cached", "--quiet"])
@@ -3571,17 +3626,27 @@ def phase_backports(args: argparse.Namespace, state: State, runner: Runner) -> N
     inventory = runner.git(["rev-list", "--topo-order", "--reverse", f"{require_sha(initial['cutoff'])}..{require_sha(initial['main_head'])}"]).stdout.splitlines()
     keys = ("backport_candidates", "backport_skipped", "backport_review_required", "backports_applied",
             "backports_conflict_skipped", "backports_build_failed", "backports_deferred", "backports_adapted", "backports_repair_failed", "backports_conflict_details")
-    aggregate = {key: [] for key in keys}
-    summaries = {}; outcomes = []; baseline_checked = False
-    for sha in inventory:
+    aggregate = {key: list(initial.get(key, [])) for key in keys}
+    summaries = dict(initial.get("backport_summaries", {}))
+    outcomes = list(initial.get("backport_outcomes", [])); baseline_checked = False
+    cursor = initial.get("backport_cursor", 0)
+    if type(cursor) is not int or cursor < 0 or cursor > len(inventory) or [row["sha"] for row in outcomes] != inventory[:cursor]:
+        raise MaintenanceError("backport checkpoint does not match the immutable inventory")
+    for index, sha in enumerate(inventory[cursor:], cursor):
         require_sha(sha)
+        # Save the last fully accepted tree/state, not a half-applied attempt.
+        previous_value = state.load()
+        pre_head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
         summaries[sha] = display_summary(_commit_record(runner, sha)["subject"])
         # Persist the in-flight item before any network/build operation. If the
         # phase is interrupted, report it as unresolved rather than complete.
         value = state.load(); value.update(aggregate)
         value["backport_inflight"] = sha; value["backport_summaries"] = summaries
         value["backport_outcomes"] = outcomes; state.save(value)
+        started = False
         try:
+            backport_time_remaining()
+            started = True
             phase_classify_backports(args, state, runner, candidates=[sha], compact=True)
             decision = state.load()
             for key in keys:
@@ -3591,6 +3656,28 @@ def phase_backports(args: argparse.Namespace, state: State, runner: Runner) -> N
                 phase_apply_backports(args, state, runner, adaptive=True, baseline_checked=baseline_checked)
                 decision = state.load()
                 baseline_checked = baseline_checked or bool(decision.get("backports_applied") or decision.get("backports_deferred"))
+            backport_time_remaining()
+        except BackportBatchExpired:
+            runner.git(["cherry-pick", "--abort"], check=False)
+            runner.git(["reset", "--hard", pre_head])
+            if runner.git(["status", "--porcelain"]).stdout:
+                raise MaintenanceError("backport handoff rollback left an unclean tree")
+            # A timed-out attempt stays eligible on the next maintenance run,
+            # but must not starve later independent candidates in every batch.
+            next_index = index
+            if started:
+                previous_value.setdefault("backports_deferred", []).append(sha)
+                previous_value.setdefault("backport_review_required", []).append({"sha": sha, "reason": "batch time budget exceeded"})
+                previous_value.setdefault("backport_outcomes", []).append({
+                    "sha": sha, "summary": summaries[sha], "outcome": "pending", "reason": "batch time budget exceeded",
+                })
+                previous_value["backport_summaries"] = summaries
+                next_index += 1
+            previous_value["backport_cursor"] = next_index
+            previous_value["backport_remaining"] = inventory[next_index:]
+            state.save(previous_value)
+            state.event("backports", "batch time budget reached; remaining fixes retained", remaining=len(inventory) - next_index)
+            return
         except Exception:
             value = state.load(); value.update(aggregate)
             value["backport_inflight"] = sha; state.save(value)
@@ -3614,6 +3701,10 @@ def phase_backports(args: argparse.Namespace, state: State, runner: Runner) -> N
         print("backport-result: " + json.dumps(row, separators=(",", ":")), file=sys.stderr)
         value = state.load(); value.update(aggregate); value.pop("backport_inflight", None)
         value["backport_summaries"] = summaries; value["backport_outcomes"] = outcomes; state.save(value)
+        value["backport_cursor"] = index + 1
+        value["backport_remaining"] = inventory[index + 1:]
+        state.save(value)
+    value = state.load(); value["backport_remaining"] = []; state.save(value)
     state.event("backports", "ordered backports processed", examined=len(inventory), applied=len(aggregate["backports_applied"]),
                 pending=sum(row["outcome"] == "pending" for row in outcomes))
 
@@ -3644,7 +3735,7 @@ def crate2nix_command() -> list[str]:
 
 def maintenance_main_through(value: Mapping[str, Any]) -> str:
     """Keep unresolved backports eligible regardless of publication type."""
-    pending = value.get("backport_review_required") or value.get("backports_deferred") or value.get("backport_inflight")
+    pending = value.get("backport_review_required") or value.get("backports_deferred") or value.get("backport_inflight") or value.get("backport_remaining")
     return require_sha(str(value["cutoff"] if pending else value["main_head"]))
 
 
@@ -3688,6 +3779,7 @@ def phase_release(args: argparse.Namespace, state: State, runner: Runner) -> Non
 def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> None:
     if state.load().get("no_changes"):
         state.event("validate", "validation skipped for empty run"); return
+    value = state.load(); value.pop("gate_results", None); value.pop("validated_head", None); state.save(value)
     clean_target = state.directory / "clean-target"
     result = locked_build(runner, target_dir=clean_target)
     if result.returncode:
@@ -3723,14 +3815,17 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
     if runner.git(["status", "--porcelain"]).stdout:
         raise MaintenanceError("final validation left repository changes")
     value = state.load(); value.setdefault("gate_results", []).append("repository-clean: passed"); state.save(value)
+    value = state.load(); value["validated_head"] = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip()); state.save(value)
     state.event("validate", "all final gates passed")
 
 
-def secure_github_push(runner: Runner, state_dir: Path, repo: str, branch: str, token: str) -> None:
+def secure_github_push(runner: Runner, state_dir: Path, repo: str, branch: str, token: str, *, source_sha: str = "HEAD") -> None:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise MaintenanceError("invalid GitHub repository for push")
     if not branch.startswith(AUTOMATION_PREFIX) or not token:
         raise MaintenanceError("invalid authenticated push parameters")
+    if source_sha != "HEAD":
+        require_sha(source_sha)
     askpass_dir = state_dir / f"askpass-{secrets.token_hex(8)}"
     askpass_dir.mkdir(mode=0o700)
     askpass = askpass_dir / "git-askpass"
@@ -3749,7 +3844,7 @@ def secure_github_push(runner: Runner, state_dir: Path, repo: str, branch: str, 
         runner.run(
             [
                 "git", "-c", "core.hooksPath=/dev/null", "push",
-                f"https://github.com/{repo}.git", f"HEAD:refs/heads/{branch}",
+                f"https://github.com/{repo}.git", f"{source_sha}:refs/heads/{branch}",
             ],
             timeout=600,
             private_env={"GIT_ASKPASS": str(askpass), "MAINTENANCE_GITHUB_PUSH_TOKEN": token},
@@ -3765,7 +3860,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
         "quarantine_exclusions", "dependency_updates", "dependency_rejected", "unresolved_advisories",
         "already_covered", "vet_accepted", "vet_rejected", "dependabot_imported", "dependabot_skipped",
         "backport_candidates", "backport_skipped", "backports_applied", "backports_conflict_skipped", "gate_results",
-        "backports_deferred",
+        "backports_deferred", "backport_remaining",
         "backports_build_failed",
     )
     lines: list[str] = []
@@ -3805,7 +3900,8 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         f"- Backports reverted after build failure: {len(value.get('backports_build_failed', []))}",
         f"- Backports requiring manual review: {len(value.get('backport_review_required', [])) + len(value.get('backports_deferred', []))}",
         f"- Dependabot PRs excluded: {len(value.get('dependabot_skipped', []))}; intentional quarantine: {len(value.get('quarantine_exclusions', []))}",
-        f"- Maintenance backlog: {'pending items remain' if value.get('backport_review_required') or value.get('backports_deferred') else 'all examined items accounted for'}",
+        f"- Unexamined fixes retained for retry: {len(value.get('backport_remaining', []))}",
+        f"- Maintenance backlog: {'pending items remain' if value.get('backport_review_required') or value.get('backports_deferred') or value.get('backport_remaining') else 'all examined items accounted for'}",
     ]
     ending = [
         "", run_link, "", "## Testing", "",
@@ -3893,6 +3989,13 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
     value = state.load()
     if value.get("no_changes"):
         state.event("publish", "no changes; no PR created"); return
+    if value.get("checkpointed"):
+        head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
+        if value.get("validated_head") != head or runner.git(["status", "--porcelain"]).stdout:
+            raise MaintenanceError("checkpoint publication requires final gates for the exact clean HEAD")
+        stable = runner.git(["ls-remote", "--exit-code", "origin", f"refs/heads/{require_branch(value['branch'])}"]).stdout.split()
+        if len(stable) != 2 or stable[0] != value["original_head"]:
+            raise MaintenanceError("stable branch advanced before publication")
     branch = value["automation_branch"]
     if not branch.startswith(AUTOMATION_PREFIX):
         raise MaintenanceError("unsafe automation branch name")
@@ -3949,7 +4052,9 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
         # sequential outcome table. Count each deferred commit only once.
         pending = len({row["sha"] for row in value.get("backport_review_required", [])}
                       | set(value.get("backports_deferred", [])))
-    lines.extend(["", f"Maintenance completion: **{'pending work remains' if pending or value.get('backport_inflight') else 'examined backlog accounted for'}**.",
+    pending += len(value.get("backport_remaining", []))
+    lines.extend(["", f"Unexamined backports retained for retry: {len(value.get('backport_remaining', []))}.",
+                  f"Maintenance completion: **{'pending work remains' if pending or value.get('backport_inflight') else 'examined backlog accounted for'}**.",
                   "Publication gates and maintenance completion are separate results."])
     if value.get("backport_inflight"):
         lines.append(f"Interrupted commit: `{require_sha(value['backport_inflight'])}`; retry required.")
@@ -3978,12 +4083,160 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
         print(report, end="")
 
 
+def persisted_network_deadline(value: Mapping[str, Any]) -> float:
+    deadline = value.get("network_not_before", 0)
+    if type(deadline) not in (int, float) or not 0 <= deadline < float("inf"):
+        raise MaintenanceError("invalid checkpoint cooldown")
+    return deadline
+
+
+def restore_network_cooldown(value: Mapping[str, Any]) -> None:
+    deadline = persisted_network_deadline(value)
+    with _HTTP_LOCK:
+        _HTTP_NEXT_REQUEST["*"] = max(_HTTP_NEXT_REQUEST.get("*", 0),
+                                      time.monotonic() + max(0, deadline - time.time()))
+
+
+def snapshot_network_deadline(value: Mapping[str, Any]) -> float:
+    # Phases run in separate interpreters. Never shorten a persisted deadline
+    # merely because this process has not made a network request yet.
+    persisted = persisted_network_deadline(value)
+    with _HTTP_LOCK:
+        cooldown = max(0.0, max(_HTTP_NEXT_REQUEST.values(), default=0) - time.monotonic())
+    return max(persisted, time.time() + cooldown)
+
+
+def phase_prepare(args: argparse.Namespace, state: State, runner: Runner) -> None:
+    """Recreate only pinned source payloads, never carry build artifacts/gates."""
+    delay = max(0.0, _HTTP_NEXT_REQUEST.get("*", 0) - time.monotonic())
+    if delay:
+        NetworkWaitBudget(MAX_HTTP_WAIT_SECONDS).sleep(delay, "checkpoint cooldown exceeds bounded wait budget")
+    contained_repo_command(runner, ["cargo", "fetch", "--locked"], network=True,
+                           source_rw=False, cache_rw=True, timeout=1800)
+    state.event("prepare", "prepared locked dependencies in fresh private cache")
+
+
+def checkpoint_identity(stage: str) -> tuple[str, str]:
+    run = os.environ.get("GITHUB_RUN_ID", "")
+    attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "")
+    if stage not in CHECKPOINT_STAGES or not re.fullmatch(r"[1-9][0-9]{0,19}", run) or not re.fullmatch(r"[1-9][0-9]{0,5}", attempt):
+        raise MaintenanceError("invalid maintenance checkpoint identity")
+    return run, attempt
+
+
+def checkpoint_output(**values: str) -> None:
+    output = os.environ.get("GITHUB_OUTPUT")
+    if not output:
+        raise MaintenanceError("checkpoint requires GitHub job outputs")
+    with open(output, "a", encoding="utf-8") as handle:
+        for key, value in values.items():
+            if not re.fullmatch(r"[A-Za-z0-9_./-]+", value):
+                raise MaintenanceError("unsafe checkpoint output")
+            handle.write(f"{key}={value}\n")
+
+
+def phase_checkpoint(args: argparse.Namespace, state: State, runner: Runner) -> None:
+    """Publish data-only progress at an immutable per-run/per-stage Git ref."""
+    branch = require_branch(args.branch)
+    stage = args.stage
+    run, attempt = checkpoint_identity(stage)
+    value = state.load()
+    if value.get("failed_phase") or value.get("backport_inflight") or runner.git(["status", "--porcelain"]).stdout:
+        raise MaintenanceError("cannot checkpoint incomplete or unclean maintenance")
+    expected_phase = "update-dependencies" if stage == "dependencies" else "import-dependabot" if stage == "vet" else "backports"
+    if value.get("last_phase") != expected_phase:
+        raise MaintenanceError("checkpoint phase did not complete")
+    if value.get("branch") != branch or runner.git(["branch", "--show-current"]).stdout.strip() != branch:
+        raise MaintenanceError("checkpoint branch mismatch")
+    head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
+    tooling = require_sha(os.environ.get("MAINTENANCE_TOOLING_COMMIT", ""))
+    if value.get("main_head") != tooling:
+        raise MaintenanceError("checkpoint main inventory differs from trusted tooling snapshot")
+    runner.git(["merge-base", "--is-ancestor", require_sha(value["original_head"]), head])
+    # App-token pushes can trigger Actions. Never expose an unvalidated tree
+    # as an executable workflow ref: the transport tip has an empty tree and
+    # exactly one parent, the completed source HEAD. Resume verifies both and
+    # checks out that parent. Transport commits never enter the release PR.
+    empty_tree = require_sha(runner.git(["mktree"], input_text="").stdout.strip())
+    transport = require_sha(runner.git([
+        "commit-tree", empty_tree, "-p", head, "-m", "Unvalidated maintenance checkpoint; source is the parent commit",
+        "-m", "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>",
+    ]).stdout.strip())
+    snapshot = {key: value[key] for key in CHECKPOINT_KEYS if key in value}
+    # Carry only the most conservative deadline, not secret Azure hostnames.
+    # Monotonic epochs differ between runners; the handoff uses wall time.
+    snapshot["network_not_before"] = snapshot_network_deadline(value)
+    payload = json.dumps({"schema": 1, "run": run, "stage": stage, "tooling": tooling,
+                          "head": head, "transport": transport, "state": snapshot}, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    if len(payload) > 4 * 1024 * 1024:
+        raise MaintenanceError("checkpoint exceeds state budget")
+    ref = f"{AUTOMATION_PREFIX}checkpoints/{run}/{attempt}/{branch}/{stage}"
+    token = os.environ.get("GITHUB_TOKEN", "")
+    # No force push, no stable/main ref update, and no PR before final gates.
+    secure_github_push(runner, state.directory, github_repository(), ref, token, source_sha=transport)
+    (state.directory / "checkpoint.json").write_bytes(payload)
+    checkpoint_output(head=head, digest=hashlib.sha256(payload).hexdigest(), ref=ref,
+                      artifact=f"maintenance-checkpoint-{run}-{attempt}-{branch}-{stage}")
+
+
+def phase_resume(args: argparse.Namespace, state: State, runner: Runner) -> None:
+    branch = require_branch(args.branch)
+    run, _ = checkpoint_identity(args.stage)
+    expected = require_sha(args.expected_head)
+    digest = args.expected_digest
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise MaintenanceError("invalid checkpoint digest")
+    ref = args.checkpoint_ref
+    if not re.fullmatch(re.escape(AUTOMATION_PREFIX) + rf"checkpoints/{run}/[1-9][0-9]{{0,5}}/{re.escape(branch)}/{re.escape(args.stage)}", ref):
+        raise MaintenanceError("checkpoint ref does not belong to this run and stage")
+    path = checkout_regular_file(state.directory, "checkpoint.json")
+    with path.open("rb") as handle:
+        payload = handle.read(4 * 1024 * 1024 + 1)
+    if len(payload) > 4 * 1024 * 1024 or not secrets.compare_digest(hashlib.sha256(payload).hexdigest(), digest):
+        raise MaintenanceError("checkpoint digest mismatch")
+    data = json.loads(payload)
+    tooling = require_sha(os.environ.get("MAINTENANCE_TOOLING_COMMIT", ""))
+    if (not isinstance(data, dict) or type(data.get("schema")) is not int or data.get("schema") != 1
+            or data.get("run") != run or data.get("stage") != args.stage
+            or data.get("head") != expected or data.get("tooling") != tooling):
+        raise MaintenanceError("checkpoint provenance mismatch")
+    value = data.get("state")
+    if not isinstance(value, dict) or set(value) - CHECKPOINT_KEYS or value.get("branch") != branch:
+        raise MaintenanceError("invalid checkpoint progress fields")
+    original = require_sha(value["original_head"])
+    require_sha(value["main_head"]); require_sha(value["cutoff"])
+    if value["main_head"] != tooling:
+        raise MaintenanceError("checkpoint main inventory differs from trusted tooling snapshot")
+    persisted_network_deadline(value)
+    transport = require_sha(data.get("transport"))
+    if runner.git(["status", "--porcelain"]).stdout:
+        raise MaintenanceError("resume requires a clean checkout")
+    runner.git(["fetch", "--no-tags", "origin", f"refs/heads/{ref}", f"refs/heads/{branch}"], timeout=300)
+    remote = runner.git(["ls-remote", "--exit-code", "origin", f"refs/heads/{ref}", f"refs/heads/{branch}"]).stdout.splitlines()
+    refs = dict(line.split("\t")[::-1] for line in remote)
+    if refs.get(f"refs/heads/{ref}") != transport or refs.get(f"refs/heads/{branch}") != original:
+        raise MaintenanceError("staged or stable branch changed since checkpoint")
+    empty_tree = runner.git(["mktree"], input_text="").stdout.strip()
+    wrapper = runner.git(["show", "-s", "--format=%T %P", transport]).stdout.strip()
+    if wrapper != f"{empty_tree} {expected}":
+        raise MaintenanceError("checkpoint transport must contain no files and exactly the expected source parent")
+    runner.git(["merge-base", "--is-ancestor", original, expected])
+    runner.git(["merge-base", "--is-ancestor", value["cutoff"], tooling])
+    runner.git(["checkout", "-B", branch, expected])
+    # Never carry approval of a former tree or a previous job's final gates.
+    value["checkpointed"] = True
+    state.save(value)
+    restore_network_cooldown(value)
+    state.event("resume", "verified immutable checkpoint", stage=args.stage, head=expected)
+
+
 PHASES = {
     "select": phase_select, "guard": phase_guard, "initialize": phase_initialize,
     "refresh-vet-imports": phase_refresh_vet_imports, "update-dependencies": phase_update_dependencies,
     "vet-dependencies": phase_vet_dependencies, "import-dependabot": phase_import_dependabot,
     "classify-backports": phase_classify_backports, "apply-backports": phase_apply_backports,
     "backports": phase_backports,
+    "checkpoint": phase_checkpoint, "resume": phase_resume, "prepare": phase_prepare,
     "release": phase_release, "validate": phase_validate, "publish": phase_publish, "report": phase_report,
 }
 
@@ -4032,6 +4285,14 @@ def build_parser() -> argparse.ArgumentParser:
         phase = sub.add_parser(name)
         phase.add_argument("--branch", default=os.environ.get("STABLE_BRANCH") or os.environ.get("REQUESTED_BRANCH"),
                            choices=(*STABLE_BRANCHES, "all") if name == "select" else STABLE_BRANCHES)
+        if name == "backports":
+            phase.add_argument("--budget-seconds", type=int, default=7200)
+        if name in {"checkpoint", "resume"}:
+            phase.add_argument("--stage", required=True, choices=CHECKPOINT_STAGES)
+        if name == "resume":
+            phase.add_argument("--expected-head", required=True)
+            phase.add_argument("--expected-digest", required=True)
+            phase.add_argument("--checkpoint-ref", required=True)
     return parser
 
 
@@ -4048,11 +4309,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         verify_tooling_integrity()
         state = State(Path(args.state_dir))
         runner = Runner(Path(args.repo_dir))
-        # A guard skip is a successful no-op for every later phase. Report is
-        # still allowed so the reason remains visible in the Actions summary.
-        if state.load().get("skip") and args.command not in {"select", "guard", "report"}:
-            return 0
-        PHASES[args.command](args, state, runner)
+        restore_network_cooldown(state.load())
+        try:
+            # A guard skip is a successful no-op for every later phase. Report is
+            # still allowed so the reason remains visible in the Actions summary.
+            if state.load().get("skip") and args.command not in {"select", "guard", "report"}:
+                return 0
+            PHASES[args.command](args, state, runner)
+        finally:
+            primary_error = sys.exc_info()[0] is not None
+            try:
+                value = state.load()
+                value["network_not_before"] = snapshot_network_deadline(value)
+                state.save(value)
+            except Exception:
+                if not primary_error:
+                    raise
+                # A persistence failure must not hide the original phase error.
+                print("error: could not persist maintenance cooldown", file=sys.stderr)
         return 0
     except (MaintenanceError, ValueError, KeyError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
         if state is not None:
