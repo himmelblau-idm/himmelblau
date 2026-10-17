@@ -2,7 +2,9 @@
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -30,7 +32,7 @@ class HsmPinInitTests(unittest.TestCase):
             .replace("/dev/tpmrm0", str(self.root / "tpm"))
             .replace("/dev/tpm0", str(self.root / "tpm"))
         )
-        self.helper("systemd-creds", """#!/usr/bin/python3
+        self.helper("systemd-creds", f"#!{sys.executable}\n" + """
 import os, pathlib, sys
 mode = sys.argv[1]
 source, dest = sys.argv[-2:]
@@ -42,6 +44,9 @@ if dest == '-':
 else:
     pathlib.Path(dest).write_bytes(data)
 """)
+        stat = shutil.which("stat")
+        if stat is None:
+            self.fail("stat is required for HSM PIN tests")
         self.helper("stat", '''#!/bin/sh
 if [ "$1" = -f ]; then
     if [ "${HSM_TEST_REAL_FS:-}" = 1 ]; then
@@ -53,7 +58,7 @@ elif [ "$1" = -c ] && [ "$2" = '%u:%g:%a' ]; then
 else
     exec /usr/bin/stat "$@"
 fi
-''')
+'''.replace("/usr/bin/stat", stat))
         self.helper("tpm2_getcap", "#!/bin/sh\necho 0x81000001\n")
         self.helper("openssl", "#!/bin/sh\nprintf '%048d' 0\n")
 
@@ -65,7 +70,7 @@ fi
     def run_init(self, **environment):
         result = subprocess.run(
             ["/bin/sh", str(self.script)],
-            env={**os.environ, "PATH": f"{self.bin}:/usr/bin:/bin",
+            env={**os.environ, "PATH": f"{self.bin}:{os.environ.get('PATH', os.defpath)}",
                  "TMPDIR": str(self.tmp), **environment},
             capture_output=True,
         )
@@ -99,6 +104,41 @@ fi
         result = self.run_init(FAIL_DECRYPT="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.credential.read_bytes(), b"original credential")
+
+    def test_valid_credential_removes_stale_legacy_files(self):
+        self.credential.write_bytes(b"x" * 24)
+        for filename in ["hsm-pin", "hsm-pin.enc"]:
+            (self.data / filename).write_bytes(b"stale")
+        result = self.run_init()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.credential.read_bytes(), b"x" * 24)
+        self.assertFalse((self.data / "hsm-pin").exists())
+        self.assertFalse((self.data / "hsm-pin.enc").exists())
+
+    def test_legacy_cleanup_failure_aborts(self):
+        for existing in [False, True]:
+            for filename in ["hsm-pin", "hsm-pin.enc"]:
+                with self.subTest(existing=existing, filename=filename):
+                    self.credential.unlink(missing_ok=True)
+                    if existing:
+                        self.credential.write_bytes(b"x" * 24)
+                    legacy = self.data / filename
+                    legacy.mkdir()
+                    try:
+                        result = self.run_init()
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertTrue(legacy.is_dir())
+                    finally:
+                        legacy.rmdir()
+
+    def test_decryption_failure_preserves_legacy_files(self):
+        self.credential.write_bytes(b"original credential")
+        for filename in ["hsm-pin", "hsm-pin.enc"]:
+            (self.data / filename).write_bytes(b"x" * 24)
+        result = self.run_init(FAIL_DECRYPT="1")
+        self.assertNotEqual(result.returncode, 0)
+        for filename in ["hsm-pin", "hsm-pin.enc"]:
+            self.assertEqual((self.data / filename).read_bytes(), b"x" * 24)
 
     def test_short_pin_is_replaced_and_generation_works_in_sh(self):
         self.credential.write_bytes(b"x" * 23)
