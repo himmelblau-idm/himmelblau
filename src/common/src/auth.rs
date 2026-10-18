@@ -670,7 +670,7 @@ macro_rules! match_sm_auth_client_response {
                 error!(?err, "PAM_IGNORE");
                 pam_fail!(
                     $msg_printer,
-                    "An unexpected error occured.",
+                    "An unexpected error occurred.",
                     PamResultCode::PAM_IGNORE
                 );
             }
