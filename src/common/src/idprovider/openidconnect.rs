@@ -884,13 +884,14 @@ fn orchestrator_inputs_from_pam_request(
 #[cfg(test)]
 mod tests {
     use super::{
-        auth_request_from_orchestrator_inputs, mfa_from_oidc_device, oidc_refresh_failure_state,
-        oidc_should_prompt_hello_setup, orchestrator_inputs_from_pam_request,
-        parse_oidc_mfa_extra_data, resolve_device_authorization_endpoint,
-        ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
-        validated_password_cache_action, DeviceAuthorizationUrl, DeviceEndpointProviderMetadata,
-        OidcMfaExtraData, OidcUserInfoClaims, OrchestratorFlowState, OrchestratorInputType,
-        OrchestratorRequiredInput,
+        auth_request_from_orchestrator_inputs, mfa_from_oidc_device,
+        oidc_hello_refresh_token_candidates, oidc_refresh_failure_state,
+        oidc_refresh_token_rejected, oidc_should_prompt_hello_setup,
+        orchestrator_inputs_from_pam_request, parse_oidc_mfa_extra_data,
+        resolve_device_authorization_endpoint, ropc_is_invalid_credentials,
+        serialize_oidc_mfa_extra_data, validated_password_cache_action, DeviceAuthorizationUrl,
+        DeviceEndpointProviderMetadata, OidcMfaExtraData, OidcUserInfoClaims,
+        OrchestratorFlowState, OrchestratorInputType, OrchestratorRequiredInput,
     };
     use crate::idprovider::common::oidc_account_id_from_userinfo;
     use crate::idprovider::interface::{AuthCacheAction, AuthRequest, AuthResult, UserTokenState};
@@ -1036,6 +1037,51 @@ mod tests {
                 UserTokenState::UseCached
             ));
         }
+    }
+
+    #[test]
+    fn oidc_refresh_token_rejected_only_for_invalid_grant() {
+        let rejected = |error: &str| {
+            oidc_refresh_token_rejected(&MsalError::AcquireTokenFailed(ErrorResponse {
+                error: error.to_string(),
+                error_description: "provider rejected the request".to_string(),
+                suberror: None,
+                error_codes: vec![],
+            }))
+        };
+        assert!(rejected("invalid_grant"));
+        assert!(!rejected("invalid_client"));
+        assert!(!rejected("server_error"));
+        assert!(!oidc_refresh_token_rejected(&MsalError::RequestFailed(
+            "offline".to_string()
+        )));
+    }
+
+    #[test]
+    fn oidc_hello_refresh_token_candidates_prefer_in_memory_token() {
+        // A background refresh rotated the token in memory after the PIN
+        // login sealed the previous one (#1874).
+        assert_eq!(
+            oidc_hello_refresh_token_candidates(
+                Some("rotated".to_string()),
+                Some("sealed".to_string())
+            ),
+            vec!["rotated".to_string(), "sealed".to_string()]
+        );
+        assert_eq!(
+            oidc_hello_refresh_token_candidates(Some("same".to_string()), Some("same".to_string())),
+            vec!["same".to_string()]
+        );
+        // After a daemon restart only the sealed token is left.
+        assert_eq!(
+            oidc_hello_refresh_token_candidates(None, Some("sealed".to_string())),
+            vec!["sealed".to_string()]
+        );
+        assert_eq!(
+            oidc_hello_refresh_token_candidates(Some("in-memory".to_string()), None),
+            vec!["in-memory".to_string()]
+        );
+        assert!(oidc_hello_refresh_token_candidates(None, None).is_empty());
     }
 
     #[test]
@@ -1809,13 +1855,32 @@ async fn oidc_userinfo_from_claims(
     Ok((userinfo, group_claims))
 }
 
+fn oidc_refresh_token_rejected(error: &MsalError) -> bool {
+    matches!(error, MsalError::AcquireTokenFailed(response) if response.error == "invalid_grant")
+}
+
 fn oidc_refresh_failure_state(error: &MsalError) -> UserTokenState {
-    match error {
-        MsalError::AcquireTokenFailed(response) if response.error == "invalid_grant" => {
-            UserTokenState::NotFound
-        }
-        _ => UserTokenState::UseCached,
+    if oidc_refresh_token_rejected(error) {
+        UserTokenState::NotFound
+    } else {
+        UserTokenState::UseCached
     }
+}
+
+/// Order the refresh tokens to try for an online Hello PIN authentication:
+/// the in-memory token first, because a background refresh rotates it without
+/// re-sealing, then the sealed token if it differs.
+fn oidc_hello_refresh_token_candidates(
+    in_memory: Option<String>,
+    sealed: Option<String>,
+) -> Vec<String> {
+    let mut candidates: Vec<String> = in_memory.into_iter().collect();
+    if let Some(sealed) = sealed {
+        if !candidates.contains(&sealed) {
+            candidates.push(sealed);
+        }
+    }
+    candidates
 }
 
 pub struct OidcApplication {
@@ -3041,7 +3106,24 @@ impl IdProvider for OidcProvider {
                 let token = if $keytype == KeyType::Decoupled {
                     // Check for and decrypt any cached tokens
                     let hello_refresh_token_tag = self.fetch_hello_refresh_token_key_tag(account_id);
-                    let refresh_token = if let Ok(Some(sealed_refresh_token)) = refresh_cache_entry {
+                    // A background refresh in unix_user_get rotates the refresh
+                    // token in memory only, so the in-memory token is the newest
+                    // one and the sealed token is only a fallback (e.g. after a
+                    // daemon restart).
+                    let mut refresh_cache_corrupted = false;
+                    let in_memory_refresh_token = match self.refresh_cache.refresh_token(account_id).await {
+                        Ok(RefreshCacheEntry::RefreshToken(refresh_token)) => Some(refresh_token),
+                        Ok(_) => {
+                            error!("Invalid refresh cache entry type");
+                            refresh_cache_corrupted = true;
+                            None
+                        }
+                        Err(e) => {
+                            debug!(?e, "No refresh token in mem cache");
+                            None
+                        }
+                    };
+                    let sealed_refresh_token = if let Ok(Some(sealed_refresh_token)) = refresh_cache_entry {
                         let pin = PinValue::new(&$cred).map_err(|e| {
                             error!("Failed initializing pin value: {:?}", e);
                             IdpError::Tpm
@@ -3060,51 +3142,49 @@ impl IdProvider for OidcProvider {
                                     error!("Failed converting refresh token to string: {:?}", e);
                                     IdpError::Tpm
                                 })?;
-                                refresh_token
-                            }
-                            Err(e) => match self.refresh_cache.refresh_token(account_id).await {
-                                Ok(RefreshCacheEntry::RefreshToken(refresh_token)) => refresh_token,
-                                Ok(_) => {
-                                    error!("Invalid refresh cache entry type");
-                                    return Ok((
-                                        AuthResult::Denied(tr("Session data corrupted. Please sign in again.")),
-                                        AuthCacheAction::None,
-                                    ));
-                                }
-                                Err(e2) => {
-                                    error!(?e, "Failed unsealing hello refresh token from TPM");
-                                    error!(?e2, "Failed retrieving refresh token from mem cache");
-                                    return Ok((
-                                        AuthResult::Denied(tr("Your session has expired. Please sign in again.")),
-                                        AuthCacheAction::None,
-                                    ));
-                                }
-                            },
-                        }
-                    } else {
-                        match self.refresh_cache.refresh_token(account_id).await {
-                            Ok(RefreshCacheEntry::RefreshToken(refresh_token)) => refresh_token,
-                            Ok(_) => {
-                                error!("Invalid refresh cache entry type");
-                                return Ok((
-                                    AuthResult::Denied(tr("Session data corrupted. Please sign in again.")),
-                                    AuthCacheAction::None,
-                                ));
+                                Some(refresh_token)
                             }
                             Err(e) => {
-                                error!(?e, "Failed retrieving refresh token from mem cache");
-                                return Ok((
-                                    AuthResult::Denied(tr("Your session has expired. Please sign in again.")),
-                                    AuthCacheAction::None,
-                                ));
+                                error!(?e, "Failed unsealing hello refresh token from TPM");
+                                None
                             }
                         }
+                    } else {
+                        None
+                    };
+                    let mut refresh_tokens = oidc_hello_refresh_token_candidates(
+                        in_memory_refresh_token,
+                        sealed_refresh_token,
+                    )
+                    .into_iter();
+                    let Some(refresh_token) = refresh_tokens.next() else {
+                        error!("No refresh token available for Hello PIN authentication");
+                        let msg = if refresh_cache_corrupted {
+                            tr("Session data corrupted. Please sign in again.")
+                        } else {
+                            tr("Your session has expired. Please sign in again.")
+                        };
+                        return Ok((AuthResult::Denied(msg), AuthCacheAction::None));
                     };
                     // We have a refresh token, exchange that for an access token
-                    match self.client.acquire_token_by_refresh_token(
+                    let mut exchange = self.client.acquire_token_by_refresh_token(
                         &refresh_token,
                         vec![],
-                    ).await {
+                    ).await;
+                    // An IdP that rotates refresh tokens revokes the older one, so
+                    // try the other cached token once before giving up on the session.
+                    if let Err(e) = &exchange {
+                        if oidc_refresh_token_rejected(e) {
+                            if let Some(refresh_token) = refresh_tokens.next() {
+                                warn!(?e, "Refresh token was rejected; retrying with the other cached refresh token");
+                                exchange = self.client.acquire_token_by_refresh_token(
+                                    &refresh_token,
+                                    vec![],
+                                ).await;
+                            }
+                        }
+                    }
+                    match exchange {
                         Ok(token) => {
                             self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                             token
