@@ -353,6 +353,9 @@ class Runner:
     def git(self, args: Sequence[str], **kwargs: Any) -> CommandResult:
         return self.run([
             "git", "-c", "core.hooksPath=/dev/null",
+            # Keep automatic housekeeping within this command's lifetime and
+            # process group; detached writers can race checkout cleanup.
+            "-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false",
             "-c", "user.name=github-actions[bot]",
             "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com",
             *args,

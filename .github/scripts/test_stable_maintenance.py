@@ -125,6 +125,34 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertEqual(state.load(), {"skip": True})
             self.assertEqual(os.stat(state.path).st_mode & 0o777, 0o600)
 
+    def test_git_automatic_maintenance_finishes_before_command_returns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = sm.Runner(root)
+            runner.git(["init", "-b", "main"])
+            # Checkout configuration must not re-enable background writers.
+            for key in ("maintenance.autoDetach", "gc.autoDetach"):
+                runner.git(["config", key, "true"])
+                self.assertEqual(runner.git(["config", "--get", key]).stdout.strip(), "false")
+            runner.git(["config", "maintenance.gc.enabled", "false"])
+            runner.git(["config", "maintenance.loose-objects.enabled", "true"])
+            runner.git(["config", "maintenance.loose-objects.auto", "1"])
+            runner.git(["hash-object", "-w", "--stdin"], input_text="loose object fixture")
+            trace = root / "trace.jsonl"
+            runner.env["GIT_TRACE2_EVENT"] = str(trace)
+            runner.git(["commit", "--allow-empty", "-m", "Trigger automatic maintenance"])
+            events = [json.loads(line) for line in trace.read_text().splitlines()]
+            calls = [event["argv"] for event in events if event["event"] == "child_start"
+                     and event.get("argv", [])[:3] == ["git", "maintenance", "run"]]
+            self.assertTrue(calls, "the real Git command must still run automatic maintenance")
+            for argv in calls:
+                self.assertNotIn("--detach", argv)
+            starts = {event["sid"] for event in events if event["event"] == "start"}
+            exits = {event["sid"] for event in events if event["event"] == "exit"}
+            self.assertEqual(starts, exits, "all Git children must finish before temporary cleanup")
+            self.assertTrue(list((root / ".git/objects/pack").glob("*.pack")),
+                            "housekeeping must still pack the loose fixture object")
+
     def test_registry_cache_grants_read_access_without_write_or_file_execute(self):
         with tempfile.TemporaryDirectory() as tmp:
             registry = Path(tmp) / "registry"; registry.mkdir(mode=0o300)
