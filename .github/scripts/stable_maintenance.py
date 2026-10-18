@@ -425,7 +425,8 @@ def checkout_regular_file(root: Path, relative: str) -> Path:
     try:
         resolved = candidate.resolve(strict=True)
         metadata = candidate.lstat()
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
+        # Python 3.12 reports symlink loops as RuntimeError, not OSError.
         raise MaintenanceError(f"checkout file is unavailable or unsafe: {relative}") from exc
     if resolved != candidate or not stat.S_ISREG(metadata.st_mode):
         raise MaintenanceError(f"checkout file is not a non-symlink regular file: {relative}")

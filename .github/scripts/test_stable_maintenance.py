@@ -4890,7 +4890,7 @@ class SequentialMaintenanceTests(unittest.TestCase):
     commit = MaintenanceHistoryTests.commit
 
     def test_packaging_backport_gate_rolls_back_and_continues_after_locked_build(self):
-        for failure in ("key-error", "timeout", "output-limit", "command-error", "success"):
+        for failure in ("key-error", "timeout", "output-limit", "command-error", "cyclic-symlink", "success"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 runner = self.repository(Path(tmp) / "repo")
                 scripts = runner.root / "scripts"
@@ -4903,7 +4903,10 @@ class SequentialMaintenanceTests(unittest.TestCase):
                 (runner.root / "earlier.txt").write_text("accepted earlier fix\n")
                 earlier = self.commit(runner, "Fix earlier independent source")
                 target = "fedora43" if failure == "success" else "fedora44"
-                test.write_text(f"from gen_dockerfiles import DISTS\nassert DISTS[{target!r}]\n")
+                if failure == "cyclic-symlink":
+                    test.symlink_to(test.name)
+                else:
+                    test.write_text(f"from gen_dockerfiles import DISTS\nassert DISTS[{target!r}]\n")
                 candidate = self.commit(runner, "Fix ARM64 packaging with a new regression")
                 (runner.root / "later.txt").write_text("accepted later fix\n")
                 later = self.commit(runner, "Fix later independent source")
@@ -4937,8 +4940,9 @@ class SequentialMaintenanceTests(unittest.TestCase):
                 accepted = [earlier, candidate, later] if failure == "success" else [earlier, later]
                 self.assertEqual(value["backports_applied"], accepted)
                 self.assertEqual(len(builds), 4)  # Baseline and EVERY candidate.
-                self.assertEqual(len(checks), 1)  # Unrelated fixes do not rerun it.
+                self.assertEqual(len(checks), int(failure != "cyclic-symlink"))
                 self.assertEqual(test.exists(), failure == "success")
+                self.assertFalse(test.is_symlink())
                 self.assertTrue((runner.root / "earlier.txt").is_file())
                 self.assertTrue((runner.root / "later.txt").is_file())
                 self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
@@ -4951,7 +4955,7 @@ class SequentialMaintenanceTests(unittest.TestCase):
                 self.assertNotIn("secret", output.getvalue())
 
     def test_packaging_backport_gate_handles_generator_edits_and_removed_or_unsafe_tests(self):
-        for kind in ("generator", "no-test", "removed-test", "symlink-test"):
+        for kind in ("generator", "no-test", "removed-test", "symlink-test", "cyclic-test"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
                 runner = self.repository(Path(tmp) / "repo")
                 scripts = runner.root / "scripts"; scripts.mkdir()
@@ -4962,13 +4966,15 @@ class SequentialMaintenanceTests(unittest.TestCase):
                     test.write_text("pass\n")
                 baseline = self.commit(runner, "Existing packaging source")
                 generator.write_text("fixed\n")
-                if kind in ("removed-test", "symlink-test"):
+                if kind in ("removed-test", "symlink-test", "cyclic-test"):
                     test.unlink()
                     if kind == "symlink-test":
                         test.symlink_to("gen_dockerfiles.py")
+                    elif kind == "cyclic-test":
+                        test.symlink_to(test.name)
                 self.commit(runner, "Adapted packaging fix")
                 with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")) as command:
-                    if kind in ("removed-test", "symlink-test"):
+                    if kind in ("removed-test", "symlink-test", "cyclic-test"):
                         with self.assertRaises(sm.MaintenanceError):
                             sm.check_backport_packaging(runner, baseline)
                         command.assert_not_called()
