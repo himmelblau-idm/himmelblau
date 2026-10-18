@@ -24,6 +24,19 @@ class Arm64RpmDockerfileTests(unittest.TestCase):
         self.assertIn("cargo install cargo-deb cargo-generate-rpm", dockerfile)
 
 
+class PackagingToolTests(unittest.TestCase):
+    def test_rpm_images_install_native_dependency_scanner(self):
+        for name, config in gen_dockerfiles.DISTS.items():
+            if config["family"] not in ("rpm", "zypper"):
+                continue
+            for arch in gen_dockerfiles.ARCH_MAP:
+                with self.subTest(distro=name, arch=arch):
+                    dockerfile = gen_dockerfiles.render(
+                        name, config, patch_libhimmelblau=False, arch=arch
+                    )
+                    self.assertIn("rpm-build", dockerfile.split())
+
+
 class SleRepositoryTests(unittest.TestCase):
     def test_sle_uses_public_repositories_without_registration(self):
         expected = {
