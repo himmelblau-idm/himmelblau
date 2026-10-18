@@ -504,7 +504,8 @@ fn write_kerberos_config_snippet(
             false => Err(format!("Path {krb_conf_dir:?} is not a directory")),
             true => Ok(()),
         },
-        Ok(false) => Err(format!("Path {krb_conf_dir:?} does not exist")),
+        Ok(false) => fs::create_dir_all(&krb_conf_dir)
+            .map_err(|e| format!("Failed to create {krb_conf_dir:?}: {e}")),
         Err(e) => Err(format!("Failed to check if {krb_conf_dir:?} exists: {e}")),
     }?;
 
