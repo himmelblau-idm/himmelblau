@@ -3251,6 +3251,8 @@ class MarkerConflictAndAITests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["rev-parse", "HEAD"]:
                     return sm.CommandResult(0, cutoff + "\n", "")
+                if argv == ["diff", "--no-renames", "--name-only", "-z", cutoff, "HEAD", "--"]:
+                    return sm.CommandResult(0, "src/a.rs\0", "")
                 if argv[:2] == ["cherry-pick", "-x"]:
                     self.assertIn(argv[2], [earlier, later])
                     return sm.CommandResult(0, "", "")
@@ -4745,7 +4747,7 @@ with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=la
                     sm.restore_network_cooldown({"network_not_before": invalid})
 
     def test_batch_deadline_reverts_only_inflight_and_next_batch_sees_prefix(self):
-        for expired_at in ("review", "build", "format"):
+        for expired_at in ("review", "build", "packaging", "format"):
             with self.subTest(expired_at=expired_at), tempfile.TemporaryDirectory() as tmp:
                 runner = self.repository(Path(tmp) / "repo")
                 base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
@@ -4771,7 +4773,11 @@ with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=la
                 def fmt(current, pre):
                     if (current.root / "next.rs").exists() and expired_at == "format":
                         raise sm.BackportBatchExpired()
+                def packaging(current, pre):
+                    if (current.root / "next.rs").exists() and expired_at == "packaging":
+                        raise sm.BackportBatchExpired()
                 with mock.patch.object(sm, "AzureAI", return_value=ai), mock.patch.object(sm, "locked_build", side_effect=build), \
+                     mock.patch.object(sm, "check_backport_packaging", side_effect=packaging), \
                      mock.patch.object(sm, "format_backport", side_effect=fmt), mock.patch.object(sm.sys, "stderr", io.StringIO()):
                     sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
                 saved = state.load()
@@ -4882,6 +4888,93 @@ with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=la
 class SequentialMaintenanceTests(unittest.TestCase):
     repository = MaintenanceHistoryTests.repository
     commit = MaintenanceHistoryTests.commit
+
+    def test_packaging_backport_gate_rolls_back_and_continues_after_locked_build(self):
+        for failure in ("key-error", "timeout", "output-limit", "command-error", "success"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                scripts = runner.root / "scripts"
+                scripts.mkdir()
+                generator = scripts / "gen_dockerfiles.py"
+                generator.write_text("DISTS = {'fedora43': 'fedora:43'}\n")
+                test = scripts / "test_gen_dockerfiles.py"
+                baseline = self.commit(runner, "Stable generator targets Fedora 43")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                (runner.root / "earlier.txt").write_text("accepted earlier fix\n")
+                earlier = self.commit(runner, "Fix earlier independent source")
+                target = "fedora43" if failure == "success" else "fedora44"
+                test.write_text(f"from gen_dockerfiles import DISTS\nassert DISTS[{target!r}]\n")
+                candidate = self.commit(runner, "Fix ARM64 packaging with a new regression")
+                (runner.root / "later.txt").write_text("accepted later fix\n")
+                later = self.commit(runner, "Fix later independent source")
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": later})
+                builds, checks = [], []
+                def build(current):
+                    builds.append(current.git(["rev-parse", "HEAD"]).stdout.strip())
+                    return sm.CommandResult(0, "", "")
+                def contained(current, command, **kwargs):
+                    self.assertEqual(command, ["python3", "scripts/test_gen_dockerfiles.py"])
+                    self.assertEqual(kwargs, dict(network=False, source_rw=False, cache_rw=False, check=False))
+                    self.assertEqual(builds[-1], current.git(["rev-parse", "HEAD"]).stdout.strip())
+                    checks.append(builds[-1])
+                    if failure in ("timeout", "output-limit"):
+                        raise sm.CommandCaptureError("secret", failure, sm.CommandResult(-9, "secret", "secret"))
+                    if failure == "command-error":
+                        raise sm.MaintenanceError("secret")
+                    # Execute the same missing-target failure as the hosted
+                    # adaptation, without substituting success for the test.
+                    return current.run([sys.executable, "-B", str(test)], check=False)
+                ai = mock.Mock(); ai.call.return_value = {"decision": True, "reason": "bug-fix"}
+                output = io.StringIO()
+                with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                     mock.patch.object(sm, "locked_build", side_effect=build), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     mock.patch.object(sm, "format_backport"), mock.patch.object(sm.sys, "stderr", output):
+                    sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                value = state.load()
+                accepted = [earlier, candidate, later] if failure == "success" else [earlier, later]
+                self.assertEqual(value["backports_applied"], accepted)
+                self.assertEqual(len(builds), 4)  # Baseline and EVERY candidate.
+                self.assertEqual(len(checks), 1)  # Unrelated fixes do not rerun it.
+                self.assertEqual(test.exists(), failure == "success")
+                self.assertTrue((runner.root / "earlier.txt").is_file())
+                self.assertTrue((runner.root / "later.txt").is_file())
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertEqual(value["backports_build_failed"], [])
+                if failure != "success":
+                    self.assertEqual(value["backports_deferred"], [candidate])
+                    self.assertEqual(value["backports_repair_failed"][0]["reason"], "packaging-test-failed")
+                    self.assertEqual(value["backport_outcomes"][1]["outcome"], "pending")
+                    self.assertEqual(sm.maintenance_main_through(value), baseline)
+                self.assertNotIn("secret", output.getvalue())
+
+    def test_packaging_backport_gate_handles_generator_edits_and_removed_or_unsafe_tests(self):
+        for kind in ("generator", "no-test", "removed-test", "symlink-test"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                scripts = runner.root / "scripts"; scripts.mkdir()
+                generator = scripts / "gen_dockerfiles.py"
+                generator.write_text("old\n")
+                test = scripts / "test_gen_dockerfiles.py"
+                if kind != "no-test":
+                    test.write_text("pass\n")
+                baseline = self.commit(runner, "Existing packaging source")
+                generator.write_text("fixed\n")
+                if kind in ("removed-test", "symlink-test"):
+                    test.unlink()
+                    if kind == "symlink-test":
+                        test.symlink_to("gen_dockerfiles.py")
+                self.commit(runner, "Adapted packaging fix")
+                with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")) as command:
+                    if kind in ("removed-test", "symlink-test"):
+                        with self.assertRaises(sm.MaintenanceError):
+                            sm.check_backport_packaging(runner, baseline)
+                        command.assert_not_called()
+                    else:
+                        sm.check_backport_packaging(runner, baseline)
+                        self.assertEqual(command.call_count, int(kind == "generator"))
 
     def test_backport_patch_treats_inventory_paths_literally(self):
         for name in (":(exclude)**", "Cargo.*", "ordinary.rs"):
