@@ -138,7 +138,7 @@ async fn fido_status_check(msg_printer: Arc<dyn MessagePrinter>) -> Sender<Statu
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::InvalidUv(attempts))) => {
                 let msg = format!(
-                    "Wrong UV! {}",
+                    "Wrong user verification! {}",
                     attempts.map_or("Try again.".to_string(), |a| format!(
                         "You have {a} attempts left."
                     ))
@@ -147,7 +147,7 @@ async fn fido_status_check(msg_printer: Arc<dyn MessagePrinter>) -> Sender<Statu
                 continue;
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::UvBlocked)) => {
-                msg_printer.print_error("Too many failed UV-attempts.");
+                msg_printer.print_error("Too many failed user verification attempts.");
                 break;
             }
             Ok(StatusUpdate::PinUvError(e)) => {
