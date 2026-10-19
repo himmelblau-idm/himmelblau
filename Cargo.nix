@@ -16106,9 +16106,9 @@ rec {
       };
       "rustls" = rec {
         crateName = "rustls";
-        version = "0.23.45";
+        version = "0.23.46";
         edition = "2021";
-        sha256 = "0d6n90q52x5cjyxb6bwcnf9hwg6yb31cwr63rk8n5yfjqwqxfh8d";
+        sha256 = "1pwg7i8drr70374amj96952cils9mpwyijd5rx1mqdp9q3c3pqa8";
         dependencies = [
           {
             name = "aws-lc-rs";
