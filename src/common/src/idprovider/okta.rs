@@ -1140,11 +1140,7 @@ impl IdProvider for OktaProvider {
         }
     }
 
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        _account: Option<&str>,
-        _keystore: &mut D,
-    ) -> CacheState {
+    async fn get_cachestate(&self, _account: Option<&str>) -> CacheState {
         self.state.lock().await.clone()
     }
 

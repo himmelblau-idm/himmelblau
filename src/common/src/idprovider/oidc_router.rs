@@ -321,11 +321,7 @@ impl IdProvider for OidcRouter {
         }
     }
 
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        account: Option<&str>,
-        keystore: &mut D,
-    ) -> CacheState {
+    async fn get_cachestate(&self, account: Option<&str>) -> CacheState {
         match *self.selection.lock().await {
             Selection::Pending => {
                 return match self.standard.state.lock().await.clone() {
@@ -337,8 +333,8 @@ impl IdProvider for OidcRouter {
             _ => (),
         }
         match self.backend().await {
-            Ok(Backend::Standard(p)) => p.get_cachestate(account, keystore).await,
-            Ok(Backend::Native(p)) => p.get_cachestate(account, keystore).await,
+            Ok(Backend::Standard(p)) => p.get_cachestate(account).await,
+            Ok(Backend::Native(p)) => p.get_cachestate(account).await,
             Err(_) => CacheState::Online,
         }
     }
@@ -678,19 +674,17 @@ mod tests {
     #[allow(clippy::unwrap_used)]
     async fn pending_selection_preserves_offline_state_but_never_reports_online() {
         let router = pending_router().await;
-        let db = crate::db::Db::new("").unwrap();
-        let mut txn = db.write().await;
         let deadline = SystemTime::now() + Duration::from_secs(60);
         *router.standard.state.lock().await = CacheState::OfflineNextCheck(deadline);
-        assert!(matches!(router.get_cachestate(None, &mut txn).await,
+        assert!(matches!(router.get_cachestate(None).await,
             CacheState::OfflineNextCheck(time) if time == deadline));
         *router.standard.state.lock().await = CacheState::Offline;
         assert!(matches!(
-            router.get_cachestate(None, &mut txn).await,
+            router.get_cachestate(None).await,
             CacheState::Offline
         ));
         *router.standard.state.lock().await = CacheState::Online;
-        assert!(matches!(router.get_cachestate(None, &mut txn).await,
+        assert!(matches!(router.get_cachestate(None).await,
             CacheState::OfflineNextCheck(time) if time <= SystemTime::now()));
         assert!(router.backend().await.is_err());
         assert!(matches!(
@@ -703,7 +697,7 @@ mod tests {
             assert!(router.backend().await.is_ok());
             assert!(router.offline_backend().await.is_ok());
             assert!(matches!(
-                router.get_cachestate(None, &mut txn).await,
+                router.get_cachestate(None).await,
                 CacheState::Online
             ));
         }
@@ -711,7 +705,7 @@ mod tests {
         assert!(router.backend().await.is_err());
         assert!(router.offline_backend().await.is_err());
         assert!(matches!(
-            router.get_cachestate(None, &mut txn).await,
+            router.get_cachestate(None).await,
             CacheState::Online
         ));
     }

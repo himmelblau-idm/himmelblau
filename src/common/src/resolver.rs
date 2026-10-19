@@ -494,11 +494,7 @@ mod tests {
             })
         }
 
-        async fn get_cachestate<D: KeyStoreTxn + Send>(
-            &self,
-            _account_id: Option<&str>,
-            _keystore: &mut D,
-        ) -> CacheState {
+        async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState {
             self.cache_state_calls.fetch_add(1, Ordering::AcqRel);
             self.cache_state
                 .read()
@@ -2233,15 +2229,7 @@ where
     }
 
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
-        let mut dbtxn = self.db.write().await;
-        let res = self.client.get_cachestate(account_id, &mut dbtxn).await;
-        if let Err(e) = dbtxn.commit() {
-            error!(
-                "Failed to commit db transaction after getting cache state: {:?}",
-                e
-            );
-        }
-        res
+        self.client.get_cachestate(account_id).await
     }
 
     pub async fn clear_cache(&self) -> ResolverResult<()> {

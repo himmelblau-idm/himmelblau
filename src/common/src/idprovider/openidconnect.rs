@@ -3877,11 +3877,7 @@ impl IdProvider for OidcProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        _account_id: Option<&str>,
-        _keystore: &mut D,
-    ) -> CacheState {
+    async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState {
         self.state.lock().await.clone()
     }
 

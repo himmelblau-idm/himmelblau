@@ -849,20 +849,16 @@ impl IdProvider for HimmelblauMultiProvider {
         Err(IdpError::BadRequest)
     }
 
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: Option<&str>,
-        keystore: &mut D,
-    ) -> CacheState {
+    async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
         match account_id {
             Some(account_id) => match idp_get_domain_for_account!(self, account_id) {
                 Ok(domain) => match self.find_provider(domain).await {
                     Ok(provider) => match provider.as_ref() {
                         Providers::Oidc(provider) => {
-                            return provider.get_cachestate(Some(account_id), keystore).await
+                            return provider.get_cachestate(Some(account_id)).await
                         }
                         Providers::Himmelblau(provider) => {
-                            return provider.get_cachestate(Some(account_id), keystore).await
+                            return provider.get_cachestate(Some(account_id)).await
                         }
                     },
                     Err(..) => return CacheState::Offline,
@@ -873,17 +869,15 @@ impl IdProvider for HimmelblauMultiProvider {
                 let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
                 for provider in providers {
                     match provider.as_ref() {
-                        Providers::Oidc(provider) => {
-                            match provider.get_cachestate(None, keystore).await {
-                                CacheState::Offline => return CacheState::Offline,
-                                CacheState::OfflineNextCheck(time) => {
-                                    return CacheState::OfflineNextCheck(time)
-                                }
-                                _ => continue,
+                        Providers::Oidc(provider) => match provider.get_cachestate(None).await {
+                            CacheState::Offline => return CacheState::Offline,
+                            CacheState::OfflineNextCheck(time) => {
+                                return CacheState::OfflineNextCheck(time)
                             }
-                        }
+                            _ => continue,
+                        },
                         Providers::Himmelblau(provider) => {
-                            match provider.get_cachestate(None, keystore).await {
+                            match provider.get_cachestate(None).await {
                                 CacheState::Offline => return CacheState::Offline,
                                 CacheState::OfflineNextCheck(time) => {
                                     return CacheState::OfflineNextCheck(time)
@@ -4685,11 +4679,7 @@ impl IdProvider for HimmelblauProvider {
         Err(IdpError::BadRequest)
     }
 
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        _account_id: Option<&str>,
-        _keystore: &mut D,
-    ) -> CacheState {
+    async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState {
         (*self.state.lock().await).clone()
     }
 }
