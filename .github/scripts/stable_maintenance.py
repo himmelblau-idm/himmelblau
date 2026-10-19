@@ -425,7 +425,8 @@ def checkout_regular_file(root: Path, relative: str) -> Path:
     try:
         resolved = candidate.resolve(strict=True)
         metadata = candidate.lstat()
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
+        # Python 3.12 reports symlink loops as RuntimeError, not OSError.
         raise MaintenanceError(f"checkout file is unavailable or unsafe: {relative}") from exc
     if resolved != candidate or not stat.S_ISREG(metadata.st_mode):
         raise MaintenanceError(f"checkout file is not a non-symlink regular file: {relative}")
@@ -3509,6 +3510,28 @@ def format_backport(runner: Runner, pre_head: str) -> None:
         runner.git(["commit", "--amend", "--no-edit"])
 
 
+def check_backport_packaging(runner: Runner, pre_head: str) -> None:
+    # Inspect the actual adapted tree, not only the original main commit.
+    paths = set(runner.git([
+        "diff", "--no-renames", "--name-only", "-z", require_sha(pre_head), "HEAD", "--",
+    ]).stdout.split("\0"))
+    test = "scripts/test_gen_dockerfiles.py"
+    if not paths.intersection({"scripts/gen_dockerfiles.py", test}):
+        return
+    # Older branches may not yet provide this test. Do not silently accept a
+    # backport which deletes it or replaces it with a non-regular path.
+    path = runner.root / test
+    if not path.exists() and not path.is_symlink() and test not in paths:
+        return
+    checkout_regular_file(runner.root, test)
+    result = contained_repo_command(
+        runner, ["python3", test], network=False, source_rw=False, cache_rw=False, check=False,
+    )
+    print(f"backport-debug: stage=packaging-tests exit={result.returncode}", file=sys.stderr)
+    if result.returncode:
+        raise MaintenanceError("backport packaging generator tests failed")
+
+
 def phase_apply_backports(
     args: argparse.Namespace, state: State, runner: Runner, *, adaptive: bool = False, baseline_checked: bool = False,
 ) -> None:
@@ -3583,6 +3606,17 @@ def phase_apply_backports(
             runner.git(["reset", "--hard", pre_head])
             print(f"backport-debug: sha={sha} result=build-skipped", file=sys.stderr)
             skipped.append(sha); build_failed.append(failure); deferred.append(sha); continue
+        try:
+            check_backport_packaging(runner, pre_head)
+        except MaintenanceError as exc:
+            runner.git(["reset", "--hard", pre_head])
+            diagnostic = (
+                exc.reason if isinstance(exc, CommandCaptureError) and exc.reason in ("timeout", "output-limit")
+                else diagnostic_reason(exc)
+            )
+            repair_failures.append({"sha": sha, "reason": "packaging-test-failed", "diagnostic": diagnostic})
+            print(f"backport-debug: sha={sha} result=packaging-test-skipped", file=sys.stderr)
+            deferred.append(sha); skipped.append(sha); continue
         if adaptive:
             try:
                 format_backport(runner, pre_head)
