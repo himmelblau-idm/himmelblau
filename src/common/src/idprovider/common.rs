@@ -16,10 +16,12 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::constants::ID_MAP_CACHE;
+use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::interface::{GroupToken, IdpError, UserToken};
 use idmap::Idmap;
-use kanidm_hsm_crypto::structures::SealedData;
+use kanidm_hsm_crypto::provider::{BoxedDynTpm, Tpm};
+use kanidm_hsm_crypto::structures::{SealedData, StorageKey};
 use lazy_static::lazy_static;
 use openidconnect::core::CoreGenderClaim;
 use openidconnect::{AdditionalClaims, UserInfoClaims};
@@ -33,6 +35,7 @@ use std::{
 };
 use tokio::sync::RwLock;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 /// When a cached PRT is older than 4h, opportunistically issue an
 /// `exchange_prt_for_prt` before using it for access-token acquisition.
@@ -412,6 +415,108 @@ pub(crate) fn should_renew_expired_try_unseal_prt(keytype: &KeyType, online: boo
     online && matches!(keytype, KeyType::Hello)
 }
 
+/// Best effort: failures are logged, not returned.
+pub(crate) fn cache_refresh_token_with_loaded_hello_key<K: KeyStoreTxn>(
+    keystore: &mut K,
+    tpm: &mut BoxedDynTpm,
+    hello_storage_key: &StorageKey,
+    refresh_token: &str,
+    account_id: &str,
+    refresh_token_tag: &str,
+) {
+    let sealed_refresh_token = match tpm.seal_data(
+        hello_storage_key,
+        Zeroizing::new(refresh_token.as_bytes().to_vec()),
+    ) {
+        Ok(sealed_refresh_token) => sealed_refresh_token,
+        Err(e) => {
+            error!(?e, account_id, "Failed to seal Hello refresh token");
+            return;
+        }
+    };
+    if let Err(e) = keystore.insert_tagged_hsm_key(refresh_token_tag, &sealed_refresh_token) {
+        error!(
+            ?e,
+            account_id, refresh_token_tag, "Failed to cache Hello refresh token"
+        );
+    }
+}
+
+pub(crate) fn unseal_refresh_token_with_loaded_hello_key(
+    tpm: &mut BoxedDynTpm,
+    hello_storage_key: &StorageKey,
+    sealed_refresh_token: &SealedData,
+) -> Result<String, IdpError> {
+    let refresh_token = tpm
+        .unseal_data(hello_storage_key, sealed_refresh_token)
+        .map_err(|e| {
+            error!(?e, "Failed to unseal Hello refresh token");
+            IdpError::Tpm
+        })?;
+    String::from_utf8(refresh_token.to_vec()).map_err(|e| {
+        error!(?e, "Failed to decode Hello refresh token");
+        IdpError::Tpm
+    })
+}
+
+/// Return the refresh token sealed under `refresh_token_tag`, or `fallback`
+/// when it is absent or cannot be unsealed.
+pub(crate) fn sealed_refresh_token_or<K: KeyStoreTxn>(
+    keystore: &mut K,
+    tpm: &mut BoxedDynTpm,
+    hello_storage_key: &StorageKey,
+    refresh_token_tag: &str,
+    fallback: Option<RefreshCacheEntry>,
+) -> Option<RefreshCacheEntry> {
+    match keystore.get_tagged_hsm_key(refresh_token_tag) {
+        Ok(Some(sealed_refresh_token)) => unseal_refresh_token_with_loaded_hello_key(
+            tpm,
+            hello_storage_key,
+            &sealed_refresh_token,
+        )
+        .ok()
+        .map(RefreshCacheEntry::RefreshToken)
+        .or(fallback),
+        Err(_) | Ok(None) => fallback,
+    }
+}
+
+/// Persist the token's PRT, or its refresh token when it has no PRT, sealed
+/// with the loaded Hello key. Best effort: failures are logged, not returned.
+#[macro_export]
+macro_rules! cache_token_with_loaded_hello_key {
+    ($self:expr, $account_id:expr, $token:expr, $loaded_hello_key:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {{
+        if let Some(prt) = &$token.prt {
+            let sealed_prt = $self
+                .client
+                .lock()
+                .await
+                .seal_user_prt_with_loaded_ms_hello_key(prt, $loaded_hello_key, $tpm, $machine_key);
+            match sealed_prt {
+                Ok(hello_prt) => {
+                    let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
+                    if let Err(e) = $keystore.insert_tagged_hsm_key(&hello_prt_tag, &hello_prt) {
+                        error!(?e, account_id = $account_id, "Failed to cache Hello PRT");
+                    }
+                }
+                Err(e) => {
+                    error!(?e, account_id = $account_id, "Failed to seal Hello PRT");
+                }
+            }
+        } else {
+            let hello_refresh_token_tag = $self.fetch_hello_refresh_token_key_tag($account_id);
+            $crate::idprovider::common::cache_refresh_token_with_loaded_hello_key(
+                $keystore,
+                $tpm,
+                $loaded_hello_key.storage_key(),
+                &$token.refresh_token,
+                $account_id,
+                &hello_refresh_token_tag,
+            );
+        }
+    }};
+}
+
 #[macro_export]
 macro_rules! impl_offline_break_glass {
     ($self:ident, $ttl:ident) => {{
@@ -482,7 +587,7 @@ macro_rules! impl_himmelblau_hello_key_helpers {
 
 #[macro_export]
 macro_rules! load_cached_prt {
-    ($hello_key:ident, $hello_storage_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($loaded_hello_key:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // Check for and decrypt any cached PRT
         let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
@@ -490,9 +595,9 @@ macro_rules! load_cached_prt {
                 .client
                 .lock()
                 .await
-                .unseal_user_prt_with_loaded_hello_key(
+                .unseal_user_prt_with_loaded_ms_hello_key(
                     &hello_prt,
-                    &$hello_storage_key,
+                    &$loaded_hello_key,
                     $tpm,
                     $machine_key,
                 )
@@ -517,23 +622,23 @@ macro_rules! load_cached_prt {
 
 #[macro_export]
 macro_rules! load_cached_prt_no_op {
-    ($hello_key:ident, $hello_storage_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($loaded_hello_key:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // No-op, since openidconnect does not have PRTs
     };
 }
 
 #[macro_export]
 macro_rules! load_cached_prt_for_try_unseal {
-    ($hello_key:ident, $hello_storage_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($loaded_hello_key:ident, $keytype:ident, $online:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
             let (mut prt, prt_expired) = $self
                 .client
                 .lock()
                 .await
-                .unseal_user_prt_with_loaded_hello_key(
+                .unseal_user_prt_with_loaded_ms_hello_key(
                     &hello_prt,
-                    &$hello_storage_key,
+                    &$loaded_hello_key,
                     $tpm,
                     $machine_key,
                 )
@@ -553,15 +658,14 @@ macro_rules! load_cached_prt_for_try_unseal {
                     .client
                     .lock()
                     .await
-                    .acquire_token_by_hello_for_business_key(
+                    .acquire_token_by_loaded_ms_hello_key(
                         $account_id,
-                        &$hello_key,
+                        &$loaded_hello_key,
                         vec![],
                         None,
                         None,
                         $tpm,
                         $machine_key,
-                        &$cred,
                     )
                     .await
                 {
@@ -583,27 +687,15 @@ macro_rules! load_cached_prt_for_try_unseal {
                     error!("Online Hello authentication did not return a replacement PRT");
                     return Ok(false);
                 };
-                let renewed_hello_prt = $self
-                    .client
-                    .lock()
-                    .await
-                    .seal_user_prt_with_hello_key(
-                        &renewed_prt,
-                        &$hello_key,
-                        &$cred,
-                        $tpm,
-                        $machine_key,
-                    )
-                    .map_err(|e| {
-                        error!(?e, "Failed to seal renewed Hello PRT");
-                        IdpError::Tpm
-                    })?;
-                $keystore
-                    .insert_tagged_hsm_key(&hello_prt_tag, &renewed_hello_prt)
-                    .map_err(|e| {
-                        error!(?e, "Failed to cache renewed Hello PRT");
-                        IdpError::Tpm
-                    })?;
+                $crate::cache_token_with_loaded_hello_key!(
+                    $self,
+                    $account_id,
+                    renewed_token,
+                    &$loaded_hello_key,
+                    $keystore,
+                    $tpm,
+                    $machine_key
+                );
                 prt = renewed_prt;
             }
             $self
@@ -616,7 +708,7 @@ macro_rules! load_cached_prt_for_try_unseal {
 
 #[macro_export]
 macro_rules! load_cached_prt_for_try_unseal_no_op {
-    ($hello_key:ident, $hello_storage_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($loaded_hello_key:ident, $keytype:ident, $online:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // No-op, since openidconnect does not have PRTs
         let _ = (&$keytype, $online);
     };
@@ -819,24 +911,15 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         e
                     })?;
 
-                let pin = match PinValue::new(&cred) {
-                    Ok(pin) => pin,
-                    Err(e) => {
-                        error!("Failed setting pin value: {:?}", e);
-                        handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
-                            Ok(AuthResult::Denied(msg.to_string()))
-                        });
-                        return Ok(AuthResult::Denied(tr(
-                            "Failed to authenticate with Hello PIN.",
-                        )));
-                    }
-                };
-                match $tpm.ms_hello_key_load($machine_key, &hello_key, &pin) {
-                    Ok((_, win_hello_storage_key)) => {
+                match himmelblau::auth::LoadedMsHelloKey::load(
+                    &hello_key,
+                    &cred,
+                    $tpm,
+                    $machine_key,
+                ) {
+                    Ok(loaded_hello_key) => {
                         $load_cached_prt!(
-                            hello_key,
-                            win_hello_storage_key,
-                            cred,
+                            loaded_hello_key,
                             $self,
                             $account_id,
                             $keystore,
@@ -849,18 +932,12 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         if let Ok(Some(sealed_refresh_token)) =
                             $keystore.get_tagged_hsm_key(&hello_refresh_token_tag)
                         {
-                            let refresh_token = String::from_utf8(
-                                $tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token)
-                                    .map_err(|e| {
-                                        error!("Failed to unseal refresh token: {:?}", e);
-                                        IdpError::Tpm
-                                    })?
-                                    .to_vec(),
-                            )
-                            .map_err(|e| {
-                                error!("Failed to decode refresh token: {:?}", e);
-                                IdpError::Tpm
-                            })?;
+                            let refresh_token =
+                                $crate::idprovider::common::unseal_refresh_token_with_loaded_hello_key(
+                                    $tpm,
+                                    loaded_hello_key.storage_key(),
+                                    &sealed_refresh_token,
+                                )?;
                             $self
                                 .refresh_cache
                                 .add_reused_refresh_token($account_id, refresh_token)
@@ -868,16 +945,14 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         }
                         if check_hello_totp_enabled!($self) {
                             if !check_hello_totp_setup!($self, $account_id, $keystore) {
-                                let (auth_result, _auth_cache_action) = impl_setup_hello_totp!(
-                                    $self,
-                                    $account_id,
-                                    $keystore,
-                                    $token,
-                                    cred,
-                                    $tpm,
-                                    $machine_key,
-                                    $cred_handler
-                                )?;
+                                let (auth_result, _auth_cache_action) =
+                                    $crate::impl_setup_hello_totp_with_storage_key!(
+                                        $account_id,
+                                        loaded_hello_key.storage_key(),
+                                        cred,
+                                        $tpm,
+                                        $cred_handler
+                                    )?;
                                 Ok(auth_result)
                             } else {
                                 *$cred_handler = AuthCredHandler::HelloTOTP {
@@ -898,7 +973,7 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         }
                     }
                     Err(e) => {
-                        error!("{:?}", e);
+                        error!(?e, "Failed to load Hello key with PIN");
                         handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
                             Ok(AuthResult::Denied(msg.to_string()))
                         });
@@ -976,29 +1051,17 @@ macro_rules! impl_himmelblau_try_unseal {
                 error!("try_unseal failed. Hello key missing.");
                 e
             })?;
-        let pin = match PinValue::new($cred) {
-            Ok(pin) => pin,
-            Err(e) => {
-                error!("Failed setting pin value: {:?}", e);
-                handle_hello_bad_pin_count!($self, $account_id, $keystore, |_msg: &str| {
-                    Ok(false)
-                });
-                return Ok(false);
-            }
-        };
 
-        match $tpm.ms_hello_key_load($machine_key, &hello_key, &pin) {
-            Ok((_, win_hello_storage_key)) => {
+        match himmelblau::auth::LoadedMsHelloKey::load(&hello_key, $cred, $tpm, $machine_key) {
+            Ok(loaded_hello_key) => {
                 // The PIN has been validated. Clear stale failures before any
                 // fallible PRT renewal or refresh-token restoration can return.
                 $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
 
                 $load_cached_prt!(
-                    hello_key,
-                    win_hello_storage_key,
+                    loaded_hello_key,
                     keytype,
                     $online,
-                    $cred,
                     $self,
                     $account_id,
                     $keystore,
@@ -1011,18 +1074,12 @@ macro_rules! impl_himmelblau_try_unseal {
                 if let Ok(Some(sealed_refresh_token)) =
                     $keystore.get_tagged_hsm_key(&hello_refresh_token_tag)
                 {
-                    let refresh_token = String::from_utf8(
-                        $tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token)
-                            .map_err(|e| {
-                                error!("Failed to unseal refresh token: {:?}", e);
-                                IdpError::Tpm
-                            })?
-                            .to_vec(),
-                    )
-                    .map_err(|e| {
-                        error!("Failed to decode refresh token: {:?}", e);
-                        IdpError::Tpm
-                    })?;
+                    let refresh_token =
+                        $crate::idprovider::common::unseal_refresh_token_with_loaded_hello_key(
+                            $tpm,
+                            loaded_hello_key.storage_key(),
+                            &sealed_refresh_token,
+                        )?;
                     $self
                         .refresh_cache
                         .add_reused_refresh_token($account_id, refresh_token)
@@ -1031,7 +1088,7 @@ macro_rules! impl_himmelblau_try_unseal {
                 Ok(true)
             }
             Err(e) => {
-                error!("{:?}", e);
+                error!(?e, "Failed to load Hello key with PIN");
                 handle_hello_bad_pin_count!($self, $account_id, $keystore, |_msg: &str| {
                     Ok(false)
                 });
@@ -1191,64 +1248,24 @@ macro_rules! impl_unix_user_access {
 #[macro_export]
 macro_rules! seal_prt_with_existing_hello_key {
     ($self:expr, $account_id:expr, $token:expr, $hello_key:expr, $pin:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {{
-        // Seal the PRT with the existing Hello key
-        if let Some(prt) = &$token.prt {
-            match $self.client.lock().await.seal_user_prt_with_hello_key(
-                prt,
-                $hello_key,
-                $pin,
-                $tpm,
-                $machine_key,
-            ) {
-                Ok(hello_prt) => {
-                    let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
-                    if let Err(e) = $keystore.insert_tagged_hsm_key(&hello_prt_tag, &hello_prt) {
-                        error!(
-                            "Failed to cache hello prt after reauth for {}: {:?}",
-                            $account_id, e
-                        );
-                    }
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to seal PRT after reauth for {}: {:?}",
-                        $account_id, e
-                    );
-                }
+        match himmelblau::auth::LoadedMsHelloKey::load($hello_key, $pin, $tpm, $machine_key) {
+            Ok(loaded_hello_key) => {
+                $crate::cache_token_with_loaded_hello_key!(
+                    $self,
+                    $account_id,
+                    $token,
+                    &loaded_hello_key,
+                    $keystore,
+                    $tpm,
+                    $machine_key
+                );
             }
-        } else {
-            // If there is no PRT, cache the refresh token instead
-            let pin_val = PinValue::new($pin).map_err(|e| {
-                error!("Failed initializing pin value: {:?}", e);
-                IdpError::Tpm
-            });
-            if let Ok(pin_val) = pin_val {
-                let key_result = $tpm.ms_hello_key_load($machine_key, $hello_key, &pin_val);
-                if let Ok((_key, win_hello_storage_key)) = key_result {
-                    let refresh_token_zeroizing =
-                        zeroize::Zeroizing::new($token.refresh_token.as_bytes().to_vec());
-                    if let Ok(sealed_rt) =
-                        $tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
-                    {
-                        let hello_rt_tag = $self.fetch_hello_refresh_token_key_tag($account_id);
-                        if let Err(e) = $keystore.insert_tagged_hsm_key(&hello_rt_tag, &sealed_rt) {
-                            error!(
-                                "Failed to cache hello refresh token after reauth for {}: {:?}",
-                                $account_id, e
-                            );
-                        }
-                    } else {
-                        error!(
-                            "Failed to seal refresh token after reauth for {}",
-                            $account_id
-                        );
-                    }
-                } else {
-                    error!(
-                        "Failed to load hello key for reauth sealing for {}",
-                        $account_id
-                    );
-                }
+            Err(e) => {
+                error!(
+                    ?e,
+                    account_id = $account_id,
+                    "Failed to load Hello key for reauth sealing"
+                );
             }
         }
     }};
@@ -1400,6 +1417,35 @@ macro_rules! impl_check_online {
 #[macro_export]
 macro_rules! impl_setup_hello_totp {
     ($self:ident, $account_id:ident, $keystore:ident, $old_token:ident, $hello_pin:ident, $tpm:ident, $machine_key:ident, $cred_handler:ident) => {{
+        let pin = PinValue::new(&$hello_pin).map_err(|e| {
+            error!("Failed setting pin value: {:?}", e);
+            IdpError::Tpm
+        })?;
+        let (hello_key, _) = $self.fetch_hello_key($account_id, $keystore).map_err(|e| {
+            error!("Online authentication failed. Hello key missing.");
+            e
+        })?;
+        let (_, win_hello_storage_key) = $tpm
+            .ms_hello_key_load($machine_key, &hello_key, &pin)
+            .map_err(|e| {
+                error!("Failed to load hello key: {:?}", e);
+                IdpError::Tpm
+            })?;
+        $crate::impl_setup_hello_totp_with_storage_key!(
+            $account_id,
+            &win_hello_storage_key,
+            $hello_pin,
+            $tpm,
+            $cred_handler
+        )
+    }};
+}
+
+/// Seal a new TOTP enrollment with the storage key of an already loaded
+/// Hello key.
+#[macro_export]
+macro_rules! impl_setup_hello_totp_with_storage_key {
+    ($account_id:ident, $hello_storage_key:expr, $hello_pin:ident, $tpm:ident, $cred_handler:ident) => {{
         let hostname = hostname::get()
             .unwrap_or_default()
             .to_string_lossy()
@@ -1434,23 +1480,9 @@ macro_rules! impl_setup_hello_totp {
             error!("Failed to serialize TOTP record: {:?}", e);
             IdpError::Tpm
         })?;
-        let pin = PinValue::new(&$hello_pin).map_err(|e| {
-            error!("Failed setting pin value: {:?}", e);
-            IdpError::Tpm
-        })?;
-        let (hello_key, _) = $self.fetch_hello_key($account_id, $keystore).map_err(|e| {
-            error!("Online authentication failed. Hello key missing.");
-            e
-        })?;
-        let (_, win_hello_storage_key) = $tpm
-            .ms_hello_key_load($machine_key, &hello_key, &pin)
-            .map_err(|e| {
-                error!("Failed to load hello key: {:?}", e);
-                IdpError::Tpm
-            })?;
         let record_json_zeroizing = Zeroizing::new(record_json.as_bytes().to_vec());
         let sealed_totp_secret = $tpm
-            .seal_data(&win_hello_storage_key, record_json_zeroizing)
+            .seal_data($hello_storage_key, record_json_zeroizing)
             .map_err(|e| {
                 error!("Failed to seal totp secret: {:?}", e);
                 IdpError::Tpm
@@ -1478,12 +1510,23 @@ macro_rules! impl_setup_hello_totp {
 #[cfg(test)]
 mod tests {
     use super::{
-        oidc_issuer_matches, should_block_hello_pin_attempts, should_offer_offline_hello_pin,
+        cache_refresh_token_with_loaded_hello_key, oidc_issuer_matches, sealed_refresh_token_or,
+        should_block_hello_pin_attempts, should_offer_offline_hello_pin,
         should_renew_expired_try_unseal_prt, should_warn_last_hello_pin_attempt,
-        try_unseal_policy_denial, KeyType, RefreshCache, RefreshCacheEntry, TryUnsealPolicyDenial,
+        try_unseal_policy_denial, unseal_refresh_token_with_loaded_hello_key, IdpError, KeyType,
+        RefreshCache, RefreshCacheEntry, TotpEnrollmentRecord, TryUnsealPolicyDenial,
     };
-    use kanidm_hsm_crypto::structures::SealedData;
+    use crate::db::{CacheError, KeyStoreTxn};
+    use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
+    use himmelblau::auth::{BrokerClientApplication, LoadedMsHelloKey, UserToken as MsalUserToken};
+    use kanidm_hsm_crypto::{
+        provider::{BoxedDynTpm, SoftTpm, Tpm},
+        structures::{LoadableMsHelloKey, SealedData, StorageKey},
+        AuthValue, PinValue,
+    };
+    use std::collections::HashMap;
     use std::time::{Duration, SystemTime};
+    use totp_rs::{Algorithm, Secret, TOTP};
     use zeroize::Zeroizing;
 
     #[test]
@@ -1725,6 +1768,586 @@ mod tests {
             Some(TryUnsealPolicyDenial::RetryLimitReached)
         );
         assert_eq!(try_unseal_policy_denial(true, false, 1, 2), None);
+    }
+
+    const TEST_HELLO_PIN: &str = "123456";
+    const TEST_ACCOUNT_ID: &str = "testuser@example.com";
+
+    #[derive(Default)]
+    struct RecordingKeyStore {
+        entries: HashMap<String, Vec<u8>>,
+        inserted_tags: Vec<String>,
+        fail_insert: bool,
+    }
+
+    impl KeyStoreTxn for RecordingKeyStore {
+        fn get_tagged_hsm_key<K: serde::de::DeserializeOwned>(
+            &mut self,
+            tag: &str,
+        ) -> Result<Option<K>, CacheError> {
+            self.entries
+                .get(tag)
+                .map(|entry| serde_cbor::from_slice(entry).map_err(|_| CacheError::SerdeJson))
+                .transpose()
+        }
+
+        fn insert_tagged_hsm_key<K: serde::Serialize>(
+            &mut self,
+            tag: &str,
+            key: &K,
+        ) -> Result<(), CacheError> {
+            if self.fail_insert {
+                return Err(CacheError::Sqlite);
+            }
+            let entry = serde_cbor::to_vec(key).map_err(|_| CacheError::SerdeJson)?;
+            self.entries.insert(tag.to_string(), entry);
+            self.inserted_tags.push(tag.to_string());
+            Ok(())
+        }
+
+        fn delete_tagged_hsm_key(&mut self, tag: &str) -> Result<(), CacheError> {
+            self.entries.remove(tag);
+            Ok(())
+        }
+    }
+
+    struct ResealHarness {
+        client: tokio::sync::Mutex<BrokerClientApplication>,
+    }
+
+    #[allow(dead_code)]
+    impl ResealHarness {
+        crate::impl_himmelblau_hello_key_helpers!();
+    }
+
+    fn reseal_harness() -> anyhow::Result<ResealHarness> {
+        let client =
+            BrokerClientApplication::new(None, None, None, None, Duration::from_secs(30), &[])
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        Ok(ResealHarness {
+            client: tokio::sync::Mutex::new(client),
+        })
+    }
+
+    fn user_token(prt: Option<SealedData>) -> anyhow::Result<MsalUserToken> {
+        let mut token: MsalUserToken = serde_json::from_value(serde_json::json!({
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "ext_expires_in": 3600,
+            "refresh_token": "refresh-token",
+        }))?;
+        token.prt = prt;
+        Ok(token)
+    }
+
+    fn soft_tpm_with_hello_key() -> anyhow::Result<(BoxedDynTpm, StorageKey, LoadableMsHelloKey)> {
+        let mut tpm = BoxedDynTpm::new(SoftTpm::new());
+        let auth = AuthValue::ephemeral().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let loadable_machine_key = tpm
+            .root_storage_key_create(&auth)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let machine_key = tpm
+            .root_storage_key_load(&auth, &loadable_machine_key)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let pin = PinValue::new(TEST_HELLO_PIN).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let hello_key = tpm
+            .ms_hello_key_create(&machine_key, &pin)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        Ok((tpm, machine_key, hello_key))
+    }
+
+    fn load_hello_key(
+        hello_key: &LoadableMsHelloKey,
+        pin: &str,
+        tpm: &mut BoxedDynTpm,
+        machine_key: &StorageKey,
+    ) -> anyhow::Result<LoadedMsHelloKey> {
+        LoadedMsHelloKey::load(hello_key, pin, tpm, machine_key)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))
+    }
+
+    fn other_loaded_hello_key(
+        tpm: &mut BoxedDynTpm,
+        machine_key: &StorageKey,
+    ) -> anyhow::Result<LoadedMsHelloKey> {
+        let pin = PinValue::new(TEST_HELLO_PIN).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let hello_key = tpm
+            .ms_hello_key_create(machine_key, &pin)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        load_hello_key(&hello_key, TEST_HELLO_PIN, tpm, machine_key)
+    }
+
+    const TEST_PRT_REFRESH_TOKEN: &str = "prt-refresh-token";
+
+    /// A harness whose client holds a transport key, and a PRT sealed with it.
+    fn harness_with_host_sealed_prt(
+        tpm: &mut BoxedDynTpm,
+        machine_key: &StorageKey,
+    ) -> anyhow::Result<(ResealHarness, SealedData)> {
+        let loadable_transport_key = tpm
+            .msoapxbc_rsa_key_create(machine_key)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let transport_key = tpm
+            .msoapxbc_rsa_key_load(machine_key, &loadable_transport_key)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let prt_storage_key = tpm.rs256_yield_cek(&transport_key);
+        let prt = serde_json::to_vec(&serde_json::json!({
+            "token_type": "Bearer",
+            "expires_in": "3600",
+            "ext_expires_in": "3600",
+            "expires_on": "9999999999",
+            "refresh_token": TEST_PRT_REFRESH_TOKEN,
+            "refresh_token_expires_in": 3600,
+            "id_token": { "name": "", "oid": "", "tid": "" },
+        }))?;
+        let host_sealed_prt = tpm
+            .seal_data(
+                prt_storage_key.as_ref().unwrap_or(machine_key),
+                Zeroizing::new(prt),
+            )
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let mut harness = reseal_harness()?;
+        harness
+            .client
+            .get_mut()
+            .set_transport_key(Some(loadable_transport_key));
+        Ok((harness, host_sealed_prt))
+    }
+
+    fn unseal_cached_refresh_token(
+        keystore: &mut RecordingKeyStore,
+        tpm: &mut BoxedDynTpm,
+        hello_storage_key: &StorageKey,
+        refresh_token_tag: &str,
+    ) -> anyhow::Result<String> {
+        let sealed_refresh_token: SealedData = keystore
+            .get_tagged_hsm_key(refresh_token_tag)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?
+            .ok_or_else(|| anyhow::anyhow!("refresh token was not persisted"))?;
+        unseal_refresh_token_with_loaded_hello_key(tpm, hello_storage_key, &sealed_refresh_token)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))
+    }
+
+    #[test]
+    fn refresh_token_storage_uses_loaded_hello_key() -> anyhow::Result<()> {
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        let loaded_hello_key = load_hello_key(&hello_key, TEST_HELLO_PIN, &mut tpm, &machine_key)?;
+        let hello_storage_key = loaded_hello_key.storage_key();
+        let refresh_token_tag = format!("{TEST_ACCOUNT_ID}/hello_refresh_token");
+
+        let mut keystore = RecordingKeyStore::default();
+        cache_refresh_token_with_loaded_hello_key(
+            &mut keystore,
+            &mut tpm,
+            hello_storage_key,
+            "refresh-token",
+            TEST_ACCOUNT_ID,
+            &refresh_token_tag,
+        );
+        assert_eq!(keystore.inserted_tags, vec![refresh_token_tag.clone()]);
+        assert_eq!(
+            unseal_cached_refresh_token(
+                &mut keystore,
+                &mut tpm,
+                hello_storage_key,
+                &refresh_token_tag
+            )?,
+            "refresh-token"
+        );
+
+        let mut failing_keystore = RecordingKeyStore {
+            fail_insert: true,
+            ..Default::default()
+        };
+        cache_refresh_token_with_loaded_hello_key(
+            &mut failing_keystore,
+            &mut tpm,
+            hello_storage_key,
+            "refresh-token",
+            TEST_ACCOUNT_ID,
+            &refresh_token_tag,
+        );
+        assert!(failing_keystore.inserted_tags.is_empty());
+
+        let invalid_utf8 = tpm
+            .seal_data(hello_storage_key, Zeroizing::new(vec![0xff]))
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert!(matches!(
+            unseal_refresh_token_with_loaded_hello_key(&mut tpm, hello_storage_key, &invalid_utf8),
+            Err(IdpError::Tpm)
+        ));
+
+        let other_loaded_hello_key = other_loaded_hello_key(&mut tpm, &machine_key)?;
+        assert!(unseal_cached_refresh_token(
+            &mut keystore,
+            &mut tpm,
+            other_loaded_hello_key.storage_key(),
+            &refresh_token_tag
+        )
+        .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_sealed_refresh_token_falls_back() -> anyhow::Result<()> {
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        let loaded_hello_key = load_hello_key(&hello_key, TEST_HELLO_PIN, &mut tpm, &machine_key)?;
+        let hello_storage_key = loaded_hello_key.storage_key();
+        let refresh_token_tag = format!("{TEST_ACCOUNT_ID}/hello_refresh_token");
+        let fallback = || Some(RefreshCacheEntry::RefreshToken("in-memory".to_string()));
+        let is_refresh_token = |entry: Option<RefreshCacheEntry>, expected: &str| matches!(entry, Some(RefreshCacheEntry::RefreshToken(value)) if value == expected);
+
+        let mut keystore = RecordingKeyStore::default();
+        assert!(is_refresh_token(
+            sealed_refresh_token_or(
+                &mut keystore,
+                &mut tpm,
+                hello_storage_key,
+                &refresh_token_tag,
+                fallback()
+            ),
+            "in-memory"
+        ));
+
+        cache_refresh_token_with_loaded_hello_key(
+            &mut keystore,
+            &mut tpm,
+            hello_storage_key,
+            "sealed",
+            TEST_ACCOUNT_ID,
+            &refresh_token_tag,
+        );
+        assert!(is_refresh_token(
+            sealed_refresh_token_or(
+                &mut keystore,
+                &mut tpm,
+                hello_storage_key,
+                &refresh_token_tag,
+                fallback()
+            ),
+            "sealed"
+        ));
+
+        let other_loaded_hello_key = other_loaded_hello_key(&mut tpm, &machine_key)?;
+        assert!(is_refresh_token(
+            sealed_refresh_token_or(
+                &mut keystore,
+                &mut tpm,
+                other_loaded_hello_key.storage_key(),
+                &refresh_token_tag,
+                fallback()
+            ),
+            "in-memory"
+        ));
+        assert!(sealed_refresh_token_or(
+            &mut keystore,
+            &mut tpm,
+            other_loaded_hello_key.storage_key(),
+            &refresh_token_tag,
+            None
+        )
+        .is_none());
+
+        let invalid_utf8 = tpm
+            .seal_data(hello_storage_key, Zeroizing::new(vec![0xff]))
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        keystore
+            .insert_tagged_hsm_key(&refresh_token_tag, &invalid_utf8)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert!(is_refresh_token(
+            sealed_refresh_token_or(
+                &mut keystore,
+                &mut tpm,
+                hello_storage_key,
+                &refresh_token_tag,
+                fallback()
+            ),
+            "in-memory"
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reseal_without_prt_caches_refresh_token_with_existing_hello_key() -> anyhow::Result<()>
+    {
+        let harness = reseal_harness()?;
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        let token = user_token(None)?;
+        let pin = Zeroizing::new(TEST_HELLO_PIN.to_string());
+        let mut keystore = RecordingKeyStore::default();
+
+        crate::seal_prt_with_existing_hello_key!(
+            harness,
+            TEST_ACCOUNT_ID,
+            token,
+            &hello_key,
+            &pin,
+            &mut keystore,
+            &mut tpm,
+            &machine_key
+        );
+
+        let refresh_token_tag = harness.fetch_hello_refresh_token_key_tag(TEST_ACCOUNT_ID);
+        assert_eq!(keystore.inserted_tags, vec![refresh_token_tag.clone()]);
+        let loaded_hello_key = load_hello_key(&hello_key, TEST_HELLO_PIN, &mut tpm, &machine_key)?;
+        assert_eq!(
+            unseal_cached_refresh_token(
+                &mut keystore,
+                &mut tpm,
+                loaded_hello_key.storage_key(),
+                &refresh_token_tag
+            )?,
+            "refresh-token"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reseal_with_wrong_pin_caches_nothing() -> anyhow::Result<()> {
+        let harness = reseal_harness()?;
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        let wrong_pin = Zeroizing::new("654321".to_string());
+
+        for token in [user_token(None)?, user_token(Some(test_prt(1)))?] {
+            let mut keystore = RecordingKeyStore::default();
+            crate::seal_prt_with_existing_hello_key!(
+                harness,
+                TEST_ACCOUNT_ID,
+                token,
+                &hello_key,
+                &wrong_pin,
+                &mut keystore,
+                &mut tpm,
+                &machine_key
+            );
+            assert!(keystore.inserted_tags.is_empty());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reseal_prt_seal_failure_caches_nothing() -> anyhow::Result<()> {
+        let harness = reseal_harness()?;
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        // Without a transport key the PRT cannot be re-sealed.
+        let token = user_token(Some(test_prt(1)))?;
+        let pin = Zeroizing::new(TEST_HELLO_PIN.to_string());
+        let mut keystore = RecordingKeyStore::default();
+
+        crate::seal_prt_with_existing_hello_key!(
+            harness,
+            TEST_ACCOUNT_ID,
+            token,
+            &hello_key,
+            &pin,
+            &mut keystore,
+            &mut tpm,
+            &machine_key
+        );
+
+        assert!(keystore.inserted_tags.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn token_cache_seals_prt_with_loaded_hello_key() -> anyhow::Result<()> {
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        let (harness, host_sealed_prt) = harness_with_host_sealed_prt(&mut tpm, &machine_key)?;
+        let loaded_hello_key = load_hello_key(&hello_key, TEST_HELLO_PIN, &mut tpm, &machine_key)?;
+        let token = user_token(Some(host_sealed_prt))?;
+        let mut keystore = RecordingKeyStore::default();
+
+        crate::cache_token_with_loaded_hello_key!(
+            harness,
+            TEST_ACCOUNT_ID,
+            token,
+            &loaded_hello_key,
+            &mut keystore,
+            &mut tpm,
+            &machine_key
+        );
+
+        let prt_tag = harness.fetch_hello_prt_key_tag(TEST_ACCOUNT_ID);
+        assert_eq!(keystore.inserted_tags, vec![prt_tag.clone()]);
+        let hello_prt: SealedData = keystore
+            .get_tagged_hsm_key(&prt_tag)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?
+            .ok_or_else(|| anyhow::anyhow!("PRT was not persisted"))?;
+        let prt = tpm
+            .unseal_data(loaded_hello_key.storage_key(), &hello_prt)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let prt: serde_json::Value = serde_json::from_slice(&prt)?;
+        assert_eq!(prt["refresh_token"], TEST_PRT_REFRESH_TOKEN);
+
+        let other_loaded_hello_key = other_loaded_hello_key(&mut tpm, &machine_key)?;
+        assert!(tpm
+            .unseal_data(other_loaded_hello_key.storage_key(), &hello_prt)
+            .is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn token_cache_insert_failure_stores_nothing() -> anyhow::Result<()> {
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        let (harness, host_sealed_prt) = harness_with_host_sealed_prt(&mut tpm, &machine_key)?;
+        let loaded_hello_key = load_hello_key(&hello_key, TEST_HELLO_PIN, &mut tpm, &machine_key)?;
+
+        for token in [user_token(Some(host_sealed_prt))?, user_token(None)?] {
+            let mut keystore = RecordingKeyStore {
+                fail_insert: true,
+                ..Default::default()
+            };
+            crate::cache_token_with_loaded_hello_key!(
+                harness,
+                TEST_ACCOUNT_ID,
+                token,
+                &loaded_hello_key,
+                &mut keystore,
+                &mut tpm,
+                &machine_key
+            );
+            assert!(keystore.entries.is_empty());
+        }
+        Ok(())
+    }
+
+    fn setup_totp_with_storage_key(
+        hello_storage_key: &StorageKey,
+        tpm: &mut BoxedDynTpm,
+        cred_handler: &mut AuthCredHandler,
+    ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
+        let account_id = TEST_ACCOUNT_ID;
+        let pin = TEST_HELLO_PIN.to_string();
+        crate::impl_setup_hello_totp_with_storage_key!(
+            account_id,
+            hello_storage_key,
+            pin,
+            tpm,
+            cred_handler
+        )
+    }
+
+    fn setup_totp_with_pin(
+        harness: &ResealHarness,
+        keystore: &mut RecordingKeyStore,
+        pin: &str,
+        tpm: &mut BoxedDynTpm,
+        machine_key: &StorageKey,
+        cred_handler: &mut AuthCredHandler,
+    ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
+        let account_id = TEST_ACCOUNT_ID;
+        let pin = pin.to_string();
+        crate::impl_setup_hello_totp!(
+            harness,
+            account_id,
+            keystore,
+            _old_token,
+            pin,
+            tpm,
+            machine_key,
+            cred_handler
+        )
+    }
+
+    #[test]
+    fn totp_setup_seals_enrollment_with_loaded_hello_key() -> anyhow::Result<()> {
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        let loaded_hello_key = load_hello_key(&hello_key, TEST_HELLO_PIN, &mut tpm, &machine_key)?;
+        let mut cred_handler = AuthCredHandler::None;
+
+        let msg = match setup_totp_with_storage_key(
+            loaded_hello_key.storage_key(),
+            &mut tpm,
+            &mut cred_handler,
+        ) {
+            Ok((AuthResult::Next(AuthRequest::HelloTOTP { msg }), AuthCacheAction::None)) => msg,
+            Ok(_) => anyhow::bail!("expected a TOTP enrollment request"),
+            Err(e) => anyhow::bail!("TOTP setup failed: {e:?}"),
+        };
+        let sealed_totp = match cred_handler {
+            AuthCredHandler::HelloTOTP {
+                cred,
+                pending_sealed_totp: Some(sealed_totp),
+            } if cred == TEST_HELLO_PIN => sealed_totp,
+            other => anyhow::bail!("unexpected credential handler: {other:?}"),
+        };
+        let record = tpm
+            .unseal_data(loaded_hello_key.storage_key(), &sealed_totp)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let record: TotpEnrollmentRecord = serde_json::from_slice(&record)?;
+        assert_eq!(record.account_name, TEST_ACCOUNT_ID);
+        assert!(msg.starts_with("otpauth://totp/"));
+        assert!(msg.contains(&format!("secret={}", record.secret_b32)));
+
+        let other_loaded_hello_key = other_loaded_hello_key(&mut tpm, &machine_key)?;
+        assert!(tpm
+            .unseal_data(other_loaded_hello_key.storage_key(), &sealed_totp)
+            .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn totp_setup_requires_stored_hello_key_and_correct_pin() -> anyhow::Result<()> {
+        let harness = reseal_harness()?;
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        let mut cred_handler = AuthCredHandler::None;
+
+        let mut empty_keystore = RecordingKeyStore::default();
+        assert!(matches!(
+            setup_totp_with_pin(
+                &harness,
+                &mut empty_keystore,
+                TEST_HELLO_PIN,
+                &mut tpm,
+                &machine_key,
+                &mut cred_handler
+            ),
+            Err(IdpError::BadRequest)
+        ));
+        assert!(matches!(cred_handler, AuthCredHandler::None));
+
+        let mut keystore = RecordingKeyStore::default();
+        keystore
+            .insert_tagged_hsm_key(
+                &harness.fetch_hello_key_tag(TEST_ACCOUNT_ID, true),
+                &hello_key,
+            )
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert!(matches!(
+            setup_totp_with_pin(
+                &harness,
+                &mut keystore,
+                "654321",
+                &mut tpm,
+                &machine_key,
+                &mut cred_handler
+            ),
+            Err(IdpError::Tpm)
+        ));
+        assert!(matches!(cred_handler, AuthCredHandler::None));
+
+        assert!(matches!(
+            setup_totp_with_pin(
+                &harness,
+                &mut keystore,
+                TEST_HELLO_PIN,
+                &mut tpm,
+                &machine_key,
+                &mut cred_handler
+            ),
+            Ok((
+                AuthResult::Next(AuthRequest::HelloTOTP { .. }),
+                AuthCacheAction::None
+            ))
+        ));
+        assert!(matches!(
+            cred_handler,
+            AuthCredHandler::HelloTOTP {
+                pending_sealed_totp: Some(_),
+                ..
+            }
+        ));
+        Ok(())
     }
 }
 
