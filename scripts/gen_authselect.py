@@ -117,7 +117,7 @@ def run_aad_tool_configure_pam(aad_tool, profile_dir, extra_args=None):
 
 
 def patch_nsswitch_for_himmelblau(nsswitch_path: Path):
-    """Ensure 'himmelblau' is present on passwd/group/shadow lines in nsswitch templates.
+    """Ensure 'himmelblau' is present on NSS lines in nsswitch templates.
 
     - If 'himmelblau' is already present, the line is left unchanged.
     - If there are trailing `{exclude ...}` macros, 'himmelblau' is inserted
@@ -175,7 +175,7 @@ def patch_nsswitch_for_himmelblau(nsswitch_path: Path):
         return f"{leading_ws}{prefix}: {new_body}"
 
     for line in original:
-        for key in ("passwd", "group", "shadow"):
+        for key in ("passwd", "group", "shadow", "initgroups"):
             line = patch_line(line, key)
         result.append(line)
 
