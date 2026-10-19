@@ -2570,6 +2570,29 @@ mod tests {
         assert_eq!(result, Vec::<String>::new());
     }
 
+    #[test]
+    fn test_get_canonicalize_user_services_default_value() {
+        // PAM_USER is never rewritten unless services are explicitly listed.
+        let config = create_empty_config();
+
+        let result = config.get_canonicalize_user_services();
+        assert_eq!(result, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_get_canonicalize_user_services_comma_separated() {
+        let config_data = r#"
+        [global]
+        canonicalize_user_services = gdm-password , login
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_canonicalize_user_services();
+        assert_eq!(result, vec!["gdm-password", "login"]);
+    }
+
     // Tests for parse_ttl_to_seconds()
 
     #[test]

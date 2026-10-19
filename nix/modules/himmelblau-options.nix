@@ -363,6 +363,53 @@ in
       example = [ "ssh" "cockpit" ];
     };
 
+    canonicalize_user_services = mkOption {
+      type = types.nullOr (types.listOf types.str);
+      default = null;
+      description = ''
+        A comma-separated list of PAM service names for which the PAM module replaces
+        **PAM_USER**
+        with the canonical account name after a successful authentication. The
+        canonical account name is the name the system name service returns for the
+        authenticated account, which is also the name reported by
+        **id -un**
+        for that user.
+        
+        Users can log in with several aliases of the same account, such as the UPN,
+        the short name, or a different letter case. Some applications, such as GDM,
+        copy
+        **PAM_USER**
+        into the
+        **USER**
+        and
+        **LOGNAME**
+        environment variables of the session, which then contain the alias entered at
+        the login prompt instead of the account name.
+        
+        The PAM service name is the name passed by the application when calling
+        **pam_start()**
+        (e.g., "gdm-password", "login").
+        
+        Entries are matched as substrings, so "gdm" will match "gdm-password",
+        "gdm-autologin", etc.
+        
+        **PAM_USER**
+        is only replaced when the canonical account name resolves to the same account
+        as the name entered at the login prompt. Do not list sshd: it requires
+        **PAM_USER**
+        to remain unchanged during authentication, and already sets
+        **USER**
+        and
+        **LOGNAME**
+        from the account name.
+        
+        By default, no service is listed and
+        **PAM_USER**
+        is never modified.
+      '';
+      example = [ "gdm-password" ];
+    };
+
     mfa_method = mkOption {
       type = types.nullOr (types.str);
       default = null;

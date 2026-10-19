@@ -57,7 +57,7 @@ pub mod macros;
 pub mod module;
 
 use std::convert::TryFrom;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 
 use himmelblau::error::MsalError;
 use himmelblau::{AuthOption, PublicClientApplication};
@@ -77,13 +77,13 @@ use std::thread::sleep;
 
 use crate::pam::constants::*;
 use crate::pam::conv::PamConv;
-use crate::pam::items::PamAuthTok;
+use crate::pam::items::{PamAuthTok, PamUser};
 use crate::pam::module::{PamHandle, PamHooks};
 use crate::pam_hooks;
 use constants::PamResultCode;
 
 use tracing::instrument;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
@@ -248,6 +248,79 @@ impl MessagePrinter for KeyringCaptureMessagePrinter {
     }
 }
 
+/// Whether `service` is listed in `canonicalize_user_services`. Entries are
+/// matched as substrings, like the other PAM service lists in himmelblau.conf.
+fn service_canonicalizes_user(services: &[String], service: &str) -> bool {
+    services
+        .iter()
+        .any(|entry| !entry.is_empty() && service.contains(entry.as_str()))
+}
+
+/// Look up `name` in the system name service, returning the account name and
+/// UID of the entry, or `None` if there is no such entry.
+fn nss_user_by_name(name: &str) -> Option<(String, libc::uid_t)> {
+    let c_name = CString::new(name).ok()?;
+    let mut pwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut result = std::ptr::null_mut();
+    let mut buffer = vec![0_u8; 16 * 1024];
+
+    let rc = unsafe {
+        libc::getpwnam_r(
+            c_name.as_ptr(),
+            pwd.as_mut_ptr(),
+            buffer.as_mut_ptr().cast::<libc::c_char>(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    if rc != 0 || result.is_null() {
+        return None;
+    }
+
+    let pwd = unsafe { pwd.assume_init() };
+    if pwd.pw_name.is_null() {
+        return None;
+    }
+    let pw_name = unsafe { CStr::from_ptr(pwd.pw_name) }.to_str().ok()?;
+    Some((pw_name.to_string(), pwd.pw_uid))
+}
+
+/// Return the canonical account name to store in PAM_USER for `login_name`, or
+/// `None` to leave PAM_USER unchanged. The canonical name is the one the name
+/// service returns for `login_name`. It is only used when the name service
+/// maps it back to itself and to the same UID, so that an alias can never be
+/// replaced by the name of a different account.
+fn canonical_user_name(
+    login_name: &str,
+    lookup: impl Fn(&str) -> Option<(String, libc::uid_t)>,
+) -> Option<String> {
+    let (canonical, uid) = lookup(login_name)?;
+    if canonical == login_name {
+        return None;
+    }
+    if lookup(&canonical) != Some((canonical.clone(), uid)) {
+        warn!(
+            %login_name,
+            %canonical,
+            "Canonical account name does not resolve to the same account, PAM_USER left unchanged"
+        );
+        return None;
+    }
+    Some(canonical)
+}
+
+/// Replace PAM_USER with the canonical account name, so that applications that
+/// read it back after authentication, such as GDM, see the account name rather
+/// than the alias entered at the login prompt.
+fn canonicalize_pam_user(pamh: &PamHandle, login_name: &str) {
+    if let Some(canonical) = canonical_user_name(login_name, nss_user_by_name) {
+        match pamh.set_item_str::<PamUser>(&canonical) {
+            Ok(()) => debug!(%login_name, %canonical, "Set PAM_USER to the canonical account name"),
+            Err(err) => error!(?err, %login_name, %canonical, "Failed to set PAM_USER"),
+        }
+    }
+}
+
 impl PamHooks for PamKanidm {
     #[instrument(skip(pamh, args, _flags))]
     fn acct_mgmt(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
@@ -356,6 +429,10 @@ impl PamHooks for PamKanidm {
             "sm_authenticate PAM context"
         );
 
+        // canonicalize_user_services is matched against PAM_SERVICE only, never
+        // against the TTY fallback or the "remote:" prefix used below.
+        let pam_service_name = pam_service.as_ref().ok().and_then(|svc| svc.clone());
+
         // Use PAM_SERVICE as the primary service identifier (most reliable).
         // This is the service name passed by the application to pam_start().
         let service = match pam_service {
@@ -389,11 +466,16 @@ impl PamHooks for PamKanidm {
                 return PamResultCode::PAM_SERVICE_ERR;
             }
         };
+        // The name as entered, before it is mapped to a UPN for the daemon.
+        let login_name = account_id.clone();
 
         let cfg = match get_cfg() {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
+        let canonicalize_user = pam_service_name.as_deref().is_some_and(|svc| {
+            service_canonicalizes_user(&cfg.get_canonicalize_user_services(), svc)
+        });
         let user_map = UserMap::new(&cfg.get_user_map_file());
         let account_id = match user_map.get_upn_from_local(&account_id) {
             Some(account_id) => account_id,
@@ -492,6 +574,10 @@ impl PamHooks for PamKanidm {
             } else {
                 debug!("No keyring secret captured; PAM_AUTHTOK not set");
             }
+        }
+
+        if canonicalize_user && result == PamResultCode::PAM_SUCCESS {
+            canonicalize_pam_user(pamh, &login_name);
         }
 
         result
@@ -1166,5 +1252,94 @@ mod tests {
         assert!(!is_loopback_address("example.com"));
         assert!(!is_loopback_address("remotehost"));
         assert!(!is_loopback_address("192.168.1.invalid"));
+    }
+
+    #[test]
+    fn test_service_canonicalizes_user() {
+        let services = vec!["gdm-password".to_string()];
+        assert!(service_canonicalizes_user(&services, "gdm-password"));
+        assert!(!service_canonicalizes_user(&services, "sshd"));
+        assert!(!service_canonicalizes_user(&services, "login"));
+
+        // Entries are matched as substrings.
+        let services = vec!["gdm".to_string()];
+        assert!(service_canonicalizes_user(&services, "gdm-password"));
+        assert!(service_canonicalizes_user(&services, "gdm-autologin"));
+
+        // An empty list, or an empty entry, matches nothing.
+        assert!(!service_canonicalizes_user(&[], "gdm-password"));
+        assert!(!service_canonicalizes_user(
+            &["".to_string()],
+            "gdm-password"
+        ));
+    }
+
+    /// A name service holding the given (lookup key, account name, UID) entries.
+    fn fake_nss(
+        entries: &[(&'static str, &'static str, libc::uid_t)],
+    ) -> impl Fn(&str) -> Option<(String, libc::uid_t)> {
+        let entries = entries.to_vec();
+        move |name| {
+            entries
+                .iter()
+                .find(|(key, _, _)| *key == name)
+                .map(|(_, pw_name, uid)| (pw_name.to_string(), *uid))
+        }
+    }
+
+    #[test]
+    fn test_canonical_user_name_replaces_alias() {
+        let nss = fake_nss(&[
+            ("alice@example.com", "alice", 1000),
+            ("Alice", "alice", 1000),
+            ("alice", "alice", 1000),
+        ]);
+        assert_eq!(
+            canonical_user_name("alice@example.com", &nss),
+            Some("alice".to_string())
+        );
+        assert_eq!(
+            canonical_user_name("Alice", &nss),
+            Some("alice".to_string())
+        );
+    }
+
+    #[test]
+    fn test_canonical_user_name_keeps_canonical_name() {
+        let nss = fake_nss(&[("alice", "alice", 1000)]);
+        assert_eq!(canonical_user_name("alice", &nss), None);
+    }
+
+    #[test]
+    fn test_canonical_user_name_unknown_user() {
+        let nss = fake_nss(&[]);
+        assert_eq!(canonical_user_name("alice@example.com", &nss), None);
+    }
+
+    #[test]
+    fn test_canonical_user_name_rejects_another_account() {
+        // The canonical name of the entered alias resolves to a different
+        // account, for instance a local user with the same name.
+        let nss = fake_nss(&[
+            ("alice@example.com", "alice", 1000),
+            ("alice", "alice", 2000),
+        ]);
+        assert_eq!(canonical_user_name("alice@example.com", &nss), None);
+    }
+
+    #[test]
+    fn test_canonical_user_name_rejects_unresolvable_name() {
+        let nss = fake_nss(&[("alice@example.com", "alice", 1000)]);
+        assert_eq!(canonical_user_name("alice@example.com", &nss), None);
+    }
+
+    #[test]
+    fn test_canonical_user_name_rejects_unstable_name() {
+        // The name service does not map the canonical name back to itself.
+        let nss = fake_nss(&[
+            ("alice@example.com", "alice", 1000),
+            ("alice", "alice@example.com", 1000),
+        ]);
+        assert_eq!(canonical_user_name("alice@example.com", &nss), None);
     }
 }
