@@ -395,13 +395,30 @@ in
         
         **PAM_USER**
         is only replaced when the canonical account name resolves to the same account
-        as the name entered at the login prompt. Do not list sshd: it requires
+        as the name entered at the login prompt.
+        
+        Do not list services that require
         **PAM_USER**
-        to remain unchanged during authentication, and already sets
+        to remain unchanged during authentication. sshd aborts the connection when it
+        re-initializes PAM and
+        **PAM_USER**
+        has changed, and already sets
         **USER**
         and
         **LOGNAME**
-        from the account name.
+        from the account name. polkit, whose PAM service is "polkit-1", rejects the
+        authentication when
+        **PAM_USER**
+        has changed, even to the name of the same account.
+        
+        pam_faillock records failures under the value of
+        **PAM_USER**
+        at the time it runs. When pam_faillock runs before pam_himmelblau in the
+        authentication stack, a successful login resets the failures recorded under
+        the canonical account name, not those recorded under the name entered at the
+        login prompt. When pam_himmelblau runs first, as configured by the authselect
+        profile and by aad-tool configure-pam, pam_faillock does not act on successful
+        Himmelblau logins, and this option does not change its behavior.
         
         By default, no service is listed and
         **PAM_USER**

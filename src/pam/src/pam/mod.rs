@@ -58,6 +58,7 @@ pub mod module;
 
 use std::convert::TryFrom;
 use std::ffi::{CStr, CString};
+use std::io;
 
 use himmelblau::error::MsalError;
 use himmelblau::{AuthOption, PublicClientApplication};
@@ -256,57 +257,111 @@ fn service_canonicalizes_user(services: &[String], service: &str) -> bool {
         .any(|entry| !entry.is_empty() && service.contains(entry.as_str()))
 }
 
+/// Initial size of the buffer passed to getpwnam_r(), and the size beyond which
+/// it is no longer doubled when the entry does not fit (ERANGE).
+const PASSWD_BUFFER_SIZE: usize = 16 * 1024;
+const PASSWD_BUFFER_MAX_SIZE: usize = 1024 * 1024;
+
 /// Look up `name` in the system name service, returning the account name and
-/// UID of the entry, or `None` if there is no such entry.
-fn nss_user_by_name(name: &str) -> Option<(String, libc::uid_t)> {
-    let c_name = CString::new(name).ok()?;
-    let mut pwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
-    let mut result = std::ptr::null_mut();
-    let mut buffer = vec![0_u8; 16 * 1024];
+/// UID of the entry, `Ok(None)` if there is no such entry, or the error that
+/// prevented the lookup.
+fn nss_user_by_name(name: &str) -> io::Result<Option<(String, libc::uid_t)>> {
+    let c_name =
+        CString::new(name).map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    let mut buffer = vec![0_u8; PASSWD_BUFFER_SIZE];
 
-    let rc = unsafe {
-        libc::getpwnam_r(
-            c_name.as_ptr(),
-            pwd.as_mut_ptr(),
-            buffer.as_mut_ptr().cast::<libc::c_char>(),
-            buffer.len(),
-            &mut result,
-        )
-    };
-    if rc != 0 || result.is_null() {
-        return None;
-    }
+    loop {
+        let mut pwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
+        let mut result = std::ptr::null_mut();
+        let rc = unsafe {
+            libc::getpwnam_r(
+                c_name.as_ptr(),
+                pwd.as_mut_ptr(),
+                buffer.as_mut_ptr().cast::<libc::c_char>(),
+                buffer.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE && buffer.len() < PASSWD_BUFFER_MAX_SIZE {
+            buffer.resize(buffer.len() * 2, 0);
+            continue;
+        }
+        if rc != 0 {
+            return Err(io::Error::from_raw_os_error(rc));
+        }
+        if result.is_null() {
+            return Ok(None);
+        }
 
-    let pwd = unsafe { pwd.assume_init() };
-    if pwd.pw_name.is_null() {
-        return None;
+        let pwd = unsafe { pwd.assume_init() };
+        if pwd.pw_name.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "passwd entry without a name",
+            ));
+        }
+        let pw_name = unsafe { CStr::from_ptr(pwd.pw_name) }
+            .to_str()
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        return Ok(Some((pw_name.to_string(), pwd.pw_uid)));
     }
-    let pw_name = unsafe { CStr::from_ptr(pwd.pw_name) }.to_str().ok()?;
-    Some((pw_name.to_string(), pwd.pw_uid))
 }
 
 /// Return the canonical account name to store in PAM_USER for `login_name`, or
 /// `None` to leave PAM_USER unchanged. The canonical name is the one the name
 /// service returns for `login_name`. It is only used when the name service
 /// maps it back to itself and to the same UID, so that an alias can never be
-/// replaced by the name of a different account.
+/// replaced by the name of a different account. Lookup failures are logged and
+/// leave PAM_USER unchanged.
 fn canonical_user_name(
     login_name: &str,
-    lookup: impl Fn(&str) -> Option<(String, libc::uid_t)>,
+    lookup: impl Fn(&str) -> io::Result<Option<(String, libc::uid_t)>>,
 ) -> Option<String> {
-    let (canonical, uid) = lookup(login_name)?;
+    let (canonical, uid) = match lookup(login_name) {
+        Ok(Some(entry)) => entry,
+        Ok(None) => {
+            warn!(
+                %login_name,
+                "No name service entry for the authenticated user, PAM_USER left unchanged"
+            );
+            return None;
+        }
+        Err(err) => {
+            warn!(
+                ?err,
+                %login_name,
+                "Failed to look up the authenticated user, PAM_USER left unchanged"
+            );
+            return None;
+        }
+    };
     if canonical == login_name {
         return None;
     }
-    if lookup(&canonical) != Some((canonical.clone(), uid)) {
-        warn!(
-            %login_name,
-            %canonical,
-            "Canonical account name does not resolve to the same account, PAM_USER left unchanged"
-        );
-        return None;
+
+    match lookup(&canonical) {
+        Ok(Some((name, canonical_uid))) if name == canonical && canonical_uid == uid => {
+            Some(canonical)
+        }
+        Ok(resolved) => {
+            warn!(
+                %login_name,
+                %canonical,
+                ?resolved,
+                "Canonical account name does not resolve to the same account, PAM_USER left unchanged"
+            );
+            None
+        }
+        Err(err) => {
+            warn!(
+                ?err,
+                %login_name,
+                %canonical,
+                "Failed to look up the canonical account name, PAM_USER left unchanged"
+            );
+            None
+        }
     }
-    Some(canonical)
 }
 
 /// Replace PAM_USER with the canonical account name, so that applications that
@@ -1277,14 +1332,44 @@ mod tests {
     /// A name service holding the given (lookup key, account name, UID) entries.
     fn fake_nss(
         entries: &[(&'static str, &'static str, libc::uid_t)],
-    ) -> impl Fn(&str) -> Option<(String, libc::uid_t)> {
+    ) -> impl Fn(&str) -> io::Result<Option<(String, libc::uid_t)>> {
         let entries = entries.to_vec();
         move |name| {
-            entries
+            Ok(entries
                 .iter()
                 .find(|(key, _, _)| *key == name)
-                .map(|(_, pw_name, uid)| (pw_name.to_string(), *uid))
+                .map(|(_, pw_name, uid)| (pw_name.to_string(), *uid)))
         }
+    }
+
+    #[test]
+    fn test_nss_user_by_name() {
+        // root exists on every system, so this exercises the real getpwnam_r().
+        assert_eq!(
+            nss_user_by_name("root").unwrap(),
+            Some(("root".to_string(), 0))
+        );
+        // A name containing NUL cannot be passed to getpwnam_r().
+        assert!(nss_user_by_name("ro\0ot").is_err());
+    }
+
+    #[test]
+    fn test_canonical_user_name_lookup_errors() {
+        // A failure of the first lookup leaves PAM_USER unchanged.
+        let failing = |_: &str| -> io::Result<Option<(String, libc::uid_t)>> {
+            Err(io::Error::from_raw_os_error(libc::EIO))
+        };
+        assert_eq!(canonical_user_name("alice@example.com", failing), None);
+
+        // So does a failure of the lookup of the canonical name.
+        let second_fails = |name: &str| -> io::Result<Option<(String, libc::uid_t)>> {
+            if name == "alice@example.com" {
+                Ok(Some(("alice".to_string(), 1000)))
+            } else {
+                Err(io::Error::from_raw_os_error(libc::EIO))
+            }
+        };
+        assert_eq!(canonical_user_name("alice@example.com", second_fails), None);
     }
 
     #[test]
