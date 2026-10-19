@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import email.utils
 import hashlib
 import http.server
 import io
@@ -1302,6 +1303,110 @@ sys.exit(int(sys.argv[1]))
                     self.assertEqual(Handler.requests, 4)  # Initial attempt plus three retries.
                 else:
                     self.assertIn("Hash Sum mismatch", result.stdout + result.stderr)
+
+    @unittest.skipUnless(Path("/usr/bin/apt-get").exists(), "native APT unavailable")
+    def test_image_index_refresh_recovers_after_per_file_retries_are_exhausted(self):
+        """Use real APT indexes; only backoff sleeps are replaced by a recorder."""
+        dockerfile = DOCKERFILE.read_text()
+        block = dockerfile.split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
+        shell = shlex.split(block.replace("\\\n", ""))[-1]
+        prefix = shell.split('echo "apt-provision: stage=update"', 1)[0]
+        probe = prefix + ("apt_update" if "apt_update() (" in prefix else 'apt_get update --snapshot "$UBUNTU_SNAPSHOT"')
+        policy = shlex.split(dockerfile.split("RUN printf '%s\\n'", 1)[1].split("\n\n", 1)[0].replace("\\\n", ""))[:-2]
+        package_index = b"Package: maintenance-fixture\nVersion: 1.0\nArchitecture: amd64\nDescription: fixture\n\n"
+        release = ("Origin: Fixture\nSuite: stable\nCodename: stable\nArchitectures: amd64\nComponents: main\n"
+                   + "Date: " + email.utils.formatdate(usegmt=True) + "\nSHA256:\n "
+                   + hashlib.sha256(package_index).hexdigest() + f" {len(package_index)} main/binary-amd64/Packages\n").encode()
+        for failures, expected_attempts in ((8, 3), (100, 4)):
+            with self.subTest(failures=failures), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for path in ("lists/partial", "cache/archives/partial", "bin", "temp"):
+                    (root / path).mkdir(parents=True)
+                class Handler(http.server.BaseHTTPRequestHandler):
+                    index_requests = 0
+                    def log_message(self, *args): pass
+                    def do_GET(self):
+                        if self.path == "/dists/stable/Release":
+                            payload = release
+                        elif self.path == "/dists/stable/main/binary-amd64/Packages":
+                            Handler.index_requests += 1
+                            if Handler.index_requests <= failures:
+                                self.send_error(503); return
+                            payload = package_index
+                        else:
+                            self.send_error(404); return
+                        self.send_response(200)
+                        self.send_header("Content-Length", str(len(payload)))
+                        self.end_headers(); self.wfile.write(payload)
+                server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                worker = threading.Thread(target=server.serve_forever, daemon=True); worker.start()
+                # Unsigned trust is confined to this loopback fixture. Production
+                # signed snapshot sources and package installation are untouched.
+                sources = root / "sources.list"
+                sources.write_text(f"deb [trusted=yes] http://127.0.0.1:{server.server_port} stable main\n")
+                config = root / "apt.conf"
+                config.write_text("\n".join(policy) + "\n" +
+                    f'Dir::Etc::sourcelist "{sources}";\nDir::Etc::sourceparts "-";\nDir::Etc::parts "-";\n'
+                    f'Dir::State::lists "{root / "lists"}";\nDir::Cache "{root / "cache"}";\n'
+                    'Acquire::Languages "none";\n' +
+                    'APT::Sandbox::User "' + __import__("pwd").getpwuid(os.geteuid()).pw_name + '";\n')
+                sleeper = root / "bin/sleep"
+                sleeper.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$SLEEP_LOG"\n'); sleeper.chmod(0o700)
+                try:
+                    result = subprocess.run(["/bin/bash", "-o", "pipefail", "-ec", probe], capture_output=True, text=True,
+                        timeout=50, env={**os.environ, "APT_CONFIG": str(config), "UBUNTU_SNAPSHOT": "20260924T000000Z",
+                                         "TMPDIR": str(root / "temp"), "SLEEP_LOG": str(root / "sleeps"),
+                                         "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"]})
+                finally:
+                    server.shutdown(); server.server_close(); worker.join(timeout=2)
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 0 if failures == 8 else 100, output)
+                self.assertEqual(Handler.index_requests, failures + 1 if failures == 8 else 16, output)
+                self.assertEqual((root / "sleeps").read_text().splitlines(), ["60", "120", "240"][:expected_attempts - 1])
+                self.assertEqual(list((root / "temp").iterdir()), [])
+                self.assertNotIn("Config-Item:", output)
+                self.assertNotIn("600%20URI%20Acquire", output)
+
+    def test_image_index_refresh_only_retries_transient_fetch_failures(self):
+        """Only exhausted transient HTTP fetch failures may repeat the update."""
+        block = DOCKERFILE.read_text().split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
+        shell = shlex.split(block.replace("\\\n", ""))[-1]
+        probe = shell.split('echo "apt-provision: stage=update"', 1)[0] + "apt_update"
+        transient = "E: Failed to fetch https://snapshot.invalid/index  503 Service Unavailable"
+        cases = (
+            (100, "E: Failed to fetch https://snapshot.invalid/index  404 Not Found", "", 100),
+            (100, "E: Failed to fetch https://snapshot.invalid/index  Hash Sum mismatch", "", 100),
+            (100, transient + "\nE: The repository is not signed.", "", 100),
+            (100, transient + "\nE: Sub-process /usr/bin/dpkg returned an error code (1)", "", 100),
+            (100, "E: Unknown failure", "", 100),
+            (137, transient, "", 137),
+            (100, transient, "tee", 9),
+            (100, transient, "sleep", 7),
+        ) + tuple((100, f"E: Failed to fetch https://snapshot.invalid/index  {code} Remote failure", "", 0)
+                  for code in (408, 429, 500, 502, 503, 504))
+        for status, output, broken, expected in cases:
+            with self.subTest(output=output, broken=broken), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); (root / "temp").mkdir()
+                apt = root / "apt-get"
+                apt.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALL_LOG"\n'
+                               + 'if [ "$(wc -l < "$CALL_LOG")" -gt 1 ]; then exit 0; fi\n'
+                               + "printf '%s\\n' " + shlex.quote(output) + f"\nexit {status}\n")
+                apt.chmod(0o700)
+                sleeper = root / "sleep"
+                sleeper.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$SLEEP_LOG"\n' +
+                                   ("exit 7\n" if broken == "sleep" else "")); sleeper.chmod(0o700)
+                if broken == "tee":
+                    tee = root / "tee"; tee.write_text("#!/bin/sh\ncat\nexit 9\n"); tee.chmod(0o700)
+                result = subprocess.run(["/bin/bash", "-o", "pipefail", "-ec", probe], capture_output=True, text=True,
+                    timeout=5, env={**os.environ, "UBUNTU_SNAPSHOT": "20260924T000000Z", "TMPDIR": str(root / "temp"),
+                                    "CALL_LOG": str(root / "calls"), "SLEEP_LOG": str(root / "sleeps"),
+                                    "PATH": str(root) + os.pathsep + os.environ["PATH"]})
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                calls = (root / "calls").read_text().splitlines()
+                self.assertEqual(len(calls), 2 if expected == 0 else 1)
+                self.assertTrue(calls[0].endswith("update --snapshot 20260924T000000Z"))
+                self.assertEqual((root / "sleeps").exists(), broken == "sleep" or expected == 0)
+                self.assertEqual(list((root / "temp").iterdir()), [])
 
     def test_checkout_regular_file_accepts_regular_file(self):
         with tempfile.TemporaryDirectory() as tmp:
