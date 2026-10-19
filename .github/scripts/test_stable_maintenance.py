@@ -4946,6 +4946,7 @@ class ManualFinalAuditTests(unittest.TestCase):
                     sm.phase_report(mock.Mock(), state, runner)
                 report = (state.directory / "report.md").read_text()
                 self.assertIn("Final audits require manual work", report)
+                self.assertIn("Draft only; release validation incomplete.", report)
                 for text in (body, report, (state.directory / "report.json").read_text()):
                     self.assertNotIn("secret", text)
                     self.assertNotIn("::error::", text)
@@ -4967,6 +4968,9 @@ class ManualFinalAuditTests(unittest.TestCase):
                 self.assertNotIn("manual_audit_head", state.load())
                 self.assertNotIn("manual_audit_work", state.load())
                 self.assertEqual(state.load()["validated_head"], runner.git(["rev-parse", "HEAD"]).stdout.strip())
+                with mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    sm.phase_report(mock.Mock(), state, runner)
+                self.assertNotIn("Draft only", (state.directory / "report.md").read_text())
                 with self.assertRaisesRegex(sm.MaintenanceError, "stable branch advanced"), \
                      mock.patch.object(sm, "secure_github_push") as push:
                     runner.git(["branch", "-f", "stable-4.x", "HEAD"])
@@ -5000,10 +5004,25 @@ class ManualFinalAuditTests(unittest.TestCase):
                      mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(int(gate == "tests"), "", "")), \
                      mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
                      mock.patch.object(sm, "locked_vet_gaps", side_effect=sm.MaintenanceError("vet failed")), \
-                     self.assertRaises(sm.MaintenanceError):
+                     self.assertRaises(sm.MaintenanceError) as failure:
                     sm.phase_validate(mock.Mock(), state, runner)
                 self.assertNotIn("manual_audit_head", state.load())
                 self.assertNotIn("validated_head", state.load())
+                value = state.load()
+                value.update(failed_phase="validate", failure=str(failure.exception))
+                state.save(value)
+                with mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    sm.phase_report(mock.Mock(), state, runner)
+                report = (state.directory / "report.md").read_text()
+                self.assertIn("Failed phase: `validate`", report)
+                self.assertIn(str(failure.exception), report)
+                self.assertNotIn("Draft only", report)
+                if gate in ("metadata", "nix", "dirty"):
+                    self.assertEqual(len(value["manual_audit_work"]), 2)
+                    for text in (report, (state.directory / "report.json").read_text()):
+                        self.assertIn("Manual Audit Work", text)
+                        self.assertIn("cargo-audit", text)
+                        self.assertIn("cargo-vet", text)
 
     def test_manual_status_rejects_malformed_or_unbound_publication(self):
         for work in (None, {}, ["cargo-audit"], [{"gate": [], "reason": "findings"}],

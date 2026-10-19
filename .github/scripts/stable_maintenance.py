@@ -4126,7 +4126,7 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
     lines = ["# Stable maintenance report", "", f"Last phase: `{value.get('last_phase', 'not started')}`", ""]
     if value.get("failed_phase"):
         lines.extend([f"Failed phase: `{value['failed_phase']}` — {value.get('failure', 'failed closed')}", ""])
-    if manual_audit_work(value):
+    if manual_audit_work(value) and value.get("manual_audit_head"):
         lines.extend(["**Final audits require manual work. Draft only; release validation incomplete.**", ""])
     if value.get("skip"):
         numbers = ", ".join(f"#{number}" for number in value.get("blocking_pull_requests", []))
