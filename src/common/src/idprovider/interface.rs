@@ -303,7 +303,7 @@ pub trait IdProvider {
 
     /// Like `check_online`, but needs no HSM and re-verifies an `Online` state, which
     /// can be stale after resume. Providers without a probe report true.
-    async fn probe_online(&self, _now: SystemTime) -> bool {
+    async fn probe_online(&self, _account_id: Option<&str>, _now: SystemTime) -> bool {
         true
     }
 

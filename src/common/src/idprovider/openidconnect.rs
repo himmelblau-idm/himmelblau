@@ -2703,7 +2703,7 @@ impl IdProvider for OidcProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn probe_online(&self, now: SystemTime) -> bool {
+    async fn probe_online(&self, _account_id: Option<&str>, now: SystemTime) -> bool {
         impl_probe_online!(self, now)
     }
 

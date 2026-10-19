@@ -214,6 +214,7 @@ mod tests {
         cache_state: RwLock<CacheState>,
         check_online_result: AtomicBool,
         probe_online_result: AtomicBool,
+        unreachable_domain: RwLock<Option<String>>,
         cache_state_calls: AtomicUsize,
         check_online_calls: AtomicUsize,
         probe_online_calls: AtomicUsize,
@@ -232,6 +233,7 @@ mod tests {
                 cache_state: RwLock::new(CacheState::Online),
                 check_online_result: AtomicBool::new(true),
                 probe_online_result: AtomicBool::new(true),
+                unreachable_domain: RwLock::new(None),
                 cache_state_calls: AtomicUsize::new(0),
                 check_online_calls: AtomicUsize::new(0),
                 probe_online_calls: AtomicUsize::new(0),
@@ -268,8 +270,18 @@ mod tests {
             self.check_online_result.load(Ordering::Acquire)
         }
 
-        async fn probe_online(&self, _now: SystemTime) -> bool {
+        async fn probe_online(&self, account_id: Option<&str>, _now: SystemTime) -> bool {
             self.probe_online_calls.fetch_add(1, Ordering::AcqRel);
+            let unreachable = self
+                .unreachable_domain
+                .read()
+                .expect("unreachable domain lock poisoned")
+                .clone();
+            if let (Some(domain), Some(account_id)) = (unreachable, account_id) {
+                if account_id.ends_with(&format!("@{domain}")) {
+                    return false;
+                }
+            }
             self.probe_online_result.load(Ordering::Acquire)
         }
 
@@ -1135,6 +1147,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn queued_refresh_probes_each_domain_once() {
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let resolver = setup_resolver().await;
+        let mut dbtxn = resolver.db.write().await;
+        for (index, spn) in ["second@example.com", "offline@contoso.com"]
+            .into_iter()
+            .enumerate()
+        {
+            let index = u32::try_from(index).unwrap();
+            let token = UserToken {
+                name: spn.split('@').next().unwrap().to_string(),
+                spn: spn.to_string(),
+                uuid: uuid::Uuid::new_v4(),
+                gidnumber: 3000 + index,
+                real_gidnumber: Some(3000 + index),
+                ..test_token()
+            };
+            dbtxn.update_account(&token, 0).unwrap();
+        }
+        dbtxn.commit().unwrap();
+        *resolver.client.unreachable_domain.write().unwrap() = Some("contoso.com".to_string());
+
+        for spn in [
+            "testuser@example.com",
+            "second@example.com",
+            "offline@contoso.com",
+        ] {
+            resolver
+                .get_nssaccount_name(spn, OnExpiry::RefreshInBackground)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+
+        assert_eq!(
+            resolver.client.probe_online_calls.load(Ordering::Acquire),
+            2
+        );
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
     async fn queued_refresh_stops_at_shutdown() {
         let resolver = setup_resolver().await;
         resolver.client.user_get_error.store(6, Ordering::Release);
@@ -1146,6 +1201,10 @@ mod tests {
         shutdown_tx.send(()).unwrap();
 
         resolver.refresh_queued_identities(&shutdown_rx).await;
+        assert_eq!(
+            resolver.client.probe_online_calls.load(Ordering::Acquire),
+            0
+        );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
     }
 
@@ -2760,6 +2819,7 @@ where
     ) {
         loop {
             tokio::select! {
+                biased;
                 _ = shutdown_rx.recv() => break,
                 _ = self.identity_refresh_ready.notified() => {}
             }
@@ -2770,32 +2830,51 @@ where
     // On shutdown, finish the refresh in progress but skip the rest of the batch.
     async fn refresh_queued_identities<T>(&self, shutdown_rx: &broadcast::Receiver<T>) {
         let queued = std::mem::take(&mut self.identity_refreshes.lock().await.queued);
-        if queued.is_empty() {
-            return;
-        }
-        // A refresh holds the HSM and database locks that sign-in needs, so probe first.
-        if !self.client.probe_online(SystemTime::now()).await {
-            debug!("Identity provider unreachable, keeping expired identities cached");
-            let retry = SystemTime::now() + UNREACHABLE_RETRY;
-            let mut refreshes = self.identity_refreshes.lock().await;
-            for spn in queued {
-                refreshes.next_allowed.insert(spn, retry);
-            }
-            return;
-        }
+        // Identities of one domain share a provider, so probe each domain once.
+        let mut reachable: HashMap<String, bool> = HashMap::new();
         for spn in queued {
             if !shutdown_rx.is_empty() {
                 break;
             }
-            let id = Id::Name(spn);
-            match self.lookup_cached_usertoken(&id).await {
-                Ok((true, Some(token))) => {
-                    if self.refresh_usertoken(&id, Some(token)).await.is_err() {
-                        warn!(account_id = %id, "Failed to refresh an expired cached identity");
-                    }
+            let id = Id::Name(spn.clone());
+            let token = match self.lookup_cached_usertoken(&id).await {
+                Ok((true, Some(token))) => token,
+                Ok(_) => continue,
+                Err(_) => {
+                    warn!(account_id = %id, "Failed to read a queued identity");
+                    continue;
                 }
-                Ok(_) => {}
-                Err(_) => warn!(account_id = %id, "Failed to read a queued identity"),
+            };
+            let domain = spn
+                .rsplit_once('@')
+                .map_or(spn.as_str(), |(_, domain)| domain);
+            // A refresh holds the HSM and database locks that sign-in needs, so probe first.
+            let online = match reachable.get(domain) {
+                Some(online) => *online,
+                None => {
+                    let online = self
+                        .client
+                        .probe_online(Some(&spn), SystemTime::now())
+                        .await;
+                    reachable.insert(domain.to_string(), online);
+                    online
+                }
+            };
+            if !online {
+                debug!(
+                    account_id = %id,
+                    "Identity provider unreachable, keeping expired identities cached"
+                );
+                let retry = SystemTime::now() + UNREACHABLE_RETRY;
+                self.identity_refreshes
+                    .lock()
+                    .await
+                    .next_allowed
+                    .insert(spn, retry);
+                continue;
+            }
+            if self.refresh_usertoken(&id, Some(token)).await.is_err() {
+                warn!(account_id = %id, "Failed to refresh an expired cached identity");
             }
         }
     }
@@ -3572,7 +3651,11 @@ where
                 match on_expiry {
                     OnExpiry::Refresh => {}
                     OnExpiry::RefreshIfReachable => {
-                        if !self.client.probe_online(SystemTime::now()).await {
+                        if !self
+                            .client
+                            .probe_online(Some(&token.spn), SystemTime::now())
+                            .await
+                        {
                             trace!("expired, provider unreachable, returning cached item");
                             return Ok(item);
                         }

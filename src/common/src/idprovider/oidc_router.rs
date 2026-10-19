@@ -321,10 +321,10 @@ impl IdProvider for OidcRouter {
         }
     }
 
-    async fn probe_online(&self, now: SystemTime) -> bool {
+    async fn probe_online(&self, account_id: Option<&str>, now: SystemTime) -> bool {
         match self.backend().await {
-            Ok(Backend::Standard(p)) => p.probe_online(now).await,
-            Ok(Backend::Native(p)) => p.probe_online(now).await,
+            Ok(Backend::Standard(p)) => p.probe_online(account_id, now).await,
+            Ok(Backend::Native(p)) => p.probe_online(account_id, now).await,
             Err(_) => false,
         }
     }
@@ -722,7 +722,7 @@ mod tests {
     async fn probe_online_requires_a_selected_reachable_backend() {
         let router = pending_router().await;
         *router.standard.state.lock().await = CacheState::Online;
-        assert!(!router.probe_online(SystemTime::now()).await);
+        assert!(!router.probe_online(None, SystemTime::now()).await);
         assert!(*router.selection.lock().await == Selection::Pending);
         assert!(matches!(
             *router.standard.state.lock().await,
@@ -731,16 +731,16 @@ mod tests {
 
         let deadline = SystemTime::now() + Duration::from_secs(60);
         *router.standard.state.lock().await = CacheState::OfflineNextCheck(deadline);
-        assert!(!router.probe_online(SystemTime::now()).await);
+        assert!(!router.probe_online(None, SystemTime::now()).await);
 
         *router.selection.lock().await = Selection::Failed;
-        assert!(!router.probe_online(SystemTime::now()).await);
+        assert!(!router.probe_online(None, SystemTime::now()).await);
 
         for selection in [Selection::StandardOidc, Selection::InteractionCode] {
             *router.selection.lock().await = selection;
             for state in [CacheState::Offline, CacheState::OfflineNextCheck(deadline)] {
                 *router.standard.state.lock().await = state;
-                assert!(!router.probe_online(SystemTime::now()).await);
+                assert!(!router.probe_online(None, SystemTime::now()).await);
             }
         }
     }

@@ -462,12 +462,21 @@ impl IdProvider for HimmelblauMultiProvider {
         true
     }
 
-    async fn probe_online(&self, now: SystemTime) -> bool {
-        let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
+    async fn probe_online(&self, account_id: Option<&str>, now: SystemTime) -> bool {
+        let providers: Vec<_> = match account_id {
+            Some(account_id) => match idp_get_domain_for_account!(self, account_id) {
+                Ok(domain) => match self.find_provider(domain).await {
+                    Ok(provider) => vec![provider],
+                    Err(..) => return false,
+                },
+                Err(..) => return false,
+            },
+            None => self.providers.lock().await.values().cloned().collect(),
+        };
         for provider in providers {
             let online = match provider.as_ref() {
-                Providers::Oidc(provider) => provider.probe_online(now).await,
-                Providers::Himmelblau(provider) => provider.probe_online(now).await,
+                Providers::Oidc(provider) => provider.probe_online(account_id, now).await,
+                Providers::Himmelblau(provider) => provider.probe_online(account_id, now).await,
             };
             if !online {
                 return false;
@@ -1155,7 +1164,7 @@ impl IdProvider for HimmelblauProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn probe_online(&self, now: SystemTime) -> bool {
+    async fn probe_online(&self, _account_id: Option<&str>, now: SystemTime) -> bool {
         impl_probe_online!(self, now)
     }
 

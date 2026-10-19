@@ -1115,11 +1115,11 @@ impl IdProvider for OktaProvider {
         if matches!(*self.state.lock().await, CacheState::Online) {
             return true;
         }
-        self.probe_online(now).await
+        self.probe_online(None, now).await
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn probe_online(&self, now: SystemTime) -> bool {
+    async fn probe_online(&self, _account_id: Option<&str>, now: SystemTime) -> bool {
         let state = self.state.lock().await.clone();
         match state {
             CacheState::Offline => return false,
