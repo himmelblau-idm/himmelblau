@@ -725,8 +725,8 @@ user-login = "mbrubeck"
 user-name = "Matt Brubeck"
 
 [[publisher.socket2]]
-version = "0.6.3"
-when = "2026-03-06"
+version = "0.6.5"
+when = "2026-07-13"
 user-id = 6025
 user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"

@@ -91,9 +91,6 @@ audit-as-crates-io = false
 [policy."hashbrown:0.15.5"]
 audit-as-crates-io = false
 
-[policy."hermit-abi:0.4.0"]
-audit-as-crates-io = false
-
 [policy."iana-time-zone-haiku:0.1.2"]
 audit-as-crates-io = false
 
@@ -119,9 +116,6 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy."libredox:0.1.3"]
-audit-as-crates-io = false
-
-[policy."linux-raw-sys:0.4.15"]
 audit-as-crates-io = false
 
 [policy."memoffset:0.8.0"]
