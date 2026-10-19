@@ -301,6 +301,12 @@ pub trait IdProvider {
 
     async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, _now: SystemTime) -> bool;
 
+    /// Like `check_online`, but needs no HSM and re-verifies an `Online` state, which
+    /// can be stale after resume. Providers without a probe report true.
+    async fn probe_online(&self, _now: SystemTime) -> bool {
+        true
+    }
+
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
