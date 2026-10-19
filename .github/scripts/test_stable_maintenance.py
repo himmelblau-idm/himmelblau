@@ -4892,6 +4892,79 @@ class ManualFinalAuditTests(unittest.TestCase):
     repository = MaintenanceHistoryTests.repository
     commit = MaintenanceHistoryTests.commit
 
+    def test_documented_revalidation_check_requires_complete_exact_head_approval(self):
+        """Run the documented state check against approved and incomplete results."""
+        guide = (SCRIPT.parent.parent / "stable-maintenance.md").read_text()
+        check = guide.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+        head = "a" * 40
+        for extra, approved in (({}, True), ({"validated_head": "b" * 40}, False),
+                                ({"validated_head": None}, False),
+                                ({"manual_audit_work": [{"gate": "cargo-audit", "reason": "check-failed"}]}, False),
+                                ({"manual_audit_head": head}, False), ({"failed_phase": "validate"}, False),
+                                ({"skip": True}, False)):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as tmp:
+                state = Path(tmp) / "state.json"
+                state.write_text(json.dumps({"validated_head": head, **extra}))
+                result = subprocess.run([sys.executable, "-c", check, str(state), head],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, approved, result.stderr)
+                if approved:
+                    self.assertIn(head, result.stdout)
+
+    def test_open_draft_blocks_new_maintenance_but_allows_standalone_revalidation(self):
+        """Validate the repaired HEAD separately without bypassing duplicate protection."""
+        for audit_failed in (True, False):
+            with self.subTest(audit_failed=audit_failed), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "source")
+                branch = sm.AUTOMATION_PREFIX + "manual-audit-test"
+                runner.git(["checkout", "-b", branch])
+                (runner.root / "manual-fix.rs").write_text("maintainer remediation\n")
+                head = self.commit(runner, "Remediate audit findings")
+                draft = {"number": 99, "state": "open", "draft": True,
+                         "head": {"ref": branch, "sha": head, "repo": {"full_name": "o/r"}},
+                         "user": {"login": "maintenance-app[bot]"},
+                         "labels": [{"name": sm.AUTOMATION_LABEL}]}
+                scheduled = sm.State(Path(tmp) / "scheduled")
+                with mock.patch.object(sm, "github_repository", return_value="o/r"), \
+                     mock.patch.object(sm, "github_headers", return_value={}), \
+                     mock.patch.object(sm, "http_json", return_value=[draft]), \
+                     mock.patch.object(sm, "github_search_items", return_value=[]), \
+                     mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    sm.phase_guard(mock.Mock(branch="stable-4.x"), scheduled, runner)
+                self.assertTrue(scheduled.load()["skip"])
+                self.assertEqual(scheduled.load()["blocking_pull_requests"], [99])
+
+                fresh = sm.State(Path(tmp) / "fresh-validation")
+                def contained(_runner, command, **kwargs):
+                    return sm.CommandResult(int(audit_failed and command[:2] == ["cargo", "audit"]), "", "")
+                with mock.patch.dict(os.environ, {"MAINTENANCE_TOOLING_SHA256": hashlib.sha256(SCRIPT.read_bytes()).hexdigest()}), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained) as commands, \
+                     mock.patch.object(sm, "locked_vet_gaps", return_value=[]) as vet, \
+                     mock.patch.object(sm, "http_json") as http, \
+                     mock.patch.object(sm, "secure_github_push") as push, \
+                     mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    self.assertEqual(sm.main(["--repo-dir", str(runner.root), "--state-dir", str(scheduled.directory),
+                                              "validate", "--branch", "stable-4.x"]), 0)
+                    commands.assert_not_called()
+                    vet.assert_not_called()
+                    for phase in ("prepare", "validate", "report"):
+                        self.assertEqual(sm.main(["--repo-dir", str(runner.root), "--state-dir", str(fresh.directory),
+                                                  phase, "--branch", "stable-4.x"]), 0)
+                self.assertEqual(commands.call_args_list[0].args[1], ["cargo", "fetch", "--locked"])
+                vet.assert_called_once()
+                http.assert_not_called()
+                push.assert_not_called()
+                value = fresh.load()
+                self.assertFalse(value.get("skip"))
+                self.assertEqual(value.get("validated_head"), None if audit_failed else head)
+                self.assertEqual(bool(value.get("manual_audit_work")), audit_failed)
+                self.assertEqual(value.get("manual_audit_head"), head if audit_failed else None)
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), head)
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertTrue(scheduled.load()["skip"])
+
     def test_failed_audits_publish_only_an_exact_clean_draft_and_can_be_revalidated(self):
         for failure in ("findings", "error", "timeout", "output-limit"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
