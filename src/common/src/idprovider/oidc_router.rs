@@ -321,6 +321,15 @@ impl IdProvider for OidcRouter {
         }
     }
 
+    async fn probe_online(&self, now: SystemTime) -> bool {
+        self.select_if_due().await;
+        match self.backend().await {
+            Ok(Backend::Standard(p)) => p.probe_online(now).await,
+            Ok(Backend::Native(p)) => p.probe_online(now).await,
+            Err(_) => false,
+        }
+    }
+
     async fn get_cachestate(&self, account: Option<&str>) -> CacheState {
         match *self.selection.lock().await {
             Selection::Pending => {
@@ -708,6 +717,25 @@ mod tests {
             router.get_cachestate(None).await,
             CacheState::Online
         ));
+    }
+
+    #[tokio::test]
+    async fn probe_online_requires_a_selected_reachable_backend() {
+        let router = pending_router().await;
+        let deadline = SystemTime::now() + Duration::from_secs(60);
+        *router.standard.state.lock().await = CacheState::OfflineNextCheck(deadline);
+        assert!(!router.probe_online(SystemTime::now()).await);
+
+        *router.selection.lock().await = Selection::Failed;
+        assert!(!router.probe_online(SystemTime::now()).await);
+
+        for selection in [Selection::StandardOidc, Selection::InteractionCode] {
+            *router.selection.lock().await = selection;
+            for state in [CacheState::Offline, CacheState::OfflineNextCheck(deadline)] {
+                *router.standard.state.lock().await = state;
+                assert!(!router.probe_online(SystemTime::now()).await);
+            }
+        }
     }
 
     #[tokio::test]

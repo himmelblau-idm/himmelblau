@@ -40,7 +40,7 @@ use crate::{
     impl_change_auth_token, impl_check_online, impl_create_decoupled_hello_key,
     impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
     impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step,
-    impl_himmelblau_try_unseal, impl_offline_break_glass, impl_setup_hello_totp,
+    impl_himmelblau_try_unseal, impl_offline_break_glass, impl_probe_online, impl_setup_hello_totp,
     impl_unix_user_access, load_cached_prt_for_try_unseal_no_op, load_cached_prt_no_op,
     no_op_prt_token_fetch, oidc_refresh_token_token_fetch,
 };
@@ -2700,6 +2700,11 @@ impl IdProvider for OidcProvider {
     #[instrument(level = "debug", skip(self, _tpm))]
     async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
         impl_check_online!(self, now)
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    async fn probe_online(&self, now: SystemTime) -> bool {
+        impl_probe_online!(self, now)
     }
 
     #[instrument(level = "debug", skip_all)]
