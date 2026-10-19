@@ -56,6 +56,7 @@ use tokio::sync::broadcast;
 use himmelblau::auth::UserToken as UnixUserToken;
 
 const NXCACHE_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
+const UNREACHABLE_RETRY: Duration = Duration::from_secs(15);
 
 // These keys deliberately mirror account_t's UUID/name/SPN/GID conflicts.
 // They are not tenant-scoped because the database's uniqueness constraints are not.
@@ -1084,6 +1085,18 @@ mod tests {
         resolver
             .client
             .set_cache_state(CacheState::OfflineNextCheck(SystemTime::UNIX_EPOCH));
+        resolver
+            .get_nssaccount_name(&token.spn, OnExpiry::RefreshInBackground)
+            .await
+            .unwrap();
+        assert!(resolver.identity_refreshes.lock().await.queued.is_empty());
+
+        resolver
+            .identity_refreshes
+            .lock()
+            .await
+            .next_allowed
+            .insert(token.spn.clone(), SystemTime::UNIX_EPOCH);
         resolver
             .get_nssaccount_name(&token.spn, OnExpiry::RefreshInBackground)
             .await
@@ -2763,9 +2776,10 @@ where
         // A refresh holds the HSM and database locks that sign-in needs, so probe first.
         if !self.client.probe_online(SystemTime::now()).await {
             debug!("Identity provider unreachable, keeping expired identities cached");
+            let retry = SystemTime::now() + UNREACHABLE_RETRY;
             let mut refreshes = self.identity_refreshes.lock().await;
-            for spn in &queued {
-                refreshes.next_allowed.remove(spn);
+            for spn in queued {
+                refreshes.next_allowed.insert(spn, retry);
             }
             return;
         }
