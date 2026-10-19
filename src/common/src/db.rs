@@ -32,6 +32,8 @@ use kanidm_hsm_crypto::{
 };
 
 const DBV_MAIN: &str = "main";
+// A blocked lookup holds the daemon's only runtime thread, so give up quickly.
+const READ_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[async_trait]
 pub trait Cache {
@@ -138,6 +140,8 @@ pub trait KeyStoreTxn {
 
 pub struct Db {
     conn: Mutex<Connection>,
+    // Lookups read committed data here rather than wait for a write transaction.
+    read_conn: Option<Mutex<Connection>>,
     crypto_policy: CryptoPolicy,
 }
 
@@ -145,6 +149,10 @@ pub struct DbTxn<'a> {
     conn: MutexGuard<'a, Connection>,
     committed: bool,
     crypto_policy: &'a CryptoPolicy,
+}
+
+pub struct DbReadTxn<'a> {
+    txn: DbTxn<'a>,
 }
 
 #[derive(Debug)]
@@ -155,7 +163,7 @@ pub enum DbError {
 }
 
 impl Db {
-    fn from_connection(conn: Connection) -> Self {
+    fn from_connection(conn: Connection, read_conn: Option<Connection>) -> Self {
         // We only build a single thread. If we need more than one, we'll
         // need to re-do this to account for path = "" for debug.
         let crypto_policy = CryptoPolicy::time_target(Duration::from_millis(250));
@@ -164,6 +172,7 @@ impl Db {
 
         Db {
             conn: Mutex::new(conn),
+            read_conn: read_conn.map(Mutex::new),
             crypto_policy,
         }
     }
@@ -175,12 +184,33 @@ impl Db {
             DbError::Sqlite
         })?;
         let _ = unsafe { umask(before) };
-        Ok(Self::from_connection(conn))
+        // Without spilling, the writer locks readers out only while it commits.
+        if let Err(e) = conn.pragma_update(None, "cache_spill", false) {
+            warn!(err = ?e, "Unable to disable the cache spill");
+        }
+        let read_conn = Self::open_reader(&conn);
+        Ok(Self::from_connection(conn, read_conn))
+    }
+
+    fn open_reader(conn: &Connection) -> Option<Connection> {
+        let path = conn.path().filter(|path| !path.is_empty())?;
+        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let read_conn = Connection::open_with_flags(path, flags).and_then(|read_conn| {
+            read_conn.busy_timeout(READ_BUSY_TIMEOUT)?;
+            Ok(read_conn)
+        });
+        match read_conn {
+            Ok(read_conn) => Some(read_conn),
+            Err(e) => {
+                warn!(err = ?e, "Unable to open a read connection, lookups will share the writer");
+                None
+            }
+        }
     }
 
     pub fn open_read_only(path: &str) -> Result<Option<Self>, DbError> {
         match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
-            Ok(conn) => Ok(Some(Self::from_connection(conn))),
+            Ok(conn) => Ok(Some(Self::from_connection(conn, None))),
             Err(e) => match Path::new(path).try_exists() {
                 Ok(false) => Ok(None),
                 _ => {
@@ -211,6 +241,18 @@ impl Db {
         };
         dbtxn.commit()?;
         Ok(loadable_machine_key)
+    }
+
+    /// Start a read-only transaction. Finish it before the next await, since
+    /// the writer cannot commit while it is open.
+    pub async fn read(&self) -> DbReadTxn<'_> {
+        let conn = match &self.read_conn {
+            Some(read_conn) => read_conn.lock().await,
+            None => self.conn.lock().await,
+        };
+        DbReadTxn {
+            txn: DbTxn::new(conn, &self.crypto_policy),
+        }
     }
 }
 
@@ -1167,10 +1209,57 @@ impl<'a> Drop for DbTxn<'a> {
     }
 }
 
+impl DbReadTxn<'_> {
+    pub fn get_account(&mut self, account_id: &Id) -> Result<Option<(UserToken, u64)>, CacheError> {
+        self.txn.get_account(account_id)
+    }
+
+    pub fn get_unexpired_accounts(&mut self, now: u64) -> Result<Vec<UserToken>, CacheError> {
+        self.txn.get_unexpired_accounts(now)
+    }
+
+    pub fn get_group(&mut self, grp_id: &Id) -> Result<Option<(GroupToken, u64)>, CacheError> {
+        self.txn.get_group(grp_id)
+    }
+
+    pub fn get_group_members(&mut self, g_uuid: Uuid) -> Result<Vec<UserToken>, CacheError> {
+        self.txn.get_group_members(g_uuid)
+    }
+
+    pub fn get_groups(&mut self) -> Result<Vec<GroupToken>, CacheError> {
+        self.txn.get_groups()
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct TestDbFile(pub(crate) String);
+
+#[cfg(test)]
+impl TestDbFile {
+    pub(crate) fn new() -> Self {
+        let path =
+            std::env::temp_dir().join(format!("himmelblau_db_test_{}.db", uuid::Uuid::new_v4()));
+        Self(
+            path.to_str()
+                .expect("Temporary test path is not valid UTF-8")
+                .to_string(),
+        )
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestDbFile {
+    fn drop(&mut self) {
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", self.0, suffix));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
-    use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn, DBV_MAIN};
+    use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn, TestDbFile, DBV_MAIN};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
     use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::Tpm, AuthValue};
 
@@ -1212,6 +1301,89 @@ mod tests {
     async fn uninitialized_database_has_no_hsm_machine_key() {
         let db = Db::new("").expect("failed to create.");
         assert!(matches!(db.get_loadable_hsm_key().await, Ok(None)));
+    }
+
+    fn test_account() -> UserToken {
+        UserToken {
+            name: "testuser".to_string(),
+            spn: "testuser@example.com".to_string(),
+            displayname: "Before".to_string(),
+            real_gidnumber: Some(2000),
+            gidnumber: 2000,
+            uuid: uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
+            shell: None,
+            groups: Vec::new(),
+            tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            valid: true,
+        }
+    }
+
+    async fn setup_file_db(file: &TestDbFile) -> Db {
+        let db = Db::new(&file.0).expect("failed to create.");
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        dbtxn.update_account(&test_account(), 300).unwrap();
+        dbtxn.commit().unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn read_does_not_wait_for_a_write_larger_than_the_page_cache() {
+        let file = TestDbFile::new();
+        let db = setup_file_db(&file).await;
+
+        let dbtxn = db.write().await;
+        dbtxn
+            .conn
+            .execute_batch("PRAGMA cache_size = 5; CREATE TABLE filler (data BLOB)")
+            .unwrap();
+        for _ in 0..400 {
+            dbtxn
+                .conn
+                .execute("INSERT INTO filler VALUES (randomblob(4000))", [])
+                .unwrap();
+        }
+
+        let id = Id::Name(test_account().spn);
+        assert!(db.read().await.get_account(&id).unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn read_gives_up_quickly_while_another_connection_holds_the_lock() {
+        let file = TestDbFile::new();
+        let db = setup_file_db(&file).await;
+        let other = rusqlite::Connection::open(&file.0).unwrap();
+        other.execute_batch("BEGIN EXCLUSIVE").unwrap();
+
+        let started = std::time::Instant::now();
+        let id = Id::Name(test_account().spn);
+        assert!(db.read().await.get_account(&id).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+
+        other.execute_batch("ROLLBACK").unwrap();
+        assert!(db.read().await.get_account(&id).unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn read_does_not_wait_for_an_open_write_transaction() {
+        let file = TestDbFile::new();
+        let db = setup_file_db(&file).await;
+        let mut account = test_account();
+        account.displayname = "After".to_string();
+        let mut dbtxn = db.write().await;
+        dbtxn.update_account(&account, 300).unwrap();
+
+        let id = Id::Name(account.spn.clone());
+        let mut reader = tokio::time::timeout(std::time::Duration::from_secs(5), db.read())
+            .await
+            .expect("lookup waited for the write transaction");
+        let (cached, _) = reader.get_account(&id).unwrap().unwrap();
+        assert_eq!(cached.displayname, "Before");
+        drop(reader);
+
+        dbtxn.commit().unwrap();
+        let (cached, _) = db.read().await.get_account(&id).unwrap().unwrap();
+        assert_eq!(cached.displayname, "After");
     }
 
     #[tokio::test]

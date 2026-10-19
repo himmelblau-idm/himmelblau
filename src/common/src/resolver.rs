@@ -2294,7 +2294,7 @@ where
     }
 
     async fn get_cached_grouptokens(&self) -> ResolverResult<Vec<GroupToken>> {
-        let mut dbtxn = self.db.write().await;
+        let mut dbtxn = self.db.read().await;
         dbtxn.get_groups().map_err(|_| ResolverError)
     }
 
@@ -2404,8 +2404,7 @@ where
         //  * spn
         //  * uuid
         //  Attempt to search these in the db.
-        let mut dbtxn = self.db.write().await;
-        let r = dbtxn.get_group(grp_id).map_err(|_| ())?;
+        let r = self.db.read().await.get_group(grp_id).map_err(|_| ())?;
 
         match r {
             Some((ut, ex)) => {
@@ -3122,7 +3121,7 @@ where
     }
 
     pub async fn get_groupmembers(&self, g_uuid: Uuid) -> Vec<String> {
-        let mut dbtxn = self.db.write().await;
+        let mut dbtxn = self.db.read().await;
 
         dbtxn
             .get_group_members(g_uuid)
@@ -3182,7 +3181,7 @@ where
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| ResolverError)?
             .as_secs();
-        let mut dbtxn = self.db.write().await;
+        let mut dbtxn = self.db.read().await;
         dbtxn
             .get_unexpired_accounts(now)
             .map(|l| {
