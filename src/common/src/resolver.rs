@@ -801,6 +801,11 @@ where
                 Ok(None)
             }
             Ok(UserTokenState::UseCached) => Ok(token),
+            Err(err @ IdpError::NotFound { .. }) => {
+                // NSS may ask for local or unknown identities outside the provider.
+                debug!(?err, "User lookup did not match an identity provider");
+                Ok(token)
+            }
             Err(err) => {
                 // Something went wrong, we don't know what, but lets return the token
                 // anyway.
