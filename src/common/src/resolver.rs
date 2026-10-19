@@ -118,8 +118,7 @@ pub enum OnExpiry {
 #[derive(Default)]
 struct IdentityRefreshes {
     queued: Vec<String>,
-    // One refresh per identity per cache lifetime, so an identity the provider
-    // cannot refresh does not cost a request on every lookup.
+    // At most one refresh per identity per cache lifetime.
     next_allowed: HashMap<String, SystemTime>,
 }
 
@@ -1021,6 +1020,7 @@ mod tests {
 
     #[tokio::test]
     async fn queued_refresh_probes_the_provider_before_refreshing() {
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
         let resolver = setup_resolver().await;
         let token = test_token();
         resolver.client.user_get_error.store(6, Ordering::Release);
@@ -1029,7 +1029,7 @@ mod tests {
             .await
             .unwrap();
 
-        resolver.refresh_queued_identities().await;
+        resolver.refresh_queued_identities(&shutdown_rx).await;
         assert_eq!(
             resolver.client.probe_online_calls.load(Ordering::Acquire),
             1
@@ -1048,6 +1048,7 @@ mod tests {
 
     #[tokio::test]
     async fn queued_refresh_waits_for_an_unreachable_provider() {
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
         let resolver = setup_resolver().await;
         let token = test_token();
         resolver.client.user_get_error.store(6, Ordering::Release);
@@ -1060,7 +1061,7 @@ mod tests {
             .await
             .unwrap();
 
-        resolver.refresh_queued_identities().await;
+        resolver.refresh_queued_identities(&shutdown_rx).await;
         assert_eq!(
             resolver.client.probe_online_calls.load(Ordering::Acquire),
             1
@@ -1095,13 +1096,14 @@ mod tests {
 
     #[tokio::test]
     async fn queued_refresh_runs_once_per_cache_lifetime() {
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
         let resolver = setup_resolver().await;
         let token = test_token();
         resolver
             .get_nssaccount_name(&token.spn, OnExpiry::RefreshInBackground)
             .await
             .unwrap();
-        resolver.refresh_queued_identities().await;
+        resolver.refresh_queued_identities(&shutdown_rx).await;
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
 
         let user = resolver
@@ -1111,7 +1113,7 @@ mod tests {
             .unwrap();
         assert!(!user.cacheable);
         assert!(resolver.identity_refreshes.lock().await.queued.is_empty());
-        resolver.refresh_queued_identities().await;
+        resolver.refresh_queued_identities(&shutdown_rx).await;
         assert_eq!(
             resolver.client.probe_online_calls.load(Ordering::Acquire),
             1
@@ -1120,7 +1122,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn queued_refresh_stops_at_shutdown() {
+        let resolver = setup_resolver().await;
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver
+            .get_nssaccount_name(&test_token().spn, OnExpiry::RefreshInBackground)
+            .await
+            .unwrap();
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        shutdown_tx.send(()).unwrap();
+
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
     async fn lookups_answer_while_a_refresh_waits_on_the_provider() {
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
         let file = crate::db::TestDbFile::new();
         let db = Db::new(&file.0).expect("failed to create test db");
         let resolver = setup_resolver_with_db(db, 0, InitgroupsMode::Named, Vec::new()).await;
@@ -1162,7 +1180,7 @@ mod tests {
             );
             resolver.client.user_get_release.notify_one();
         };
-        tokio::join!(resolver.refresh_queued_identities(), checks);
+        tokio::join!(resolver.refresh_queued_identities(&shutdown_rx), checks);
 
         assert!(
             resolver
@@ -2730,14 +2748,14 @@ where
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => break,
-                _ = self.identity_refresh_ready.notified() => {
-                    self.refresh_queued_identities().await;
-                }
+                _ = self.identity_refresh_ready.notified() => {}
             }
+            self.refresh_queued_identities(&shutdown_rx).await;
         }
     }
 
-    async fn refresh_queued_identities(&self) {
+    // On shutdown, finish the refresh in progress but skip the rest of the batch.
+    async fn refresh_queued_identities<T>(&self, shutdown_rx: &broadcast::Receiver<T>) {
         let queued = std::mem::take(&mut self.identity_refreshes.lock().await.queued);
         if queued.is_empty() {
             return;
@@ -2752,6 +2770,9 @@ where
             return;
         }
         for spn in queued {
+            if !shutdown_rx.is_empty() {
+                break;
+            }
             let id = Id::Name(spn);
             match self.lookup_cached_usertoken(&id).await {
                 Ok((true, Some(token))) => {
