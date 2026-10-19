@@ -46,7 +46,9 @@ use crate::idprovider::interface::{
     UserTokenState,
 };
 use crate::unix_config::{HomeAttr, UidAttr};
-use crate::unix_proto::{HomeDirectoryInfo, NssGroup, NssUser, PamAuthRequest, PamAuthResponse};
+use crate::unix_proto::{
+    HomeDirectoryInfo, LocalTaskOwner, NssGroup, NssUser, PamAuthRequest, PamAuthResponse,
+};
 use crate::user_map::UserMap;
 
 use kanidm_hsm_crypto::{
@@ -111,6 +113,7 @@ pub enum AuthSession {
 
 /// One token's view of the user for all tasks after `pam_sm_open_session`.
 pub struct SessionIdentity {
+    pub owner: LocalTaskOwner,
     pub home: HomeDirectoryInfo,
     pub account: NssUser,
     pub group_ids: Vec<Uuid>,
@@ -2468,6 +2471,9 @@ mod tests {
         assert_eq!(identity.home.uid, identity.account.uid);
         assert_eq!(identity.home.uid, token.gidnumber);
         assert_eq!(identity.group_ids, groups);
+        assert_eq!(identity.owner.object_id, token.uuid);
+        assert_eq!(identity.owner.tenant_id, token.tenant_id);
+        assert_eq!(identity.owner.upn, token.spn);
         let snapshot = (
             identity.account.name.clone(),
             identity.account.uid,
@@ -5723,13 +5729,27 @@ where
         &self,
         account_id: &str,
     ) -> ResolverResult<Option<SessionIdentity>> {
-        let Some(tok) = self.get_usertoken(Id::Name(account_id.to_string())).await? else {
+        self.get_session_identity(Id::Name(account_id.to_string()))
+            .await
+    }
+
+    /// Resolve a single token snapshot for local account tasks, including immutable ownership.
+    pub async fn get_session_identity(
+        &self,
+        account_id: Id,
+    ) -> ResolverResult<Option<SessionIdentity>> {
+        let Some(tok) = self.get_usertoken(account_id).await? else {
             return Ok(None);
         };
         let tok = self.canonical_alias_token(tok, true).await;
         let home = self.home_directory_info(&tok);
         let group_ids = tok.groups.iter().map(|group| group.uuid).collect();
         Ok(Some(SessionIdentity {
+            owner: LocalTaskOwner {
+                object_id: tok.uuid,
+                tenant_id: tok.tenant_id,
+                upn: tok.spn.clone(),
+            },
             home,
             account: self.nss_user_from_token(tok, true),
             group_ids,

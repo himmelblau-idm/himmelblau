@@ -47,7 +47,8 @@ use himmelblau_unix_common::resolver::{AuthSession, NssAccountLookup, Resolver, 
 use himmelblau_unix_common::unix_config::UidAttr;
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{
-    ClientRequest, ClientResponse, NssUser, PamAuthResponse, TaskRequest, TaskResponse,
+    ClientRequest, ClientResponse, LocalTaskOwner, NssUser, PamAuthResponse, TaskRequest,
+    TaskResponse,
 };
 use himmelblau_unix_common::user_map::UserMap;
 use himmelblau_unix_common::{tpm_init, tpm_loadable_machine_key, tpm_machine_key};
@@ -323,7 +324,7 @@ fn sudo_group_ids(cfg: &HimmelblauConfig) -> HashSet<Uuid> {
         .collect()
 }
 
-fn local_task_owner(account: &NssUser) -> String {
+fn canonical_account_name(account: &NssUser) -> String {
     account
         .canonical_name
         .as_deref()
@@ -334,7 +335,7 @@ fn local_task_owner(account: &NssUser) -> String {
 /// Target of local-group/subid tasks: the user-map account of the UPN, else the NSS name.
 fn local_task_account(user_map: &UserMap, account: &NssUser) -> String {
     user_map
-        .get_local_from_upn(&local_task_owner(account))
+        .get_local_from_upn(&canonical_account_name(account))
         .unwrap_or_else(|| account.name.clone())
 }
 
@@ -359,7 +360,7 @@ async fn submit_local_groups_task(
     task_channel_tx: &Sender<AsyncTaskRequest>,
     account_id: String,
     is_sudoer: bool,
-    owner: String,
+    owner: LocalTaskOwner,
 ) -> Result<(), ()> {
     let (tx, rx) = oneshot::channel();
 
@@ -407,13 +408,9 @@ async fn reconcile_local_groups_once(
         }
     };
 
-    for mut account in accounts {
-        let is_sudoer = if sudo_group_ids.is_empty() {
-            account = match cachelayer.get_nssaccount_gid(account.uid).await {
-                Ok(Some(account)) => account,
-                _ => continue,
-            };
-            false
+    for account in accounts {
+        let (lookup_uid, is_sudoer) = if sudo_group_ids.is_empty() {
+            (account.uid, false)
         } else {
             let token = match cachelayer
                 .refresh_cached_usertoken(
@@ -438,29 +435,27 @@ async fn reconcile_local_groups_once(
                 }
             };
 
-            account = match cachelayer.get_nssaccount_gid(token.gidnumber).await {
-                Ok(Some(account)) => account,
-                _ => continue,
-            };
-            token
-                .groups
-                .iter()
-                .any(|group| sudo_group_ids.contains(&group.uuid))
+            (
+                token.gidnumber,
+                token
+                    .groups
+                    .iter()
+                    .any(|group| sudo_group_ids.contains(&group.uuid)),
+            )
         };
 
+        let (account, owner) = match cachelayer.get_session_identity(Id::Gid(lookup_uid)).await {
+            Ok(Some(identity)) => (identity.account, identity.owner),
+            _ => continue,
+        };
         let rendered = cachelayer.render_alias(account.clone(), true).await;
         let target = local_task_account(&user_map, &rendered);
         if is_local_account_excluded(cachelayer, cfg, &user_map, &account, &target).await {
             continue;
         }
-        if submit_local_groups_task(
-            task_channel_tx,
-            target,
-            is_sudoer,
-            local_task_owner(&account),
-        )
-        .await
-        .is_err()
+        if submit_local_groups_task(task_channel_tx, target, is_sudoer, owner)
+            .await
+            .is_err()
         {
             warn!(
                 account_id = account.name.as_str(),
@@ -912,6 +907,7 @@ async fn handle_client(
                     {
                         Ok(Some(SessionIdentity {
                             home: info,
+                            owner,
                             account,
                             group_ids,
                         })) => {
@@ -972,7 +968,7 @@ async fn handle_client(
                                 task_channel_tx,
                                 target.clone(),
                                 is_sudoer,
-                                local_task_owner(&account),
+                                owner,
                             )
                             .await
                             {
@@ -980,7 +976,7 @@ async fn handle_client(
                                     trace!("Task completed, returning to pam ...");
                                     ClientResponse::Ok
                                 }
-                                Err(()) => ClientResponse::Error,
+                                Err(()) => return ClientResponse::Error,
                             };
 
                             // Set up subordinate IDs for container support

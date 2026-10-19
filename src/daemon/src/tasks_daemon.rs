@@ -38,7 +38,9 @@ use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{
     DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR, LOCAL_TASK_NAMES_CACHE,
 };
-use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
+use himmelblau_unix_common::unix_proto::{
+    HomeDirectoryInfo, LocalTaskOwner, TaskRequest, TaskResponse,
+};
 use himmelblau_unix_common::user_map::UserMap;
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::uid_t;
@@ -626,52 +628,68 @@ fn is_local_passwd_user(name: &str) -> bool {
 /// else took it) and the stale holders of `name`; the name is only recorded if it succeeds.
 fn claim_local_task_name(
     state: &Path,
-    owner: &str,
+    owner: &LocalTaskOwner,
     name: &str,
     retire: impl FnOnce(Option<&str>, &[String]) -> Result<(), String>,
 ) -> Result<(), String> {
-    let mut names: HashMap<String, String> = fs::read(state)
-        .ok()
-        .and_then(|data| serde_json::from_slice(&data).ok())
-        .unwrap_or_default();
-    let owner = owner.to_lowercase();
-    let previous = names.insert(owner.clone(), name.to_string());
+    let mut names: HashMap<String, String> = match fs::read(state) {
+        Ok(data) => serde_json::from_slice(&data)
+            .map_err(|e| format!("Invalid local task state in {}: {}", state.display(), e))?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => HashMap::new(),
+        Err(e) => return Err(format!("Failed to read {}: {}", state.display(), e)),
+    };
+    // Migrate legacy UPN-keyed state only when the current UPN matches.
+    let legacy = names.remove(&owner.upn.to_lowercase());
+    let migrated = legacy.is_some();
+    let owner = owner.key();
+    let previous = names.insert(owner.clone(), name.to_string()).or(legacy);
     let evicted: Vec<String> = names
         .iter()
         .filter(|(holder, held)| **holder != owner && *held == name)
         .map(|(holder, _)| holder.clone())
         .collect();
     names.retain(|holder, held| *holder == owner || held != name);
-    if previous.as_deref() == Some(name) && evicted.is_empty() {
+    if previous.as_deref() == Some(name) && evicted.is_empty() && !migrated {
         return Ok(());
     }
-    let previous = previous.filter(|previous| !names.values().any(|held| held == previous));
+    let previous = previous
+        .filter(|previous| previous != name && !names.values().any(|held| held == previous));
     retire(previous.as_deref(), &evicted)?;
 
-    serde_json::to_vec(&names)
-        .map_err(|e| e.to_string())
-        .and_then(|data| {
-            OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(state)
-                .and_then(|mut file| file.write_all(&data))
-                .map_err(|e| e.to_string())
-        })
-        .map_err(|e| {
-            format!(
-                "Failed to record local task name in {}: {}",
-                state.display(),
-                e
-            )
-        })
+    let parent = state
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let save = || -> Result<(), String> {
+        let data = serde_json::to_vec(&names).map_err(|e| e.to_string())?;
+        let mut file = NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+        file.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+        file.write_all(&data).map_err(|e| e.to_string())?;
+        file.as_file().sync_all().map_err(|e| e.to_string())?;
+        file.persist(state).map_err(|e| e.to_string())?;
+        fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|e| e.to_string())
+    };
+    save().map_err(|e| {
+        format!(
+            "Failed to record local task name in {}: {}",
+            state.display(),
+            e
+        )
+    })
+}
+
+// This cannot be a portable SAM name or a UPN, so another login cannot claim the reservation.
+fn reserved_subid_name(owner_key: &str) -> String {
+    format!("himmelblau-retired/{}", owner_key)
 }
 
 /// Retire the previous name's grants when an owner's local name changes.
 fn retire_previous_local_name(
-    owner: &str,
+    owner: &LocalTaskOwner,
     name: &str,
     local_groups: &[String],
     local_sudo_group: &str,
@@ -684,8 +702,12 @@ fn retire_previous_local_name(
             // A stale holder keeps its range under its own key, so the new owner gets a fresh one.
             for old in evicted {
                 for subid_file in subid_files {
-                    migrate_subid_entry(name, old, subid_file)?;
+                    migrate_subid_entry(name, &reserved_subid_name(old), subid_file)?;
                 }
+            }
+            // An evicted owner can return under another name without losing its reserved range.
+            for subid_file in subid_files {
+                migrate_subid_entry(&reserved_subid_name(&owner.key()), name, subid_file)?;
             }
         }
         let Some(previous) = previous else {
@@ -1383,9 +1405,20 @@ mod tests {
         }
     }
 
+    fn task_owner(upn: &str) -> LocalTaskOwner {
+        LocalTaskOwner {
+            object_id: uuid::Uuid::new_v5(
+                &uuid::Uuid::NAMESPACE_DNS,
+                upn.to_lowercase().as_bytes(),
+            ),
+            tenant_id: Some(uuid::Uuid::parse_str(TENANT_ID).unwrap()),
+            upn: upn.to_string(),
+        }
+    }
+
     fn record_local_task_name(state: &Path, owner: &str, name: &str) -> Option<String> {
         let mut retired = None;
-        claim_local_task_name(state, owner, name, |previous, _| {
+        claim_local_task_name(state, &task_owner(owner), name, |previous, _| {
             retired = previous.map(str::to_string);
             Ok(())
         })
@@ -1443,20 +1476,124 @@ mod tests {
 
         assert_eq!(record_local_task_name(&state, "a@example.com", "bob"), None);
         let mut evicted = vec![];
-        claim_local_task_name(&state, "b@example.com", "bob", |_, stale| {
+        claim_local_task_name(&state, &task_owner("b@example.com"), "bob", |_, stale| {
             evicted = stale.to_vec();
             Ok(())
         })
         .unwrap();
-        assert_eq!(evicted, ["a@example.com"]);
+        assert_eq!(evicted, [task_owner("a@example.com").key()]);
 
         let failed =
-            claim_local_task_name(&state, "b@example.com", "robert", |_, _| Err("x".into()));
+            claim_local_task_name(&state, &task_owner("b@example.com"), "robert", |_, _| {
+                Err("x".into())
+            });
         assert!(failed.is_err());
         assert_eq!(
             record_local_task_name(&state, "b@example.com", "robert"),
             Some("bob".to_string())
         );
+    }
+
+    #[test]
+    fn upn_rename_keeps_the_same_local_task_owner_and_subid_range() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let state = tmpdir.path().join("local-task-names.json");
+        let subuid = tmpdir.path().join("subuid");
+        let owner = task_owner("a@example.com");
+        claim_local_task_name(&state, &owner, "bob", |_, _| Ok(())).unwrap();
+        fs::write(&subuid, "bob:100000:65536\n").unwrap();
+        let before = fs::read(&state).unwrap();
+        let renamed = LocalTaskOwner {
+            upn: "renamed@example.com".into(),
+            ..owner.clone()
+        };
+
+        claim_local_task_name(&state, &renamed, "bob", |_, _| {
+            panic!("an unchanged local account must not be retired after a UPN rename")
+        })
+        .unwrap();
+        add_subid_entry("bob", 200000, 65536, (100000, 1000000), &subuid).unwrap();
+        assert_eq!(fs::read(&state).unwrap(), before);
+        assert_eq!(fs::read_to_string(&subuid).unwrap(), "bob:100000:65536\n");
+
+        for replacement in [
+            LocalTaskOwner {
+                object_id: uuid::Uuid::new_v4(),
+                ..renamed.clone()
+            },
+            LocalTaskOwner {
+                tenant_id: Some(uuid::Uuid::new_v4()),
+                ..renamed.clone()
+            },
+        ] {
+            let other_state = tmpdir.path().join(replacement.key());
+            fs::write(&other_state, &before).unwrap();
+            claim_local_task_name(&other_state, &replacement, "bob", |previous, evicted| {
+                assert_eq!(previous, None);
+                assert_eq!(evicted, [owner.key()]);
+                Ok(())
+            })
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn legacy_upn_owner_is_upgraded_without_retiring_its_name() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let state = tmpdir.path().join("local-task-names.json");
+        fs::write(&state, br#"{"a@example.com":"bob"}"#).unwrap();
+        let owner = task_owner("A@Example.com");
+        claim_local_task_name(&state, &owner, "bob", |previous, evicted| {
+            assert_eq!(previous, None);
+            assert!(evicted.is_empty());
+            Ok(())
+        })
+        .unwrap();
+        let names: HashMap<String, String> =
+            serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        assert_eq!(names, HashMap::from([(owner.key(), "bob".into())]));
+    }
+
+    #[test]
+    fn unreadable_or_malformed_local_task_state_aborts_before_retirement() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let state = tmpdir.path().join("local-task-names.json");
+        for contents in [b"{".as_slice(), b"[]", b"null", br#"{"a":42}"#] {
+            fs::write(&state, contents).unwrap();
+            assert!(
+                claim_local_task_name(&state, &task_owner("a@example.com"), "bob", |_, _| {
+                    panic!("invalid state must abort before retirement")
+                })
+                .is_err()
+            );
+            assert_eq!(fs::read(&state).unwrap(), contents);
+        }
+        // A directory gives a deterministic read error even when tests run as root.
+        assert!(claim_local_task_name(
+            tmpdir.path(),
+            &task_owner("a@example.com"),
+            "bob",
+            |_, _| { panic!("unreadable state must abort before retirement") }
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn local_task_state_is_replaced_atomically() {
+        use std::io::Read;
+        let tmpdir = tempfile::tempdir().unwrap();
+        let state = tmpdir.path().join("local-task-names.json");
+        record_local_task_name(&state, "a@example.com", "bob");
+        let before = fs::read(&state).unwrap();
+        let mut old_file = fs::File::open(&state).unwrap();
+        record_local_task_name(&state, "a@example.com", "robert");
+        let mut old_contents = Vec::new();
+        old_file.read_to_end(&mut old_contents).unwrap();
+        assert_eq!(old_contents, before);
+        let names: HashMap<String, String> =
+            serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        assert_eq!(names[&task_owner("a@example.com").key()], "robert");
+        assert_eq!(fs::read_dir(tmpdir.path()).unwrap().count(), 1);
     }
 
     #[test]
@@ -1466,7 +1603,22 @@ mod tests {
         fs::write(path, "robert:165536:65536\n").unwrap();
 
         assert!(add_subid_entry("bob", 165536, 65536, (100000, 231072), path).is_ok());
-        assert!(fs::read_to_string(path).unwrap().ends_with("bob:100000:65536\n"));
+        assert!(fs::read_to_string(path)
+            .unwrap()
+            .ends_with("bob:100000:65536\n"));
+    }
+
+    #[test]
+    fn evicted_subid_owner_can_reclaim_its_reserved_range() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let subuid = tmpdir.path().join("subuid");
+        let reserved = reserved_subid_name(&task_owner("a@example.com").key());
+        fs::write(&subuid, "bob:100000:65536\n").unwrap();
+        migrate_subid_entry("bob", &reserved, &subuid).unwrap();
+        add_subid_entry("bob", 100000, 65536, (100000, 1000000), &subuid).unwrap();
+        migrate_subid_entry(&reserved, "robert", &subuid).unwrap();
+        let contents = fs::read_to_string(&subuid).unwrap();
+        assert_eq!(contents, "robert:100000:65536\nbob:165536:65536\n");
     }
 
     #[test]

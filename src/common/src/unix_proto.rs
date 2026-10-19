@@ -13,6 +13,7 @@ use himmelblau::intune::NoncompliantRule;
 use libc::uid_t;
 use libkrimes::proto::KerberosCredentials;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 fn default_true() -> bool {
     true
@@ -319,11 +320,25 @@ pub struct HomeDirectoryInfo {
     pub aliases: Vec<String>,
 }
 
+/// Immutable directory identity owning local task state, plus its current UPN for legacy migration.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct LocalTaskOwner {
+    pub object_id: Uuid,
+    pub tenant_id: Option<Uuid>,
+    pub upn: String,
+}
+
+impl LocalTaskOwner {
+    pub fn key(&self) -> String {
+        format!("{}-{}", self.tenant_id.unwrap_or_default(), self.object_id)
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
-    /// Parameters: (account, is_sudoer, canonical UPN of the account's owner)
-    LocalGroups(String, bool, String),
+    /// Parameters: (account, is_sudoer, directory identity of the account's owner)
+    LocalGroups(String, bool, LocalTaskOwner),
     LogonScript(String, String),
     KerberosConfig(Option<String>, Option<String>),
     KerberosTGTs(
