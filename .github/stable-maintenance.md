@@ -67,14 +67,25 @@ neither a new process nor a fresh runner resets server-requested backoff.
 
 After four batches, unexamined commits are reported explicitly and retain the old
 cutoff along with failed/deferred candidates. Earlier accepted fixes can still
-produce a useful partial maintenance PR, but only after **all** existing final
-build/test/fmt/NSS/available packaging/audit/vet/clean-tree gates pass. Publication
-also checks that the gate-approved HEAD is still the exact clean staged HEAD and
-that stable has not advanced. A checkpoint is never evidence that those gates
-have passed.
+produce a useful partial maintenance PR. Final build/test/fmt/NSS/available
+packaging, metadata/Nix regeneration and clean-tree failures still block it.
+Both final cargo-audit and locked, frozen cargo-vet checks run even when the first
+audit fails. Findings
+or audit execution failures become explicit manual work in the report and PR;
+the job can publish a **draft**, with unchecked remediation/rerun tasks, rather
+than discard the tested changes. This path does not claim a validated release
+or mark the PR ready for review. It creates no exemptions or audit approvals.
+Only a run passing both audits can use normal ready-for-review publication.
 
-Use Actions' **Re-run failed jobs** to resume a failed stage from its predecessor
-without repeating successful earlier stages. Reruns keep the original trusted
+Publication checks that either the fully validated HEAD or the separately
+recorded draft-only HEAD is still the exact clean staged HEAD, and that stable
+has not advanced. A fresh validation clears both earlier outcomes before any
+checks run. Neither outcome is transferred in checkpoint artifacts. A checkpoint
+is never evidence that final gates passed. Maintainers must remediate the listed
+audit work and rerun full release validation before approving a draft for release.
+
+Use Actions' **Re-run failed jobs** to resume a failed, pre-publication stage
+from its predecessor without repeating successful earlier stages. Reruns keep the original trusted
 tooling snapshot; checkpoints from earlier attempts of the same run are allowed,
 but another run's state is not. A full new dispatch starts from stable again and
 does not automatically trust an abandoned staging branch. Checkpoint artifacts
@@ -87,3 +98,82 @@ this is not a promise that arbitrary backlog or outage sizes will finish. The
 bounded backport stages reserve ample time outside their processing budget for
 image setup, cleanup, checkpoint push and report upload. Final validation remains
 a fresh job and cannot be substituted by earlier builds.
+
+## Revalidating a preserved manual-audit draft
+
+An open maintenance PR, including a manual-audit draft, intentionally blocks new
+scheduled or dispatched maintenance for that stable branch. The guard prevents
+duplicate PRs and preserves maintainer edits. A workflow rerun resumes its old
+checkpoint, not the repaired draft HEAD; do not bypass the guard or close the
+draft merely to revalidate it. The standalone `prepare`, `validate` and `report`
+commands provide the manual, validation-only path below. They do not publish,
+replace the PR branch, or mark the draft ready.
+
+1. Remediate the audit findings on the existing draft branch and push those
+   commits. Record its exact repaired HEAD. Normal PR CI is useful but does not
+   replace the complete isolated final gates, including cargo-audit.
+2. Use an isolated Linux/Docker test runner with Python 3.12, the maintenance
+   workflow's outbound allowlist and no publication/Azure credentials. Check out a reviewed,
+   immutable `main` revision in `TOOLING_DIR` and that repaired PR HEAD in a
+   separate `SOURCE_DIR`. Both paths must be absolute; use a full source clone
+   with its own `.git` directory, not a linked worktree. Disable Git hooks in both
+   checkouts. Never use tooling or the Dockerfile from the mutable PR checkout.
+3. Set `EXPECTED_HEAD` to the repaired 40-character SHA and `TARGET_BRANCH` to
+   its stable base. Run the following in Bash. Every attempt creates fresh state,
+   image context and a private Cargo cache outside the source checkout. Do not
+   copy a workflow's skipped state or checkpoint into this directory, and do not
+   run `guard`, `initialize`, `release` or `publish` as part of this validation.
+
+```bash
+set -euo pipefail
+: "${TOOLING_DIR:?absolute trusted main checkout}"
+: "${SOURCE_DIR:?absolute repaired PR checkout}"
+: "${EXPECTED_HEAD:?exact repaired PR head SHA}"
+: "${TARGET_BRANCH:?stable-3.x or stable-4.x}"
+test -z "$(git -C "$TOOLING_DIR" status --porcelain)"
+test "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$EXPECTED_HEAD"
+test -z "$(git -C "$SOURCE_DIR" status --porcelain)"
+
+validation_dir=$(mktemp -d)
+mkdir -m 0755 "$validation_dir/cargo" "$validation_dir/image-context"
+export MAINTENANCE_PROJECT_CARGO_HOME="$validation_dir/cargo"
+export MAINTENANCE_BUILD_IMAGE="himmelblau-stable-maintenance:revalidate-$$"
+export MAINTENANCE_TOOLING_COMMIT="$(git -C "$TOOLING_DIR" rev-parse HEAD)"
+tool="$TOOLING_DIR/.github/scripts/stable_maintenance.py"
+export MAINTENANCE_TOOLING_SHA256="$(sha256sum "$tool" | cut -d ' ' -f 1)"
+docker build --file "$TOOLING_DIR/.github/stable-maintenance.Dockerfile" \
+  --tag "$MAINTENANCE_BUILD_IMAGE" "$validation_dir/image-context"
+
+python3 "$tool" --repo-dir "$SOURCE_DIR" --state-dir "$validation_dir/state" \
+  prepare --branch "$TARGET_BRANCH"
+validation_status=0
+python3 "$tool" --repo-dir "$SOURCE_DIR" --state-dir "$validation_dir/state" \
+  validate --branch "$TARGET_BRANCH" || validation_status=$?
+python3 "$tool" --repo-dir "$SOURCE_DIR" --state-dir "$validation_dir/state" \
+  report --branch "$TARGET_BRANCH"
+test "$validation_status" -eq 0
+test "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$EXPECTED_HEAD"
+test -z "$(git -C "$SOURCE_DIR" status --porcelain)"
+python3 - "$validation_dir/state/state.json" "$EXPECTED_HEAD" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+state = json.loads(Path(sys.argv[1]).read_text())
+if (state.get("validated_head") != sys.argv[2]
+        or state.get("manual_audit_work") or state.get("manual_audit_head")
+        or state.get("failed_phase") or state.get("skip")):
+    raise SystemExit("Release validation is incomplete; keep the PR in draft")
+print(f"All final gates passed for repaired HEAD {sys.argv[2]}")
+PY
+```
+
+Audit findings intentionally make `validate` return zero with manual work, so
+the final state check is mandatory; the process exit code alone is not release
+approval. Retain the success output identifying the exact HEAD alongside
+`report.md` and `report.json` as validation evidence, not the private state
+directory. Before manually marking the existing PR ready, verify
+its current remote HEAD still equals `EXPECTED_HEAD`, review the audit remediation
+and ensure its stable base is still appropriate. Any later source change requires
+fresh full validation. Keep the draft open if a gate fails; the next automated
+maintenance run may proceed only after the existing PR is merged or closed.
