@@ -3816,7 +3816,10 @@ def phase_release(args: argparse.Namespace, state: State, runner: Runner) -> Non
 def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> None:
     if state.load().get("no_changes"):
         state.event("validate", "validation skipped for empty run"); return
-    value = state.load(); value.pop("gate_results", None); value.pop("validated_head", None); state.save(value)
+    value = state.load()
+    for key in ("gate_results", "validated_head", "manual_audit_head", "manual_audit_work"):
+        value.pop(key, None)
+    state.save(value)
     clean_target = state.directory / "clean-target"
     result = locked_build(runner, target_dir=clean_target)
     if result.returncode:
@@ -3836,12 +3839,25 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
             checkout_regular_file(runner.root, relative)
             contained_repo_command(runner, command, network=False, source_rw=False, cache_rw=False)
             value = state.load(); value.setdefault("gate_results", []).append(relative + ": passed"); state.save(value)
-    if contained_repo_command(runner, ["cargo", "audit", "--json"], network=True, source_rw=False, cache_rw=True, timeout=900, check=False).returncode:
-        raise MaintenanceError("cargo-audit final gate failed")
-    value = state.load(); value.setdefault("gate_results", []).append("cargo-audit: passed"); state.save(value)
-    if locked_vet_gaps(runner, state.directory):
-        raise MaintenanceError("cargo-vet final gate reports uncovered dependencies")
-    value = state.load(); value.setdefault("gate_results", []).append("cargo-vet: passed"); state.save(value)
+    # Keep tested maintenance work, but never treat failed audits as approval.
+    # Run BOTH audits; execution errors require manual reruns as well as findings.
+    for gate, check in (
+        ("cargo-audit", lambda: contained_repo_command(runner, ["cargo", "audit", "--json"], network=True,
+                                                     source_rw=False, cache_rw=True, timeout=900, check=False).returncode != 0),
+        ("cargo-vet", lambda: bool(locked_vet_gaps(runner, state.directory))),
+    ):
+        try:
+            failed = check()
+            reason = ("check-failed" if gate == "cargo-audit" else "findings") if failed else None
+        except MaintenanceError:
+            failed, reason = True, "execution-failed"
+        value = state.load()
+        value.setdefault("gate_results", []).append(gate + (": manual work required" if failed else ": passed"))
+        if failed:
+            value.setdefault("manual_audit_work", []).append({"gate": gate, "reason": reason})
+        state.save(value)
+        if failed:
+            state.event("validate", "final audit requires manual work", gate=gate, reason=reason)
     contained_repo_command(runner, ["cargo", "metadata", "--locked", "--format-version", "1"], network=True, source_rw=False, cache_rw=True, timeout=300)
     if (runner.root / "Cargo.nix").is_file():
         before = hashlib.sha256((runner.root / "Cargo.nix").read_bytes()).digest()
@@ -3852,8 +3868,26 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
     if runner.git(["status", "--porcelain"]).stdout:
         raise MaintenanceError("final validation left repository changes")
     value = state.load(); value.setdefault("gate_results", []).append("repository-clean: passed"); state.save(value)
-    value = state.load(); value["validated_head"] = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip()); state.save(value)
-    state.event("validate", "all final gates passed")
+    value = state.load()
+    manual = bool(manual_audit_work(value))
+    value["manual_audit_head" if manual else "validated_head"] = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
+    state.save(value)
+    state.event("validate", "final audits require manual work; draft publication only" if manual else "all final gates passed")
+
+
+def manual_audit_work(value: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Only bounded trusted status codes may reach publication, never raw output."""
+    work = value.get("manual_audit_work", [])
+    if not isinstance(work, list) or len(work) > 2:
+        raise MaintenanceError("invalid manual audit work")
+    seen: set[str] = set()
+    for row in work:
+        if (not isinstance(row, dict) or set(row) != {"gate", "reason"}
+                or row["gate"] not in ("cargo-audit", "cargo-vet")
+                or row["reason"] not in ("findings", "check-failed", "execution-failed") or row["gate"] in seen):
+            raise MaintenanceError("invalid manual audit work")
+        seen.add(row["gate"])
+    return work
 
 
 def secure_github_push(runner: Runner, state_dir: Path, repo: str, branch: str, token: str, *, source_sha: str = "HEAD") -> None:
@@ -3898,7 +3932,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
         "already_covered", "vet_accepted", "vet_rejected", "dependabot_imported", "dependabot_skipped",
         "backport_candidates", "backport_skipped", "backports_applied", "backports_conflict_skipped", "gate_results",
         "backports_deferred", "backport_remaining",
-        "backports_build_failed",
+        "backports_build_failed", "manual_audit_work",
     )
     lines: list[str] = []
     for key in keys:
@@ -3917,6 +3951,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
 
 
 def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
+    manual = manual_audit_work(value)
     through = maintenance_main_through(value)
     marker = f"{MARKER} {require_sha(str(through))}"
     run_id = os.environ.get("GITHUB_RUN_ID", "")
@@ -3927,6 +3962,8 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         else "Full details are in the maintenance run summary and logs."
     )
     summary = "Refresh supply-chain metadata; no version bump." if value.get("metadata_only") else "Validated stable maintenance release."
+    if manual:
+        summary = "DRAFT: final audits need manual work; release validation is incomplete."
     lines = [
         "## Summary", "", summary + " Human review required; never auto-merged.", "",
         "## What Changed", "",
@@ -3944,15 +3981,22 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         "", run_link, "", "## Testing", "",
         "- Distro: pinned Ubuntu 24.04 maintenance image.",
         "- Steps: clean locked build, workspace tests, rustfmt, available NSS/packaging generator tests, cargo-audit, cargo-vet, clean worktree.",
-        "- Results: all publication gates passed. No manual VM test performed.", "",
+        ("- Results: non-audit gates passed; final audits require manual work. No manual VM test performed."
+         if manual else "- Results: all publication gates passed. No manual VM test performed."), "",
         "## Automated Checks", "",
-        "Build/tests/audit/vet passed; distro packaging and SELinux policy tests were not run by this workflow.", "",
+        ("Build/tests passed; final audit work is listed above; distro packaging and SELinux policy tests were not run."
+         if manual else "Build/tests/audit/vet passed; distro packaging and SELinux policy tests were not run by this workflow."), "",
         "## System Integration Impact", "",
         "Review included backports for system integration changes; no automatic deployment.", "",
         "## Checklist", "",
-        "- [x] Automated validation completed.",
+        "- [ ] Resolve final audit work and rerun all release validation." if manual else "- [x] Automated validation completed.",
         "- [ ] Maintainer review of backports and integration impact.", "", marker,
     ]
+    if manual:
+        lines.extend(["", "### Manual audit work", ""])
+        for row in manual:
+            task = "resolve findings and rerun" if row["reason"] == "findings" else "investigate failed check, resolve findings and rerun"
+            lines.append(f"- [ ] {row['gate']}: {task}; see run diagnostics/report.")
     # Prioritize actionable changes and deferrals; never dump already-covered
     # dependencies into the PR. The complete bounded inventory is in the report.
     for key in ("backport_review_required", "backports_build_failed", "backports_deferred", "backports_applied", "dependabot_imported", "dependabot_skipped", "dependency_updates"):
@@ -4026,9 +4070,11 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
     value = state.load()
     if value.get("no_changes"):
         state.event("publish", "no changes; no PR created"); return
-    if value.get("checkpointed"):
+    manual = manual_audit_work(value)
+    if value.get("checkpointed") or manual:
         head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
-        if value.get("validated_head") != head or runner.git(["status", "--porcelain"]).stdout:
+        approval = "manual_audit_head" if manual else "validated_head"
+        if value.get(approval) != head or runner.git(["status", "--porcelain"]).stdout:
             raise MaintenanceError("checkpoint publication requires final gates for the exact clean HEAD")
         stable = runner.git(["ls-remote", "--exit-code", "origin", f"refs/heads/{require_branch(value['branch'])}"]).stdout.split()
         if len(stable) != 2 or stable[0] != value["original_head"]:
@@ -4051,6 +4097,8 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
         # before ready_for_review so even that policy sees its exemption.
         "body": body, "draft": True,
     }
+    if manual:
+        payload["title"] = f"Manual audit work required: {value['branch']} maintenance"
     repo = github_repository()
     pr = http_json(f"https://api.github.com/repos/{repo}/pulls", method="POST", headers=github_headers(), body=payload)
     number = pr.get("number") if isinstance(pr, dict) else None
@@ -4065,11 +4113,12 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
         node_id = pr.get("node_id")
         if not isinstance(node_id, str) or not re.fullmatch(r"[A-Za-z0-9_=-]{1,200}", node_id):
             raise MaintenanceError("GitHub did not return a valid PR node id")
-        mark_maintenance_pr_ready(repo, number, node_id, state)
+        if not manual:
+            mark_maintenance_pr_ready(repo, number, node_id, state)
     except MaintenanceError:
         close_failed_maintenance_pr(repo, number, state)
         raise
-    state.event("publish", "labeled pull request ready for review", number=number)
+    state.event("publish", "draft pull request requires manual audit work" if manual else "labeled pull request ready for review", number=number)
 
 
 def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None:
@@ -4077,6 +4126,8 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
     lines = ["# Stable maintenance report", "", f"Last phase: `{value.get('last_phase', 'not started')}`", ""]
     if value.get("failed_phase"):
         lines.extend([f"Failed phase: `{value['failed_phase']}` — {value.get('failure', 'failed closed')}", ""])
+    if manual_audit_work(value):
+        lines.extend(["**Final audits require manual work. Draft only; release validation incomplete.**", ""])
     if value.get("skip"):
         numbers = ", ".join(f"#{number}" for number in value.get("blocking_pull_requests", []))
         lines.extend([f"Run skipped because an existing maintenance PR is open: {numbers or 'unknown' }.", ""])

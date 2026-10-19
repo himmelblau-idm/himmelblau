@@ -55,11 +55,22 @@ neither a new process nor a fresh runner resets server-requested backoff.
 
 After four batches, unexamined commits are reported explicitly and retain the old
 cutoff along with failed/deferred candidates. Earlier accepted fixes can still
-produce a useful partial maintenance PR, but only after **all** existing final
-build/test/fmt/NSS/available packaging/audit/vet/clean-tree gates pass. Publication
-also checks that the gate-approved HEAD is still the exact clean staged HEAD and
-that stable has not advanced. A checkpoint is never evidence that those gates
-have passed.
+produce a useful partial maintenance PR. Final build/test/fmt/NSS/available
+packaging, metadata/Nix regeneration and clean-tree failures still block it.
+Both final cargo-audit and locked, frozen cargo-vet checks run even when the first
+audit fails. Findings
+or audit execution failures become explicit manual work in the report and PR;
+the job can publish a **draft**, with unchecked remediation/rerun tasks, rather
+than discard the tested changes. This path does not claim a validated release
+or mark the PR ready for review. It creates no exemptions or audit approvals.
+Only a run passing both audits can use normal ready-for-review publication.
+
+Publication checks that either the fully validated HEAD or the separately
+recorded draft-only HEAD is still the exact clean staged HEAD, and that stable
+has not advanced. A fresh validation clears both earlier outcomes before any
+checks run. Neither outcome is transferred in checkpoint artifacts. A checkpoint
+is never evidence that final gates passed. Maintainers must remediate the listed
+audit work and rerun full release validation before approving a draft for release.
 
 Use Actions' **Re-run failed jobs** to resume a failed stage from its predecessor
 without repeating successful earlier stages. Reruns keep the original trusted

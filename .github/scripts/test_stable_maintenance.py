@@ -2144,13 +2144,14 @@ class CargoVetTests(unittest.TestCase):
                 self.assertTrue(calls)
                 self.assertTrue(all(not path.exists() for path in calls))
 
-    def test_final_validation_rejects_locked_vet_gaps(self):
+    def test_final_validation_records_locked_vet_gaps_as_manual_work(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "source"
             (root / "supply-chain").mkdir(parents=True)
             (root / "supply-chain/audits.toml").write_text("# Current audits\n")
             state = sm.State(Path(tmp) / "state")
             runner = mock.Mock(root=root)
+            runner.git.side_effect = lambda command: sm.CommandResult(0, "a" * 40 if command[0] == "rev-parse" else "", "")
             stores = []
             def contained(_runner, command, **kwargs):
                 if command[:2] == ["cargo", "vet"]:
@@ -2160,10 +2161,12 @@ class CargoVetTests(unittest.TestCase):
                     return sm.CommandResult(1, VET_LOCKED_FAILURE, "")
                 return sm.CommandResult(0, "", "")
             with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
-                 mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
-                 self.assertRaisesRegex(sm.MaintenanceError, "final gate reports uncovered"):
+                 mock.patch.object(sm, "contained_repo_command", side_effect=contained):
                 sm.phase_validate(mock.Mock(), state, runner)
             self.assertNotIn("cargo-vet: passed", state.load()["gate_results"])
+            self.assertEqual(state.load()["manual_audit_work"], [{"gate": "cargo-vet", "reason": "findings"}])
+            self.assertEqual(state.load()["manual_audit_head"], "a" * 40)
+            self.assertNotIn("validated_head", state.load())
             self.assertEqual(len(stores), 1)
             self.assertFalse(stores[0].exists())
 
@@ -4883,6 +4886,139 @@ with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=la
                      mock.patch.object(sm, "secure_github_push") as push:
                     sm.phase_publish(mock.Mock(), state, runner)
                 push.assert_not_called()
+
+
+class ManualFinalAuditTests(unittest.TestCase):
+    repository = MaintenanceHistoryTests.repository
+    commit = MaintenanceHistoryTests.commit
+
+    def test_failed_audits_publish_only_an_exact_clean_draft_and_can_be_revalidated(self):
+        for failure in ("findings", "error", "timeout", "output-limit"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                state = sm.State(Path(tmp) / "state")
+                state.save({"checkpointed": True, "branch": "stable-4.x", "original_head": head,
+                            "main_head": head, "version": "4.0.6", "validated_head": head,
+                            "automation_branch": sm.AUTOMATION_PREFIX + "manual-audit-test"})
+                calls = []
+                def contained(_runner, command, **kwargs):
+                    calls.append(command)
+                    if command[:2] == ["cargo", "audit"]:
+                        self.assertEqual(kwargs, dict(network=True, source_rw=False, cache_rw=True, timeout=900, check=False))
+                        if failure == "error":
+                            raise sm.MaintenanceError("secret ::error:: unsafe")
+                        if failure in ("timeout", "output-limit"):
+                            raise sm.CommandCaptureError("secret", failure, sm.CommandResult(-9, "secret", "secret"))
+                        return sm.CommandResult(1, "secret", "secret")
+                    return sm.CommandResult(0, "", "")
+                with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     mock.patch.object(sm, "locked_vet_gaps", side_effect=sm.MaintenanceError("secret") if failure == "error" else None,
+                                       return_value=[sm.VetItem("example", "1.0.0", "1.1.0")]) as vet:
+                    sm.phase_validate(mock.Mock(), state, runner)
+                vet.assert_called_once()
+                self.assertIn(["cargo", "metadata", "--locked", "--format-version", "1"], calls)
+                value = state.load()
+                self.assertEqual(value["manual_audit_head"], head)
+                self.assertNotIn("validated_head", value)
+                self.assertEqual([row["gate"] for row in value["manual_audit_work"]], ["cargo-audit", "cargo-vet"])
+                self.assertIn("repository-clean: passed", value["gate_results"])
+                with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "test", "GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "123"}), \
+                     mock.patch.object(sm, "secure_github_push") as push, \
+                     mock.patch.object(sm, "mark_maintenance_pr_ready") as ready, \
+                     mock.patch.object(sm, "http_json", side_effect=[{"number": 99, "node_id": "PR_test"}, {}]) as http:
+                    sm.phase_publish(mock.Mock(), state, runner)
+                push.assert_called_once()
+                ready.assert_not_called()
+                self.assertEqual(http.call_count, 2)  # Create draft, then label; no ready mutation.
+                payload = http.call_args_list[0].kwargs["body"]
+                self.assertTrue(payload["draft"])
+                self.assertIn("Manual audit work required", payload["title"])
+                body = payload["body"]
+                self.assertLessEqual(len(body.encode()), 2400)
+                self.assertIn("cargo-audit:", body)
+                self.assertIn("cargo-vet:", body)
+                self.assertNotIn("all publication gates passed", body)
+                self.assertNotIn("Validated stable maintenance release", body)
+                with mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    sm.phase_report(mock.Mock(), state, runner)
+                report = (state.directory / "report.md").read_text()
+                self.assertIn("Final audits require manual work", report)
+                for text in (body, report, (state.directory / "report.json").read_text()):
+                    self.assertNotIn("secret", text)
+                    self.assertNotIn("::error::", text)
+                # Dirty trees, later commits and a moved stable ref still block.
+                (runner.root / "late.rs").write_text("changed source\n")
+                for committed in (False, True):
+                    if committed:
+                        self.commit(runner, "Unvalidated later commit")
+                    with self.assertRaisesRegex(sm.MaintenanceError, "exact clean HEAD"), \
+                         mock.patch.object(sm, "secure_github_push") as push:
+                        sm.phase_publish(mock.Mock(), state, runner)
+                    push.assert_not_called()
+                # A fresh successful validation removes old manual status.
+                with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "locked_vet_gaps", return_value=[]):
+                    sm.phase_validate(mock.Mock(), state, runner)
+                self.assertNotIn("manual_audit_head", state.load())
+                self.assertNotIn("manual_audit_work", state.load())
+                self.assertEqual(state.load()["validated_head"], runner.git(["rev-parse", "HEAD"]).stdout.strip())
+                with self.assertRaisesRegex(sm.MaintenanceError, "stable branch advanced"), \
+                     mock.patch.object(sm, "secure_github_push") as push:
+                    runner.git(["branch", "-f", "stable-4.x", "HEAD"])
+                    sm.phase_publish(mock.Mock(), state, runner)
+                push.assert_not_called()
+
+    def test_non_audit_failures_remain_fatal_without_draft_approval(self):
+        for gate in ("build", "tests", "fmt", "packaging", "metadata", "nix", "dirty"):
+            with self.subTest(gate=gate), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                if gate == "packaging":
+                    (runner.root / "scripts").mkdir()
+                    (runner.root / "scripts/test_gen_dockerfiles.py").write_text("raise RuntimeError()\n")
+                    self.commit(runner, "Packaging fixture")
+                if gate == "nix":
+                    (runner.root / "Cargo.nix").write_text("original\n")
+                    self.commit(runner, "Nix fixture")
+                state = sm.State(Path(tmp) / "state")
+                state.save({"manual_audit_head": "a" * 40, "validated_head": "b" * 40})
+                def contained(_runner, command, **kwargs):
+                    if gate == "nix" and command == sm.crate2nix_command():
+                        (runner.root / "Cargo.nix").write_text("unexpected rewrite\n")
+                    if ((gate == "fmt" and command[:2] == ["cargo", "fmt"])
+                            or (gate == "metadata" and command[:2] == ["cargo", "metadata"])
+                            or (gate == "packaging" and command[0] == "python3")):
+                        raise sm.MaintenanceError("failed non-audit gate")
+                    return sm.CommandResult(1 if command[:2] == ["cargo", "audit"] else 0, "", "")
+                if gate == "dirty":
+                    (runner.root / "dirty.rs").write_text("dirty\n")
+                with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(int(gate == "build"), "", "")), \
+                     mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(int(gate == "tests"), "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     mock.patch.object(sm, "locked_vet_gaps", side_effect=sm.MaintenanceError("vet failed")), \
+                     self.assertRaises(sm.MaintenanceError):
+                    sm.phase_validate(mock.Mock(), state, runner)
+                self.assertNotIn("manual_audit_head", state.load())
+                self.assertNotIn("validated_head", state.load())
+
+    def test_manual_status_rejects_malformed_or_unbound_publication(self):
+        for work in (None, {}, ["cargo-audit"], [{"gate": [], "reason": "findings"}],
+                     [{"gate": "cargo-audit", "reason": "secret"}],
+                     [{"gate": "cargo-audit", "reason": "findings"}] * 2):
+            with self.subTest(work=work), self.assertRaises(sm.MaintenanceError):
+                sm.manual_audit_work({"manual_audit_work": work})
+        runner, state = mock.Mock(), mock.Mock()
+        runner.git.return_value = sm.CommandResult(0, "a" * 40, "")
+        state.load.return_value = {"manual_audit_work": [{"gate": "cargo-audit", "reason": "findings"}],
+                                  "validated_head": "a" * 40}
+        with self.assertRaisesRegex(sm.MaintenanceError, "exact clean HEAD"), \
+             mock.patch.object(sm, "secure_github_push") as push:
+            sm.phase_publish(mock.Mock(), state, runner)
+        push.assert_not_called()
 
 
 class SequentialMaintenanceTests(unittest.TestCase):
