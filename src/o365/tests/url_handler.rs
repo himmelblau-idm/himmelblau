@@ -46,7 +46,8 @@ struct Harness {
 
 impl Harness {
     fn new(tag: &str) -> Harness {
-        let dir = std::env::temp_dir().join(format!(
+        // Stubs are executed, so use Cargo's writable executable target mount.
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "o365-url-handler-test-{}-{}",
             tag,
             std::process::id()
