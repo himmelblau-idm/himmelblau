@@ -6,7 +6,8 @@
 Himmelblau
 .SH SYNOPSIS
 \f[B]pam_himmelblau.so\f[R] [debug] [use_first_pass]
-[ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin] [no_info_prompt] [try_unseal]
+[ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin] [no_info_prompt]
+[try_unseal]
 .SH DESCRIPTION
 \f[B]pam_himmelblau\f[R] is a PAM module that authenticates users
 against Microsoft Azure Entra ID using the Himmelblau daemon
@@ -56,12 +57,13 @@ globally.
 .PD 0
 .P
 .PD
-Folds any informational text (the configured Entra password prompt and any
-MFA message) into the password prompt itself, so the PAM conversation carries
-a single \f[CR]PAM_PROMPT_ECHO_OFF\f[R] instead of sending a separate
-\f[CR]PAM_TEXT_INFO\f[R] message first.
-Required for PAM consumers that cannot carry a standalone info message during
-authentication, such as the MariaDB \f[CR]auth_pam\f[R] dialog relay.
+Folds any informational text (the configured Entra password prompt and
+any MFA message) into the password prompt itself, so the PAM
+conversation carries a single \f[CR]PAM_PROMPT_ECHO_OFF\f[R] instead of
+sending a separate \f[CR]PAM_TEXT_INFO\f[R] message first.
+Required for PAM consumers that cannot carry a standalone info message
+during authentication, such as MariaDB\(cqs \f[CR]auth_pam\f[R] dialog
+relay.
 .IP \(bu 2
 \f[B]try_unseal\f[R]
 .PD 0
@@ -70,15 +72,14 @@ authentication, such as the MariaDB \f[CR]auth_pam\f[R] dialog relay.
 Silently attempt to unseal the Hello secret using the password from a
 previous PAM module (similar to how \f[CR]pam_gnome_keyring.so\f[R]
 unlocks the GNOME keyring at login).
-When Hello TOTP is disabled, the PIN is validated locally on every
-invocation and valid cached SSO material is restored using the dedicated
-try_unseal path.
+When Hello TOTP is disabled, the dedicated try_unseal path validates the
+PIN locally on every invocation and restores valid cached SSO material.
 If a cached Entra PRT has expired and the provider is online, the daemon
 uses the validated Hello key to request and cache a replacement PRT; an
 offline invocation remains local and fails only the unseal attempt.
 Authenticated user information is refreshed only when
 \f[CR]cache_timeout\f[R] has elapsed and the provider supports a
-non-interactive refresh.
+non\-interactive refresh.
 Implies \f[CR]use_first_pass\f[R] and \f[CR]ignore_unknown_user\f[R].
 Will never fail the PAM authentication stack and never wait for an
 answer, as it simply sends a request via IPC to himmelblaud.
@@ -88,9 +89,9 @@ Hello secret will be unsealed automatically, without requiring a manual
 \f[CR]aad\-tool\f[R] invocation.
 Requires the local user password to be identical to the himmelblau PIN.
 This option is incompatible with \f[CR]enable_hello_totp = true\f[R]:
-the daemon logs an error and refuses the unseal before loading cached SSO
-material because this non-interactive hook cannot collect the required
-TOTP.
+the daemon logs an error and refuses the unseal before loading cached
+SSO material because this non\-interactive hook cannot collect the
+required TOTP.
 Use the normal interactive Himmelblau authentication flow when Hello
 TOTP is required.
 .SH PAM CONFIGURATION
@@ -113,6 +114,9 @@ pam\-config \-\-add \-\-himmelblau
 .PP
 The \f[CR]aad\-tool configure\-pam\f[R] command also inserts recommended
 directives (dry\-run unless \f[CR]\-\-really\f[R] is used).
+It also updates matching existing authentication entries to stop the
+stack on \f[CR]PAM_ABORT\f[R], preserving their other control actions.
+The optional \f[CR]try_unseal\f[R] entry is unchanged.
 .SS Manual configuration
 In \f[CR]/etc/pam.d/common\-auth\f[R], ensure that the
 \f[CR]pam_himmelblau.so\f[R] module is placed after other authentication
@@ -129,11 +133,20 @@ unknown users are not implicitly allowed.
 auth        required      pam_env.so
 auth        [default=1 ignore=ignore success=ok] pam_localuser.so
 auth        sufficient    pam_unix.so nullok try_first_pass
-auth        sufficient    pam_himmelblau.so ignore_unknown_user
+auth        [success=done new_authtok_reqd=done abort=die default=ignore] pam_himmelblau.so ignore_unknown_user
 auth        required      pam_deny.so
 .EE
 .PP
 Configure \f[CR]/etc/pam.d/common\-account\f[R] in a similar manner.
+.PP
+The \f[CR]abort=die\f[R] action stops authentication when passkey
+authentication is cancelled, rather than falling through to another
+module.
+Keep \f[CR]default=ignore\f[R] so unknown users and other non\-success
+results retain their existing fallback behavior.
+On existing installations, review the generated PAM configuration on the
+test machine and reapply the relevant configuration tool; package
+upgrades may preserve locally configured PAM files.
 .IP
 .EX
 account    [success=ok auth_err=die default=ignore] pam_himmelblau.so ignore_unknown_user
@@ -211,8 +224,10 @@ The user did not meet the required credential policy.
 .PD 0
 .P
 .PD
-A critical, unrecoverable failure occurred\(emsuch as a panic inside the
-\f[CR]himmelblaud\f[R] service.
+Authentication was cancelled, or a critical, unrecoverable failure
+occurred, such as a panic inside the \f[CR]himmelblaud\f[R] service.
+Authentication controls must include \f[CR]abort=die\f[R] to stop the
+PAM stack on this result.
 .SH SEE ALSO
 \f[B]himmelblaud(8)\f[R], \f[B]aad\-tool(1)\f[R],
 \f[B]himmelblau.conf(5)\f[R], \f[B]pam(8)\f[R]

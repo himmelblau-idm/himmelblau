@@ -137,6 +137,56 @@ fn preserve_numeric_account_success(existing_line: &str) -> Option<String> {
     ))
 }
 
+fn auth_control_with_terminal_abort(existing_line: &str) -> anyhow::Result<String> {
+    let rest = existing_line
+        .trim_start()
+        .strip_prefix("auth")
+        .ok_or_else(|| anyhow::anyhow!("Expected an auth PAM entry: {existing_line}"))?;
+    let control = rest.trim_start();
+    let control_start = existing_line.len() - control.len();
+    let (control_len, actions) = if let Some(bracketed) = control.strip_prefix('[') {
+        let end = bracketed
+            .find(']')
+            .ok_or_else(|| anyhow::anyhow!("Unterminated PAM control: {existing_line}"))?;
+        (end + 2, &bracketed[..end])
+    } else {
+        let simple = control.split_whitespace().next().unwrap_or("");
+        let actions = match simple {
+            "sufficient" => "success=done new_authtok_reqd=done default=ignore",
+            "required" => "success=ok new_authtok_reqd=ok ignore=ignore default=bad",
+            "requisite" => "success=ok new_authtok_reqd=ok ignore=ignore default=die",
+            "optional" => "success=ok new_authtok_reqd=ok default=ignore",
+            _ => anyhow::bail!("Unsupported PAM auth control: {existing_line}"),
+        };
+        (simple.len(), actions)
+    };
+
+    let mut actions: Vec<&str> = actions.split_whitespace().collect();
+    if actions.contains(&"abort=die") {
+        return Ok(existing_line.to_string());
+    }
+    if let Some(action) = actions
+        .iter_mut()
+        .find(|action| action.starts_with("abort="))
+    {
+        *action = "abort=die";
+    } else {
+        let index = actions
+            .iter()
+            .position(|action| action.starts_with("default="))
+            .filter(|_| !control.starts_with('['))
+            .unwrap_or(actions.len());
+        actions.insert(index, "abort=die");
+    }
+
+    Ok(format!(
+        "{}[{}]{}",
+        &existing_line[..control_start],
+        actions.join(" "),
+        &existing_line[control_start + control_len..]
+    ))
+}
+
 #[instrument(skip(after_pred, before_pred))]
 fn insert_module_line(
     pam_file: &str,
@@ -182,8 +232,12 @@ fn insert_module_line(
             return Ok(());
         }
 
-        let updated_line = preserve_numeric_account_success(&lines[existing_index])
-            .unwrap_or_else(|| module_line.to_string());
+        let updated_line = if stack_type == "auth" {
+            auth_control_with_terminal_abort(&lines[existing_index])?
+        } else {
+            preserve_numeric_account_success(&lines[existing_index])
+                .unwrap_or_else(|| module_line.to_string())
+        };
         if updated_line == lines[existing_index] {
             debug!("{} already contains pam_himmelblau; skipping", pam_file);
             return Ok(());
@@ -345,11 +399,11 @@ fn configure_pam(
                 auth_file,
                 // Set PAM_AUTHTOK from Hello PIN so downstream modules (e.g. gnome-keyring)
                 // can unlock using use_authtok.
-                "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
+                "auth\t[success=done new_authtok_reqd=done abort=die default=ignore]\tpam_himmelblau.so ignore_unknown_user set_authtok",
                 None,
                 // pam_himmelblau should always come first on the auth stack
                 Some(&|_: &str| true),
-                false,
+                true,
                 dry_run,
             )?;
         }
@@ -2512,7 +2566,7 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::HimmelblauUnixParser;
-    use super::{insert_module_line, preserve_numeric_account_success};
+    use super::{configure_pam, insert_module_line, preserve_numeric_account_success};
     use clap::CommandFactory;
     use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
     use himmelblau_unix_common::tpm::resolve_hsm_type;
@@ -2520,11 +2574,12 @@ mod tests {
     use kanidm_hsm_crypto::provider::{BoxedDynTpm, SoftTpm, Tpm};
     use kanidm_hsm_crypto::AuthValue;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     const ACCOUNT_LINE: &str =
         "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";
+    const AUTH_LINE: &str = "auth\t[success=done new_authtok_reqd=done abort=die default=ignore]\tpam_himmelblau.so ignore_unknown_user set_authtok";
 
     fn temp_pam_file(name: &str, content: &str) -> anyhow::Result<PathBuf> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -2808,6 +2863,119 @@ mod tests {
             "auth required pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n"
         );
         remove_temp_file(&path)
+    }
+
+    fn configure_test_pam(path: &Path, dry_run: bool, try_unseal: bool) -> anyhow::Result<()> {
+        let file = path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("PAM fixture path is not valid UTF-8"))?;
+        configure_pam(
+            dry_run,
+            Some(file),
+            Some(file),
+            Some(file),
+            Some(file),
+            try_unseal,
+        )
+    }
+
+    #[test]
+    fn configure_pam_auth_inserts_terminal_abort_control() -> anyhow::Result<()> {
+        let path = temp_pam_file("auth-insert", "auth required pam_unix.so\n")?;
+        configure_test_pam(&path, false, false)?;
+        let content = read_to_string(&path)?;
+        remove_temp_file(&path)?;
+        assert!(content.starts_with(&format!("{AUTH_LINE}\nauth required pam_unix.so\n")));
+        Ok(())
+    }
+
+    #[test]
+    fn configure_pam_auth_updates_existing_controls_without_changing_other_actions(
+    ) -> anyhow::Result<()> {
+        for (old_control, new_control) in [
+            (
+                "sufficient",
+                "[success=done new_authtok_reqd=done abort=die default=ignore]",
+            ),
+            (
+                "required",
+                "[success=ok new_authtok_reqd=ok ignore=ignore abort=die default=bad]",
+            ),
+            (
+                "requisite",
+                "[success=ok new_authtok_reqd=ok ignore=ignore abort=die default=die]",
+            ),
+            (
+                "optional",
+                "[success=ok new_authtok_reqd=ok abort=die default=ignore]",
+            ),
+            (
+                "[success=2 default=ignore]",
+                "[success=2 default=ignore abort=die]",
+            ),
+            (
+                "[success=ok ignore=2 default=2]",
+                "[success=ok ignore=2 default=2 abort=die]",
+            ),
+            (
+                "[success=done abort=ignore default=ignore]",
+                "[success=done abort=die default=ignore]",
+            ),
+        ] {
+            let old_line = format!(
+                "  auth   {old_control}   pam_himmelblau.so set_authtok ignore_unknown_user\n"
+            );
+            let new_line = format!(
+                "  auth   {new_control}   pam_himmelblau.so set_authtok ignore_unknown_user\n"
+            );
+            let path = temp_pam_file(
+                "auth-migrate",
+                &format!("{old_line}auth required pam_unix.so\n"),
+            )?;
+            configure_test_pam(&path, false, false)?;
+            let content = read_to_string(&path)?;
+            configure_test_pam(&path, false, false)?;
+            let repeated = read_to_string(&path)?;
+            remove_temp_file(&path)?;
+            assert!(
+                content.starts_with(&format!("{new_line}auth required pam_unix.so\n")),
+                "{old_control}: {content}"
+            );
+            assert_eq!(content, repeated);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn configure_pam_auth_preserves_secure_lines_and_try_unseal() -> anyhow::Result<()> {
+        let existing = concat!(
+            "auth optional pam_himmelblau.so try_unseal\n",
+            "  auth  [success=2 abort=die default=ignore]  pam_himmelblau.so set_authtok ignore_unknown_user\n",
+            "auth required pam_unix.so\n",
+        );
+        let path = temp_pam_file("auth-secure", existing)?;
+        configure_test_pam(&path, false, false)?;
+        let content = read_to_string(&path)?;
+        remove_temp_file(&path)?;
+        assert!(content.starts_with(existing));
+
+        let path = temp_pam_file("auth-unseal", existing)?;
+        configure_test_pam(&path, false, true)?;
+        let content = read_to_string(&path)?;
+        remove_temp_file(&path)?;
+        assert_eq!(content, existing);
+        Ok(())
+    }
+
+    #[test]
+    fn configure_pam_auth_dry_run_does_not_modify_existing_controls() -> anyhow::Result<()> {
+        let existing = "auth sufficient pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n";
+        let path = temp_pam_file("auth-dry-run", existing)?;
+        configure_test_pam(&path, true, false)?;
+        let content = read_to_string(&path)?;
+        remove_temp_file(&path)?;
+        assert_eq!(content, existing);
+        Ok(())
     }
 
     const DONATIONS_URL: &str = "https://himmelblau-idm.org/donations/";

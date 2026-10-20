@@ -5908,6 +5908,7 @@ mod tests {
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
     use himmelblau::{MFAAuthContinue, MfaMethodInfo};
     use kanidm_hsm_crypto::structures::SealedData;
+    use std::cell::Cell;
     use zeroize::Zeroizing;
 
     fn edge_prt_error() -> MsalError {

@@ -70,30 +70,35 @@ if command -v authselect >/dev/null 2>&1; then
     fi
 fi
 
-# Helper: validate/fix pam-config account line for pam_himmelblau
-fix_pam_config_account_line() {
-    local pc="/etc/pam.d/common-account-pc"
-    local plain="/etc/pam.d/common-account"
+# Repair legacy built-in pam-config output, which may ignore our vendor template.
+fix_pam_config_lines() {
+    local stack pc plain legacy control
+    for stack in account auth; do
+        pc="/etc/pam.d/common-${stack}-pc"
+        plain="/etc/pam.d/common-${stack}"
+        if [ "$stack" = account ]; then
+            legacy="(required|sufficient)"
+            control="[success=ok auth_err=die default=ignore]"
+        else
+            legacy="(sufficient)"
+            control="[success=done new_authtok_reqd=done abort=die default=ignore]"
+        fi
 
-    [ -f "$pc" ] || return 1
+        [ -f "$pc" ] || return 1
 
-    # Detect legacy/simple pam-config output:
-    #   account required|sufficient pam_himmelblau.so ignore_unknown_user
-    if ! grep -Eq '^[[:space:]]*account[[:space:]]+(required|sufficient)[[:space:]]+pam_himmelblau\.so([[:space:]]+|$).*ignore_unknown_user' "$pc"; then
-        return 0
-    fi
+        if ! grep -Eq "^[[:space:]]*${stack}[[:space:]]+${legacy}[[:space:]]+pam_himmelblau\\.so([[:space:]]+|$).*ignore_unknown_user" "$pc"; then
+            continue
+        fi
 
-    # Ensure we have a self-managed common-account
-    if [ ! -f "$plain" ]; then
-        sed '/^[[:space:]]*#/d' "$pc" >"$plain" || return 1
-        chmod --reference="$pc" "$plain" || :
-    fi
+        if [ ! -f "$plain" ]; then
+            sed '/^[[:space:]]*#/d' "$pc" >"$plain" || return 1
+            chmod --reference="$pc" "$plain" || return 1
+        fi
 
-    # Make explicit himmelblau account denials terminal while preserving
-    # PAM_IGNORE fall-through for local users.
-    sed -i -E \
-        's#^([[:space:]]*account[[:space:]]+)(required|sufficient)([[:space:]]+pam_himmelblau\.so([[:space:]]+|$).*ignore_unknown_user)#\1[success=ok auth_err=die default=ignore]\3#' \
-        "$plain" || return 1
+        sed -i -E \
+            "s#^([[:space:]]*${stack}[[:space:]]+)${legacy}([[:space:]]+pam_himmelblau\\.so([[:space:]]+|$).*ignore_unknown_user)#\\1${control}\\3#" \
+            "$plain" || return 1
+    done
 
     return 0
 }
@@ -105,8 +110,10 @@ if command -v pam-config >/dev/null 2>&1; then
     if pam-config --add --himmelblau >/dev/null 2>&1; then
         pam_config_ok=1
 
-        # Validate/fix the known-bad older behavior (account required)
-        fix_pam_config_account_line >/dev/null 2>&1 || :
+        if ! fix_pam_config_lines; then
+            echo "warning: failed to repair legacy Himmelblau PAM controls" >&2
+            pam_config_ok=0
+        fi
     fi
 fi
 
