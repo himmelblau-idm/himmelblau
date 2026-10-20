@@ -342,3 +342,139 @@ async fn helper_requests_refresh_okta_tokens_with_filtered_scopes_and_rotation()
         assert_eq!(requests[1]["refresh_token"], "fixture-rotated");
     }
 }
+
+#[tokio::test]
+async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
+    use tpm::{provider::SoftTpm, provider::Tpm, AuthValue};
+
+    for case in [
+        "uuid",
+        "tenant",
+        "matching",
+        "unrestricted",
+        "userinfo_failure",
+        "guarded_userinfo_failure",
+    ] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let issuer = format!("{origin}/oauth2/default");
+        let (id_token, jwk) = signed_id_token(&issuer);
+        let userinfo = json!({"sub":"broker-test-subject", "preferred_username":ACCOUNT,
+            "email":ACCOUNT, "name":"Broker Test"});
+        let responses = [
+            (
+                "POST /oauth2/default/v1/token ",
+                json!({
+                "access_token":"fixture-access", "id_token":id_token,
+                "refresh_token":"fixture-rotated", "expires_in":3600,
+                "token_type":"Bearer", "scope":"openid email"}),
+            ),
+            (
+                "GET /oauth2/default/.well-known/openid-configuration ",
+                json!({
+                "issuer":issuer, "jwks_uri":format!("{issuer}/v1/keys")}),
+            ),
+            ("GET /oauth2/default/v1/keys ", json!({"keys":[jwk]})),
+            ("GET /oauth2/default/v1/userinfo ", userinfo.clone()),
+        ];
+        let server = tokio::spawn(async move {
+            for (path, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut stream).await;
+                assert!(request.starts_with(path), "unexpected request: {request}");
+                if request.starts_with("POST ") {
+                    assert!(request.contains("refresh_token=fixture-refresh"));
+                }
+                let status = if case.ends_with("userinfo_failure") && path.contains("userinfo") {
+                    "503 Service Unavailable"
+                } else {
+                    "200 OK"
+                };
+                let body = body.to_string();
+                let response = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let mut provider = provider().await;
+        provider
+            .config
+            .lock()
+            .await
+            .set("global", "oidc_issuer_url", &issuer);
+        provider.issuer = issuer.clone();
+        provider.origin = origin;
+        provider.tenant_id = Uuid::new_v5(&OIDC_NAMESPACE, issuer.as_bytes());
+        let mut options = ClientConfig::new(&issuer, &provider.client_id, &provider.redirect_uri);
+        options.allow_loopback_http = true;
+        provider.client = Arc::new(PublicClientApplication::new(options).unwrap());
+        provider.delayed_init().await.unwrap();
+        let config = provider.config.lock().await;
+        let mut old = oidc_user_token_from_claims(
+            &userinfo,
+            config.get_shell(None),
+            &provider.idmap,
+            &provider.tenant_id,
+            &config.get_oidc_account_id_claims(),
+            config.get_oidc_account_id_strip_at_suffix(),
+        )
+        .await
+        .unwrap();
+        drop(config);
+        match case {
+            "uuid" => old.uuid = Uuid::new_v4(),
+            "tenant" => old.tenant_id = Some(Uuid::new_v4()),
+            _ => (),
+        }
+        let expected = (!matches!(case, "unrestricted" | "userinfo_failure"))
+            .then_some((old.uuid, old.tenant_id));
+        provider
+            .refresh_cache
+            .add(
+                ACCOUNT,
+                &RefreshCacheEntry::RefreshToken("fixture-refresh".into()),
+            )
+            .await;
+        let db = crate::db::Db::new("").unwrap();
+        let mut txn = db.write().await;
+        let mut tpm = tpm::provider::BoxedDynTpm::new(SoftTpm::new());
+        let auth = AuthValue::ephemeral().unwrap();
+        let loadable = tpm.root_storage_key_create(&auth).unwrap();
+        let key = tpm.root_storage_key_load(&auth, &loadable).unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            provider.unix_user_get(
+                &Id::Name(ACCOUNT.into()),
+                Some(&old),
+                expected,
+                &mut txn,
+                &mut tpm,
+                &key,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            matches!(result, UserTokenState::Update(_)),
+            matches!(case, "matching" | "unrestricted"),
+            "{case}"
+        );
+        if matches!(case, "uuid" | "tenant") {
+            assert!(matches!(result, UserTokenState::Rejected), "{case}");
+        }
+        let expected_secret = if matches!(case, "uuid" | "tenant" | "guarded_userinfo_failure") {
+            "fixture-refresh"
+        } else {
+            "fixture-rotated"
+        };
+        assert!(
+            matches!(provider.refresh_cache.refresh_token(ACCOUNT).await.unwrap(),
+            RefreshCacheEntry::RefreshToken(secret) if secret == expected_secret),
+            "{case}"
+        );
+        tokio::time::timeout(Duration::from_secs(10), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}

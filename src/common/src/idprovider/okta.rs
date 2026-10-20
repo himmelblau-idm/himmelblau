@@ -516,6 +516,21 @@ impl OktaProvider {
     /// in preference to a more recent in-memory replacement.
     #[instrument(level = "debug", skip_all)]
     async fn refresh(&self, account: &str, scopes: &[String]) -> Result<okta::UserToken, IdpError> {
+        let token = self.refresh_without_caching(account, scopes).await?;
+        // Unrestricted callers retain rotated credentials even if a later
+        // user-info request fails. Reconciliation validates first instead.
+        self.cache_refresh(account, &token).await;
+        Ok(token)
+    }
+
+    /// Call with the account refresh lock held. The caller must validate the
+    /// expected identity before publishing any returned replacement credential.
+    #[instrument(level = "debug", skip_all)]
+    async fn refresh_without_caching(
+        &self,
+        account: &str,
+        scopes: &[String],
+    ) -> Result<okta::UserToken, IdpError> {
         let secret = match self
             .refresh_cache
             .refresh_token(account)
@@ -536,14 +551,7 @@ impl OktaProvider {
             .refresh_tokens_with_scopes(&credential, scopes)
             .await
         {
-            Ok(token) => {
-                // The SDK validates refreshed ID tokens for this client.
-                // Save rotation before a fallible user-info
-                // request; otherwise an outage would lose the replacement.
-                self.cache_refresh(account, &token).await;
-                debug!("Okta token refresh succeeded; refresh cache updated");
-                Ok(token)
-            }
+            Ok(token) => Ok(token),
             Err(error) => {
                 if classify(&error) == FailureAction::RejectRefresh {
                     error::log_failure("refresh", &error);
@@ -1173,18 +1181,24 @@ impl IdProvider for OktaProvider {
             if self.refresh_cache.refresh_token(account).await.is_err() {
                 return Ok(UserTokenState::UseCached);
             }
-            return match self.refresh(account, &[]).await {
+            let refreshed = if expected_identity.is_some() {
+                self.refresh_without_caching(account, &[]).await
+            } else {
+                self.refresh(account, &[]).await
+            };
+            return match refreshed {
                 Ok(token) => match self.identity(account, &token, Some(old)).await {
                     Ok(identity) => {
                         if expected_identity
                             .is_some_and(|expected| (identity.uuid, identity.tenant_id) != expected)
                         {
-                            return Ok(UserTokenState::UseCached);
+                            return Ok(UserTokenState::Rejected);
                         }
                         self.cache_refresh(account, &token).await;
                         Ok(UserTokenState::Update(identity))
                     }
                     Err(IdpError::Transport) => Ok(UserTokenState::UseCached),
+                    Err(_) if expected_identity.is_some() => Ok(UserTokenState::Rejected),
                     Err(_) => Ok(UserTokenState::NotFound),
                 },
                 // Revoked SSO material does not revoke the local PIN or cached

@@ -257,6 +257,7 @@ mod tests {
                     Ok(UserTokenState::LookupOnly(test_token()))
                 }
                 6 => Ok(UserTokenState::Update(self.auth_token())),
+                8 => Ok(UserTokenState::Rejected),
                 _ => Ok(UserTokenState::UseCached),
             }
         }
@@ -1651,6 +1652,7 @@ mod tests {
         let other_uuid = uuid::Uuid::new_v4();
         let other_tenant = Some(uuid::Uuid::new_v4());
         for (mode, cached_uuid, cached_tenant) in [
+            (8, token.uuid, token.tenant_id),
             (3, token.uuid, token.tenant_id),
             (3, other_uuid, token.tenant_id),
             (3, token.uuid, other_tenant),
@@ -1676,7 +1678,8 @@ mod tests {
 
             let accounts = resolver.get_unexpired_nssaccounts().await.unwrap();
             assert_eq!(accounts.len(), 1);
-            // Both provider modes return the same name and new group claims.
+            // Explicit rejections return no claims; other modes return the same name
+            // and new group claims.
             // Lookup-only claims remain ineligible even for the same UUID;
             // trusted updates must still match both the UUID and tenant.
             assert!(resolver
@@ -1689,7 +1692,7 @@ mod tests {
                 *resolver.client.expected_refresh_identity.read().unwrap(),
                 Some((cached_uuid, cached_tenant)),
             );
-            if mode == 3 {
+            if mode == 3 || mode == 8 {
                 let (expired, cached) = resolver
                     .get_cached_usertoken(&Id::Name(token.name.clone()))
                     .await
@@ -2759,6 +2762,7 @@ where
                 self.set_nxcache(account_id).await;
                 Ok(None)
             }
+            Ok(UserTokenState::Rejected) => Ok(None),
             Ok(UserTokenState::UseCached) => Ok(token),
             Err(err @ IdpError::NotFound { .. }) => {
                 // NSS may ask for local or unknown identities outside the provider.

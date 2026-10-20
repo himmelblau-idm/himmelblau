@@ -59,6 +59,8 @@ pub enum UserTokenState {
     UseCached,
     /// The requested entity is not found, or has been removed.
     NotFound,
+    /// Reject this refresh without returning cached claims or changing either cache.
+    Rejected,
 
     /// Update the cache state with the data found in this UserToken.
     Update(UserToken),

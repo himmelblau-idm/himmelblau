@@ -2681,7 +2681,9 @@ impl OidcProvider {
             return Ok(AuthResult::Denied(msg));
         }
         if expected_identity.is_some_and(|expected| (token2.uuid, token2.tenant_id) != expected) {
-            return Err(IdpError::BadRequest);
+            return Ok(AuthResult::Denied(
+                "Refreshed identity does not match cached user".into(),
+            ));
         }
         info!("Authentication successful for user '{}'", token2.uuid);
         if let Some(refresh_token) = token.refresh_token() {
@@ -2804,6 +2806,9 @@ impl IdProvider for OidcProvider {
                 .await
             {
                 Ok(AuthResult::Success { token }) => Ok(UserTokenState::Update(token)),
+                Ok(AuthResult::Denied(_)) if expected_identity.is_some() => {
+                    Ok(UserTokenState::Rejected)
+                }
                 Ok(AuthResult::Denied(msg)) => {
                     error!(
                         %msg,
