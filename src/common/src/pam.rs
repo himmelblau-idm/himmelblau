@@ -96,15 +96,22 @@ impl TryFrom<&Vec<&CStr>> for Options {
         };
 
         let try_unseal = gopts.contains("try_unseal");
+        // Ignore malformed values and use the strictest nonzero limit when
+        // repeated arguments conflict. A zero or malformed value must not
+        // silently disable an explicitly configured bound.
         let max_tries = gopts
             .iter()
-            .find_map(|o| o.strip_prefix("max_tries="))
-            .map_or(0, |v| {
-                v.parse().unwrap_or_else(|_| {
+            .filter_map(|o| o.strip_prefix("max_tries="))
+            .filter_map(|v| match v.parse::<u32>() {
+                Ok(0) => None,
+                Ok(value) => Some(value),
+                Err(_) => {
                     println!("Invalid max_tries={} ignored", v);
-                    0
-                })
-            });
+                    None
+                }
+            })
+            .min()
+            .unwrap_or(0);
         Ok(Options {
             debug: gopts.contains("debug"),
             use_first_pass: gopts.contains("use_first_pass") || try_unseal,
@@ -117,5 +124,29 @@ impl TryFrom<&Vec<&CStr>> for Options {
             max_tries,
             force_reauth: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Options;
+
+    #[test]
+    fn max_tries_ignores_invalid_values_and_uses_strictest_positive_limit() {
+        for (args, expected) in [
+            (vec![], 0),
+            (vec![c"max_tries=0"], 0),
+            (vec![c"max_tries=-1", c"max_tries=1"], 1),
+            (vec![c"max_tries=1", c"max_tries=-1"], 1),
+            (vec![c"max_tries=0", c"max_tries=2"], 2),
+            (vec![c"max_tries=10", c"max_tries=2"], 2),
+            (vec![c"max_tries=2", c"max_tries=10"], 2),
+            (vec![c"max_tries=2", c"max_tries=2"], 2),
+            (vec![c"max_tries=4294967296", c"max_tries=3"], 3),
+            (vec![c"max_tries=", c"max_tries=x", c"max_tries=-1"], 0),
+            (vec![c"max_tries=4294967295"], u32::MAX),
+        ] {
+            assert_eq!(Options::try_from(&args).unwrap().max_tries, expected);
+        }
     }
 }

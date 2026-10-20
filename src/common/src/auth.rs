@@ -830,7 +830,7 @@ fn handle_pam_auth_response_success() -> PamWhatNext {
 
 fn handle_pam_auth_response_denied(state: &mut AuthenticateState, msg: &str) -> PamWhatNext {
     state.msg_printer.print_text(msg);
-    state.denials += 1;
+    state.denials = state.denials.saturating_add(1);
     if state.opts.max_tries != 0 && state.denials >= state.opts.max_tries {
         // Callers that answer prompts without the user (display managers)
         // would otherwise resubmit the same credentials forever.
@@ -2066,6 +2066,64 @@ mod tests {
         ));
         assert_eq!(printer.text.lock().unwrap().len(), 3);
         fs::remove_file(listener.local_addr().unwrap().as_pathname().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn max_tries_one_allows_offline_prompt_but_stops_actual_denial() {
+        for final_response in [
+            PamAuthResponse::Success,
+            PamAuthResponse::Denied("bad password".into()),
+        ] {
+            let succeeds = matches!(final_response, PamAuthResponse::Success);
+            let printer = Arc::new(RecordingPrinter::default());
+            let (mut state, listener) = test_password_state(printer);
+            state.opts.max_tries = 1;
+            let (socket, _) = listener.accept().unwrap();
+            // After a transport error, the resolver sends the offline prompt
+            // directly. PAM must not spend the denial budget on that prompt.
+            serde_json::to_writer(
+                &socket,
+                &ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password {
+                    prompt: None,
+                    long_prompt: None,
+                }),
+            )
+            .unwrap();
+            let next = authenticate_request_response(
+                &mut state,
+                &ClientRequest::PamAuthenticateStep(PamAuthRequest::Password {
+                    cred: "hunter2".into(),
+                }),
+            );
+            assert_eq!(state.denials, 0);
+            let PamWhatNext::Next(request) = next else {
+                panic!("offline prompt terminated authentication");
+            };
+            assert!(matches!(
+                request,
+                ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { .. })
+            ));
+            serde_json::to_writer(
+                &socket,
+                &ClientResponse::PamAuthenticateStepResponse(final_response),
+            )
+            .unwrap();
+            let result = authenticate_request_response(&mut state, &request);
+            if succeeds {
+                assert!(matches!(
+                    result,
+                    PamWhatNext::Finish(PamResultCode::PAM_SUCCESS)
+                ));
+                assert_eq!(state.denials, 0);
+            } else {
+                assert!(matches!(
+                    result,
+                    PamWhatNext::Finish(PamResultCode::PAM_MAXTRIES)
+                ));
+                assert_eq!(state.denials, 1);
+            }
+            fs::remove_file(listener.local_addr().unwrap().as_pathname().unwrap()).unwrap();
+        }
     }
 
     #[test]

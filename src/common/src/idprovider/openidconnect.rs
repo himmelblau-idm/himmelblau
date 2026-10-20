@@ -2895,12 +2895,7 @@ impl IdProvider for OidcProvider {
             info!("Network down detected");
             let mut state = self.state.lock().await;
             *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-            return Ok((
-                AuthRequest::InitDenied {
-                    msg: tr("Network outage detected."),
-                },
-                AuthCredHandler::None,
-            ));
+            return Err(IdpError::Transport);
         }
 
         let hello_key = match self.fetch_hello_key(account_id, keystore) {
@@ -2988,10 +2983,7 @@ impl IdProvider for OidcProvider {
             info!("Network down detected");
             let mut state = self.state.lock().await;
             *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-            return Ok((
-                AuthResult::Denied(tr("Network outage detected.")),
-                AuthCacheAction::None,
-            ));
+            return Err(IdpError::Transport);
         }
 
         let remote_services = self
