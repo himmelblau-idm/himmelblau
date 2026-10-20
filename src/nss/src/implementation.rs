@@ -409,13 +409,9 @@ impl GroupHooks for HimmelblauGroup {
         };
 
         // Attempt to respond to a request for the fake primary group name.
-        match if upn.contains("@") || synthetic_primary_group_gid(&name).is_some() {
-            let req =
-                ClientRequest::NssGroupByName(if synthetic_primary_group_gid(&name).is_some() {
-                    name.clone()
-                } else {
-                    upn
-                });
+        let is_synthetic = synthetic_primary_group_gid(&name).is_some();
+        match if upn.contains("@") || is_synthetic {
+            let req = ClientRequest::NssGroupByName(if is_synthetic { name.clone() } else { upn });
             daemon_client
                 .call_and_wait(&req, cfg.get_unix_sock_timeout())
                 .map(|r| match r {

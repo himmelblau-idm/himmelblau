@@ -5464,7 +5464,7 @@ impl HimmelblauProvider {
         // the synthetic primary group when this was its only matching GID.
         if synthetic_primary_group_gid(&name).is_some() {
             return Err(anyhow!(
-                "Group name uses the synthetic primary-group namespace."
+                "Group name {name:?} uses the reserved synthetic primary-group namespace (himmelblau-primary-group-<gid>)."
             ));
         }
         let id =
