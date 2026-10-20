@@ -1915,6 +1915,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn initgroups_rejects_numeric_gid_owned_by_another_identity() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        for mode in [InitgroupsMode::Full, InitgroupsMode::Named] {
+            for provider_first in [false, true] {
+                let resolver = setup_resolver_with(0, mode, Vec::new()).await;
+                let synthetic = synthetic_primary_group(2400);
+                let provider_group = GroupToken {
+                    uuid: uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                    name: "generic-oidc-group".into(),
+                    spn: "generic-oidc-group".into(),
+                    gidnumber: synthetic.gidnumber,
+                };
+                let mut user = test_token();
+                user.groups.push(synthetic.clone());
+                if provider_first {
+                    resolver
+                        .set_cache_grouptoken(&provider_group)
+                        .await
+                        .unwrap();
+                }
+                resolver
+                    .set_cache_usertoken(&mut user, false)
+                    .await
+                    .unwrap();
+                if !provider_first {
+                    // The valid synthetic membership initially works. A later
+                    // provider arrival must invalidate it without refreshing
+                    // the already-cached user token.
+                    assert_eq!(
+                        resolver.get_initgroups(&user.spn).await.unwrap(),
+                        Some(vec![2100, 2400])
+                    );
+                    resolver
+                        .set_cache_grouptoken(&provider_group)
+                        .await
+                        .unwrap();
+                }
+                for refresh in [false, true] {
+                    if refresh {
+                        resolver
+                            .set_cache_usertoken(&mut user, false)
+                            .await
+                            .unwrap();
+                    }
+                    assert_eq!(
+                        resolver.get_initgroups(&user.spn).await.unwrap(),
+                        Some(vec![2100])
+                    );
+                }
+
+                // A real claim for the occupying identity still grants its
+                // GID, even alongside the rejected synthetic claim.
+                user.groups.push(provider_group.clone());
+                resolver
+                    .set_cache_usertoken(&mut user, false)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    resolver.get_initgroups(&user.spn).await.unwrap(),
+                    Some(vec![2100, 2400])
+                );
+
+                // Neither provider claims nor synthetic-looking labels can
+                // evade the ownership check by using a different UUID.
+                let mut impostor = provider_group.clone();
+                impostor.uuid = uuid::uuid!("dddddddd-dddd-dddd-dddd-dddddddddddd");
+                impostor.name = synthetic.name.clone();
+                impostor.spn = synthetic.spn.clone();
+                user.groups = vec![test_token().groups[0].clone(), impostor];
+                resolver
+                    .set_cache_usertoken(&mut user, false)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    resolver.get_initgroups(&user.spn).await.unwrap(),
+                    Some(vec![2100])
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn obsolete_synthetic_rows_are_removed_after_last_member_moves() {
         use crate::idprovider::himmelblau::synthetic_primary_group;
         let resolver = setup_resolver().await;
@@ -3957,24 +4040,39 @@ where
         let Some(tok) = token else {
             return Ok(None);
         };
-        if self.initgroups_mode == InitgroupsMode::Full {
-            return Ok(Some(tok.groups.iter().map(|g| g.gidnumber).collect()));
-        }
-        let mut named = Vec::with_capacity(tok.groups.len());
+        let mut gids = Vec::with_capacity(tok.groups.len());
         for group in &tok.groups {
-            match self.get_nssgroup_gid(group.gidnumber).await {
-                Ok(Some(nss_group)) if !nss_group.name.is_empty() => {
-                    named.push(group.gidnumber);
+            // A raw claim is not proof of ownership of a cached numeric GID.
+            // In particular, a real provider group can replace a synthetic
+            // primary group after the user token was cached. Check at lookup
+            // time in both modes, rather than relying on memberof_t alone.
+            match self.get_grouptoken(Id::Gid(group.gidnumber)).await {
+                Ok(Some(cached)) if cached.uuid != group.uuid => {
+                    debug!(
+                        gid = group.gidnumber,
+                        "skipping supplementary group owned by another identity"
+                    );
+                }
+                Ok(Some(cached))
+                    if self.initgroups_mode == InitgroupsMode::Full
+                        || !self.token_gidattr(&cached).is_empty() =>
+                {
+                    gids.push(group.gidnumber);
+                }
+                // Full mode intentionally permits claims without an NSS row,
+                // but never claims whose GID has a different known owner.
+                Ok(None) if self.initgroups_mode == InitgroupsMode::Full => {
+                    gids.push(group.gidnumber);
                 }
                 Ok(Some(_)) | Ok(None) | Err(_) => {
                     debug!(
                         gid = group.gidnumber,
-                        "skipping supplementary group with no NSS name"
+                        "skipping supplementary group with no verified NSS identity"
                     );
                 }
             }
         }
-        Ok(Some(named))
+        Ok(Some(gids))
     }
 
     pub async fn pam_account_allowed(&self, account_id: &str) -> ResolverResult<Option<bool>> {
