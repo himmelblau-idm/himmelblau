@@ -884,16 +884,17 @@ fn orchestrator_inputs_from_pam_request(
 #[cfg(test)]
 mod tests {
     use super::{
-        auth_request_from_orchestrator_inputs, mfa_from_oidc_device,
+        auth_request_from_orchestrator_inputs, mfa_from_oidc_device, oidc_cache_refresh_token,
         oidc_hello_refresh_token_candidates, oidc_refresh_failure_state,
         oidc_refresh_token_rejected, oidc_should_prompt_hello_setup,
         orchestrator_inputs_from_pam_request, parse_oidc_mfa_extra_data,
         resolve_device_authorization_endpoint, ropc_is_invalid_credentials,
         serialize_oidc_mfa_extra_data, validated_password_cache_action, DeviceAuthorizationUrl,
-        DeviceEndpointProviderMetadata, OidcMfaExtraData, OidcUserInfoClaims,
+        DeviceEndpointProviderMetadata, OidcMfaExtraData, OidcTokenResponse, OidcUserInfoClaims,
         OrchestratorFlowState, OrchestratorInputType, OrchestratorRequiredInput,
     };
     use crate::idprovider::common::oidc_account_id_from_userinfo;
+    use crate::idprovider::common::{RefreshCache, RefreshCacheEntry};
     use crate::idprovider::interface::{AuthCacheAction, AuthRequest, AuthResult, UserTokenState};
     use crate::unix_proto::PamAuthRequest;
     use himmelblau::error::{ErrorResponse, MsalError};
@@ -1082,6 +1083,36 @@ mod tests {
             vec!["in-memory".to_string()]
         );
         assert!(oidc_hello_refresh_token_candidates(None, None).is_empty());
+    }
+
+    #[tokio::test]
+    async fn oidc_exchanged_refresh_token_replaces_in_memory_token() {
+        // A PIN login sealed the rotated token, then a later step failed. The
+        // next PIN login must not present the revoked token first (#1874).
+        let cache = RefreshCache::new();
+        cache
+            .add(
+                "user@example.com",
+                &RefreshCacheEntry::RefreshToken("consumed".to_string()),
+            )
+            .await;
+        let token: OidcTokenResponse = serde_json::from_value(json!({
+            "access_token": "access",
+            "token_type": "bearer",
+            "refresh_token": "rotated",
+        }))
+        .unwrap();
+
+        oidc_cache_refresh_token(&cache, "user@example.com", &token).await;
+
+        let in_memory = match cache.refresh_token("user@example.com").await {
+            Ok(RefreshCacheEntry::RefreshToken(refresh_token)) => Some(refresh_token),
+            _ => None,
+        };
+        assert_eq!(
+            oidc_hello_refresh_token_candidates(in_memory, Some("rotated".to_string())),
+            vec!["rotated".to_string()]
+        );
     }
 
     #[test]
@@ -1881,6 +1912,24 @@ fn oidc_hello_refresh_token_candidates(
         }
     }
     candidates
+}
+
+/// Cache the refresh token returned by a refresh-token exchange in memory.
+/// A rotating IdP has already revoked the token that was presented, so this
+/// runs before any later step can fail and leave the revoked token cached.
+async fn oidc_cache_refresh_token(
+    refresh_cache: &RefreshCache,
+    account_id: &str,
+    token: &OidcTokenResponse,
+) {
+    if let Some(refresh_token) = token.refresh_token() {
+        refresh_cache
+            .add(
+                account_id,
+                &RefreshCacheEntry::RefreshToken(refresh_token.secret().to_string()),
+            )
+            .await;
+    }
 }
 
 pub struct OidcApplication {
@@ -3186,6 +3235,8 @@ impl IdProvider for OidcProvider {
                     }
                     match exchange {
                         Ok(token) => {
+                            // The next PIN login presents the in-memory token first.
+                            oidc_cache_refresh_token(&self.refresh_cache, account_id, &token).await;
                             self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                             token
                         },
