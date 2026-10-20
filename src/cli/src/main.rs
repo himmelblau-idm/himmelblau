@@ -418,15 +418,15 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
         .as_ref()
         .map(|c| c.get_enable_passwordless())
         .unwrap_or(true);
-    let apply_policy = config
+    let use_intune_auth_resource = config
         .as_ref()
-        .map(|c| c.get_apply_policy())
+        .map(|c| c.get_use_intune_auth_resource())
         .unwrap_or(false);
     let mut auth_options = vec![];
     if enable_passwordless {
         auth_options.push(AuthOption::Passwordless);
     }
-    if apply_policy {
+    if use_intune_auth_resource {
         auth_options.push(AuthOption::IntuneEnable);
     }
     let auth_init = match app.check_user_exists(account_id, &auth_options).await {

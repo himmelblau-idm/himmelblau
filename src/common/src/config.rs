@@ -1460,6 +1460,17 @@ mod tests {
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_intune_auth_resource(), false);
         assert_eq!(config_empty.get_use_intune_auth_resource(), false);
+
+        let apply_policy_data = r#"
+        [global]
+        apply_policy = true
+        "#;
+
+        let apply_policy_file = create_temp_config(apply_policy_data);
+        let apply_policy = HimmelblauConfig::new(Some(&apply_policy_file)).unwrap();
+
+        assert_eq!(apply_policy.get_intune_auth_resource(), false);
+        assert_eq!(apply_policy.get_use_intune_auth_resource(), true);
     }
 
     #[test]
