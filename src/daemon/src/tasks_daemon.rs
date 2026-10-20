@@ -20,10 +20,11 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 #![allow(unexpected_cfgs)]
 
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::os::unix::fs::{symlink, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str;
 use std::time::Duration;
@@ -34,7 +35,9 @@ use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
 use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR};
+use himmelblau_unix_common::constants::{
+    DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR, LOCAL_TASK_NAMES_CACHE,
+};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use himmelblau_unix_common::user_map::UserMap;
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
@@ -166,6 +169,26 @@ fn create_home_directory(
         selinux_util::SelinuxLabeler::new_noop()
     };
 
+    // An alias link still pointing at the old home of a renamed account.
+    for alias in info.aliases.iter() {
+        let alias = alias.trim_start_matches('.').replace(['/', '\\'], "");
+        if let Ok(old) = fs::read_link(format!("{}{}", home_prefix, alias)) {
+            let old_path = home_prefix_path.join(old);
+            let owned = fs::symlink_metadata(&old_path)
+                .map(|m| m.is_dir() && m.uid() == info.uid)
+                .unwrap_or(false);
+            if owned && old_path.parent() == Some(home_prefix_path) && !hd_path.exists() {
+                fs::rename(&old_path, hd_path).map_err(|e| format!("{:?}", e))?;
+            }
+        }
+    }
+
+    if let Ok(m) = fs::symlink_metadata(hd_path) {
+        if m.uid() != info.uid {
+            return Err("Home directory belongs to another user".to_string());
+        }
+    }
+
     // Does the home directory exist?
     if !hd_path.exists() {
         // Set the SELinux security context for file creation
@@ -241,7 +264,7 @@ fn create_home_directory(
             return Err("Invalid/Corrupt alias directory path - no prefix found".to_string());
         }
 
-        if alias_path.exists() {
+        if alias_path.symlink_metadata().is_ok() {
             let attr = match fs::symlink_metadata(alias_path) {
                 Ok(a) => a,
                 Err(e) => {
@@ -290,31 +313,33 @@ fn group_members_include(users: &str, account_id: &str) -> bool {
     users.split(',').any(|user| user.trim() == account_id)
 }
 
-fn user_in_group(account_id: &str, local_group: &str) -> bool {
-    let output = Command::new("getent")
+fn user_in_group(account_id: &str, local_group: &str) -> Result<bool, String> {
+    let out = Command::new("getent")
         .arg("group")
         .arg(local_group)
-        .output();
+        .output()
+        .map_err(|e| format!("Failed to inspect local group {}: {:?}", local_group, e))?;
 
-    if let Ok(out) = output {
-        if out.status.success() {
+    match out.status.code() {
+        Some(0) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            if let Some(users) = stdout.split(':').nth(3) {
-                return group_members_include(users, account_id);
-            }
+            let users = stdout.split(':').nth(3).unwrap_or_default();
+            Ok(group_members_include(users, account_id))
         }
+        // No such group.
+        Some(2) => Ok(false),
+        _ => Err(format!("Failed to inspect local group {}", local_group)),
     }
-    false
 }
 
-fn remove_user_from_group(account_id: &str, local_group: &str) {
-    if !user_in_group(account_id, local_group) {
+fn remove_user_from_group(account_id: &str, local_group: &str) -> Result<(), String> {
+    if !user_in_group(account_id, local_group)? {
         trace!(
             "User {} is not a member of {}, nothing to remove",
             account_id,
             local_group
         );
-        return;
+        return Ok(());
     }
 
     match Command::new("gpasswd")
@@ -323,17 +348,15 @@ fn remove_user_from_group(account_id: &str, local_group: &str) {
         .arg(local_group)
         .output()
     {
-        Ok(res) => {
-            if !res.status.success() {
-                error!("Failed removing user from local group {}", local_group);
-            }
-        }
-        Err(e) => {
-            error!(
-                "Failed removing user from local group {}: {:?}",
-                local_group, e
-            );
-        }
+        Ok(res) if res.status.success() => Ok(()),
+        Ok(_) => Err(format!(
+            "Failed removing user from local group {}",
+            local_group
+        )),
+        Err(e) => Err(format!(
+            "Failed removing user from local group {}: {:?}",
+            local_group, e
+        )),
     }
 }
 
@@ -404,16 +427,31 @@ fn validate_subid_username(username: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn subid_range_taken(contents: &str, start: u32, count: u32) -> bool {
+    contents.lines().any(|line| {
+        let mut fields = line.rsplitn(3, ':');
+        match (
+            fields.next().and_then(|c| c.parse::<u64>().ok()),
+            fields.next().and_then(|s| s.parse::<u64>().ok()),
+        ) {
+            (Some(c), Some(s)) => s < start as u64 + count as u64 && (start as u64) < s + c,
+            _ => false,
+        }
+    })
+}
+
 /// Add a subordinate ID entry to /etc/subuid or /etc/subgid
 /// Format: username:start:count
 fn add_subid_entry(
     username: &str,
     start: u32,
     count: u32,
+    (min, max): (u32, u32),
     subid_file: &Path,
 ) -> Result<(), String> {
     // Never interpolate an unvalidated name into a subid record.
     validate_subid_username(username)?;
+    let _lock = lock_subid_file(subid_file)?;
 
     // Check if user already has an entry
     if user_has_subid_entry(username, subid_file) {
@@ -423,6 +461,20 @@ fn add_subid_entry(
             subid_file.display()
         );
         return Ok(());
+    }
+
+    // Never overlap a range which another name, e.g. a migrated one, holds.
+    let contents = fs::read_to_string(subid_file).unwrap_or_default();
+    let step = count.max(1);
+    let slots = (max.saturating_sub(min) / step).max(1);
+    let mut start = start;
+    let mut probes = 0;
+    while subid_range_taken(&contents, start, count) {
+        probes += 1;
+        if probes >= slots {
+            return Err("No free subordinate ID range".to_string());
+        }
+        start = min + (start.saturating_sub(min) / step + 1) % slots * step;
     }
 
     // Append the new entry
@@ -449,17 +501,215 @@ fn add_subid_entry(
 }
 
 /// Set up subordinate UID/GID mappings for a user
-fn setup_subordinate_ids(username: &str, start: u32, count: u32) -> Result<(), String> {
+fn setup_subordinate_ids(
+    username: &str,
+    start: u32,
+    count: u32,
+    subid_range: (u32, u32),
+) -> Result<(), String> {
     let subuid_path = Path::new("/etc/subuid");
     let subgid_path = Path::new("/etc/subgid");
 
     // Add entry to /etc/subuid
-    add_subid_entry(username, start, count, subuid_path)?;
+    add_subid_entry(username, start, count, subid_range, subuid_path)?;
 
     // Add entry to /etc/subgid (same range)
-    add_subid_entry(username, start, count, subgid_path)?;
+    add_subid_entry(username, start, count, subid_range, subgid_path)?;
 
     Ok(())
+}
+
+/// Lock a subid file the way shadow does: `<file>.lock` holds the pid of its owner.
+struct SubidLock(PathBuf);
+
+impl Drop for SubidLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn lock_subid_file(subid_file: &Path) -> Result<SubidLock, String> {
+    let mut path = subid_file.as_os_str().to_owned();
+    path.push(".lock");
+    let path = PathBuf::from(path);
+    for _ in 0..20 {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
+            Ok(mut lock) => {
+                let _ = write!(lock, "{}", std::process::id());
+                return Ok(SubidLock(path));
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let stale = fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|pid| pid.trim().parse::<u32>().ok())
+                    .is_some_and(|pid| !Path::new(&format!("/proc/{}", pid)).exists());
+                if stale {
+                    let _ = fs::remove_file(&path);
+                } else {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+            Err(e) => return Err(format!("Failed to lock {}: {:?}", subid_file.display(), e)),
+        }
+    }
+    Err(format!("Timed out locking {}", subid_file.display()))
+}
+
+/// Replace a subid file with a fully synced temporary file, keeping its permissions.
+fn replace_subid_file(subid_file: &Path, contents: &str) -> io::Result<()> {
+    let mut tmp = NamedTempFile::new_in(subid_file.parent().unwrap_or(Path::new("/etc")))?;
+    tmp.as_file()
+        .set_permissions(fs::metadata(subid_file)?.permissions())?;
+    tmp.write_all(contents.as_bytes())?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(subid_file).map_err(|e| e.error)?;
+    Ok(())
+}
+
+/// Move a retired name's subid range to the owner's new name (unless that name already has one).
+fn migrate_subid_entry(previous: &str, name: &str, subid_file: &Path) -> Result<(), String> {
+    validate_subid_username(name)?;
+    let _lock = lock_subid_file(subid_file)?;
+    let contents = match fs::read_to_string(subid_file) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("Failed to read {}: {:?}", subid_file.display(), e)),
+    };
+    let previous_prefix = format!("{}:", previous);
+    if !contents
+        .lines()
+        .any(|line| line.starts_with(&previous_prefix))
+    {
+        return Ok(());
+    }
+
+    let name_prefix = format!("{}:", name);
+    let mut has_range = contents.lines().any(|line| line.starts_with(&name_prefix));
+    let mut migrated = String::with_capacity(contents.len());
+    for line in contents.lines() {
+        match line.strip_prefix(&previous_prefix) {
+            Some(range) if !has_range => {
+                migrated.push_str(&name_prefix);
+                migrated.push_str(range);
+                has_range = true;
+            }
+            Some(_) => continue,
+            None => migrated.push_str(line),
+        }
+        migrated.push('\n');
+    }
+
+    replace_subid_file(subid_file, &migrated)
+        .map_err(|e| format!("Failed to write to {}: {:?}", subid_file.display(), e))?;
+    info!(
+        "Moved subordinate ID entry of {} to {} in {}",
+        previous,
+        name,
+        subid_file.display()
+    );
+    Ok(())
+}
+
+fn is_local_passwd_user(name: &str) -> bool {
+    let prefix = format!("{}:", name);
+    fs::read_to_string("/etc/passwd")
+        .map(|passwd| passwd.lines().any(|line| line.starts_with(&prefix)))
+        .unwrap_or(false)
+}
+
+/// Remember the owner's last local name. `retire` gets the previous name (if it changed and nobody
+/// else took it) and the stale holders of `name`; the name is only recorded if it succeeds.
+fn claim_local_task_name(
+    state: &Path,
+    owner: &str,
+    name: &str,
+    retire: impl FnOnce(Option<&str>, &[String]) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut names: HashMap<String, String> = fs::read(state)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default();
+    let owner = owner.to_lowercase();
+    let previous = names.insert(owner.clone(), name.to_string());
+    let evicted: Vec<String> = names
+        .iter()
+        .filter(|(holder, held)| **holder != owner && *held == name)
+        .map(|(holder, _)| holder.clone())
+        .collect();
+    names.retain(|holder, held| *holder == owner || held != name);
+    if previous.as_deref() == Some(name) && evicted.is_empty() {
+        return Ok(());
+    }
+    let previous = previous.filter(|previous| !names.values().any(|held| held == previous));
+    retire(previous.as_deref(), &evicted)?;
+
+    serde_json::to_vec(&names)
+        .map_err(|e| e.to_string())
+        .and_then(|data| {
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(state)
+                .and_then(|mut file| file.write_all(&data))
+                .map_err(|e| e.to_string())
+        })
+        .map_err(|e| {
+            format!(
+                "Failed to record local task name in {}: {}",
+                state.display(),
+                e
+            )
+        })
+}
+
+/// Retire the previous name's grants when an owner's local name changes.
+fn retire_previous_local_name(
+    owner: &str,
+    name: &str,
+    local_groups: &[String],
+    local_sudo_group: &str,
+    mapped_local: Option<&str>,
+) -> Result<(), String> {
+    let state = Path::new(LOCAL_TASK_NAMES_CACHE);
+    claim_local_task_name(state, owner, name, |previous, evicted| {
+        let subid_files = [Path::new("/etc/subuid"), Path::new("/etc/subgid")];
+        if !is_local_passwd_user(name) {
+            // A stale holder keeps its range under its own key, so the new owner gets a fresh one.
+            for old in evicted {
+                for subid_file in subid_files {
+                    migrate_subid_entry(name, old, subid_file)?;
+                }
+            }
+        }
+        let Some(previous) = previous else {
+            return Ok(());
+        };
+
+        debug!("Retiring local name {} in favor of {}", previous, name);
+        for group in local_groups
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(local_sudo_group))
+        {
+            remove_user_from_group(previous, group)?;
+        }
+
+        // Rows tracked for this owner move on even if a local account took the name since; only
+        // the owner's own user-map account keeps the rows of the local account it maps to.
+        if mapped_local != Some(previous) {
+            for subid_file in subid_files {
+                migrate_subid_entry(previous, name, subid_file)?;
+            }
+        }
+        Ok(())
+    })
 }
 
 async fn set_accountsservice_icon(account_id: &str, icon_path: &Path) -> zbus::Result<()> {
@@ -712,23 +962,41 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
                 // All good, loop.
             }
-            Some(Ok(TaskRequest::LocalGroups(mut account_id, is_sudoer))) => {
+            Some(Ok(TaskRequest::LocalGroups(mut account_id, is_sudoer, owner))) => {
                 debug!("Received task -> LocalGroups(...)",);
                 account_id = cfg.map_upn_to_name(&account_id);
 
                 let local_groups = cfg.get_local_groups();
+                let local_sudo_group = cfg.get_local_sudo_group();
+                let mapped_local = UserMap::new(&cfg.get_user_map_file())
+                    .get_local_from_upn(&owner.upn.to_lowercase());
+                if let Err(msg) = retire_previous_local_name(
+                    &owner,
+                    &account_id,
+                    &local_groups,
+                    &local_sudo_group,
+                    mapped_local.as_deref(),
+                ) {
+                    error!("Failed to retire the previous local name: {}", msg);
+                    if let Err(e) = reqs.send(TaskResponse::Error(msg)).await {
+                        error!("Error -> {:?}", e);
+                        return;
+                    }
+                    continue;
+                }
+
                 for local_group in &local_groups {
                     add_user_to_group(&account_id, local_group);
                 }
-
-                let local_sudo_group = cfg.get_local_sudo_group();
 
                 // Only run sudo groups if local_groups does not contain local_sudo_group (default = sudo)
                 if !local_groups.contains(&local_sudo_group) {
                     if is_sudoer {
                         add_user_to_group(&account_id, &local_sudo_group);
                     } else {
-                        remove_user_from_group(&account_id, &local_sudo_group);
+                        if let Err(e) = remove_user_from_group(&account_id, &local_sudo_group) {
+                            error!("{}", e);
+                        }
                     }
                 }
 
@@ -877,7 +1145,8 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     username, start, count
                 );
 
-                let resp = match setup_subordinate_ids(&username, start, count) {
+                let range = cfg.get_subid_range();
+                let resp = match setup_subordinate_ids(&username, start, count, range) {
                     Ok(()) => TaskResponse::Success(0),
                     Err(msg) => {
                         error!(
@@ -1114,11 +1383,117 @@ mod tests {
         }
     }
 
+    fn record_local_task_name(state: &Path, owner: &str, name: &str) -> Option<String> {
+        let mut retired = None;
+        claim_local_task_name(state, owner, name, |previous, _| {
+            retired = previous.map(str::to_string);
+            Ok(())
+        })
+        .unwrap();
+        retired
+    }
+
     #[test]
     fn group_membership_matches_newline_terminated_last_member() {
         let users = "alice,bob\n";
 
         assert!(group_members_include(users, "bob"));
+    }
+
+    #[test]
+    fn changed_local_task_name_is_retired_unless_taken_over() {
+        let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
+        let state = tmpdir.path().join("local-task-names.json");
+
+        assert_eq!(record_local_task_name(&state, "A@example.com", "bob"), None);
+        assert_eq!(record_local_task_name(&state, "a@example.com", "bob"), None);
+        assert_eq!(
+            record_local_task_name(&state, "a@example.com", "robert"),
+            Some("bob".to_string())
+        );
+
+        assert_eq!(
+            record_local_task_name(&state, "b@example.com", "robert"),
+            None
+        );
+        assert_eq!(record_local_task_name(&state, "a@example.com", "bob"), None);
+        assert_eq!(
+            fs::metadata(&state).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn claiming_a_name_transfers_it_from_a_stale_holder() {
+        let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
+        let state = tmpdir.path().join("local-task-names.json");
+
+        assert_eq!(record_local_task_name(&state, "a@example.com", "bob"), None);
+        assert_eq!(record_local_task_name(&state, "b@example.com", "bob"), None);
+        assert_eq!(
+            record_local_task_name(&state, "b@example.com", "robert"),
+            Some("bob".to_string())
+        );
+    }
+
+    #[test]
+    fn stale_holders_are_reported_and_failed_retirements_are_retried() {
+        let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
+        let state = tmpdir.path().join("local-task-names.json");
+
+        assert_eq!(record_local_task_name(&state, "a@example.com", "bob"), None);
+        let mut evicted = vec![];
+        claim_local_task_name(&state, "b@example.com", "bob", |_, stale| {
+            evicted = stale.to_vec();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(evicted, ["a@example.com"]);
+
+        let failed =
+            claim_local_task_name(&state, "b@example.com", "robert", |_, _| Err("x".into()));
+        assert!(failed.is_err());
+        assert_eq!(
+            record_local_task_name(&state, "b@example.com", "robert"),
+            Some("bob".to_string())
+        );
+    }
+
+    #[test]
+    fn add_subid_entry_wraps_inside_the_range() {
+        let subid_file = tempfile::NamedTempFile::new().expect("failed to create temp subid file");
+        let path = subid_file.path();
+        fs::write(path, "robert:165536:65536\n").unwrap();
+
+        assert!(add_subid_entry("bob", 165536, 65536, (100000, 231072), path).is_ok());
+        assert!(fs::read_to_string(path).unwrap().ends_with("bob:100000:65536\n"));
+    }
+
+    #[test]
+    fn retired_subid_range_moves_to_the_new_name() {
+        let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
+        let subuid = tmpdir.path().join("subuid");
+
+        fs::write(&subuid, "root:1:2\nbob:100000:65536\n").unwrap();
+        migrate_subid_entry("bob", "robert", &subuid).unwrap();
+        assert_eq!(
+            fs::read_to_string(&subuid).unwrap(),
+            "root:1:2\nrobert:100000:65536\n"
+        );
+
+        fs::write(&subuid, "bob:100000:65536\nrobert:200000:65536\n").unwrap();
+        migrate_subid_entry("bob", "robert", &subuid).unwrap();
+        assert_eq!(
+            fs::read_to_string(&subuid).unwrap(),
+            "robert:200000:65536\n"
+        );
+
+        fs::write(&subuid, "bobby:1:2\n").unwrap();
+        migrate_subid_entry("bob", "robert", &subuid).unwrap();
+        assert_eq!(fs::read_to_string(&subuid).unwrap(), "bobby:1:2\n");
+
+        assert!(migrate_subid_entry("bob", "x:0:1", &subuid).is_err());
+        migrate_subid_entry("bob", "robert", &tmpdir.path().join("missing")).unwrap();
     }
 
     #[test]
@@ -1146,7 +1521,7 @@ mod tests {
 
         let before = fs::read(path).unwrap_or_default();
 
-        assert!(add_subid_entry(ADVISORY_PAYLOAD, 100000, 65536, path).is_err());
+        assert!(add_subid_entry(ADVISORY_PAYLOAD, 100000, 65536, (0, u32::MAX), path).is_err());
 
         let after = fs::read(path).unwrap_or_default();
         assert_eq!(before, after, "subid file must not be modified");
@@ -1157,16 +1532,55 @@ mod tests {
         let subid_file = tempfile::NamedTempFile::new().expect("failed to create temp subid file");
         let path = subid_file.path();
 
-        assert!(add_subid_entry("user@example.com", 2100000000, 65536, path).is_ok());
+        assert!(
+            add_subid_entry("user@example.com", 2100000000, 65536, (0, u32::MAX), path).is_ok()
+        );
 
         let contents = fs::read_to_string(path).unwrap_or_default();
         assert_eq!(contents, "user@example.com:2100000000:65536\n");
 
         // A second call for the same user must not duplicate the record.
-        assert!(add_subid_entry("user@example.com", 2100000000, 65536, path).is_ok());
+        assert!(
+            add_subid_entry("user@example.com", 2100000000, 65536, (0, u32::MAX), path).is_ok()
+        );
 
         let contents = fs::read_to_string(path).unwrap_or_default();
         assert_eq!(contents, "user@example.com:2100000000:65536\n");
+    }
+
+    #[test]
+    fn add_subid_entry_skips_a_range_held_by_a_migrated_name() {
+        let subid_file = tempfile::NamedTempFile::new().expect("failed to create temp subid file");
+        let path = subid_file.path();
+        fs::write(path, "robert:100000:65536\n").unwrap();
+
+        assert!(add_subid_entry("bob", 100000, 65536, (100000, 150000), path).is_err());
+        assert!(add_subid_entry("bob", 100000, 65536, (100000, u32::MAX), path).is_ok());
+
+        let contents = fs::read_to_string(path).unwrap();
+        assert_eq!(contents, "robert:100000:65536\nbob:165536:65536\n");
+    }
+
+    #[test]
+    fn renamed_home_is_moved_and_foreign_home_is_refused() {
+        let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
+        let prefix = format!("{}/", tmpdir.path().display());
+        let uid = fs::metadata(tmpdir.path()).unwrap().uid();
+        let gid = fs::metadata(tmpdir.path()).unwrap().gid();
+        let info = |name: &str, uid| HomeDirectoryInfo {
+            uid,
+            gid,
+            name: name.to_string(),
+            aliases: vec!["alice@contoso.com".to_string()],
+        };
+
+        fs::create_dir(tmpdir.path().join("bob")).unwrap();
+        symlink("bob", tmpdir.path().join("alice@contoso.com")).unwrap();
+        assert!(create_home_directory(&info("robert", uid), &prefix, false, false).is_ok());
+        assert!(!tmpdir.path().join("bob").exists());
+        assert!(tmpdir.path().join("robert").is_dir());
+
+        assert!(create_home_directory(&info("robert", uid + 1), &prefix, false, false).is_err());
     }
 
     #[test]
