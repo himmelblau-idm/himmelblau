@@ -1237,13 +1237,13 @@ mod tests {
             1
         );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
-        assert!(resolver
-            .identity_refreshes
-            .lock()
-            .await
-            .next_allowed
-            .get(&second.spn)
-            .is_some_and(|retry| *retry <= SystemTime::now() + Duration::from_secs(15)));
+        let refreshes = resolver.identity_refreshes.lock().await;
+        for spn in [test_token().spn, second.spn] {
+            assert!(refreshes
+                .next_allowed
+                .get(&spn)
+                .is_some_and(|retry| *retry <= SystemTime::now() + Duration::from_secs(15)));
+        }
     }
 
     #[tokio::test]
@@ -2995,6 +2995,12 @@ where
             }
             if !matches!(self.get_cachestate(Some(&spn)).await, CacheState::Online) {
                 reachable.insert(domain.to_string(), false);
+                let retry = SystemTime::now() + UNREACHABLE_RETRY;
+                self.identity_refreshes
+                    .lock()
+                    .await
+                    .next_allowed
+                    .insert(spn, retry);
             }
         }
     }
