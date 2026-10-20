@@ -6,6 +6,18 @@
 }:
 let
   cfg = config.services.himmelblau;
+  # The daemon accepts activated descriptors only at its built-in paths.
+  # Preserve manual binding for overrides, including the original writable
+  # runtime directory, rather than passing descriptors it will discard.
+  # Paths outside /run/himmelblaud still need administrator provisioning.
+  defaultSocketPath = path: name:
+    path == null
+    || path == "/run/himmelblaud/${name}"
+    || path == "/var/run/himmelblaud/${name}";
+  useSocketActivation =
+    defaultSocketPath cfg.settings.socket_path "socket"
+    && defaultSocketPath cfg.settings.task_socket_path "task_sock"
+    && defaultSocketPath cfg.settings.broker_socket_path "broker_sock";
   mayUseLocalTpmDevice = (
       cfg.settings.tpm_tcti_name == null
       || cfg.settings.tpm_tcti_name == "device"
@@ -183,7 +195,9 @@ in
 
     systemd.tmpfiles.rules = [
       "d /var/cache/nss-himmelblau 0755 root root -"
-      "d /var/cache/himmelblau-policies 0600 root root -"
+      # Preserve the former CacheDirectory default: user-context policy
+      # wrappers must be able to traverse this root-owned directory.
+      "d /var/cache/himmelblau-policies 0755 root root -"
     ];
 
     programs.firefox = {
@@ -298,7 +312,7 @@ in
         daemonAfter = commonAfter ++ [ "nscd.service" ]
           ++ lib.optional config.security.tpm2.enable "himmelblau-hsm-pin-init.service"
           ++ lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
-        daemonSockets = [
+        daemonSockets = lib.optionals useSocketActivation [
           "himmelblaud.socket"
           "himmelblaud-tasks.socket"
           "himmelblaud-broker.socket"
@@ -368,6 +382,8 @@ in
             SupplementaryGroups = lib.optional (
               tpmAccessRequired && config.security.tpm2.tssGroup != null
             ) config.security.tpm2.tssGroup;
+          } // lib.optionalAttrs (!useSocketActivation) {
+            RuntimeDirectory = "himmelblaud";
           } // lib.optionalAttrs config.security.tpm2.enable {
             LoadCredentialEncrypted = "hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc";
             Environment = "HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin";
@@ -422,7 +438,9 @@ in
             pkgs.util-linux
           ];
           unitConfig = {
-            ConditionPathExists = "/run/himmelblaud/task_sock";
+            ConditionPathExists = if defaultSocketPath cfg.settings.task_socket_path "task_sock"
+              then "/run/himmelblaud/task_sock"
+              else cfg.settings.task_socket_path;
           };
           serviceConfig = commonServiceConfig // {
             ExecStart = "${cfg.daemonPackage}/bin/himmelblaud_tasks";
@@ -447,7 +465,7 @@ in
         };
       };
 
-    systemd.sockets =
+    systemd.sockets = lib.mkIf useSocketActivation (
       let
         daemonAfter = config.systemd.services.himmelblaud.after;
         commonSocket = {
@@ -492,6 +510,6 @@ in
             SocketMode = "0666";
           };
         };
-      };
+      });
   };
 }

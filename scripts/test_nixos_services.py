@@ -19,8 +19,10 @@ defaults follow the generated units. The HSM initializer runs even when an
 encrypted PIN already exists so the helper can validate and migrate it.
 It remains inactive after success so later daemon starts can retry TPM binding.
 The policy cache tmpfiles rule is written literally in the NixOS module and
-checked for exact equivalence with src/daemon/src/himmelblau-policies.tmpfiles.conf,
-including detection of duplicate or conflicting rules for the same path.
+checked independently for traversal permission and duplicate/conflicting rules.
+Unlike the packaged 0600 rule, NixOS retains its former CacheDirectory mode 0755.
+Custom socket paths use manual binding with a writable RuntimeDirectory because
+activated descriptors are accepted only at the daemon's built-in paths.
 
 NixOS-specific requirements and intentional deviations from the generated units:
 - Supported NixOS releases provide the required systemd features, so omit the
@@ -593,24 +595,45 @@ class NixosServiceTests(unittest.TestCase):
                     actual, generated, GENERATED_ONLY
                 ))
 
-    def test_policy_cache_tmpfiles_rules_match_packaged_file(self):
+    def test_policy_cache_directory_remains_traversable(self):
         rules = "\n".join(self.evaluated["tmpfilesRules"]).splitlines()
-        source = ROOT / "src/daemon/src/himmelblau-policies.tmpfiles.conf"
-        expected = [
-            rule.strip()
-            for rule in source.read_text().splitlines()
-            if rule.strip() and not rule.lstrip().startswith("#")
-        ]
-        self.assertTrue(expected, "The packaged policy tmpfiles file must contain rules")
-        paths = {rule.split()[1] for rule in expected}
         actual = [
-            rule.strip()
-            for rule in rules
-            if not rule.lstrip().startswith("#")
-            and len(rule.split()) >= 2
-            and rule.split()[1] in paths
+            rule.strip() for rule in rules
+            if not rule.lstrip().startswith("#") and len(rule.split()) >= 2
+            and rule.split()[1] == "/var/cache/himmelblau-policies"
         ]
-        self.assertEqual(actual, expected)
+        self.assertEqual(actual, ["d /var/cache/himmelblau-policies 0755 root root -"])
+
+    def test_custom_socket_paths_restore_manual_binding(self):
+        for setting in ["socketPath", "taskSocketPath", "brokerSocketPath"]:
+            with self.subTest(setting=setting):
+                path = "/run/himmelblaud/custom-" + setting
+                evaluated = evaluate(**{setting: path})
+                units = {name: parse_unit(text)
+                         for name, text in evaluated["units"].items()}
+                self.assertFalse([name for name in units if name.endswith(".socket")])
+                daemon = units["himmelblaud.service"]
+                self.assertEqual(daemon["Service"]["RuntimeDirectory"], "himmelblaud")
+                self.assertFalse(daemon["Service"].get("Sockets", "").strip())
+                for key in ["After", "Requires"]:
+                    self.assertFalse([unit for unit in daemon["Unit"].get(key, "").split()
+                                      if unit.endswith(".socket")])
+                expected = path if setting == "taskSocketPath" else "/run/himmelblaud/task_sock"
+                self.assertEqual(units["himmelblaud-tasks.service"]["Unit"]["ConditionPathExists"], expected)
+
+    def test_default_socket_aliases_retain_activation(self):
+        for args in [
+            dict(socketPath=None, taskSocketPath=None, brokerSocketPath=None),
+            dict(socketPath="/run/himmelblaud/socket",
+                 taskSocketPath="/run/himmelblaud/task_sock",
+                 brokerSocketPath="/run/himmelblaud/broker_sock"),
+        ]:
+            with self.subTest(args=args):
+                evaluated = evaluate(**args)
+                self.assertEqual(len([name for name in evaluated["units"]
+                                      if name.endswith(".socket")]), 3)
+                daemon = parse_unit(evaluated["units"]["himmelblaud.service"])
+                self.assertNotIn("RuntimeDirectory", daemon["Service"])
 
     def test_nixos_nss_proxy_is_not_stopped(self):
         self.assertTrue(self.evaluated["nscdEnabled"])

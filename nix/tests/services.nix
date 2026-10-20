@@ -4,6 +4,9 @@
   tpmEnabled ? true,
   tcti ? "device:/dev/tpmrm0",
   tssGroup ? "tss",
+  socketPath ? "/var/run/himmelblaud/socket",
+  taskSocketPath ? "/var/run/himmelblaud/task_sock",
+  brokerSocketPath ? "/var/run/himmelblaud/broker_sock",
   pinPath ? "/var/lib/himmelblaud/hsm-pin",
 }:
 let
@@ -22,6 +25,9 @@ let
           nssPackage = pkgs.emptyDirectory;
           settings.tpm_tcti_name = tcti;
           settings.hsm_pin_path = pinPath;
+          settings.socket_path = socketPath;
+          settings.task_socket_path = taskSocketPath;
+          settings.broker_socket_path = brokerSocketPath;
         };
         security.tpm2 = {
           enable = tpmEnabled;
