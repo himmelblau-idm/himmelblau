@@ -76,8 +76,20 @@ function getFileExtension(filename) {
 // Exemption check
 // ---------------------------------------------------------------------------
 
-function isExempt(pr) {
+function isTrustedMaintenancePr(pr, repository) {
+  return pr.user?.login === 'himmelblau-stable-maintenance[bot]'
+    && pr.user?.type === 'Bot'
+    && pr.head?.repo?.full_name === repository
+    && /^stable-[34]\.x$/.test(pr.base?.ref || '')
+    && (pr.head?.ref || '').startsWith(`automation/stable-maintenance/${pr.base.ref}-`);
+}
+
+function isExempt(pr, repository) {
   const login = pr.user?.login || '';
+
+  if (isTrustedMaintenancePr(pr, repository)) {
+    return { exempt: true, reason: 'repository stable-maintenance automation' };
+  }
 
   if (DEPENDABOT_LOGINS.has(login)) {
     return { exempt: true, reason: `author ${login} is dependabot` };
@@ -614,8 +626,29 @@ module.exports = async ({ github, context, core }) => {
 
   core.info(`Evaluating PR #${prNumber} by ${author}.`);
 
+  // Persist an authorized reopen before considering the transient draft pass.
+  if (context.payload.action === 'reopened' && context.actor) {
+    let permission;
+    try {
+      const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+        owner, repo, username: context.actor,
+      });
+      permission = data.permission;
+    } catch {
+      core.warning(`PR #${prNumber}: unable to verify reopen actor; applying ordinary screening.`);
+    }
+    if (['admin', 'maintain', 'write'].includes(permission)) {
+      await github.rest.issues.addLabels({
+        owner, repo, issue_number: prNumber, labels: [EXEMPT_LABEL],
+      });
+      await deleteExistingComment(github, owner, repo, prNumber);
+      core.info(`PR #${prNumber}: maintainer reopen by ${context.actor}; exemption persisted.`);
+      return;
+    }
+  }
+
   // --- Exemption check ---
-  const exemption = isExempt(pr);
+  const exemption = isExempt(pr, `${owner}/${repo}`);
   if (exemption.exempt) {
     // If the PR became exempt after a prior failing run (e.g., maintainer
     // added the exempt label, then reopened), clear the stale guidance.
@@ -687,3 +720,6 @@ module.exports = async ({ github, context, core }) => {
 
   core.info(`PR #${prNumber}: closed.`);
 };
+
+module.exports.isExempt = isExempt;
+module.exports.isTrustedMaintenancePr = isTrustedMaintenancePr;

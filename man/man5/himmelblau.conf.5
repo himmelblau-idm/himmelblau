@@ -105,6 +105,16 @@ to authenticate against any standards-compliant OIDC provider, rather than
 using the built-in Microsoft Entra ID defaults.
 
 .PP
+Himmelblau prefers native Interaction Code authentication when supported by the
+configured client. It probes issuers with Okta metadata or hostname hints,
+issuers advertising the interaction_code grant, and issuers without a usable
+device authorization flow. Otherwise it uses the existing OIDC device flow.
+Selection lasts until daemon restart. Temporary outages defer selection.
+The absence of interaction_code in discovery does not prove it is disabled.
+Use oidc_force_interaction_code to require native authentication and
+oidc_redirect_uri to configure its registered redirect URI.
+
+.PP
 If
 .B enable_hello
 is set to true (the default), the client application must allow refresh tokens
@@ -131,7 +141,7 @@ If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
 authentication flow.
 
 .PP
-If
+When the standard OIDC backend is selected, if
 .B allow_console_password_only
 is enabled and the OIDC provider advertises the
 .B password
@@ -144,6 +154,50 @@ grant continue to use the device flow.
 
 .P
 Example: oidc_issuer_url = https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0
+
+.TP
+.B oidc_force_interaction_code
+.RE
+Require native Interaction Code (IDX) authentication for the configured OIDC
+issuer. When true, Himmelblau never falls back to device authorization or the
+browser orchestrator. The server must implement the compatible IDX protocol,
+and the configured public client must permit Interaction Code.
+.PP
+When false, Himmelblau probes likely compatible providers (including Okta) and
+issuers without device authorization, then falls back quietly when native
+authentication is unavailable. Selection is fixed until daemon restart;
+selection during a network outage is deferred until connectivity returns.
+
+.P
+Default: false
+
+.TP
+.B oidc_redirect_uri
+.RE
+Redirect URI supplied to native OIDC Interaction Code requests. Register this
+exact URI on the public OIDC application identified by app_id, or configure
+the URI already registered there. A URI without a fragment or embedded
+credentials is required.
+.PP
+Native PAM flows do not open a callback listener. Policies requiring a browser
+redirect or external callback must offer another supported native method;
+otherwise authentication reports that the external step is unsupported.
+
+.P
+Default: http://localhost:8765/callback
+
+.TP
+.B oidc_device_authorization_endpoint
+.RE
+Optional device authorization endpoint for generic OIDC providers that omit
+.B device_authorization_endpoint
+from their discovery metadata. The discovered endpoint is preferred when it
+is present. This option is used only when
+.B oidc_issuer_url
+is configured.
+
+.P
+Example: oidc_device_authorization_endpoint = https://idp.example.com/device/code
 
 .TP
 .B oidc_account_id_claims
@@ -453,7 +507,9 @@ Example: mfa_poll_prompt_services = ssh,cockpit
 .TP
 .B mfa_method
 .RE
-Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. When set, Himmelblau will attempt to use this specific MFA method instead of the default method configured in the user's Entra ID profile. If not set or if the specified method is not available for the user, the default MFA method will be used.
+Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. For Microsoft Entra ID, Himmelblau requests the named Entra method. For native Okta authentication, this option also accepts Okta remediation or method identifiers, such as challenge-authenticator, push, or otp. An exact Okta identifier takes precedence over the compatibility mappings below.
+
+When an Entra method has an Okta equivalent, Himmelblau maps it automatically: PhoneAppNotification and CompanionAppsNotification select Okta Verify push, while PhoneAppOTP selects an Okta verification code. If the configured value is unavailable or cannot be mapped, Himmelblau logs an error and continues with the identity provider's first policy-compliant method.
 
 Valid values include:
 .RS
@@ -473,6 +529,12 @@ TwoWayVoiceAlternateMobile - Phone call to alternate mobile number
 TwoWayVoiceOffice - Phone call to office
 .IP \(bu 2
 ConsolidatedTelephony - Call or text message
+.IP \(bu 2
+challenge-authenticator - Okta IDX authenticator challenge remediation
+.IP \(bu 2
+push - Okta Verify push notification
+.IP \(bu 2
+otp - Okta Verify verification code
 .RE
 
 .P
@@ -507,6 +569,28 @@ A comma-separated list of local groups that every Entra ID user should be a memb
 
 .P
 Example: local_groups = sudo,admin
+
+.TP
+.B initgroups_mode
+.RE
+Controls which supplementary groups Himmelblau returns from NSS initgroups.
+
+.RS
+.IP \(bu 2
+named \(em return only groups that resolve to an NSS name (default). A GID that
+.B getgrgid
+cannot name is omitted, so tools such as
+.B groups
+do not fail on an unnamed group id.
+.IP \(bu 2
+full \(em return every cached group GID, including ones with no NSS name. Use this when debugging a missing membership.
+.RE
+
+.P
+Default: named
+
+.P
+Example: initgroups_mode = <named|full>
 
 .TP
 .B local_groups_reconcile_interval
@@ -578,6 +662,12 @@ Example: logon_token_scopes = user.read,mail.read
 .TP
 .B app_id
 .RE
+When oidc_issuer_url is configured, this is the OIDC public client identifier.
+Native Interaction Code authentication requires that grant to be enabled for
+the authorization server and application, and oidc_redirect_uri to be registered
+on the application. No client secret is used.
+
+.PP
 Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
 the
 .B gidNumber
@@ -886,6 +976,19 @@ Example: enable_passwordless = false
 .B home_prefix
 .RE
 The prefix to use for user home directories.
+On SELinux systems, a custom prefix must have a persistent file-context
+equivalence to /home before users' homes are created. This labels the prefix
+home_root_t and applies the normal home/content contexts to its whole subtree.
+For example:
+.nf
+sudo mkdir -p /home/entra
+sudo semanage fcontext -a -e /home "$(readlink -f /home/entra)"
+sudo restorecon -R "$(readlink -f /home/entra)"
+.fi
+Resolve the destination when /home is a symlink, such as on Aurora; retain
+/home as the equivalence source. Use the same setup for prefixes outside /home.
+Relabel only the configured prefix. Changing just its directory label with
+chcon does not provide the descendant file-context rules.
 
 .P
 Default: /home/

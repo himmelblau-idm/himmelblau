@@ -7,6 +7,12 @@
            domain_specific="true"
            order="2300">
 <description>
+When oidc_issuer_url is configured, this is the OIDC public client identifier.
+Native Interaction Code authentication requires that grant to be enabled for
+the authorization server and application, and oidc_redirect_uri to be registered
+on the application. No client secret is used.
+
+.PP
 Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
 the
 .B gidNumber

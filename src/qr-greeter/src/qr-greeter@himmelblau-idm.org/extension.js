@@ -7,11 +7,14 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as AuthPromptModule from 'resource:///org/gnome/shell/gdm/authPrompt.js';
 import { QrCode, Ecc } from './qrcodegen.js';
 import { selectDeviceFlowUrl, URL_RE } from './qrselection.js';
+import { enrollmentQr, paintEnrollmentQr, bindEnrollmentQrLifetime } from './enrollmentqr.js';
 
 const GdmAuthPrompt = AuthPromptModule.AuthPrompt;
 
 // Track active temp files for cleanup
 let activeTotpTempFiles = new Set();
+const activeEnrollmentQrs = new Set();
+const OIDC_ENROLL_QR_PREFIX = "[OIDC_ENROLL_QR]";
 
 // Must match the prefixes used in src/common/src/auth.rs fido_auth() / fido_status_check()
 const FIDO_INSERT_PREFIX = "[FIDO_INSERT] ";
@@ -191,7 +194,7 @@ export default class QrGreeterExtension extends Extension {
                     line.startsWith(FIDO_TOUCH_PREFIX) ||
                     line.startsWith(QR_BT_PREFIX) ||
                     line.startsWith(QR_BT_LABEL_PREFIX) ||
-                    line.startsWith(TOTP_QR_PREFIX)
+                    line.startsWith(TOTP_QR_PREFIX) || line.startsWith(OIDC_ENROLL_QR_PREFIX)
                 );
                 if (hasTaggedLine) {
                     const displayLines = [];
@@ -200,7 +203,7 @@ export default class QrGreeterExtension extends Extension {
                             line.startsWith(FIDO_TOUCH_PREFIX) ||
                             line.startsWith(QR_BT_PREFIX) ||
                             line.startsWith(QR_BT_LABEL_PREFIX) ||
-                            line.startsWith(TOTP_QR_PREFIX)) {
+                            line.startsWith(TOTP_QR_PREFIX) || line.startsWith(OIDC_ENROLL_QR_PREFIX)) {
                             this.setMessage(line, styleClass);
                         } else {
                             displayLines.push(line);
@@ -214,6 +217,38 @@ export default class QrGreeterExtension extends Extension {
                 }
             }
 
+            if (message && message.startsWith(OIDC_ENROLL_QR_PREFIX)) {
+                if (this._nativeEnrollmentQr) {
+                    this._nativeEnrollmentQr.destroy();
+                    this._nativeEnrollmentQr = null;
+                }
+                const encoded = message.substring(OIDC_ENROLL_QR_PREFIX.length).trim();
+                if (!encoded) return;
+                try {
+                    const qr = enrollmentQr(encoded, GLib.base64_decode);
+                    const area = new St.DrawingArea({ width: 256, height: 256,
+                        x_align: Clutter.ActorAlign.CENTER,
+                        accessible_name: "Scan with your authenticator app to enroll" });
+                    area.connect('repaint', () => {
+                        const cr = area.get_context();
+                        const [width, height] = area.get_surface_size();
+                        paintEnrollmentQr(cr, width, height, qr);
+                        cr.$dispose();
+                    });
+                    area.connect('destroy', () => {
+                        activeEnrollmentQrs.delete(area);
+                        if (this._nativeEnrollmentQr === area)
+                            this._nativeEnrollmentQr = null;
+                    });
+                    this.add_child(area);
+                    this._nativeEnrollmentQr = area;
+                    activeEnrollmentQrs.add(area);
+                    bindEnrollmentQrLifetime(this, area);
+                } catch (_) {
+                    origSetMessage.call(this, "The enrollment QR code could not be displayed. Use the setup key if available.", styleClass);
+                }
+                return;
+            }
             let displayMessage = message;
             const isQrBtLabel = message && message.startsWith(QR_BT_LABEL_PREFIX);
             const isQrBt = message && message.startsWith(QR_BT_PREFIX);
@@ -480,6 +515,8 @@ export default class QrGreeterExtension extends Extension {
     }
 
     disable() {
+        for (const area of activeEnrollmentQrs) area.destroy();
+        activeEnrollmentQrs.clear();
         console.log("Himmelblau QR Greeter: disabled...");
         // Clean up any remaining temp files
         cleanupAllTempFiles();

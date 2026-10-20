@@ -220,11 +220,20 @@ mod tests {
         let path = temp_db();
         let writable = MappedNameCache::new_for_test(&path).unwrap();
         let reader = MappedNameCache::new(&path, &Mode::ReadOnly).unwrap();
-        assert!(reader.insert_learned_mapping("alice@example.com", "alice").is_err());
+        assert!(reader
+            .insert_learned_mapping("alice@example.com", "alice")
+            .is_err());
         assert_eq!(reader.get_learned_mapped_name("alice@example.com"), None);
-        assert!(writable.insert_learned_mapping("alice@example.com", "alice").unwrap());
-        assert!(!writable.insert_learned_mapping("alice@example.com", "alice").unwrap());
-        assert_eq!(reader.get_upn_from_learned_name("alice"), Some("alice@example.com".to_string()));
+        assert!(writable
+            .insert_learned_mapping("alice@example.com", "alice")
+            .unwrap());
+        assert!(!writable
+            .insert_learned_mapping("alice@example.com", "alice")
+            .unwrap());
+        assert_eq!(
+            reader.get_upn_from_learned_name("alice"),
+            Some("alice@example.com".to_string())
+        );
         drop(reader);
         drop(writable);
         let _ = fs::remove_file(path);

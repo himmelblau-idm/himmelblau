@@ -8,6 +8,9 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 use kanidm_hsm_crypto::provider::BoxedDynTpm;
+#[cfg(not(feature = "tpm"))]
+use kanidm_hsm_crypto::provider::SoftTpm;
+use kanidm_hsm_crypto::structures::LoadableStorageKey;
 use kanidm_hsm_crypto::AuthValue;
 use std::error::Error;
 use std::io::Read;
@@ -16,6 +19,8 @@ use std::process::{Command, Stdio};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use zeroize::{Zeroize, Zeroizing};
+
+use crate::unix_config::HsmType;
 
 /// Validates that the HSM PIN file path is within the expected directory
 fn validate_hsm_pin_path(hsm_pin_path: &str) -> Result<PathBuf, Box<dyn Error>> {
@@ -70,6 +75,14 @@ fn validate_hsm_pin_path(hsm_pin_path: &str) -> Result<PathBuf, Box<dyn Error>> 
     }
 
     Ok(canonical)
+}
+
+/// Returns whether a PIN path is provided as a decrypted systemd service credential.
+pub fn is_systemd_credential(hsm_pin_path: &str) -> bool {
+    let Some(credentials_directory) = std::env::var_os("CREDENTIALS_DIRECTORY") else {
+        return false;
+    };
+    Path::new(hsm_pin_path).starts_with(Path::new(&credentials_directory))
 }
 
 pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn Error>> {
@@ -188,50 +201,79 @@ pub fn open_tpm_if_possible(tcti_name: &str) -> BoxedDynTpm {
 
 #[cfg(not(feature = "tpm"))]
 pub fn open_tpm_if_possible(_tcti_name: &str) -> BoxedDynTpm {
-    use kanidm_hsm_crypto::provider::SoftTpm;
     debug!("opened soft tpm");
     BoxedDynTpm::new(SoftTpm::new())
 }
 
+#[doc(hidden)]
+pub fn resolve_hsm_type(
+    configured_hsm_type: &HsmType,
+    existing_machine_key: Option<&LoadableStorageKey>,
+) -> HsmType {
+    match (configured_hsm_type, existing_machine_key) {
+        (
+            HsmType::TpmIfPossible,
+            Some(
+                LoadableStorageKey::SoftAes256GcmV1 { .. }
+                | LoadableStorageKey::SoftAes256GcmV2 { .. },
+            ),
+        ) => HsmType::Soft,
+        (HsmType::TpmIfPossible, Some(LoadableStorageKey::TpmAes128CfbV1 { .. })) => HsmType::Tpm,
+        (configured_hsm_type, _) => configured_hsm_type.clone(),
+    }
+}
+
 #[macro_export]
 macro_rules! tpm_init {
-    ($cfg:ident, $on_error:expr) => {{
+    ($cfg:ident, $loadable_machine_key_fut:expr, $on_error:expr) => {{
         use himmelblau_unix_common::constants::DEFAULT_HSM_PIN_PATH_ENC;
         use himmelblau_unix_common::tpm::{
-            decrypt_hsm_pin, open_tpm, open_tpm_if_possible, read_hsm_pin, write_hsm_pin,
+            decrypt_hsm_pin, is_systemd_credential, open_tpm, open_tpm_if_possible, read_hsm_pin,
+            write_hsm_pin,
         };
         use himmelblau_unix_common::unix_config::HsmType;
+        use kanidm_hsm_crypto::provider::{BoxedDynTpm, SoftTpm};
         use kanidm_hsm_crypto::AuthValue;
 
-        // Check for an existing encrypted hsm pin. If present, we MUST be root
-        // to decrypt it (aad-tool will use this, or himmelblaud started with
-        // `skip-root-check`).
-        let hsm_pin = match decrypt_hsm_pin(DEFAULT_HSM_PIN_PATH_ENC) {
-            Ok(hsm_pin) => hsm_pin,
-            Err(e) => {
-                // Himmelblaud might still read the decrypted PIN from systemd
-                // later, so we don't want this message explicitly printed to debug.
-                trace!("Failed reading encrypted HSM PIN: {}", e);
+        // Do not conflate a missing key with an error retrieving the key;
+        // doing so could discard and invalidate existing TPM state.
+        let existing_machine_key = match $loadable_machine_key_fut.await {
+            Ok(loadable_machine_key) => loadable_machine_key,
+            Err(err) => {
+                error!(?err, "Unable to access hsm loadable machine key");
+                $on_error
+            }
+        };
 
-                // Check for and create the hsm pin if required.
-                if let Err(err) = write_hsm_pin(&$cfg.get_hsm_pin_path()).await {
+        let hsm_pin_path = $cfg.get_hsm_pin_path();
+        let hsm_pin = if is_systemd_credential(&hsm_pin_path) {
+            match read_hsm_pin(&hsm_pin_path).await {
+                Ok(hsm_pin) => hsm_pin,
+                Err(err) => {
                     error!(
                         ?err,
-                        "Failed to create HSM PIN into {}",
-                        &$cfg.get_hsm_pin_path()
+                        "Failed to read HSM PIN from systemd credential {}", hsm_pin_path
                     );
                     $on_error
-                };
-                // read the hsm pin
-                match read_hsm_pin(&$cfg.get_hsm_pin_path()).await {
-                    Ok(hp) => hp,
-                    Err(err) => {
-                        error!(
-                            ?err,
-                            "Failed to read HSM PIN from {}",
-                            &$cfg.get_hsm_pin_path()
-                        );
+                }
+            }
+        } else {
+            // Non-systemd callers may need to decrypt the stored PIN themselves.
+            match decrypt_hsm_pin(DEFAULT_HSM_PIN_PATH_ENC) {
+                Ok(hsm_pin) => hsm_pin,
+                Err(e) => {
+                    trace!("Failed reading encrypted HSM PIN: {}", e);
+
+                    if let Err(err) = write_hsm_pin(&hsm_pin_path).await {
+                        error!(?err, "Failed to create HSM PIN into {}", hsm_pin_path);
                         $on_error
+                    };
+                    match read_hsm_pin(&hsm_pin_path).await {
+                        Ok(hsm_pin) => hsm_pin,
+                        Err(err) => {
+                            error!(?err, "Failed to read HSM PIN from {}", hsm_pin_path);
+                            $on_error
+                        }
                     }
                 }
             }
@@ -245,7 +287,21 @@ macro_rules! tpm_init {
             }
         };
 
-        let mut hsm: BoxedDynTpm = match $cfg.get_hsm_type() {
+        let configured_hsm_type = $cfg.get_hsm_type();
+        let target_hsm_type = $crate::tpm::resolve_hsm_type(
+            &configured_hsm_type,
+            existing_machine_key.as_ref(),
+        );
+
+        if configured_hsm_type == HsmType::TpmIfPossible && target_hsm_type != configured_hsm_type
+        {
+            info!(
+                ?target_hsm_type,
+                "TpmIfPossible has resolved to {target_hsm_type:?} to align with the existing machine key."
+            );
+        }
+
+        let mut hsm = match target_hsm_type {
             HsmType::Soft => BoxedDynTpm::new(SoftTpm::new()),
             HsmType::TpmIfPossible => open_tpm_if_possible(&$cfg.get_tpm_tcti_name()),
             HsmType::Tpm => match open_tpm(&$cfg.get_tpm_tcti_name()) {
@@ -412,4 +468,61 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_hsm_type;
+    use crate::unix_config::HsmType;
+    use kanidm_hsm_crypto::structures::LoadableStorageKey;
+    use zeroize::Zeroizing;
+
+    fn soft_machine_key() -> LoadableStorageKey {
+        LoadableStorageKey::SoftAes256GcmV1 {
+            key: Zeroizing::new(vec![0; 32]),
+            tag: [0; 16],
+            iv: [0; 16],
+        }
+    }
+
+    #[test]
+    fn tpm_if_possible_without_persisted_state_remains_dynamic() {
+        assert_eq!(
+            resolve_hsm_type(&HsmType::TpmIfPossible, None),
+            HsmType::TpmIfPossible
+        );
+    }
+
+    #[test]
+    fn tpm_if_possible_reuses_persisted_soft_state() {
+        let machine_key = soft_machine_key();
+        assert_eq!(
+            resolve_hsm_type(&HsmType::TpmIfPossible, Some(&machine_key)),
+            HsmType::Soft
+        );
+    }
+
+    #[cfg(not(feature = "tpm"))]
+    #[test]
+    fn tpm_if_possible_reuses_persisted_tpm_state() {
+        let machine_key = LoadableStorageKey::TpmAes128CfbV1 {
+            private: (),
+            public: (),
+            sk_private: (),
+            sk_public: (),
+        };
+        assert_eq!(
+            resolve_hsm_type(&HsmType::TpmIfPossible, Some(&machine_key)),
+            HsmType::Tpm
+        );
+    }
+
+    #[test]
+    fn explicit_hsm_type_overrides_persisted_state() {
+        let machine_key = soft_machine_key();
+        assert_eq!(
+            resolve_hsm_type(&HsmType::Tpm, Some(&machine_key)),
+            HsmType::Tpm
+        );
+    }
 }

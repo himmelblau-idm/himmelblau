@@ -1,0 +1,102 @@
+---
+name: Stable maintenance branch pipeline
+on:
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  dependencies:
+    uses: ./.github/workflows/stable-maintenance-stage.yml
+    with:
+      branch: ${{ inputs.branch }}
+      stage: dependencies
+    secrets: inherit
+
+  vet:
+    needs: dependencies
+    if: needs.dependencies.outputs.proceed == 'true'
+    uses: ./.github/workflows/stable-maintenance-stage.yml
+    with:
+      branch: ${{ inputs.branch }}
+      stage: vet
+      previous-stage: dependencies
+      checkpoint-head: ${{ needs.dependencies.outputs.head }}
+      checkpoint-digest: ${{ needs.dependencies.outputs.digest }}
+      checkpoint-ref: ${{ needs.dependencies.outputs.ref }}
+      checkpoint-artifact: ${{ needs.dependencies.outputs.artifact }}
+    secrets: inherit
+
+  backports-1:
+    needs: vet
+    if: needs.vet.outputs.proceed == 'true'
+    uses: ./.github/workflows/stable-maintenance-stage.yml
+    with:
+      branch: ${{ inputs.branch }}
+      stage: backports-1
+      previous-stage: vet
+      checkpoint-head: ${{ needs.vet.outputs.head }}
+      checkpoint-digest: ${{ needs.vet.outputs.digest }}
+      checkpoint-ref: ${{ needs.vet.outputs.ref }}
+      checkpoint-artifact: ${{ needs.vet.outputs.artifact }}
+    secrets: inherit
+
+  backports-2:
+    needs: backports-1
+    if: needs.backports-1.outputs.proceed == 'true'
+    uses: ./.github/workflows/stable-maintenance-stage.yml
+    with:
+      branch: ${{ inputs.branch }}
+      stage: backports-2
+      previous-stage: backports-1
+      checkpoint-head: ${{ needs.backports-1.outputs.head }}
+      checkpoint-digest: ${{ needs.backports-1.outputs.digest }}
+      checkpoint-ref: ${{ needs.backports-1.outputs.ref }}
+      checkpoint-artifact: ${{ needs.backports-1.outputs.artifact }}
+    secrets: inherit
+
+  backports-3:
+    needs: backports-2
+    if: needs.backports-2.outputs.proceed == 'true'
+    uses: ./.github/workflows/stable-maintenance-stage.yml
+    with:
+      branch: ${{ inputs.branch }}
+      stage: backports-3
+      previous-stage: backports-2
+      checkpoint-head: ${{ needs.backports-2.outputs.head }}
+      checkpoint-digest: ${{ needs.backports-2.outputs.digest }}
+      checkpoint-ref: ${{ needs.backports-2.outputs.ref }}
+      checkpoint-artifact: ${{ needs.backports-2.outputs.artifact }}
+    secrets: inherit
+
+  backports-4:
+    needs: backports-3
+    if: needs.backports-3.outputs.proceed == 'true'
+    uses: ./.github/workflows/stable-maintenance-stage.yml
+    with:
+      branch: ${{ inputs.branch }}
+      stage: backports-4
+      previous-stage: backports-3
+      checkpoint-head: ${{ needs.backports-3.outputs.head }}
+      checkpoint-digest: ${{ needs.backports-3.outputs.digest }}
+      checkpoint-ref: ${{ needs.backports-3.outputs.ref }}
+      checkpoint-artifact: ${{ needs.backports-3.outputs.artifact }}
+    secrets: inherit
+
+  final:
+    needs: backports-4
+    if: needs.backports-4.outputs.proceed == 'true'
+    uses: ./.github/workflows/stable-maintenance-stage.yml
+    with:
+      branch: ${{ inputs.branch }}
+      stage: final
+      previous-stage: backports-4
+      checkpoint-head: ${{ needs.backports-4.outputs.head }}
+      checkpoint-digest: ${{ needs.backports-4.outputs.digest }}
+      checkpoint-ref: ${{ needs.backports-4.outputs.ref }}
+      checkpoint-artifact: ${{ needs.backports-4.outputs.artifact }}
+    secrets: inherit

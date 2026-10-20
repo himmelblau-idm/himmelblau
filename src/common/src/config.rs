@@ -75,6 +75,15 @@ pub enum IpVersionSelection {
     Ipv6Only,
 }
 
+/// Which supplementary groups NSS initgroups publishes.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum InitgroupsMode {
+    /// Only groups that resolve to an NSS name.
+    Named,
+    /// Every cached group GID, including ones getgrgid cannot name.
+    Full,
+}
+
 impl From<JoinType> for u32 {
     fn from(val: JoinType) -> Self {
         // Microsoft Entra ID enrollment join types:
@@ -166,7 +175,7 @@ async fn request_federation_provider(
 
     let url = Url::parse_with_params(
         &format!("https://{}/odc/v2.1/federationProvider", odc_provider),
-        &[("domain", domain)],
+        [("domain", domain)],
     )
     .map_err(|e| MsalError::RequestFailed(format!("{:?}", e)))?;
 
@@ -948,11 +957,12 @@ impl HimmelblauConfig {
                                 return None;
                             }
                             // Open a writable script cache only after a successful script.
-                            let script_cache = if name_cache.is_none() && passwd_path == "/etc/passwd" {
-                                MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite).ok()
-                            } else {
-                                None
-                            };
+                            let script_cache =
+                                if name_cache.is_none() && passwd_path == "/etc/passwd" {
+                                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite).ok()
+                                } else {
+                                    None
+                                };
                             if let Some(name_cache) = name_cache.or(script_cache.as_ref()) {
                                 if let Err(e) = name_cache.insert_mapping(&upn, account_id) {
                                     error!(
@@ -1508,10 +1518,38 @@ mod tests {
 
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_ip_version(), IpVersionSelection::Both);
+        assert_eq!(config_empty.get_initgroups_mode(), InitgroupsMode::Named);
         assert_eq!(
             config_empty.get_ip_versions(),
             vec![IpVersion::V4, IpVersion::V6]
         );
+    }
+
+    #[test]
+    fn test_get_initgroups_mode() {
+        let named = r#"
+        [global]
+        initgroups_mode = named
+        "#;
+        let temp_file = create_temp_config(named);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_initgroups_mode(), InitgroupsMode::Named);
+
+        let full = r#"
+        [global]
+        initgroups_mode = full
+        "#;
+        let temp_file = create_temp_config(full);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_initgroups_mode(), InitgroupsMode::Full);
+
+        let invalid = r#"
+        [global]
+        initgroups_mode = debug
+        "#;
+        let temp_file = create_temp_config(invalid);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_initgroups_mode(), InitgroupsMode::Named);
     }
 
     #[test]
@@ -1942,6 +1980,24 @@ mod tests {
     }
 
     #[test]
+    fn test_get_oidc_device_authorization_endpoint() {
+        let config_data = r#"
+        [global]
+        oidc_device_authorization_endpoint = https://idp.example.com/device/code
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_oidc_device_authorization_endpoint(),
+            Some("https://idp.example.com/device/code".to_string())
+        );
+
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_oidc_device_authorization_endpoint(), None);
+    }
+
+    #[test]
     fn test_get_selinux() {
         let config_data = r#"
         [global]
@@ -2271,24 +2327,79 @@ mod tests {
     }
 
     #[test]
+    fn test_inactive_learning_does_not_use_existing_aliases() {
+        let (cache_path, cache) = create_temp_name_cache();
+        cache
+            .insert_learned_mapping("alice@alternate.example", "alice")
+            .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        for setting in [
+            "cn_name_mapping=false",
+            "oidc_issuer_url=https://issuer.example",
+            "name_mapping_script=/does/not/exist",
+        ] {
+            let config = HimmelblauConfig::new(Some(&create_temp_config(&format!(
+                "[global]\ncn_name_mapping=true\nlearned_name_mapping=true\ndomains=primary.example\n{setting}\n"
+            )))).unwrap();
+            assert!(!config.learned_name_mapping_enabled());
+            assert_ne!(
+                config.map_name_to_upn_with_cache_impl("alice", &passwd, Some(&cache)),
+                Some("alice@alternate.example".to_string())
+            );
+            assert_eq!(
+                config.map_upn_to_name_with_passwd_impl(
+                    "alice@alternate.example",
+                    Some(&cache),
+                    &passwd
+                ),
+                "alice@alternate.example"
+            );
+        }
+        drop(cache);
+        let _ = fs::remove_file(cache_path);
+        let _ = fs::remove_file(passwd);
+    }
+
+    #[test]
     fn test_learned_mapping_respects_reserved_names_and_later_local_ownership() {
         let config = HimmelblauConfig::new(Some(&create_temp_config(
             "[global]\ncn_name_mapping=true\nlearned_name_mapping=true\ndomains=example.com\n",
-        ))).unwrap();
+        )))
+        .unwrap();
         let passwd = create_temp_passwd(PASSWD_MINIMAL);
         let (cache_path, cache) = create_temp_name_cache();
         for name in ["gdm", "pam_unix_non_existent_probe"] {
             let upn = format!("{name}@example.com");
-            assert!(!config.learn_authenticated_short_name_with_cache_impl(&upn, &upn, &passwd, &cache).unwrap());
+            assert!(!config
+                .learn_authenticated_short_name_with_cache_impl(&upn, &upn, &passwd, &cache)
+                .unwrap());
             assert_eq!(cache.get_learned_mapped_name(&upn), None);
         }
-        assert!(config.learn_authenticated_short_name_with_cache_impl(
-            "alice@example.com", "alice@example.com", &passwd, &cache,
-        ).unwrap());
-        assert_eq!(config.map_upn_to_name_with_passwd_impl("alice@example.com", Some(&cache), &passwd), "alice");
-        fs::write(&passwd, format!("{PASSWD_MINIMAL}alice:x:1000:1000::/home/alice:/bin/sh\n")).unwrap();
-        assert_eq!(config.map_upn_to_name_with_cache_impl("alice", &passwd, Some(&cache)), Some("alice".to_string()));
-        assert_eq!(config.map_upn_to_name_with_passwd_impl("alice@example.com", Some(&cache), &passwd), "alice@example.com");
+        assert!(config
+            .learn_authenticated_short_name_with_cache_impl(
+                "alice@example.com",
+                "alice@example.com",
+                &passwd,
+                &cache,
+            )
+            .unwrap());
+        assert_eq!(
+            config.map_upn_to_name_with_passwd_impl("alice@example.com", Some(&cache), &passwd),
+            "alice"
+        );
+        fs::write(
+            &passwd,
+            format!("{PASSWD_MINIMAL}alice:x:1000:1000::/home/alice:/bin/sh\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.map_name_to_upn_with_cache_impl("alice", &passwd, Some(&cache)),
+            Some("alice".to_string())
+        );
+        assert_eq!(
+            config.map_upn_to_name_with_passwd_impl("alice@example.com", Some(&cache), &passwd),
+            "alice@example.com"
+        );
         drop(cache);
         let _ = fs::remove_file(cache_path);
         let _ = fs::remove_file(passwd);

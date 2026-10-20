@@ -233,6 +233,13 @@ fn show_pinentry_message(msg: &str) {
 struct PinentryMessagePrinter;
 
 impl MessagePrinter for PinentryMessagePrinter {
+    fn print_sensitive(&self, msg: &str) {
+        let clean = sanitize_for_pinentry(msg);
+        if !clean.is_empty() {
+            show_pinentry_message(&clean);
+        }
+    }
+
     fn print_text(&self, msg: &str) {
         let clean = sanitize_for_pinentry(msg);
         if clean.is_empty() {

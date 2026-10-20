@@ -1,4 +1,5 @@
 name: Publish GitHub Release
+run-name: Publish GitHub Release ${{ inputs.tag || github.ref_name }}
 
 on:
   push:
@@ -19,6 +20,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: publish-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   publish-release:
     runs-on: ubuntu-latest
@@ -27,7 +32,7 @@ jobs:
 
     steps:
     - name: Harden the runner (Audit all outbound calls)
-      uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+      uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
       with:
         egress-policy: audit
 
@@ -82,18 +87,6 @@ jobs:
         fi
         python3 .github/scripts/release_automation.py "${ARGS[@]}"
 
-    - name: Add package links
-      if: ${{ steps.release-tag.outputs.stable == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
-      shell: bash
-      run: |
-        TAG="${{ steps.release-tag.outputs.tag }}"
-        {
-          printf '\n---\n\n'
-          printf '## Packages\n\n'
-          printf -- '- Stable packages: https://packages.himmelblau-idm.org/stable/%s/\n' "$TAG"
-          printf -- '- SBOM: https://packages.himmelblau-idm.org/stable/%s/sbom/sbom.json\n' "$TAG"
-        } >> release-notes.md
-
     - name: Publish GitHub Release
       if: ${{ steps.release-tag.outputs.stable == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
       env:
@@ -102,7 +95,7 @@ jobs:
       run: |
         TAG="${{ steps.release-tag.outputs.tag }}"
         if gh release view "$TAG" >/dev/null 2>&1; then
-          gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md
+          gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md --draft=false --prerelease=false
         else
           gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
         fi

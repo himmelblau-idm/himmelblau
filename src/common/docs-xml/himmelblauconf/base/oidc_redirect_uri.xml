@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="oidc_redirect_uri" section="global" type="string"
+           rust_type="String" documented="true" domain_specific="false" order="202">
+<description>
+Redirect URI supplied to native OIDC Interaction Code requests. Register this
+exact URI on the public OIDC application identified by app_id, or configure
+the URI already registered there. A URI without a fragment or embedded
+credentials is required.
+.PP
+Native PAM flows do not open a callback listener. Policies requiring a browser
+redirect or external callback must offer another supported native method;
+otherwise authentication reports that the external step is unsupported.
+</description>
+<conf_description>Registered redirect URI for native OIDC authentication.</conf_description>
+<default>http://localhost:8765/callback</default>
+</parameter>

@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
@@ -24,6 +24,6 @@ jobs:
         with:
           extra_nix_config: experimental-features = nix-command flakes
 
-      - uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7
       - run: nix flake check
-      - run: nix build .#daemon .#sso .#broker .#pam .#nss .#aad-tool .#o365 2>&1
+      - run: nix build .#daemon .#sso .#broker .#pam .#nss .#aad-tool .#o365 .#collabora 2>&1

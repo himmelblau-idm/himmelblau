@@ -29,6 +29,16 @@ const SSO_URL_DEFAULT: &str = "https://login.microsoftonline.com/";
 const EDGE_BROWSER_CLIENT_ID: &str = "d7b530a4-7680-4c23-a8bf-c52c121d2e87";
 const GRAPH_SCOPES: [&str; 1] = ["https://graph.microsoft.com/.default"];
 
+/// Write a diagnostic line to stderr, ignoring write errors.
+///
+/// The browser decides where stderr goes, so diagnostics are best-effort: a
+/// failed write must not stop the native messaging host.
+macro_rules! log {
+    ($($arg:tt)*) => {{
+        let _ = writeln!(io::stderr(), $($arg)*);
+    }};
+}
+
 struct NativeMessaging;
 
 impl NativeMessaging {
@@ -218,8 +228,8 @@ async fn run_interactive() -> Result<(), Box<dyn Error>> {
 }
 
 async fn run_as_native_messaging() -> Result<(), Box<dyn Error>> {
-    eprintln!("Running as native messaging instance.");
-    eprintln!("For interactive mode, start with --interactive");
+    log!("Running as native messaging instance.");
+    log!("For interactive mode, start with --interactive");
 
     let ssomib = SsoMib::new().await?;
     NativeMessaging::send_message(&NativeMessaging::encode_message(&json!({
@@ -270,7 +280,7 @@ async fn run_as_native_messaging() -> Result<(), Box<dyn Error>> {
                 }))?)?;
             }
             _ => {
-                eprintln!("Invalid request '{:?}'", received_message["command"]);
+                log!("Invalid request '{:?}'", received_message["command"]);
                 NativeMessaging::send_message(&NativeMessaging::encode_message(&json!({
                     "command": received_message["command"],
                     "message": { "error": "Invalid request" },
@@ -291,9 +301,9 @@ async fn main() {
 
     if interactive {
         if let Err(e) = run_interactive().await {
-            eprintln!("run_interactive failed: {:?}", e);
+            log!("run_interactive failed: {:?}", e);
         }
     } else if let Err(e) = run_as_native_messaging().await {
-        eprintln!("run_as_native_messaging failed: {:?}", e);
+        log!("run_as_native_messaging failed: {:?}", e);
     }
 }

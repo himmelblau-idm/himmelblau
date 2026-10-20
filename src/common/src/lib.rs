@@ -44,6 +44,8 @@ pub mod client_sync;
 #[cfg(target_family = "unix")]
 pub mod db;
 #[cfg(target_family = "unix")]
+mod enrollment;
+#[cfg(target_family = "unix")]
 pub mod hello_pin_complexity;
 #[cfg(target_family = "unix")]
 pub mod i18n;
@@ -71,3 +73,5 @@ pub mod unix_passwd;
 pub mod unix_proto;
 #[cfg(target_family = "unix")]
 pub mod user_map;
+#[cfg(target_family = "unix")]
+mod webauthn;

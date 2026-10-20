@@ -133,15 +133,6 @@ audit-as-crates-io = true
 [policy."minimal-lexical:0.2.1"]
 audit-as-crates-io = true
 
-[policy."opentelemetry-otlp:0.31.1"]
-audit-as-crates-io = true
-
-[policy."opentelemetry:0.31.0"]
-audit-as-crates-io = true
-
-[policy."opentelemetry_sdk:0.31.0"]
-audit-as-crates-io = true
-
 [policy.paste]
 audit-as-crates-io = true
 
@@ -160,7 +151,7 @@ audit-as-crates-io = true
 [policy."redox_syscall:0.5.12"]
 audit-as-crates-io = true
 
-[policy."reqwest:0.12.24"]
+[policy."reqwest:0.12.28"]
 audit-as-crates-io = true
 
 [policy."rsa:0.9.999"]
@@ -320,7 +311,7 @@ version = "1.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.aws-lc-sys]]
-version = "0.38.0"
+version = "0.45.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.axum]]
@@ -483,6 +474,10 @@ criteria = "safe-to-deploy"
 version = "0.7.6"
 criteria = "safe-to-deploy"
 
+[[exemptions.der]]
+version = "0.8.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.der_derive]]
 version = "0.7.3"
 criteria = "safe-to-deploy"
@@ -625,6 +620,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.inotify-sys]]
 version = "0.1.5"
+criteria = "safe-to-deploy"
+
+[[exemptions.integer-encoding]]
+version = "3.0.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.ipnet]]
@@ -933,6 +932,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
 version = "0.103.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.rusty-leveldb]]
+version = "4.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.schannel]]
