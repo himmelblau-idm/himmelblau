@@ -31,6 +31,7 @@ use crate::i18n::{tr, tr_fmt};
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::build_online_probe_client;
 use crate::idprovider::common::flip_displayname_comma;
+use crate::idprovider::common::sealed_refresh_token_or;
 use crate::idprovider::common::should_block_hello_pin_attempts;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
@@ -45,19 +46,21 @@ use crate::unix_passwd::parse_etc_passwd;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
 use crate::{
-    check_hello_totp_enabled, check_hello_totp_setup, entra_id_prt_token_fetch,
-    entra_id_refresh_token_token_fetch, extract_base_url, handle_hello_bad_pin_count,
-    impl_change_auth_token, impl_check_online, impl_create_decoupled_hello_key,
-    impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
-    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step,
-    impl_himmelblau_try_unseal, impl_offline_break_glass, impl_provision_hello_key,
-    impl_provision_or_create_hello_key, impl_setup_hello_totp, impl_unix_user_access,
-    load_cached_prt, load_cached_prt_for_try_unseal, seal_prt_with_existing_hello_key,
+    cache_token_with_loaded_hello_key, check_hello_totp_enabled, check_hello_totp_setup,
+    entra_id_prt_token_fetch, entra_id_refresh_token_token_fetch, extract_base_url,
+    handle_hello_bad_pin_count, impl_change_auth_token, impl_check_online,
+    impl_create_decoupled_hello_key, impl_handle_hello_pin_totp_auth,
+    impl_himmelblau_hello_key_helpers, impl_himmelblau_offline_auth_init,
+    impl_himmelblau_offline_auth_step, impl_himmelblau_try_unseal, impl_offline_break_glass,
+    impl_provision_hello_key, impl_provision_or_create_hello_key,
+    impl_setup_hello_totp_with_storage_key, impl_unix_user_access, load_cached_prt,
+    load_cached_prt_for_try_unseal, seal_prt_with_existing_hello_key,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use himmelblau::auth::{
-    BrokerClientApplication, PublicClientApplication, UserToken as UnixUserToken, BROKER_APP_ID,
+    BrokerClientApplication, LoadedMsHelloKey, PublicClientApplication, UserToken as UnixUserToken,
+    BROKER_APP_ID,
 };
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
@@ -76,7 +79,6 @@ use rand::RngExt;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::thread::sleep;
 use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, Mutex, OnceCell};
@@ -134,63 +136,6 @@ macro_rules! lookup_with_credentials {
 
 fn unexpired_prt_entry(prt: SealedData, prt_expired: bool) -> Option<RefreshCacheEntry> {
     (!prt_expired).then_some(RefreshCacheEntry::Prt(prt))
-}
-
-fn cached_prt_or_refresh_token<F>(
-    cached_prt: Option<RefreshCacheEntry>,
-    load_refresh_token: F,
-) -> Result<Option<RefreshCacheEntry>, IdpError>
-where
-    F: FnOnce() -> Result<Option<RefreshCacheEntry>, IdpError>,
-{
-    match cached_prt {
-        Some(cached_prt) => Ok(Some(cached_prt)),
-        None => load_refresh_token(),
-    }
-}
-
-fn cache_refresh_token_with_loaded_hello_key<K: KeyStoreTxn>(
-    keystore: &mut K,
-    tpm: &mut tpm::provider::BoxedDynTpm,
-    hello_storage_key: &tpm::structures::StorageKey,
-    refresh_token: &str,
-    account_id: &str,
-    refresh_token_tag: &str,
-) -> Result<(), IdpError> {
-    let sealed_refresh_token = tpm
-        .seal_data(
-            hello_storage_key,
-            Zeroizing::new(refresh_token.as_bytes().to_vec()),
-        )
-        .map_err(|e| {
-            error!(?e, account_id, "Failed to seal refresh token");
-            IdpError::Tpm
-        })?;
-    keystore
-        .insert_tagged_hsm_key(refresh_token_tag, &sealed_refresh_token)
-        .map_err(|e| {
-            error!(
-                ?e,
-                account_id, refresh_token_tag, "Failed to cache hello refresh token"
-            );
-            IdpError::Tpm
-        })
-}
-
-fn unseal_refresh_token_with_loaded_hello_key(
-    tpm: &mut tpm::provider::BoxedDynTpm,
-    hello_storage_key: &tpm::structures::StorageKey,
-    sealed_refresh_token: &SealedData,
-) -> Result<Option<String>, IdpError> {
-    match tpm.unseal_data(hello_storage_key, sealed_refresh_token) {
-        Ok(refresh_token_bytes) => String::from_utf8(refresh_token_bytes.to_vec())
-            .map(Some)
-            .map_err(|e| {
-                error!(?e, "Failed converting refresh token to string");
-                IdpError::Tpm
-            }),
-        Err(_) => Ok(None),
-    }
 }
 
 fn is_unavailable_mfa_method_error(msg: &str, requested_method: &str) -> bool {
@@ -1750,7 +1695,7 @@ impl IdProvider for HimmelblauProvider {
                             Ok(val) => val,
                             Err(MsalError::RequestFailed(_)) => {
                                 // Retry on network failure, as these can be rather common
-                                sleep(Duration::from_millis(500));
+                                tokio::time::sleep(Duration::from_millis(500)).await;
                                 net_down_check!(
                                     self.client
                                         .lock()
@@ -1900,7 +1845,7 @@ impl IdProvider for HimmelblauProvider {
                             Ok(val) => val,
                             Err(MsalError::RequestFailed(_)) => {
                                 // Retry on network failure, as these can be rather common
-                                sleep(Duration::from_millis(500));
+                                tokio::time::sleep(Duration::from_millis(500)).await;
                                 net_down_check!(
                                     client
                                         .acquire_token_by_refresh_token(
@@ -2530,7 +2475,7 @@ impl IdProvider for HimmelblauProvider {
                                      * device object. Wait 5 seconds and try again. */
                                     info!("Azure hasn't finished replicating the device...");
                                     info!("Retrying in 5 seconds");
-                                    sleep(Duration::from_secs(5));
+                                    tokio::time::sleep(Duration::from_secs(5)).await;
                                     net_down_check!(
                                         self.client
                                             .lock()
@@ -2872,7 +2817,7 @@ impl IdProvider for HimmelblauProvider {
             }};
         }
         macro_rules! sspr_demand_hello_fallback {
-            ($cred:ident, $require_hello_totp:expr) => {{
+            ($loaded_hello_key:ident, $cred:ident, $require_hello_totp:expr) => {{
                 // Hello authentication already succeeded,
                 // but SSPR demand was sent. Proceed and permit
                 // this authentication so the user has the opportunity
@@ -2883,14 +2828,11 @@ impl IdProvider for HimmelblauProvider {
                 );
                 if $require_hello_totp {
                     if !check_hello_totp_setup!(self, account_id, keystore) {
-                        return impl_setup_hello_totp!(
-                            self,
+                        return impl_setup_hello_totp_with_storage_key!(
                             account_id,
-                            keystore,
-                            old_token,
+                            $loaded_hello_key.storage_key(),
                             $cred,
                             tpm,
-                            machine_key,
                             cred_handler
                         );
                     } else {
@@ -2918,40 +2860,7 @@ impl IdProvider for HimmelblauProvider {
             }};
         }
         macro_rules! auth_and_validate_hello_key {
-            ($hello_key:ident, $keytype:ident, $cred:ident, $require_hello_totp:expr, $hello_key_was_just_provisioned:expr) => {{
-                // CRITICAL: Validate that we can load the key, otherwise the offline
-                // fallback will allow the user to authenticate with a bad PIN here.
-                // `acquire_token_by_hello_for_business_key` CAN (and probably will)
-                // respond with a `RequestFailed` prior to validating the PIN, since
-                // the Nonce request will fail (which is sent prior to validation).
-                let pin = match PinValue::new(&$cred) {
-                    Ok(pin) => pin,
-                    Err(e) => {
-                        error!("Failed setting pin value: {:?}", e);
-                        handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                            Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
-                        });
-                        return Ok((
-                            AuthResult::Denied(tr("Failed to authenticate with Hello PIN.")),
-                            AuthCacheAction::None,
-                        ));
-                    }
-                };
-                let (_, win_hello_storage_key) =
-                    match tpm.ms_hello_key_load(machine_key, &$hello_key, &pin) {
-                        Ok(keys) => keys,
-                        Err(e) => {
-                            error!("{:?}", e);
-                            handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                                Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
-                            });
-                            return Ok((
-                                AuthResult::Denied(tr("Failed to authenticate with Hello PIN.")),
-                                AuthCacheAction::None,
-                            ));
-                        }
-                    };
-
+            ($loaded_hello_key:ident, $keytype:ident, $cred:ident, $require_hello_totp:expr, $hello_key_was_just_provisioned:expr) => {{
                 // If an app_id is defined in the config, the app should have the
                 // GroupMember.Read.All API permission.
                 let (client_id, scopes) = if self.config.lock().await.get_app_id(&self.domain).is_some() {
@@ -2978,9 +2887,9 @@ impl IdProvider for HimmelblauProvider {
                                         .client
                                         .lock()
                                         .await
-                                        .unseal_user_prt_with_loaded_hello_key(
+                                        .unseal_user_prt_with_loaded_ms_hello_key(
                                             &hello_prt,
-                                            &win_hello_storage_key,
+                                            &$loaded_hello_key,
                                             tpm,
                                             machine_key,
                                         );
@@ -3078,14 +2987,11 @@ impl IdProvider for HimmelblauProvider {
                             );
                             if $require_hello_totp {
                                 if !check_hello_totp_setup!(self, account_id, keystore) {
-                                    return impl_setup_hello_totp!(
-                                        self,
+                                    return impl_setup_hello_totp_with_storage_key!(
                                         account_id,
-                                        keystore,
-                                        old_token,
+                                        $loaded_hello_key.storage_key(),
                                         $cred,
                                         tpm,
-                                        machine_key,
                                         cred_handler
                                     );
                                 }
@@ -3109,7 +3015,7 @@ impl IdProvider for HimmelblauProvider {
                             }
                         }
                         Err(ref e) if is_sspr_required(e) => {
-                            sspr_demand_hello_fallback!($cred, $require_hello_totp)
+                            sspr_demand_hello_fallback!($loaded_hello_key, $cred, $require_hello_totp)
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
                             let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
@@ -3150,15 +3056,14 @@ impl IdProvider for HimmelblauProvider {
                         .client
                         .lock()
                         .await
-                        .acquire_token_by_hello_for_business_key(
+                        .acquire_token_by_loaded_ms_hello_key(
                             account_id,
-                            &$hello_key,
+                            &$loaded_hello_key,
                             scopes,
                             None,
                             client_id,
                             tpm,
                             machine_key,
-                            &$cred,
                         )
                         .await
                     {
@@ -3176,14 +3081,11 @@ impl IdProvider for HimmelblauProvider {
                                 CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                             if $require_hello_totp {
                                 if !check_hello_totp_setup!(self, account_id, keystore) {
-                                    return impl_setup_hello_totp!(
-                                        self,
+                                    return impl_setup_hello_totp_with_storage_key!(
                                         account_id,
-                                        keystore,
-                                        old_token,
+                                        $loaded_hello_key.storage_key(),
                                         $cred,
                                         tpm,
-                                        machine_key,
                                         cred_handler
                                     );
                                 } else {
@@ -3207,7 +3109,7 @@ impl IdProvider for HimmelblauProvider {
                         // The SSPR cached-token fallback exists only to let a user reach a
                         // browser on the local machine and complete SSPR enrollment.
                         Err(ref e) if is_sspr_required(e) && !is_remote_service => {
-                            sspr_demand_hello_fallback!($cred, $require_hello_totp)
+                            sspr_demand_hello_fallback!($loaded_hello_key, $cred, $require_hello_totp)
                         }
                         Err(ref e) if is_sspr_required(e) && is_remote_service => {
                             return Ok((
@@ -3227,15 +3129,14 @@ impl IdProvider for HimmelblauProvider {
                                     .client
                                     .lock()
                                     .await
-                                    .acquire_token_by_hello_for_business_key(
+                                    .acquire_token_by_loaded_ms_hello_key(
                                         account_id,
-                                        &$hello_key,
+                                        &$loaded_hello_key,
                                         vec![],
                                         None,
                                         None,
                                         tpm,
                                         machine_key,
-                                        &$cred,
                                     )
                                     .await
                                 {
@@ -3270,15 +3171,14 @@ impl IdProvider for HimmelblauProvider {
                                     .client
                                     .lock()
                                     .await
-                                    .acquire_token_by_hello_for_business_key(
+                                    .acquire_token_by_loaded_ms_hello_key(
                                         account_id,
-                                        &$hello_key,
+                                        &$loaded_hello_key,
                                         vec!["https://graph.microsoft.com/.default"],
                                         None,
                                         Some(DEFAULT_APP_ID),
                                         tpm,
                                         machine_key,
-                                        &$cred,
                                     )
                                     .await
                                 {
@@ -3317,15 +3217,14 @@ impl IdProvider for HimmelblauProvider {
                                 .client
                                 .lock()
                                 .await
-                                .acquire_token_by_hello_for_business_key(
+                                .acquire_token_by_loaded_ms_hello_key(
                                     account_id,
-                                    &$hello_key,
+                                    &$loaded_hello_key,
                                     vec!["https://graph.microsoft.com/.default"],
                                     None,
                                     Some(DEFAULT_APP_ID),
                                     tpm,
                                     machine_key,
-                                    &$cred,
                                 )
                                 .await
                             {
@@ -3378,9 +3277,9 @@ impl IdProvider for HimmelblauProvider {
                                 .client
                                 .lock()
                                 .await
-                                .unseal_user_prt_with_loaded_hello_key(
+                                .unseal_user_prt_with_loaded_ms_hello_key(
                                     &hello_prt,
-                                    &win_hello_storage_key,
+                                    &$loaded_hello_key,
                                     tpm,
                                     machine_key,
                                 )
@@ -3390,23 +3289,15 @@ impl IdProvider for HimmelblauProvider {
                                 }),
                             Err(_) | Ok(None) => None,
                         };
-                        cached_prt_or_refresh_token(cached_prt, || {
-                            match keystore.get_tagged_hsm_key(&hello_refresh_token_tag) {
-                                Ok(Some(sealed_refresh_token)) => {
-                                    match unseal_refresh_token_with_loaded_hello_key(
-                                        tpm,
-                                        &win_hello_storage_key,
-                                        &sealed_refresh_token,
-                                    )? {
-                                        Some(refresh_token) => Ok(Some(
-                                            RefreshCacheEntry::RefreshToken(refresh_token),
-                                        )),
-                                        None => Ok(in_memory_entry),
-                                    }
-                                }
-                                Err(_) | Ok(None) => Ok(in_memory_entry),
-                            }
-                        })?
+                        cached_prt.or_else(|| {
+                            sealed_refresh_token_or(
+                                keystore,
+                                tpm,
+                                $loaded_hello_key.storage_key(),
+                                &hello_refresh_token_tag,
+                                in_memory_entry,
+                            )
+                        })
                     };
                     if let Some(RefreshCacheEntry::Prt(prt)) = refresh_cache_entry {
                         prt_cache_update = PrtCacheUpdate::Reused;
@@ -3443,14 +3334,11 @@ impl IdProvider for HimmelblauProvider {
                                         CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                                     if $require_hello_totp {
                                         if !check_hello_totp_setup!(self, account_id, keystore) {
-                                            return impl_setup_hello_totp!(
-                                                self,
+                                            return impl_setup_hello_totp_with_storage_key!(
                                                 account_id,
-                                                keystore,
-                                                old_token,
+                                                $loaded_hello_key.storage_key(),
                                                 $cred,
                                                 tpm,
-                                                machine_key,
                                                 cred_handler
                                             );
                                         } else {
@@ -3472,7 +3360,7 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                 }
                                 Err(ref e) if is_sspr_required(e) && !is_remote_service => {
-                                    sspr_demand_hello_fallback!($cred, $require_hello_totp)
+                                    sspr_demand_hello_fallback!($loaded_hello_key, $cred, $require_hello_totp)
                                 }
                                 Err(ref e) if is_sspr_required(e) && is_remote_service => {
                                     return Ok((
@@ -3574,14 +3462,11 @@ impl IdProvider for HimmelblauProvider {
                                     CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                                 if $require_hello_totp {
                                     if !check_hello_totp_setup!(self, account_id, keystore) {
-                                        return impl_setup_hello_totp!(
-                                            self,
+                                        return impl_setup_hello_totp_with_storage_key!(
                                             account_id,
-                                            keystore,
-                                            old_token,
+                                            $loaded_hello_key.storage_key(),
                                             $cred,
                                             tpm,
-                                            machine_key,
                                             cred_handler
                                         );
                                     } else {
@@ -3603,7 +3488,7 @@ impl IdProvider for HimmelblauProvider {
                                 }
                             }
                             Err(ref e) if is_sspr_required(e) && !is_remote_service => {
-                                sspr_demand_hello_fallback!($cred, $require_hello_totp)
+                                sspr_demand_hello_fallback!($loaded_hello_key, $cred, $require_hello_totp)
                             }
                             Err(ref e) if is_sspr_required(e) && is_remote_service => {
                                 return Ok((
@@ -3635,43 +3520,16 @@ impl IdProvider for HimmelblauProvider {
                     }
                 };
 
-                // Cache the PRT to disk for offline auth SSO
-                if let Some(prt) = &token.prt {
-                    match self.client.lock().await.seal_user_prt_with_hello_key(
-                        prt,
-                        &$hello_key,
-                        &$cred,
-                        tpm,
-                        machine_key,
-                    ) {
-                        Ok(hello_prt) => {
-                            let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
-                            keystore
-                                .insert_tagged_hsm_key(&hello_prt_tag, &hello_prt)
-                                .map_err(|e| {
-                                    let uuid = token.uuid().map(|v| v.to_string()).unwrap_or("".to_string());
-                                    error!("Failed to cache hello prt for {}: {:?}", uuid, e);
-                                    IdpError::Tpm
-                                })?;
-                        }
-                        Err(e) => {
-                            let uuid = token.uuid().map(|v| v.to_string()).unwrap_or("".to_string());
-                            error!("Failed to cache hello prt for {}: {:?}", uuid, e);
-                        }
-                    }
-                } else {
-                    // If there is no PRT, cache the refresh token instead
-                    let hello_refresh_token_tag =
-                        self.fetch_hello_refresh_token_key_tag(account_id);
-                    cache_refresh_token_with_loaded_hello_key(
-                        keystore,
-                        tpm,
-                        &win_hello_storage_key,
-                        &token.refresh_token,
-                        account_id,
-                        &hello_refresh_token_tag,
-                    )?;
-                }
+                // Cache the PRT, or the refresh token, to disk for offline auth SSO
+                cache_token_with_loaded_hello_key!(
+                    self,
+                    account_id,
+                    token,
+                    &$loaded_hello_key,
+                    keystore,
+                    tpm,
+                    machine_key
+                );
 
                 if !self.is_intune_enrolled(keystore).await {
                     intune_enroll!(token);
@@ -3684,14 +3542,11 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Success { token }) => {
                         if $require_hello_totp {
                             if !check_hello_totp_setup!(self, account_id, keystore) {
-                                return impl_setup_hello_totp!(
-                                    self,
+                                return impl_setup_hello_totp_with_storage_key!(
                                     account_id,
-                                    keystore,
-                                    old_token,
+                                    $loaded_hello_key.storage_key(),
                                     $cred,
                                     tpm,
-                                    machine_key,
                                     cred_handler
                                 );
                             } else {
@@ -3955,10 +3810,14 @@ impl IdProvider for HimmelblauProvider {
                 let amr_ngcmfa = token.amr_ngcmfa().unwrap_or(false);
                 let hello_tag = self.fetch_hello_key_tag(account_id, amr_ngcmfa);
 
-                let (hello_key, keytype) = if amr_ngcmfa {
+                let (hello_key, loaded_hello_key, keytype) = if amr_ngcmfa {
                     net_down_check!(
-                        impl_provision_hello_key!(self, token, pin, tpm, machine_key),
-                        Ok(hello_key) => (hello_key, KeyType::Hello),
+                        self.client
+                            .lock()
+                            .await
+                            .provision_loaded_ms_hello_key(&token, tpm, machine_key, &pin)
+                            .await,
+                        Ok((hello_key, loaded_hello_key)) => (hello_key, loaded_hello_key, KeyType::Hello),
                         Err(e) => {
                             return Ok((
                                 AuthResult::Next(AuthRequest::SetupPin {
@@ -3978,18 +3837,23 @@ impl IdProvider for HimmelblauProvider {
                         }
                     )
                 } else {
-                    (
-                        impl_create_decoupled_hello_key!(
-                            self,
-                            token,
-                            amr_ngcmfa,
-                            tpm,
-                            machine_key,
-                            pin,
-                            IdpError::Tpm
-                        ),
-                        KeyType::Decoupled,
-                    )
+                    let hello_key = impl_create_decoupled_hello_key!(
+                        self,
+                        token,
+                        amr_ngcmfa,
+                        tpm,
+                        machine_key,
+                        pin,
+                        IdpError::Tpm
+                    );
+                    let loaded_hello_key =
+                        LoadedMsHelloKey::load(&hello_key, &pin, tpm, machine_key).map_err(
+                            |e| {
+                                error!(?e, "Failed to load new decoupled Hello key");
+                                IdpError::Tpm
+                            },
+                        )?;
+                    (hello_key, loaded_hello_key, KeyType::Decoupled)
                 };
                 keystore
                     .insert_tagged_hsm_key(&hello_tag, &hello_key)
@@ -3998,7 +3862,13 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::Tpm
                     })?;
 
-                auth_and_validate_hello_key!(hello_key, keytype, pin, require_hello_totp, true)
+                auth_and_validate_hello_key!(
+                    loaded_hello_key,
+                    keytype,
+                    pin,
+                    require_hello_totp,
+                    true
+                )
             }
             (_, PamAuthRequest::Pin { cred }) => {
                 let (hello_key, keytype) =
@@ -4007,7 +3877,33 @@ impl IdProvider for HimmelblauProvider {
                             error!("Online authentication failed. Hello key missing.");
                         })?;
 
-                auth_and_validate_hello_key!(hello_key, keytype, cred, require_hello_totp, false)
+                // CRITICAL: Validate that we can load the key, otherwise the offline
+                // fallback will allow the user to authenticate with a bad PIN here.
+                // Token acquisition with the loaded key does not check the PIN and
+                // CAN (and probably will) respond with a `RequestFailed` when the
+                // Nonce request fails.
+                let loaded_hello_key =
+                    match LoadedMsHelloKey::load(&hello_key, &cred, tpm, machine_key) {
+                        Ok(loaded_hello_key) => loaded_hello_key,
+                        Err(e) => {
+                            error!(?e, "Failed to load Hello key with PIN");
+                            handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                                Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                            });
+                            return Ok((
+                                AuthResult::Denied(tr("Failed to authenticate with Hello PIN.")),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                    };
+
+                auth_and_validate_hello_key!(
+                    loaded_hello_key,
+                    keytype,
+                    cred,
+                    require_hello_totp,
+                    false
+                )
             }
             // Sign-in frequency optimization: Password-first flow for console logins.
             // This handler validates password via ROPC, then checks PRT for sign-in
@@ -5023,7 +4919,7 @@ impl HimmelblauProvider {
                     "PRT exchange failed, retrying after network error: {:?}",
                     msg
                 );
-                sleep(Duration::from_millis(500));
+                tokio::time::sleep(Duration::from_millis(500)).await;
                 self.client
                     .lock()
                     .await
@@ -6000,13 +5896,11 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_refresh_token_with_loaded_hello_key, cached_prt_or_refresh_token,
         is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
         is_unavailable_mfa_method_error, local_user_ids_from_passwd, mfa_flow_uses_push_hint,
-        password_change_required, unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key,
-        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
+        password_change_required, unexpired_prt_entry, CONSENT_REQUIRED,
+        PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
-    use crate::db::{CacheError, KeyStoreTxn};
     use crate::idprovider::common::RefreshCacheEntry;
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
@@ -6014,9 +5908,9 @@ mod tests {
     use kanidm_hsm_crypto::{
         provider::{BoxedDynTpm, SoftTpm, Tpm},
         structures::SealedData,
-        AuthValue, PinValue,
+        AuthValue,
     };
-    use std::{cell::Cell, collections::HashMap};
+    use std::collections::HashMap;
     use zeroize::Zeroizing;
 
     fn lookup_test_user(group_name: &str) -> super::UserToken {
@@ -6041,6 +5935,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::unwrap_used)]
     fn lookup_test_prt() -> SealedData {
         let mut tpm = BoxedDynTpm::new(SoftTpm::new());
         let auth = AuthValue::ephemeral().unwrap();
@@ -6054,6 +5949,7 @@ mod tests {
     // backends. The refresh cache, ordering and token-state propagation are real;
     // MSAL/Graph token validation itself still requires tenant-backed coverage.
     #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
     async fn cached_user_refresh_wins_over_configured_app_lookup() {
         use super::{RefreshCache, UserTokenState};
         let prt = lookup_test_prt();
@@ -6092,6 +5988,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
     async fn missing_user_refresh_retains_app_lookup_for_cached_and_new_users() {
         use super::{RefreshCache, UserTokenState};
         for cached_user in [true, false] {
@@ -6118,6 +6015,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
     async fn purged_user_refresh_retains_confidential_fallback() {
         use super::{RefreshCache, UserTokenState};
         let cache = RefreshCache::new();
@@ -6146,6 +6044,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
     async fn uncached_user_tries_app_before_available_refresh() {
         use super::UserTokenState;
         for app_succeeds in [true, false] {
@@ -6177,6 +6076,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
     async fn absent_app_and_user_credentials_leave_existing_fallback_in_charge() {
         for cached_user in [true, false] {
             let mut calls = 0;
@@ -6195,6 +6095,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
     async fn failed_user_refresh_does_not_silently_switch_to_app_claims() {
         use super::UserTokenState;
         let mut calls = 0;
@@ -6257,13 +6158,6 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct RecordingKeyStore {
-        entries: HashMap<String, Vec<u8>>,
-        inserted_tags: Vec<String>,
-        fail_insert: bool,
-    }
-
     #[test]
     fn local_user_lookup_uses_passwd_file_only() {
         let passwd = b"root:x:0:0:root:/root:/bin/bash\nlocal:x:1000:1001::/home/local:/bin/bash\n";
@@ -6298,37 +6192,6 @@ mod tests {
         );
         assert_eq!(local_user_ids_from_passwd(passwd, "+local"), None);
         assert_eq!(local_user_ids_from_passwd(passwd, "-local"), None);
-    }
-
-    impl KeyStoreTxn for RecordingKeyStore {
-        fn get_tagged_hsm_key<K: serde::de::DeserializeOwned>(
-            &mut self,
-            tag: &str,
-        ) -> Result<Option<K>, CacheError> {
-            self.entries
-                .get(tag)
-                .map(|entry| serde_cbor::from_slice(entry).map_err(|_| CacheError::SerdeJson))
-                .transpose()
-        }
-
-        fn insert_tagged_hsm_key<K: serde::Serialize>(
-            &mut self,
-            tag: &str,
-            key: &K,
-        ) -> Result<(), CacheError> {
-            if self.fail_insert {
-                return Err(CacheError::Sqlite);
-            }
-            let entry = serde_cbor::to_vec(key).map_err(|_| CacheError::SerdeJson)?;
-            self.entries.insert(tag.to_string(), entry);
-            self.inserted_tags.push(tag.to_string());
-            Ok(())
-        }
-
-        fn delete_tagged_hsm_key(&mut self, tag: &str) -> Result<(), CacheError> {
-            self.entries.remove(tag);
-            Ok(())
-        }
     }
 
     fn should_use_sspr_hello_fallback(e: &MsalError, is_remote_service: bool) -> bool {
@@ -6455,124 +6318,17 @@ mod tests {
     }
 
     #[test]
-    fn refresh_token_storage_reuses_loaded_hello_key() -> anyhow::Result<()> {
-        let mut tpm = BoxedDynTpm::new(SoftTpm::new());
-        let auth = AuthValue::ephemeral().map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        let loadable_machine_key = tpm
-            .root_storage_key_create(&auth)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        let machine_key = tpm
-            .root_storage_key_load(&auth, &loadable_machine_key)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        let pin = PinValue::new("123456").map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        let hello_key = tpm
-            .ms_hello_key_create(&machine_key, &pin)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        let (_, hello_storage_key) = tpm
-            .ms_hello_key_load(&machine_key, &hello_key, &pin)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-
-        let account_id = "testuser@example.com";
-        let refresh_token_tag = format!("{account_id}/hello_refresh_token");
-        let mut keystore = RecordingKeyStore::default();
-        cache_refresh_token_with_loaded_hello_key(
-            &mut keystore,
-            &mut tpm,
-            &hello_storage_key,
-            "refresh-token",
-            account_id,
-            &refresh_token_tag,
-        )
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        assert_eq!(keystore.inserted_tags, vec![refresh_token_tag.clone()]);
-        let sealed_refresh_token: SealedData = keystore
-            .get_tagged_hsm_key(&refresh_token_tag)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?
-            .ok_or_else(|| anyhow::anyhow!("refresh token was not persisted"))?;
-        assert_eq!(
-            unseal_refresh_token_with_loaded_hello_key(
-                &mut tpm,
-                &hello_storage_key,
-                &sealed_refresh_token,
-            )
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?,
-            Some("refresh-token".to_string())
-        );
-
-        let mut failing_keystore = RecordingKeyStore {
-            fail_insert: true,
-            ..Default::default()
+    fn cached_prt_selection_skips_expired_prt() {
+        let prt = SealedData::SoftV1 {
+            data: Zeroizing::new(vec![1]),
+            tag: [1; 16],
+            iv: [1; 16],
         };
-        assert!(cache_refresh_token_with_loaded_hello_key(
-            &mut failing_keystore,
-            &mut tpm,
-            &hello_storage_key,
-            "refresh-token",
-            account_id,
-            &refresh_token_tag,
-        )
-        .is_err());
-
-        let invalid_utf8 = tpm
-            .seal_data(&hello_storage_key, Zeroizing::new(vec![0xff]))
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        assert!(unseal_refresh_token_with_loaded_hello_key(
-            &mut tpm,
-            &hello_storage_key,
-            &invalid_utf8,
-        )
-        .is_err());
-
-        let other_hello_key = tpm
-            .ms_hello_key_create(&machine_key, &pin)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        let (_, other_storage_key) = tpm
-            .ms_hello_key_load(&machine_key, &other_hello_key, &pin)
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        assert_eq!(
-            unseal_refresh_token_with_loaded_hello_key(
-                &mut tpm,
-                &other_storage_key,
-                &sealed_refresh_token,
-            )
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?,
-            None
-        );
-
         assert!(matches!(
-            unexpired_prt_entry(sealed_refresh_token.clone(), false),
+            unexpired_prt_entry(prt.clone(), false),
             Some(RefreshCacheEntry::Prt(_))
         ));
-
-        let refresh_fallback_used = Cell::new(false);
-        let selected_entry = cached_prt_or_refresh_token(
-            unexpired_prt_entry(sealed_refresh_token.clone(), true),
-            || {
-                refresh_fallback_used.set(true);
-                Ok(Some(RefreshCacheEntry::RefreshToken(
-                    "refresh-token".to_string(),
-                )))
-            },
-        )
-        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        assert!(matches!(
-            selected_entry,
-            Some(RefreshCacheEntry::RefreshToken(_))
-        ));
-        assert!(refresh_fallback_used.get());
-
-        refresh_fallback_used.set(false);
-        let selected_entry =
-            cached_prt_or_refresh_token(unexpired_prt_entry(sealed_refresh_token, false), || {
-                refresh_fallback_used.set(true);
-                Ok(Some(RefreshCacheEntry::RefreshToken(
-                    "refresh-token".to_string(),
-                )))
-            })
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        assert!(matches!(selected_entry, Some(RefreshCacheEntry::Prt(_))));
-        assert!(!refresh_fallback_used.get());
-        Ok(())
+        assert!(unexpired_prt_entry(prt, true).is_none());
     }
 
     #[test]
