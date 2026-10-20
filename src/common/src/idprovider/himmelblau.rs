@@ -1033,6 +1033,14 @@ fn credential_tenant_matches(expected: Option<Uuid>, actual: Option<Uuid>) -> bo
     }
 }
 
+fn credential_identity_matches(credential: &UnixUserToken, expected: (Uuid, Option<Uuid>)) -> bool {
+    let tenant = credential
+        .tenant_id()
+        .ok()
+        .and_then(|tenant| Uuid::parse_str(&tenant).ok());
+    credential.uuid().ok() == Some(expected.0) && credential_tenant_matches(expected.1, tenant)
+}
+
 // Keep the identity check and every credential-cache write in one operation so
 // rejected reconciliation responses cannot poison later broker/SSO requests.
 async fn cache_validated_identity(
@@ -1044,15 +1052,8 @@ async fn cache_validated_identity(
     update: PrtCacheUpdate,
 ) -> AuthResult {
     if expected_identity.is_some_and(|expected| {
-        // The mapped UserToken uses the configured Graph tenant. Check the
-        // credential's tenant too, rather than trusting that mapping alone.
-        let credential_tenant = credential
-            .tenant_id()
-            .ok()
-            .and_then(|tenant| Uuid::parse_str(&tenant).ok());
         (identity.uuid, identity.tenant_id) != expected
-            || credential.uuid().ok() != Some(expected.0)
-            || !credential_tenant_matches(expected.1, credential_tenant)
+            || !credential_identity_matches(credential, expected)
     }) {
         return AuthResult::Denied("Refreshed identity does not match cached user".to_string());
     }
@@ -1979,22 +1980,11 @@ impl IdProvider for HimmelblauProvider {
             }
         };
         match self
-            .token_validate(
-                &account_id,
-                &token,
-                old_token,
-                PrtCacheUpdate::Fresh,
-                expected_identity,
-            )
+            .validate_refreshed_token(&account_id, &token, old_token, expected_identity)
             .await
         {
-            Ok(result) => {
-                match validated_refresh_state(result, old_token, expected_identity.is_some()) {
-                    Some(state) => Ok(state),
-                    None => fake_user!(),
-                }
-            }
-            Err(_) => fake_user!(),
+            Ok(Some(state)) => Ok(state),
+            Ok(None) | Err(_) => fake_user!(),
         }
     }
 
@@ -5185,6 +5175,31 @@ impl HimmelblauProvider {
         }
     }
 
+    // This is also the state-conversion boundary used by unix_user_get. Keep
+    // identity denial distinct from the lookup fallback after validation.
+    async fn validate_refreshed_token(
+        &self,
+        account_id: &str,
+        token: &UnixUserToken,
+        old_token: Option<&UserToken>,
+        expected_identity: Option<(Uuid, Option<Uuid>)>,
+    ) -> Result<Option<UserTokenState>, IdpError> {
+        let result = self
+            .token_validate(
+                account_id,
+                token,
+                old_token,
+                PrtCacheUpdate::Fresh,
+                expected_identity,
+            )
+            .await?;
+        Ok(validated_refresh_state(
+            result,
+            old_token,
+            expected_identity.is_some(),
+        ))
+    }
+
     #[instrument(level = "debug", skip_all)]
     async fn token_validate(
         &self,
@@ -5194,6 +5209,13 @@ impl HimmelblauProvider {
         prt_cache_update: PrtCacheUpdate,
         expected_identity: Option<(Uuid, Option<Uuid>)>,
     ) -> Result<AuthResult, IdpError> {
+        // Reject replacement credentials before SPN parsing, Graph requests, or
+        // RFC2307 mapping can fail and route this refresh to cached fallback.
+        if expected_identity.is_some_and(|expected| !credential_identity_matches(token, expected)) {
+            return Ok(AuthResult::Denied(
+                "Refreshed identity does not match cached user".into(),
+            ));
+        }
         // UUID is only used for logging; tolerate tokens where the oid claim is
         // absent or empty (e.g. device-flow tokens that lack the oid claim) by
         // falling back to an explicit "unknown" value rather than the requested
@@ -6052,6 +6074,123 @@ mod tests {
     };
     use std::{cell::Cell, collections::HashMap};
     use zeroize::Zeroizing;
+
+    #[tokio::test]
+    async fn reconciliation_provider_rejects_credentials_before_rfc2307_mapping() {
+        use super::*;
+
+        let mut config = HimmelblauConfig::new(Some("/dev/null")).unwrap();
+        config.set("global", "id_attr_map", "rfc2307");
+        config.set("global", "user_map_file", "/dev/null");
+        let ip_versions = config.get_ip_versions();
+        let config = Arc::new(Mutex::new(config));
+        let tenant = Uuid::new_v4();
+        let graph = Graph::new(
+            "http://127.0.0.1:9",
+            "example.com",
+            Some("login.microsoftonline.com"),
+            Some(&tenant.to_string()),
+            Some("http://127.0.0.1:9"),
+            Duration::from_millis(100),
+            &ip_versions,
+        )
+        .await
+        .unwrap();
+        let client = BrokerClientApplication::new(
+            None,
+            None,
+            None,
+            None,
+            Duration::from_millis(100),
+            &ip_versions,
+        )
+        .unwrap();
+        let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
+        let provider =
+            HimmelblauProvider::new(client, &config, "example.com", graph, &idmap).unwrap();
+        let old = UserToken {
+            name: format!("reconciliation-{}@example.com", Uuid::new_v4()),
+            spn: "unused@example.com".into(),
+            uuid: Uuid::new_v4(),
+            real_gidnumber: None,
+            gidnumber: 200001,
+            displayname: "Cached user".into(),
+            shell: None,
+            groups: vec![],
+            tenant_id: Some(tenant),
+            valid: true,
+        };
+        let mut credential = UnixUserToken {
+            token_type: "Bearer".into(),
+            scope: None,
+            expires_in: 3600,
+            ext_expires_in: 3600,
+            access_token: None,
+            refresh_token: "replacement".into(),
+            id_token: himmelblau::auth::IdToken {
+                oid: Uuid::new_v4().to_string(),
+                tid: tenant.to_string(),
+                preferred_username: Some(old.name.clone()),
+                ..Default::default()
+            },
+            client_info: Default::default(),
+            prt: None,
+        };
+        // With no static mapping or directory uidNumber, this exact provider's
+        // RFC2307 conversion fails. The refresh guard must run before it.
+        assert!(matches!(
+            provider
+                .user_token_from_unix_user_token(
+                    &old.name,
+                    TokenOrObj::UserToken(Box::new(credential.clone())),
+                    Some(&old)
+                )
+                .await,
+            Err(IdpError::BadRequest)
+        ));
+        provider
+            .refresh_cache
+            .add(
+                &old.name,
+                &RefreshCacheEntry::RefreshToken("original".into()),
+            )
+            .await;
+        credential.access_token = Some("fixture-access".into());
+        for (uuid, tid) in [
+            (Uuid::new_v4(), tenant.to_string()),
+            (old.uuid, Uuid::new_v4().to_string()),
+            (old.uuid, String::new()),
+        ] {
+            credential.id_token.oid = uuid.to_string();
+            credential.id_token.tid = tid;
+            // Exercise the actual provider validation/state-conversion path
+            // called by unix_user_get, not just the cache-writing helper.
+            let state = provider
+                .validate_refreshed_token(
+                    &old.name,
+                    &credential,
+                    Some(&old),
+                    Some((old.uuid, old.tenant_id)),
+                )
+                .await
+                .unwrap();
+            assert!(matches!(state, Some(UserTokenState::Rejected)));
+            assert!(
+                matches!(provider.refresh_cache.refresh_token(&old.name).await.unwrap(),
+                RefreshCacheEntry::RefreshToken(secret) if secret == "original")
+            );
+        }
+        // The raw-credential guard retains the supported consumer aliases.
+        credential.id_token.oid = old.uuid.to_string();
+        credential.id_token.tid = "9188040d-6c67-4c5b-b112-36a304b66dad".into();
+        assert!(credential_identity_matches(
+            &credential,
+            (
+                old.uuid,
+                Some(uuid::uuid!("9cd80435-793b-4f48-844b-6b3f37d1c1f3"))
+            )
+        ));
+    }
 
     #[test]
     fn reconciliation_denial_never_falls_back_to_cached_claims() {
