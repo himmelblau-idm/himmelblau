@@ -733,7 +733,10 @@ fn claim_local_task_name(
     let owner = owner.key();
     let previous = names.remove(&owner).or(legacy);
     // An unchanged name keeps the provenance it was first claimed with.
-    let local = local && !matches!(&previous, Some(p) if p.name() == name && !p.is_local());
+    let local = match &previous {
+        Some(previous) if previous.name() == name => previous.is_local(),
+        _ => local,
+    };
     let record = name.to_string();
     let record = if local {
         TaskName::Local { local: record }
@@ -1678,6 +1681,58 @@ mod tests {
         let names: HashMap<String, String> =
             serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
         assert_eq!(names, HashMap::from([(owner.key(), "bob".into())]));
+    }
+
+    #[test]
+    fn unchanged_local_name_keeps_local_provenance() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let state = tmpdir.path().join("local-task-names.json");
+        let owner = task_owner("a@example.com");
+        claim_local_task_name(&state, &owner, "bob", true, |_, _| Ok(())).unwrap();
+
+        claim_local_task_name(&state, &owner, "bob", false, |_, _| {
+            panic!("an unchanged local account must not be retired")
+        })
+        .unwrap();
+
+        let names: HashMap<String, TaskName> =
+            serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        assert!(matches!(
+            names.get(&owner.key()),
+            Some(TaskName::Local { local }) if local == "bob"
+        ));
+    }
+
+    #[test]
+    fn nil_tenant_local_owner_upgrade_keeps_local_provenance() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let state = tmpdir.path().join("local-task-names.json");
+        let owner = task_owner("a@example.com");
+        let nil_tenant = LocalTaskOwner {
+            tenant_id: None,
+            ..owner.clone()
+        };
+        let names = HashMap::from([(
+            nil_tenant.key(),
+            TaskName::Local {
+                local: "bob".to_string(),
+            },
+        )]);
+        fs::write(&state, serde_json::to_vec(&names).unwrap()).unwrap();
+
+        claim_local_task_name(&state, &owner, "bob", false, |previous, evicted| {
+            assert_eq!(previous, None);
+            assert!(evicted.is_empty());
+            Ok(())
+        })
+        .unwrap();
+
+        let names: HashMap<String, TaskName> =
+            serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        assert!(matches!(
+            names.get(&owner.key()),
+            Some(TaskName::Local { local }) if local == "bob"
+        ));
     }
 
     #[test]
