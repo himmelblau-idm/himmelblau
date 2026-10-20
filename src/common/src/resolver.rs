@@ -1780,20 +1780,23 @@ mod tests {
                 replacement.name = "replacement".to_string();
                 replacement.spn = "replacement@example.com".to_string();
                 replacement.gidnumber += 2;
-                match alias {
+                let lookup = match alias {
                     "gid" => {
                         current.gidnumber += 1;
                         replacement.gidnumber = snapshot.gidnumber;
+                        Id::Gid(snapshot.gidnumber)
                     }
                     "name" => {
                         current.name = "renamed".to_string();
                         replacement.name = snapshot.name.clone();
+                        Id::Name(snapshot.name.clone())
                     }
                     _ => {
                         current.spn = "renamed@example.com".to_string();
                         replacement.spn = snapshot.spn.clone();
+                        Id::Name(snapshot.spn.clone())
                     }
-                }
+                };
                 resolver
                     .set_cache_usertoken_guarded(&mut current, 1, Some("a-secret"))
                     .await
@@ -1806,10 +1809,15 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                assert!(resolver
-                    .delete_cache_usertoken_guarded(&snapshot, 3)
+                resolver.password_generation.store(3, Ordering::Relaxed);
+                resolver.client.user_get_error.store(8, Ordering::Release);
+                let refreshed = resolver
+                    .refresh_usertoken(&lookup, Some(snapshot.clone()))
                     .await
-                    .unwrap());
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(refreshed.uuid, replacement.uuid);
+                assert!(resolver.check_nxcache(&lookup).await.is_none());
                 let cached = resolver.get_cached_usertokens().await.unwrap();
                 assert_eq!(cached.len(), 1);
                 assert_eq!(cached[0].uuid, replacement.uuid);
@@ -3170,6 +3178,13 @@ where
                             .map(|(expired, token)| token.map(|token| (token, !expired)));
                     }
                 };
+                // Deleting the snapshotted identity can leave this lookup's
+                // alias owned by a different account. Return that account rather
+                // than reporting it absent or publishing a negative entry.
+                let (expired, current) = self.get_cached_usertoken(account_id).await?;
+                if let Some(current) = current {
+                    return Ok(Some((current, !expired)));
+                }
                 // Cache the NX here.
                 self.set_nxcache(account_id).await;
                 Ok(None)
