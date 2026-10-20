@@ -69,11 +69,8 @@ macro_rules! fetch_cached_user {
         match $cache {
             Some(ref c) => match c.get_user(&$id) {
                 Some(nu) => {
-                    let mut passwd = passwd_from_nssuser(fallback_nssuser(nu));
-                    // Use local_name override if provided, otherwise use cn_name_mapping
-                    passwd.name = $local_name.unwrap_or_else(|| {
-                        fallback_display_name(&$cfg, &passwd.name, &local_login_names())
-                    });
+                    let passwd =
+                        fallback_passwd_from_nssuser(nu, &$cfg, $local_name, &local_login_names());
                     return Response::Success(passwd);
                 }
                 None => return $ret,
@@ -102,8 +99,7 @@ macro_rules! fetch_all_cached_users {
                         if is_mapped_nss_user(&nu, &$user_map) {
                             return None;
                         }
-                        let mut passwd = passwd_from_nssuser(fallback_nssuser(nu));
-                        passwd.name = fallback_display_name(&$cfg, &passwd.name, &local_logins);
+                        let passwd = fallback_passwd_from_nssuser(nu, &$cfg, None, &local_logins);
                         Some(passwd)
                     })
                     .collect()
@@ -499,6 +495,32 @@ fn fallback_nssuser(mut nu: NssUser) -> NssUser {
         nu.name = canonical;
     }
     nu
+}
+
+/// Derive a fallback home from the final rendered name, including CN collisions.
+fn fallback_passwd_from_nssuser(
+    nu: NssUser,
+    cfg: &HimmelblauConfig,
+    local_name: Option<String>,
+    local_logins: &[String],
+) -> Passwd {
+    let old_name = nu.name.clone();
+    let canonical = nu
+        .canonical_name
+        .clone()
+        .unwrap_or_else(|| old_name.clone());
+    let old_home = nu.homedir.clone();
+    let mut passwd = passwd_from_nssuser(fallback_nssuser(nu));
+    passwd.name =
+        local_name.unwrap_or_else(|| fallback_display_name(cfg, &passwd.name, local_logins));
+    if let Some((dir, leaf)) = old_home.rsplit_once('/') {
+        let derived_home =
+            leaf == old_name || canonical.split_once('@').is_some_and(|(cn, _)| cn == leaf);
+        if derived_home && leaf != passwd.name && local_logins.iter().any(|login| login == leaf) {
+            passwd.dir = format!("{dir}/{}", passwd.name);
+        }
+    }
+    passwd
 }
 
 fn local_login_names() -> Vec<String> {
@@ -1283,6 +1305,36 @@ mod tests {
         cn.canonical_name = Some("bob@contoso.com".to_string());
         cn.homedir = "/home/bob".to_string();
         assert_eq!(fallback_nssuser(cn).homedir, "/home/bob");
+    }
+
+    #[test]
+    fn fallback_cn_home_avoids_a_new_local_account() -> Result<(), String> {
+        let cfg = test_config()?;
+        let user = || {
+            let mut nu = test_nss_user("bob");
+            nu.canonical_name = Some("bob@contoso.com".into());
+            nu.homedir = "/home/bob".into();
+            nu
+        };
+        let passwd = fallback_passwd_from_nssuser(user(), &cfg, None, &["bob".into()]);
+        assert_eq!(passwd.name, "bob@contoso.com");
+        assert_eq!(passwd.dir, "/home/bob@contoso.com");
+        let mut qualified = user();
+        qualified.name = "bob@contoso.com".into();
+        assert_eq!(
+            fallback_passwd_from_nssuser(qualified, &cfg, None, &["bob".into()]).dir,
+            "/home/bob@contoso.com"
+        );
+        let passwd = fallback_passwd_from_nssuser(user(), &cfg, None, &[]);
+        assert_eq!(passwd.name, "bob");
+        assert_eq!(passwd.dir, "/home/bob");
+        let mut custom = user();
+        custom.homedir = "/srv/homes/object-id".into();
+        assert_eq!(
+            fallback_passwd_from_nssuser(custom, &cfg, None, &["bob".into()]).dir,
+            "/srv/homes/object-id"
+        );
+        Ok(())
     }
 
     #[test]

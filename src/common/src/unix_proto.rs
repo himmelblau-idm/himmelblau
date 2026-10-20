@@ -320,7 +320,7 @@ pub struct HomeDirectoryInfo {
     pub aliases: Vec<String>,
 }
 
-/// Immutable directory identity owning local task state, plus its current UPN for legacy migration.
+/// Immutable directory identity owning local task state, plus its current UPN for diagnostics.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct LocalTaskOwner {
     pub object_id: Uuid,
