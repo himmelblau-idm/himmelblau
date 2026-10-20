@@ -1111,11 +1111,17 @@ impl OktaProvider {
 
 #[async_trait]
 impl IdProvider for OktaProvider {
-    #[instrument(level = "debug", skip_all)]
     async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
+        if matches!(*self.state.lock().await, CacheState::Online) {
+            return true;
+        }
+        self.probe_online(None, now).await
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    async fn probe_online(&self, _account_id: Option<&str>, now: SystemTime) -> bool {
         let state = self.state.lock().await.clone();
         match state {
-            CacheState::Online => return true,
             CacheState::Offline => return false,
             CacheState::OfflineNextCheck(next) if next > now => return false,
             _ => (),
@@ -1140,11 +1146,7 @@ impl IdProvider for OktaProvider {
         }
     }
 
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        _account: Option<&str>,
-        _keystore: &mut D,
-    ) -> CacheState {
+    async fn get_cachestate(&self, _account: Option<&str>) -> CacheState {
         self.state.lock().await.clone()
     }
 
