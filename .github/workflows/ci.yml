@@ -45,6 +45,8 @@ jobs:
           persist-credentials: false
       - name: Test maintenance diagnostics and isolation
         run: PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_stable_maintenance.py
+      - name: Test slop guard policy and maintainer overrides
+        run: node --test .github/scripts/test_slop_checks.js
 
   build:
     name: Build
@@ -218,7 +220,12 @@ jobs:
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev
       - name: "Run tests"
-        run: cargo test
+        run: |
+          make test-hsm-pin-init
+          python3 scripts/test_collabora_packaging.py
+          python3 scripts/test_collabora_distribution_packaging.py
+          python3 scripts/test_sso_policies_scripts.py
+          cargo test
         continue-on-error: false
       - name: "Test aad-tool without donation messages"
         run: cargo test -p aad-tool --no-default-features

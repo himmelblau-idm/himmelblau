@@ -975,6 +975,7 @@ mod tests {
             gecos: "Test User".to_string(),
             homedir: "/home/test".to_string(),
             shell: "/bin/bash".to_string(),
+            cacheable: true,
         }
     }
 

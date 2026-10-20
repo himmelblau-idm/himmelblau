@@ -1,4 +1,5 @@
 name: Publish GitHub Release
+run-name: Publish GitHub Release ${{ inputs.tag || github.ref_name }}
 
 on:
   push:
@@ -18,6 +19,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: publish-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   publish-release:
@@ -90,7 +95,7 @@ jobs:
       run: |
         TAG="${{ steps.release-tag.outputs.tag }}"
         if gh release view "$TAG" >/dev/null 2>&1; then
-          gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md
+          gh release edit "$TAG" --title "$TAG" --notes-file release-notes.md --draft=false --prerelease=false
         else
           gh release create "$TAG" --title "$TAG" --notes-file release-notes.md --verify-tag
         fi

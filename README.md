@@ -87,10 +87,11 @@ You may want to install this one extra if you use a browser other than firefox /
 
 - `himmelblau.packages.<arch>.sso`: Used to facilitate the communication to the broker
 
-These two are optional and need to be installed by you:
+These packages are optional and need to be installed by you:
 
 - `himmelblau.packages.<arch>.aad-tool`: The cli to interact with your daemon - you probably want to install it.
 - `himmelblau.packages.<arch>.o365`: Installs `teams-for-linux` with shortcuts to the o365 suite
+- `himmelblau.packages.<arch>.collabora`: Experimental Collabora Office Microsoft 365 bridge. See its [setup and removal instructions](src/collabora/README.md#arch-gentoo-and-nixos-packaging).
 
 The Nix packages include TPM support. The Himmelblau module enables `security.tpm2.enable` by default and adds
 the daemon to the configured TPM access group. An explicit `security.tpm2.enable = false;` disables this, but
