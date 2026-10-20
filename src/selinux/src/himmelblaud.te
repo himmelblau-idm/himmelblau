@@ -533,7 +533,7 @@ allow himmelblaud_tasks_t himmelblau_etc_t:dir { getattr open read search };
 allow himmelblaud_tasks_t himmelblau_etc_t:file { getattr open read };
 allow himmelblaud_tasks_t himmelblau_etc_t:lnk_file { getattr read };
 allow himmelblaud_tasks_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search write };
-allow himmelblaud_tasks_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+allow himmelblaud_tasks_t himmelblau_nss_cache_t:file { create getattr lock open read rename setattr unlink write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename rmdir search setattr write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:lnk_file { getattr read };
@@ -675,10 +675,10 @@ optional {
 	require {
 		type etc_t;
 		class dir { add_name remove_name write };
-		class file { create link unlink };
+		class file { create link rename setattr unlink };
 	}
 	allow himmelblaud_tasks_t etc_t:dir { add_name remove_name write };
-	allow himmelblaud_tasks_t etc_t:file { create link unlink };
+	allow himmelblaud_tasks_t etc_t:file { create link rename setattr unlink };
 }
 
 optional {

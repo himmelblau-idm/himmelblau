@@ -409,8 +409,8 @@ async fn reconcile_local_groups_once(
     };
 
     for account in accounts {
-        let (lookup_uid, is_sudoer) = if sudo_group_ids.is_empty() {
-            (account.uid, false)
+        let lookup_uid = if sudo_group_ids.is_empty() {
+            account.uid
         } else {
             let token = match cachelayer
                 .refresh_cached_usertoken(
@@ -435,19 +435,15 @@ async fn reconcile_local_groups_once(
                 }
             };
 
-            (
-                token.gidnumber,
-                token
-                    .groups
-                    .iter()
-                    .any(|group| sudo_group_ids.contains(&group.uuid)),
-            )
+            token.gidnumber
         };
 
-        let (account, owner) = match cachelayer.get_session_identity(Id::Gid(lookup_uid)).await {
-            Ok(Some(identity)) => (identity.account, identity.owner),
+        let identity = match cachelayer.get_session_identity(Id::Gid(lookup_uid)).await {
+            Ok(Some(identity)) => identity,
             _ => continue,
         };
+        let is_sudoer = identity.group_ids.iter().any(|id| sudo_group_ids.contains(id));
+        let (account, owner) = (identity.account, identity.owner);
         let rendered = cachelayer.render_alias(account.clone(), true).await;
         let target = local_task_account(&user_map, &rendered);
         if is_local_account_excluded(cachelayer, cfg, &user_map, &account, &target).await {

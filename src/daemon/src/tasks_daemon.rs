@@ -617,6 +617,58 @@ fn migrate_subid_entry(previous: &str, name: &str, subid_file: &Path) -> Result<
     Ok(())
 }
 
+/// Give `name` the range reserved for its owner and park a stale holder's range under that
+/// holder's reservation. The owner's reservation stays as the marker, so repeating it is a no-op.
+fn reclaim_subid_range(
+    owner_key: &str,
+    name: &str,
+    evicted: &[String],
+    subid_file: &Path,
+) -> Result<(), String> {
+    validate_subid_username(name)?;
+    let _lock = lock_subid_file(subid_file)?;
+    let contents = match fs::read_to_string(subid_file) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("Failed to read {}: {:?}", subid_file.display(), e)),
+    };
+    let own = format!("{}:", reserved_subid_name(owner_key));
+    let current = format!("{}:", name);
+    let holder = evicted
+        .first()
+        .map(|old| format!("{}:", reserved_subid_name(old)));
+    let restored = contents.lines().find_map(|line| line.strip_prefix(&own));
+    let mut can_park = holder
+        .as_ref()
+        .is_some_and(|h| !contents.lines().any(|line| line.starts_with(h)));
+    let (mut out, mut changed, mut has_name) = (String::new(), false, false);
+    for line in contents.lines() {
+        match (line.strip_prefix(&current), &holder) {
+            (Some(range), Some(h)) if Some(range) != restored => {
+                changed = true;
+                if can_park {
+                    out.push_str(&format!("{}{}\n", h, range));
+                    can_park = false;
+                }
+            }
+            (name_row, _) => {
+                has_name |= name_row.is_some();
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    if let (Some(range), false) = (restored, has_name) {
+        out.push_str(&format!("{}{}\n", current, range));
+        changed = true;
+    }
+    if changed {
+        replace_subid_file(subid_file, &out)
+            .map_err(|e| format!("Failed to write to {}: {:?}", subid_file.display(), e))?;
+    }
+    Ok(())
+}
+
 fn is_local_passwd_user(name: &str) -> bool {
     let prefix = format!("{}:", name);
     fs::read_to_string("/etc/passwd")
@@ -699,15 +751,10 @@ fn retire_previous_local_name(
     claim_local_task_name(state, owner, name, |previous, evicted| {
         let subid_files = [Path::new("/etc/subuid"), Path::new("/etc/subgid")];
         if !is_local_passwd_user(name) {
-            // A stale holder keeps its range under its own key, so the new owner gets a fresh one.
-            for old in evicted {
-                for subid_file in subid_files {
-                    migrate_subid_entry(name, &reserved_subid_name(old), subid_file)?;
-                }
-            }
-            // An evicted owner can return under another name without losing its reserved range.
+            // A stale holder keeps its range under its own key, so the new owner gets a fresh one,
+            // and an evicted owner returning under another name gets its reserved range back.
             for subid_file in subid_files {
-                migrate_subid_entry(&reserved_subid_name(&owner.key()), name, subid_file)?;
+                reclaim_subid_range(&owner.key(), name, evicted, subid_file)?;
             }
         }
         let Some(previous) = previous else {
@@ -1619,6 +1666,23 @@ mod tests {
         migrate_subid_entry(&reserved, "robert", &subuid).unwrap();
         let contents = fs::read_to_string(&subuid).unwrap();
         assert_eq!(contents, "robert:100000:65536\nbob:165536:65536\n");
+    }
+
+    #[test]
+    fn reclaiming_a_reserved_range_is_repeatable() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let subuid = tmpdir.path().join("subuid");
+        let (a, b) = (task_owner("a@example.com").key(), task_owner("b@example.com").key());
+        let (ra, rb) = (reserved_subid_name(&a), reserved_subid_name(&b));
+        fs::write(&subuid, format!("bob:200000:65536\n{}:100000:65536\n", rb)).unwrap();
+
+        for _ in 0..2 {
+            reclaim_subid_range(&b, "bob", &[a.clone()], &subuid).unwrap();
+            assert_eq!(
+                fs::read_to_string(&subuid).unwrap(),
+                format!("{ra}:200000:65536\n{rb}:100000:65536\nbob:100000:65536\n")
+            );
+        }
     }
 
     #[test]
