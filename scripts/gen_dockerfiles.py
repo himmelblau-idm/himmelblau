@@ -71,7 +71,7 @@ SELINUX_PKGS = ["policycoreutils-devel", "selinux-policy-targeted"]
 AUTHSELECT_PKGS = ["authselect"]
 
 DEB_PKGS = COMMON + [p for p, _ in PKG_PAIRS if p]
-RPM_PKGS = COMMON + AUTHSELECT_PKGS + [q for _, q in PKG_PAIRS if q]
+RPM_PKGS = COMMON + AUTHSELECT_PKGS + ["rpm-build"] + [q for _, q in PKG_PAIRS if q]
 
 # enable caching of apt packages: https://docs.docker.com/build/cache/optimize/#use-cache-mounts
 APT_BOOTSTRAP = """\
@@ -113,16 +113,19 @@ FAMILIES = {
     "deb": {
         "bootstrap": APT_BOOTSTRAP,
         "pkgs": DEB_PKGS,
+        "packaging_tool": "cargo-deb",
         "env": "ENV DEBIAN_FRONTEND=noninteractive HIMMELBLAU_ALLOW_MISSING_SELINUX=1",
     },
     "rpm": {
         "bootstrap": DNF_BOOTSTRAP,
         "pkgs": RPM_PKGS,
+        "packaging_tool": "cargo-generate-rpm",
         "env": None,
     },
     "zypper": {
         "bootstrap": ZYPPER_BOOTSTRAP,
         "pkgs": RPM_PKGS,
+        "packaging_tool": "cargo-generate-rpm",
         "env": None,
     },
     "ebuild": {
@@ -156,8 +159,18 @@ PACKAGES = [
     ("selinux", "src/selinux", False),
     ("apparmor", "src/apparmor", False),
     ("o365", "src/o365", False),
+    ("himmelblau-collabora", "src/collabora", False),
     ("himmelblau-orchestrator", "src/orchestrator", False),
 ]
+
+RPM_INTERNAL_REQUIRES = {
+    "src/nss": ("himmelblau",),
+    "src/pam": ("himmelblau",),
+    "src/broker": ("himmelblau",),
+    "src/sso": ("himmelblau-broker",),
+    "src/o365": ("himmelblau",),
+    "src/collabora": ("himmelblau-broker",),
+}
 
 CMD_TAB = "     "
 CMD_SEP = f" && \\ \n{CMD_TAB}"
@@ -211,7 +224,27 @@ def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
         pkgs.append(pkg)
     rpm_cmds = []
     for _, s, _ in pkgs:
-        rpm_cmds.append(f"cargo generate-rpm -p {s}")
+        requires = RPM_INTERNAL_REQUIRES.get(s, ())
+        requires_arg = ""
+        if requires:
+            requires_toml = ", ".join(
+                f"{package} = '= ${{RPM_INTERNAL_VERSION}}-${{RPM_INTERNAL_RELEASE}}'"
+                for package in requires
+            )
+            requires_arg = (
+                f' --set-metadata \\"requires = {{ {requires_toml} }}\\"'
+            )
+        rpm_cmds.append(
+            f'cargo generate-rpm -p {s} '
+            f'--set-metadata \\"release = \'${{RPM_INTERNAL_RELEASE}}\'\\"'
+            f'{requires_arg}'
+        )
+    rpm_cmds.insert(
+        0,
+        "RPM_INTERNAL_VERSION=$(cargo metadata --no-deps --format-version 1 "
+        "| jq -r '.packages[] | select(.name == \\\"himmelblaud\\\") | .version')",
+    )
+    rpm_cmds.insert(1, 'RPM_INTERNAL_RELEASE=\\"${RPM_PACKAGE_RELEASE:-1}\\"')
     rpms = CMD_SEP.join(rpm_cmds)
     if apparmor:
         gen_servicefiles = "make rpm-servicefiles ORCHESTRATOR_APPARMOR_PROFILE=himmelblau-orchestrator-container"
@@ -346,32 +379,18 @@ DISTS = {
         "selinux": True,
     },
     # ---- SUSE family ----
-    "sle15sp6": {
-        "family": "zypper",
-        "image": "registry.suse.com/suse/sle15:15.6",
-        "scc": True,
-        "scc_vers": "15.6",
-        "post_bootstrap": [
-            # Python 3.6 doesn't have dataclasses; install python311 and symlink as python3
-            "RUN zypper --non-interactive install python311 && ln -sf /usr/bin/python3.11 /usr/bin/python3",
-        ],
-        "replace": {
-            "build-essential": "",
-            "@development-tools": "",
-            "dbus-devel": "dbus-1-devel",
-            "tpm2-tss-devel": "tpm2-0-tss-devel",
-            "sqlite-devel": "sqlite3-devel",
-            "policycoreutils-devel": "",
-            "selinux-policy-targeted": "",
-        },
-        "tpm": True,
-        "apparmor": True,
-    },
     "sle15sp7": {
         "family": "zypper",
-        "image": "registry.suse.com/suse/sle15:15.7",
-        "scc": True,
-        "scc_vers": "15.7",
+        # The Ruby development BCI is an SP7 image that already contains the
+        # matching sqlite3-devel package, which is not published by SLE_BCI.
+        # The remaining SLE development packages come from SLE_BCI, while the
+        # public Backports projects supply authselect and LLVM/Clang.
+        "image": "registry.suse.com/bci/ruby:2.5",
+        "extra_prep": [
+            "RUN zypper ar -e https://download.opensuse.org/repositories/openSUSE:/Backports:/SLE-15-SP7/standard/openSUSE:Backports:SLE-15-SP7.repo",
+            "RUN zypper ar -e https://download.opensuse.org/repositories/openSUSE:/Backports:/SLE-15-SP7:/Update/standard/openSUSE:Backports:SLE-15-SP7:Update.repo",
+            "RUN zypper --non-interactive --gpg-auto-import-keys refresh openSUSE_Backports_SLE-15-SP7 openSUSE_Backports_SLE-15-SP7_Update",
+        ],
         "post_bootstrap": [
             # Python 3.6 doesn't have dataclasses; install python311 and symlink as python3
             "RUN zypper --non-interactive install python311 && ln -sf /usr/bin/python3.11 /usr/bin/python3",
@@ -381,8 +400,10 @@ DISTS = {
             "@development-tools": "",
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
+            # The generic Backports package is a metapackage for clang17 from
+            # a non-public SLE module; clang14 is fully in Backports itself.
+            "clang": "clang14",
             "sqlite-devel": "sqlite3-devel",
-            "clang": "clang7",
             "policycoreutils-devel": "",
             "selinux-policy-targeted": "",
         },
@@ -391,10 +412,10 @@ DISTS = {
     },
     "sle16": {
         "family": "zypper",
-        "image": "registry.suse.com/bci/bci-sle16-kernel-module-devel:16.0",
-        "scc": True,
-        "scc_vers": "16.0",
+        "image": "registry.suse.com/bci/bci-base:16.0",
         "extra_prep": [
+            "RUN zypper ar -e https://download.opensuse.org/distribution/leap/16.0/repo/oss openSUSE_Leap_16.0_OSS",
+            "RUN zypper --non-interactive --gpg-auto-import-keys refresh openSUSE_Leap_16.0_OSS",
             # Temporary patch for broken SLE libudev1 version in the base image
             "RUN zypper in -y --oldpackage libudev1-257.7-160000.2.2.$(uname -m)",
             # Temporary authselect build, since it hasn't landed in PackageHub yet
@@ -468,7 +489,6 @@ DOCKERFILE_TPL = """\
 {GENERATED_MARKER}{tooling_stage}FROM {base_image}
 
 {env}
-{sle_connect}
 
 # Build argument for optional Cargo patch configuration
 ARG CARGO_PATCH_ARG=""
@@ -557,7 +577,7 @@ WORKDIR /himmelblau
 # Install Rust + aarch64 target + packaging tools (native amd64)
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
     rustup target add aarch64-unknown-linux-gnu && \\
-    cargo install cargo-deb cargo-generate-rpm
+    cargo install cargo-deb
 
 # Configure cross-compilation
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \\
@@ -578,7 +598,7 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \\
 # Rust install: native (amd64) — compile cargo-deb/cargo-generate-rpm from source
 RUST_INSTALL_NATIVE = """\
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
-    cargo install cargo-deb cargo-generate-rpm"""
+    cargo install {packaging_tool}"""
 
 # Rust install: emulated (arm64) — install Rust and packaging tools natively.
 # This is slower than cross-compiling the packaging tools, but avoids copying
@@ -587,7 +607,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -s
 RUST_INSTALL_EMULATED = """\
 ENV CFLAGS="-O2" CXXFLAGS="-O2"
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
-    cargo install cargo-deb cargo-generate-rpm"""
+    cargo install {packaging_tool}"""
 
 # Ubuntu codename mapping (used for multiarch apt sources)
 UBUNTU_CODENAMES = {
@@ -658,23 +678,6 @@ RUN sed -i 's/^deb http/deb [arch=amd64] http/' /etc/apt/sources.list && \\
 """
 
 
-SLE_CONNECT_TPL = """\
-# Install SUSEConnect and dependencies for registration
-RUN zypper --non-interactive refresh && \\
-    zypper --non-interactive install --no-recommends \\
-        SUSEConnect \\
-        ca-certificates \\
-        suse-build-key && \\
-    zypper clean --all
-
-RUN --mount=type=secret,id=scc_regcode,dst=/run/secrets/scc_regcode \\
-    set -e && \\
-    source /run/secrets/scc_regcode && \\
-    SUSEConnect --email "$email" --regcode "$regcode" && \\
-    SUSEConnect -p PackageHub/{scc_vers}/$(uname -m)
-"""
-
-
 def build_pkg_list(dist_cfg, selinux):
     fam = FAMILIES[dist_cfg["family"]]
     pkgs = list(fam["pkgs"])
@@ -709,7 +712,6 @@ def render(
     else:
         bootstrap = fam["bootstrap"].rstrip()
     env = fam["env"] or ""
-    sle_connect = SLE_CONNECT_TPL.format(scc_vers=dist_cfg.get("scc_vers")) if dist_cfg.get("scc") else ""
 
     # Features
     tpm = bool(dist_cfg.get("tpm", False))
@@ -729,7 +731,7 @@ def render(
             cross_target=cross_target,
         )
     elif dist_name == "test":
-        final_cmd = "CMD cargo test"
+        final_cmd = "CMD python3 scripts/test_hsm_pin_init.py && cargo test"
     elif dist_cfg["family"] == "ebuild":
         # Ebuild generation - lightweight, just runs gen_ebuild.py
         repo_root = Path(__file__).parent.parent.resolve()
@@ -767,20 +769,21 @@ def render(
         return df
 
     # Select Rust install method and tooling stage based on architecture
-    if dist_cfg["family"] == "arch":
+    if dist_cfg["family"] in ("arch", "ebuild"):
         # Arch installs rust with pacman and packages with makepkg, so it needs
         # neither a rustup toolchain nor cargo-deb/cargo-generate-rpm.
+        # Ebuild generation also needs no Rust toolchain or packaging tools.
         rust_install = ""
         tooling_stage = ""
     elif arch != "amd64":
         # arm64 RPM/zypper: run under QEMU and compile packaging tools natively
         # inside the target distro image. Cross-built tools from a Debian
         # tooling stage can fail to execute on RPM-family images.
-        rust_install = RUST_INSTALL_EMULATED
+        rust_install = RUST_INSTALL_EMULATED.format(packaging_tool=fam["packaging_tool"])
         tooling_stage = ""
     else:
         # amd64: compile packaging tools natively
-        rust_install = RUST_INSTALL_NATIVE
+        rust_install = RUST_INSTALL_NATIVE.format(packaging_tool=fam["packaging_tool"])
         tooling_stage = ""
 
     # Use minimal template for ebuild generation
@@ -798,7 +801,6 @@ def render(
             env=env,
             bootstrap=(extra + bootstrap),
             post_bootstrap=post_bootstrap,
-            sle_connect=("\n" + sle_connect + "\n" if sle_connect else ""),
             rust_install=rust_install,
             selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
             patch_libhimmelblau="COPY ./scripts/cargo-patch-config.toml /root/.cargo/config.toml" if patch_libhimmelblau else "",

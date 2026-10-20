@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="oidc_device_authorization_endpoint"
+           section="global"
+           type="string"
+           rust_type="Option&lt;String&gt;"
+           documented="true"
+           domain_specific="false"
+           order="203">
+<description>
+Optional device authorization endpoint for generic OIDC providers that omit
+.B device_authorization_endpoint
+from their discovery metadata. The discovered endpoint is preferred when it
+is present. This option is used only when
+.B oidc_issuer_url
+is configured.
+</description>
+<conf_description>Fallback device authorization endpoint for generic OIDC providers.</conf_description>
+<default></default>
+<example>oidc_device_authorization_endpoint = https://idp.example.com/device/code</example>
+</parameter>

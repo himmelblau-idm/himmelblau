@@ -58,6 +58,7 @@ if selinux_configured; then
         [ -d /var/cache/private/himmelblaud ] && restorecon -RFv /var/cache/private/himmelblaud || :
         [ -d /var/cache/himmelblaud ]         && restorecon -RFv /var/cache/himmelblaud || :
         [ -d /var/cache/nss-himmelblau ]      && restorecon -RFv /var/cache/nss-himmelblau || :
+        [ -d /var/cache/himmelblau-policies ] && restorecon -RFv /var/cache/himmelblau-policies || :
         [ -d /var/lib/private/himmelblaud ]   && restorecon -RFv /var/lib/private/himmelblaud || :
         [ -d /var/lib/himmelblaud ]           && restorecon -RFv /var/lib/himmelblaud || :
 

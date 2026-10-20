@@ -21,18 +21,27 @@ mod tests {
     use std::path::PathBuf;
     use std::process::Command;
 
-    #[test]
-    fn qr_selection_js_test() {
+    fn run_js_test(filename: &str) {
         let mut test_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_path.push("src");
         test_path.push("qr-greeter@himmelblau-idm.org");
-        test_path.push("qrselection.test.js");
+        test_path.push(filename);
 
         let status = Command::new("node")
             .arg(test_path)
             .status()
             .expect("failed to launch node");
 
-        assert!(status.success(), "qrselection.test.js failed");
+        assert!(status.success(), "{filename} failed");
+    }
+
+    #[test]
+    fn qr_selection_js_test() {
+        run_js_test("qrselection.test.js");
+    }
+
+    #[test]
+    fn enrollment_qr_js_test() {
+        run_js_test("enrollmentqr.test.js");
     }
 }

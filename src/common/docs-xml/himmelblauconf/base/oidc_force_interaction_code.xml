@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="oidc_force_interaction_code" section="global" type="bool"
+           rust_type="bool" documented="true" domain_specific="false" order="201">
+<description>
+Require native Interaction Code (IDX) authentication for the configured OIDC
+issuer. When true, Himmelblau never falls back to device authorization or the
+browser orchestrator. The server must implement the compatible IDX protocol,
+and the configured public client must permit Interaction Code.
+.PP
+When false, Himmelblau probes likely compatible providers (including Okta) and
+issuers without device authorization, then falls back quietly when native
+authentication is unavailable. Selection is fixed until daemon restart;
+selection during a network outage is deferred until connectivity returns.
+</description>
+<conf_description>Require native OIDC Interaction Code authentication.</conf_description>
+<default>false</default>
+</parameter>

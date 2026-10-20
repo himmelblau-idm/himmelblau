@@ -1,0 +1,103 @@
+---
+name: Weekly stable-branch maintenance
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Stable branch to maintain
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - stable-3.x
+          - stable-4.x
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: Select stable maintenance targets
+    if: >-
+      github.repository == 'himmelblau-idm/himmelblau' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      enabled: ${{ steps.select.outputs.enabled }}
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Harden the runner (block unapproved outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+
+      - name: Checkout trusted default-branch tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          fetch-depth: 0
+          persist-credentials: false
+          set-safe-directory: false
+
+      - name: Snapshot trusted maintenance tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          tooling_sha="$(sha256sum tooling/.github/scripts/stable_maintenance.py)"
+          tooling_sha="${tooling_sha%% *}"
+          if [[ ! "$tooling_sha" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Unable to establish trusted tooling digest"
+            exit 2
+          fi
+          printf 'MAINTENANCE_TOOLING_SHA256=%s\n' "$tooling_sha" >> "$GITHUB_ENV"
+
+      - name: Trust only this workspace and disable Git hooks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --replace-all safe.directory "$GITHUB_WORKSPACE/tooling"
+          mkdir -p "$RUNNER_TEMP/disabled-git-hooks"
+          git -C tooling config --local core.hooksPath "$RUNNER_TEMP/disabled-git-hooks"
+
+      - name: Test the stable maintenance orchestrator
+        run: python3 tooling/.github/scripts/test_stable_maintenance.py
+
+      - name: Select requested stable branches
+        id: select
+        env:
+          REQUESTED_BRANCH: ${{ inputs.branch || 'all' }}
+          STATE_DIR: ${{ runner.temp }}/stable-maintenance-selection
+        run: |
+          mkdir -p "$STATE_DIR"
+          python3 tooling/.github/scripts/stable_maintenance.py \
+            --repo-dir tooling --state-dir "$STATE_DIR" \
+            select --branch "$REQUESTED_BRANCH"
+
+  maintain:
+    name: Maintain ${{ matrix.branch }} in checkpointed jobs
+    needs: select
+    if: needs.select.outputs.enabled == 'true'
+    permissions:
+      contents: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    concurrency:
+      # Hold the shared Azure queue across the entire staged branch pipeline.
+      group: stable-maintenance-azure-quota
+      cancel-in-progress: false
+      queue: max
+    uses: ./.github/workflows/stable-maintenance-branch.yml
+    with:
+      branch: ${{ matrix.branch }}
+    secrets: inherit

@@ -17,10 +17,26 @@ let
     ];
   };
   cargo_nix = pkgs.callPackage ./Cargo.nix {
+    rootFeatures = [
+      "default"
+      "himmelblau_unix_common/tpm"
+    ];
     buildRustCrateForPkgs =
       pkgs:
       pkgs.buildRustCrate.override {
         defaultCrateOverrides = pkgs.defaultCrateOverrides // {
+          tss-esapi = attrs: {
+            DEP_TSS2_ESYS_VERSION = pkgs.tpm2-tss.version;
+          };
+          tss-esapi-sys = attrs: {
+            nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [
+              pkgs.pkg-config
+              pkgs.rustPlatform.bindgenHook
+            ];
+            buildInputs = (attrs.buildInputs or [ ]) ++ [
+              pkgs.tpm2-tss
+            ];
+          };
           idmap =
             attrs:
             unistring
@@ -54,6 +70,10 @@ let
                 pkgs.makeWrapper
               ];
               postInstall = (if attrs ? postInstall then attrs.postInstall else "") + ''
+                install -Dm755 \
+                  ${./src/daemon/scripts/himmelblau-init-hsm-pin} \
+                  $out/libexec/himmelblau-init-hsm-pin
+
                 po_dir=${./po}
                 linguas="$po_dir/LINGUAS"
                 if [ -f "$linguas" ]; then
@@ -112,6 +132,20 @@ let
                   $out/lib/mozilla/native-messaging-hosts/linux_entra_sso.json \
                   $out/lib/chromium/native-messaging-hosts/linux_entra_sso.json \
                    --replace-fail "/usr/bin/" "$out/bin/"
+            '';
+          };
+
+          himmelblau-collabora = attrs: {
+            postInstall = (attrs.postInstall or "") + ''
+              install -Dm644 platform/himmelblau-collabora.service \
+                $out/lib/systemd/user/himmelblau-collabora.service
+              install -Dm644 platform/himmelblau-collabora.desktop \
+                $out/etc/xdg/autostart/himmelblau-collabora.desktop
+
+              substituteInPlace $out/lib/systemd/user/himmelblau-collabora.service \
+                --replace-fail "/usr/bin/himmelblau-collabora" "$out/bin/himmelblau-collabora"
+              substituteInPlace $out/etc/xdg/autostart/himmelblau-collabora.desktop \
+                --replace-fail "Exec=systemctl " "Exec=${pkgs.systemd}/bin/systemctl "
             '';
           };
 
@@ -206,6 +240,7 @@ rec {
     sso = cargo_nix.workspaceMembers."sso".build;
     broker = cargo_nix.workspaceMembers."broker".build;
     o365 = cargo_nix.workspaceMembers."o365".build;
+    collabora = cargo_nix.workspaceMembers."himmelblau-collabora".build;
     pam = cargo_nix.workspaceMembers."pam_himmelblau".build;
     nss = cargo_nix.workspaceMembers."nss_himmelblau".build;
   };

@@ -857,21 +857,21 @@ Keep your response focused and actionable.
                 # Method 1: Use -p flag with prompt from file
                 result = subprocess.run(
                     [self.cli_path, "-p", prompt, "--output-format", "text"],
-                    capture_output=True, text=True, timeout=180,
+                    capture_output=True, text=True, timeout=600,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
                 # Method 2: Pipe prompt via stdin
                 result = subprocess.run(
                     [self.cli_path, "--output-format", "text"],
-                    input=prompt, capture_output=True, text=True, timeout=180,
+                    input=prompt, capture_output=True, text=True, timeout=600,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
                 # Method 3: Use --print flag
                 result = subprocess.run(
                     [self.cli_path, "--print", prompt],
-                    capture_output=True, text=True, timeout=180,
+                    capture_output=True, text=True, timeout=600,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
@@ -881,14 +881,14 @@ Keep your response focused and actionable.
                 # Method 1: Use -p for prompt
                 result = subprocess.run(
                     [self.cli_path, "-p", prompt],
-                    capture_output=True, text=True, timeout=180,
+                    capture_output=True, text=True, timeout=600,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
                 # Method 2: Pipe prompt via stdin
                 result = subprocess.run(
                     [self.cli_path],
-                    input=prompt, capture_output=True, text=True, timeout=180,
+                    input=prompt, capture_output=True, text=True, timeout=600,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
@@ -908,7 +908,7 @@ Keep your response focused and actionable.
                             "--output-last-message", output_file,
                             "-",
                         ],
-                        input=prompt, capture_output=True, text=True, timeout=180,
+                        input=prompt, capture_output=True, text=True, timeout=600,
                     )
                     if result.returncode == 0:
                         with open(output_file, "r", encoding="utf-8") as f:

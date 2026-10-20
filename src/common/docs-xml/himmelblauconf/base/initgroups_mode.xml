@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="initgroups_mode"
+           section="global"
+           type="enum"
+           rust_type="InitgroupsMode"
+           documented="true"
+           domain_specific="false"
+           order="1810">
+<description>
+Controls which supplementary groups Himmelblau returns from NSS initgroups.
+
+.RS
+.IP \(bu 2
+named \(em return only groups that resolve to an NSS name (default). A GID that
+.B getgrgid
+cannot name is omitted, so tools such as
+.B groups
+do not fail on an unnamed group id.
+.IP \(bu 2
+full \(em return every cached group GID, including ones with no NSS name. Use this when debugging a missing membership.
+.RE
+</description>
+<conf_description>Supplementary groups: named only, or every cached GID.</conf_description>
+<default>named</default>
+<default_const>InitgroupsMode::Named</default_const>
+<example>initgroups_mode = &lt;named|full&gt;</example>
+<enum_values>
+  <value rust="InitgroupsMode::Named">named</value>
+  <value rust="InitgroupsMode::Full">full</value>
+</enum_values>
+</parameter>

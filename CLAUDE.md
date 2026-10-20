@@ -53,7 +53,7 @@ Common targets:
 
 Per-distro targets (build only one):
 `make ubuntu22.04`, `ubuntu24.04`, `debian12`, `debian13`, `rocky8`, `rocky9`, `rocky10`,
-`tumbleweed`, `rawhide`, `fedora43`, `fedora44`, `sle15sp6`, `sle15sp7`, `sle16`, `gentoo`.
+`tumbleweed`, `rawhide`, `fedora43`, `fedora44`, `sle15sp7`, `sle16`, `gentoo`.
 
 Tips / conventions:
 
@@ -137,9 +137,7 @@ Daemons:
 - `src/daemon/` — system daemon + tasks daemon
   - `src/daemon/src/daemon.rs` — main daemon
   - `src/daemon/src/tasks_daemon.rs` — tasks daemon
-  - tmpfiles templates:
-    - `src/daemon/src/himmelblaud.tmpfiles.conf`
-    - `src/daemon/src/himmelblau-policies.tmpfiles.conf`
+  - tmpfiles template: `src/daemon/src/himmelblau-policies.tmpfiles.conf`
 
 Auth integration modules:
 

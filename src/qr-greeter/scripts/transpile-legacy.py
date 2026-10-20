@@ -286,6 +286,16 @@ def main():
     with open(qrselection_dst, 'w') as f:
         f.write(transpiled)
 
+    # Enrollment QR rendering uses the same legacy exports as other helpers.
+    enrollment_src = src_dir / "enrollmentqr.js"
+    enrollment = enrollment_src.read_text().replace(
+        "import { QrCode, Ecc } from './qrcodegen.js';",
+        "const Me = imports.misc.extensionUtils.getCurrentExtension();\n"
+        "const QrCode = Me.imports.qrcodegen.QrCode;\n"
+        "const Ecc = Me.imports.qrcodegen.Ecc;",
+    ).replace("export function ", "function ")
+    (legacy_dir / "enrollmentqr.js").write_text(enrollment)
+
     # Transpile qrcodegen.js
     qrcodegen_src = src_dir / "qrcodegen.js"
     qrcodegen_dst = legacy_dir / "qrcodegen.js"
