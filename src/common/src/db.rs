@@ -170,11 +170,39 @@ impl Db {
 
     pub fn new(path: &str) -> Result<Self, DbError> {
         let before = unsafe { umask(0o0077) };
-        let conn = Connection::open(path).map_err(|e| {
-            error!(err = ?e, "rusqulite error");
+        let result = Connection::open(path);
+        let _ = unsafe { umask(before) };
+        let conn = result.map_err(|e| {
+            error!(err = ?e, "rusqlite error");
             DbError::Sqlite
         })?;
-        let _ = unsafe { umask(before) };
+        // SQLite does not change existing modes on open. Use the resolved file
+        // name so temporary databases and memory URIs retain their semantics.
+        if let Some(path) = conn.path().filter(|path| !path.is_empty()) {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            for suffix in ["", "-wal", "-shm", "-journal"] {
+                let file = format!("{path}{suffix}");
+                let result = std::fs::OpenOptions::new()
+                    .read(true)
+                    // SQLite sidecars must not redirect permission changes to
+                    // another file. The configured main path may be a symlink.
+                    .custom_flags(if suffix.is_empty() {
+                        0
+                    } else {
+                        libc::O_NOFOLLOW
+                    })
+                    .open(&file)
+                    .and_then(|file| file.set_permissions(std::fs::Permissions::from_mode(0o600)));
+                match result {
+                    Ok(()) => {}
+                    Err(e) if !suffix.is_empty() && e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => {
+                        error!(err = ?e, path = %file, "Unable to restrict database permissions");
+                        return Err(DbError::Sqlite);
+                    }
+                }
+            }
+        }
         Ok(Self::from_connection(conn))
     }
 
@@ -1173,6 +1201,8 @@ mod tests {
     use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn, DBV_MAIN};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
     use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::Tpm, AuthValue};
+    use rusqlite::Connection;
+    use uuid::Uuid;
 
     const TESTACCOUNT1_PASSWORD_A: &str = "password a for account1 test";
     const TESTACCOUNT1_PASSWORD_B: &str = "password b for account1 test";
@@ -1187,6 +1217,88 @@ mod tests {
     fn setup_tpm() -> BoxedDynTpm {
         use kanidm_hsm_crypto::provider::SoftTpm;
         BoxedDynTpm::new(SoftTpm::new())
+    }
+
+    struct TestDbDirectory(std::path::PathBuf);
+
+    impl TestDbDirectory {
+        #[allow(clippy::unwrap_used)]
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("himmel-db-{}", Uuid::new_v4()));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDbDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn existing_database_and_sidecars_become_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = TestDbDirectory::new();
+        let path = directory.path().join("cache.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('retained');",
+            )
+            .unwrap();
+        drop(connection);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        // Synthetic sidecars are inspected before SQLite executes any queries.
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let sidecar = format!("{}{suffix}", path.display());
+            std::fs::write(&sidecar, []).unwrap();
+            std::fs::set_permissions(&sidecar, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        let db = Db::new(path.to_str().unwrap()).unwrap();
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let file = format!("{}{suffix}", path.display());
+            assert_eq!(
+                std::fs::metadata(file).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        drop(db);
+        let connection = Connection::open(&path).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT value FROM marker", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "retained"
+        );
+        drop(connection);
+        assert!(Db::new(path.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn database_permissions_preserve_new_and_memory_databases() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = TestDbDirectory::new();
+        let path = directory.path().join("new.db");
+        let _db = Db::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        for path in [
+            "",
+            ":memory:",
+            "file:permission-test?mode=memory&cache=shared",
+        ] {
+            assert!(Db::new(path).is_ok(), "failed to open {path}");
+        }
+        assert!(Db::new(directory.path().to_str().unwrap()).is_err());
     }
 
     #[tokio::test]

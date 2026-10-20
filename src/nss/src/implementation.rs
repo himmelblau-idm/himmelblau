@@ -682,7 +682,34 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
             None => return NSS_STATUS_NOTFOUND,
         },
     };
-    let req = ClientRequest::NssInitgroups(account_id.clone());
+    initgroups_for_account(
+        &cfg,
+        c_user,
+        &account_id,
+        primary_gid,
+        start,
+        size,
+        groupsp,
+        limit,
+        errnop,
+    )
+}
+
+// Keep configuration and name mapping at the FFI boundary so the socket protocol
+// and fallback can be exercised against a private daemon without host changes.
+#[allow(clippy::too_many_arguments)]
+unsafe fn initgroups_for_account(
+    cfg: &HimmelblauConfig,
+    c_user: &str,
+    account_id: &str,
+    primary_gid: libc::gid_t,
+    start: &mut libc::c_long,
+    size: &mut libc::c_long,
+    groupsp: &mut *mut libc::gid_t,
+    limit: libc::c_long,
+    errnop: &mut libc::c_int,
+) -> libc::c_int {
+    let req = ClientRequest::NssInitgroups(account_id.to_string());
 
     let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
         Ok(dc) => dc,
@@ -712,11 +739,11 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
             Err(_) => return NSS_STATUS_UNAVAIL,
         };
     }
-    let fallback_gids =
-        match fallback_initgroups_gids(&mut daemon_client, &cfg, c_user, &account_id) {
-            Some(gids) => gids,
-            None => return NSS_STATUS_UNAVAIL,
-        };
+    let fallback_gids = match fallback_initgroups_gids(&mut daemon_client, cfg, c_user, account_id)
+    {
+        Some(gids) => gids,
+        None => return NSS_STATUS_UNAVAIL,
+    };
 
     match append_initgroups_gids(
         fallback_gids,
@@ -977,6 +1004,157 @@ mod tests {
             shell: "/bin/bash".to_string(),
             cacheable: true,
         }
+    }
+
+    // Each response includes the expected request. Reconnection is checked by
+    // accepting a new socket after an intentionally malformed protocol response.
+    #[allow(clippy::unwrap_used, clippy::panic)] // Panics fail the private test server.
+    fn run_initgroups_daemon_case(
+        fast_response: &str,
+        fallback_response: Option<&str>,
+        reconnect: bool,
+        expected_status: libc::c_int,
+        expected_gids: &[libc::gid_t],
+    ) {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
+        use std::time::{Duration, Instant};
+        let path = format!("/tmp/himmel-nss-{}.sock", Uuid::new_v4());
+        let listener = UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let config_file = create_temp_config(&format!(
+            "[global]\ndomains = contoso.com\nsocket_path = {path}\nconnection_timeout = 1\n"
+        ))
+        .unwrap();
+        let cfg = HimmelblauConfig::new(Some(&config_file)).unwrap();
+        fs::remove_file(config_file).unwrap();
+        let fast = fast_response.to_string();
+        let fallback = fallback_response.map(str::to_string);
+        let server = std::thread::spawn(move || {
+            let accept = || {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            stream
+                                .set_read_timeout(Some(Duration::from_secs(2)))
+                                .unwrap();
+                            return stream;
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "client did not connect");
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(e) => panic!("accept: {e}"),
+                    }
+                }
+            };
+            let exchange =
+                |stream: &mut std::os::unix::net::UnixStream, request: &[u8], response: &str| {
+                    let mut received = vec![0; request.len()];
+                    stream.read_exact(&mut received).unwrap();
+                    assert_eq!(received, request);
+                    stream.write_all(response.as_bytes()).unwrap();
+                };
+            let mut stream = accept();
+            exchange(
+                &mut stream,
+                br#"{"NssInitgroups":"alice@contoso.com"}"#,
+                &fast,
+            );
+            if let Some(response) = fallback {
+                if reconnect {
+                    drop(stream);
+                    stream = accept();
+                }
+                exchange(&mut stream, br#""NssGroups""#, &response);
+            }
+        });
+        let mut start = 0;
+        let mut size = 0;
+        let mut groups = std::ptr::null_mut();
+        let mut errno = 0;
+        unsafe {
+            let status = initgroups_for_account(
+                &cfg,
+                "alice",
+                "alice@contoso.com",
+                1000,
+                &mut start,
+                &mut size,
+                &mut groups,
+                0,
+                &mut errno,
+            );
+            let actual = collect_groups(groups, start);
+            libc::free(groups.cast());
+            server.join().unwrap();
+            fs::remove_file(path).unwrap();
+            assert_eq!(status, expected_status);
+            assert_eq!(actual, expected_gids);
+        }
+    }
+
+    const FALLBACK_GROUPS: &str = r#"{"NssGroups":[{"name":"primary","gid":1000,"members":["alice"]},{"name":"team","gid":2000,"members":["ALICE@contoso.com"]},{"name":"other","gid":3000,"members":["bob@contoso.com"]}]}"#;
+
+    #[test]
+    fn initgroups_empty_and_primary_only_responses_use_fallback() {
+        for fast in [r#"{"NssInitgroups":[]}"#, r#"{"NssInitgroups":[1000]}"#] {
+            run_initgroups_daemon_case(
+                fast,
+                Some(FALLBACK_GROUPS),
+                false,
+                NSS_STATUS_SUCCESS,
+                &[2000],
+            );
+        }
+    }
+
+    #[test]
+    fn initgroups_protocol_error_reconnects_for_fallback() {
+        run_initgroups_daemon_case(
+            "!",
+            Some(FALLBACK_GROUPS),
+            true,
+            NSS_STATUS_SUCCESS,
+            &[2000],
+        );
+    }
+
+    #[test]
+    fn initgroups_fallback_failure_and_empty_membership_report_status() {
+        run_initgroups_daemon_case(
+            r#"{"NssInitgroups":[]}"#,
+            Some("!"),
+            false,
+            NSS_STATUS_UNAVAIL,
+            &[],
+        );
+        run_initgroups_daemon_case(
+            r#"{"NssInitgroups":[]}"#,
+            Some(r#"{"NssGroups":[]}"#),
+            false,
+            NSS_STATUS_NOTFOUND,
+            &[],
+        );
+    }
+
+    #[test]
+    fn initgroups_fast_success_and_unknown_user_do_not_enumerate() {
+        run_initgroups_daemon_case(
+            r#"{"NssInitgroups":[1000,2000,2000]}"#,
+            None,
+            false,
+            NSS_STATUS_SUCCESS,
+            &[2000],
+        );
+        run_initgroups_daemon_case(
+            r#"{"NssInitgroups":null}"#,
+            None,
+            false,
+            NSS_STATUS_NOTFOUND,
+            &[],
+        );
     }
 
     #[test]
