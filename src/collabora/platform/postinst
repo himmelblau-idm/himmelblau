@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+# Enable the target image's unit without inspecting or starting host sessions.
+if [ -n "${DPKG_ROOT:-}" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --root="$DPKG_ROOT" --global enable himmelblau-collabora.service >/dev/null 2>&1 || true
+    elif command -v deb-systemd-helper >/dev/null 2>&1; then
+        deb-systemd-helper --user enable himmelblau-collabora.service >/dev/null 2>&1 || true
+    fi
+    exit 0
+fi
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --global enable himmelblau-collabora.service >/dev/null 2>&1 || true
+    for runtime in /run/user/[0-9]*; do
+        [ -d "$runtime" ] || continue
+        uid=${runtime##*/}
+        user=$(getent passwd "$uid" | cut -d: -f1)
+        [ -n "$user" ] || continue
+        runuser -u "$user" -- env XDG_RUNTIME_DIR="$runtime" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+            systemctl --user daemon-reload >/dev/null 2>&1 || true
+        # Starting is a no-op for an active bridge; restarting would invalidate
+        # open documents' in-memory sessions and interrupt their saves.
+        runuser -u "$user" -- env XDG_RUNTIME_DIR="$runtime" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+            systemctl --user start himmelblau-collabora.service >/dev/null 2>&1 || true
+    done
+fi

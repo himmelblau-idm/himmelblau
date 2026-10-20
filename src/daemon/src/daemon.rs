@@ -376,7 +376,7 @@ async fn reconcile_local_groups_once(
         })
         .collect();
 
-    let accounts = match cachelayer.get_nssaccounts().await {
+    let accounts = match cachelayer.get_unexpired_nssaccounts().await {
         Ok(accounts) => accounts,
         Err(_) => {
             warn!("Unable to fetch cached users for local group reconciliation");
@@ -1726,6 +1726,12 @@ mod tests {
     }
 }
 
+fn notify_noop_reload() -> io::Result<()> {
+    let monotonic_usec = NotifyState::monotonic_usec_now()?;
+    sd_notify::notify(&[NotifyState::Reloading, monotonic_usec])?;
+    sd_notify::notify(&[NotifyState::Ready])
+}
+
 async fn process_etc_passwd_group(
     cachelayer: &Resolver<IdProviderProxy>,
 ) -> Result<(), Box<dyn Error>> {
@@ -2398,6 +2404,17 @@ async fn main() -> ExitCode {
                 info!("Stopped resolver");
             });
 
+            // systemd checks for the reload signal handler when it receives READY=1.
+            let mut sighup = match tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::hangup(),
+            ) {
+                Ok(signal) => signal,
+                Err(e) => {
+                    error!("Failed to register SIGHUP handler: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
             info!("Server started ...");
 
             if systemd_booted {
@@ -2435,12 +2452,12 @@ async fn main() -> ExitCode {
                     } => {
                         // Ignore
                     }
-                    Some(()) = async move {
-                        let sigterm = tokio::signal::unix::SignalKind::hangup();
-                        #[allow(clippy::unwrap_used)]
-                        tokio::signal::unix::signal(sigterm).unwrap().recv().await
-                    } => {
-                        // Ignore
+                    Some(()) = sighup.recv() => {
+                        if systemd_booted {
+                            if let Err(e) = notify_noop_reload() {
+                                error!("Failed to acknowledge systemd reload: {}", e);
+                            }
+                        }
                     }
                     Some(()) = async move {
                         let sigterm = tokio::signal::unix::SignalKind::user_defined1();

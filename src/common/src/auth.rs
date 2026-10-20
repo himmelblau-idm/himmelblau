@@ -375,8 +375,21 @@ fn check_bluetooth() -> BluetoothState {
         }
     };
 
-    let objects = match proxy.get_managed_objects() {
-        Ok(o) => o,
+    // Do not let the call D-Bus-activate bluetooth.service: without an adapter
+    // systemd skips the unit, and dbus-daemon then holds the call until its
+    // service_start_timeout (25 s by default) expires, delaying every FIDO login.
+    let objects = match proxy
+        .inner()
+        .call_with_flags::<_, _, zbus::fdo::ManagedObjects>(
+            "GetManagedObjects",
+            zbus::proxy::MethodFlags::NoAutoStart.into(),
+            &(),
+        ) {
+        Ok(Some(o)) => o,
+        Ok(None) => {
+            debug!("BlueZ GetManagedObjects returned no reply");
+            return BluetoothState::NoAdapter;
+        }
         Err(e) => {
             debug!("BlueZ GetManagedObjects failed: {:?}", e);
             return BluetoothState::NoAdapter;
@@ -1986,12 +1999,18 @@ mod tests {
     fn test_password_state(
         printer: Arc<RecordingPrinter>,
     ) -> (AuthenticateState, std::os::unix::net::UnixListener) {
-        fs::create_dir_all("target").expect("Failed to create target directory");
-        let socket_path = format!("target/himmelblau_auth_test_sock_{}", uuid::Uuid::new_v4());
+        let socket_path = std::env::temp_dir().join(format!(
+            "himmelblau_auth_test_sock_{}",
+            uuid::Uuid::new_v4()
+        ));
         let listener = std::os::unix::net::UnixListener::bind(&socket_path)
             .expect("Failed to bind test socket");
-        let daemon_client =
-            DaemonClientBlocking::new(&socket_path).expect("Failed to connect test socket");
+        let daemon_client = DaemonClientBlocking::new(
+            socket_path
+                .to_str()
+                .expect("Temporary test socket path is not valid UTF-8"),
+        )
+        .expect("Failed to connect test socket");
         (
             AuthenticateState {
                 daemon_client,

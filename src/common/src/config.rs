@@ -699,7 +699,8 @@ impl HimmelblauConfig {
         domains.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         if domains.len() > 1 {
             return Err(
-                "Only one Entra domain may be configured; use domain_aliases for aliases".to_string(),
+                "Only one Entra domain may be configured; use domain_aliases for aliases"
+                    .to_string(),
             );
         }
         Ok(domains.into_iter().next())
@@ -1682,6 +1683,17 @@ mod tests {
         );
         config.set("test.com", "tenant_id", "other");
         assert!(config.get_configured_entra_domain().is_err());
+    }
+
+    #[test]
+    fn test_single_entra_domain_allows_empty_oidc_and_case_duplicates() {
+        let mut config = create_empty_config();
+        assert_eq!(config.get_configured_entra_domain().unwrap(), None);
+        config.set("oidc", "app_id", "test-client");
+        assert_eq!(config.get_configured_entra_domain().unwrap(), None);
+        config.set("global", "domains", "example.com,EXAMPLE.COM,example.com");
+        let domain = config.get_configured_entra_domain().unwrap().unwrap();
+        assert!(domain.eq_ignore_ascii_case("example.com"));
     }
 
     #[test]

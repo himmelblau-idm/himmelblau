@@ -71,7 +71,7 @@ SELINUX_PKGS = ["policycoreutils-devel", "selinux-policy-targeted"]
 AUTHSELECT_PKGS = ["authselect"]
 
 DEB_PKGS = COMMON + [p for p, _ in PKG_PAIRS if p]
-RPM_PKGS = COMMON + AUTHSELECT_PKGS + [q for _, q in PKG_PAIRS if q]
+RPM_PKGS = COMMON + AUTHSELECT_PKGS + ["rpm-build"] + [q for _, q in PKG_PAIRS if q]
 
 # enable caching of apt packages: https://docs.docker.com/build/cache/optimize/#use-cache-mounts
 APT_BOOTSTRAP = """\
@@ -159,6 +159,7 @@ PACKAGES = [
     ("selinux", "src/selinux", False),
     ("apparmor", "src/apparmor", False),
     ("o365", "src/o365", False),
+    ("himmelblau-collabora", "src/collabora", False),
     ("himmelblau-orchestrator", "src/orchestrator", False),
 ]
 
@@ -168,6 +169,7 @@ RPM_INTERNAL_REQUIRES = {
     "src/broker": ("himmelblau",),
     "src/sso": ("himmelblau-broker",),
     "src/o365": ("himmelblau",),
+    "src/collabora": ("himmelblau-broker",),
 }
 
 CMD_TAB = "     "
@@ -729,7 +731,7 @@ def render(
             cross_target=cross_target,
         )
     elif dist_name == "test":
-        final_cmd = "CMD cargo test"
+        final_cmd = "CMD python3 scripts/test_hsm_pin_init.py && cargo test"
     elif dist_cfg["family"] == "ebuild":
         # Ebuild generation - lightweight, just runs gen_ebuild.py
         repo_root = Path(__file__).parent.parent.resolve()
