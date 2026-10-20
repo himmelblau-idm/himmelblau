@@ -1090,6 +1090,7 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
+    use tempfile::TempDir;
 
     // Helper function to create temporary configuration files
     fn create_temp_config(contents: &str) -> String {
@@ -1105,9 +1106,21 @@ mod tests {
         file_path
     }
 
+    // Mapping cache path in a fresh temporary directory, which deletes it when dropped.
+    fn temp_mapping_cache_path() -> (TempDir, String) {
+        let dir = tempfile::tempdir().expect("Failed to create temporary directory");
+        let file_path = dir
+            .path()
+            .join("mapping.cache.db")
+            .to_str()
+            .expect("Temporary path is not UTF-8")
+            .to_string();
+        (dir, file_path)
+    }
+
     // Throwaway mapping cache so map_upn_to_name_impl can be tested hermetically.
-    fn create_temp_mapping_cache(rows: &[(&str, &str)]) -> String {
-        let file_path = format!("/tmp/himmelblau_test_mapping_{}.db", uuid::Uuid::new_v4());
+    fn create_temp_mapping_cache(rows: &[(&str, &str)]) -> (TempDir, String) {
+        let (dir, file_path) = temp_mapping_cache_path();
         let conn = rusqlite::Connection::open(&file_path).expect("Failed to create mapping cache");
         conn.execute(
             "CREATE TABLE mapping (upn TEXT PRIMARY KEY, mapped_name TEXT NOT NULL)",
@@ -1121,7 +1134,7 @@ mod tests {
             )
             .expect("Failed to insert mapping");
         }
-        file_path
+        (dir, file_path)
     }
 
     // Helper function to create an empty config (to test defaults without system config interference)
@@ -2353,7 +2366,7 @@ mod tests {
 
     #[test]
     fn test_map_upn_to_name_script_cache_hit() {
-        let cache = create_temp_mapping_cache(&[("first.last@example.com", "first.last")]);
+        let (_dir, cache) = create_temp_mapping_cache(&[("first.last@example.com", "first.last")]);
         assert_eq!(
             script_config().map_upn_to_name_impl("first.last@example.com", &cache),
             "first.last"
@@ -2362,7 +2375,7 @@ mod tests {
 
     #[test]
     fn test_map_upn_to_name_script_no_cache_falls_back_to_cn() {
-        let missing = format!("/tmp/himmelblau_test_mapping_{}.db", uuid::Uuid::new_v4());
+        let (_dir, missing) = temp_mapping_cache_path();
         assert_eq!(
             script_config().map_upn_to_name_impl("first.last@example.com", &missing),
             "first.last"
@@ -2371,7 +2384,7 @@ mod tests {
 
     #[test]
     fn test_map_upn_to_name_script_cache_miss_falls_back_to_cn() {
-        let cache = create_temp_mapping_cache(&[]);
+        let (_dir, cache) = create_temp_mapping_cache(&[]);
         assert_eq!(
             script_config().map_upn_to_name_impl("first.last@example.com", &cache),
             "first.last"
@@ -2380,7 +2393,7 @@ mod tests {
 
     #[test]
     fn test_map_upn_to_name_script_prefers_exact_cache_key() {
-        let cache = create_temp_mapping_cache(&[
+        let (_dir, cache) = create_temp_mapping_cache(&[
             ("First.Last@example.com", "jdoe"),
             ("first.last@example.com", "flast"),
         ]);
@@ -2397,7 +2410,7 @@ mod tests {
 
     #[test]
     fn test_map_upn_to_name_script_read_error_falls_back_to_cn() {
-        let broken = format!("/tmp/himmelblau_test_mapping_{}.db", uuid::Uuid::new_v4());
+        let (_dir, broken) = temp_mapping_cache_path();
         rusqlite::Connection::open(&broken).expect("Failed to create mapping cache");
         assert_eq!(
             script_config().map_upn_to_name_impl("first.last@example.com", &broken),
@@ -2408,7 +2421,7 @@ mod tests {
     #[test]
     fn test_map_upn_to_name_script_login_spelling_is_normalized() {
         // The cache is keyed and valued by what the user typed at login.
-        let cache = create_temp_mapping_cache(&[("First.Last@example.com", "First.Last")]);
+        let (_dir, cache) = create_temp_mapping_cache(&[("First.Last@example.com", "First.Last")]);
         let config = script_config();
         for upn in [
             "first.last@example.com",
@@ -2425,7 +2438,7 @@ mod tests {
 
     #[test]
     fn test_map_upn_to_name_script_keeps_renamed_mapping() {
-        let cache = create_temp_mapping_cache(&[("john.doe@example.com", "jdoe")]);
+        let (_dir, cache) = create_temp_mapping_cache(&[("john.doe@example.com", "jdoe")]);
         assert_eq!(
             script_config_with("../../scripts/test_script_rename.sh")
                 .map_upn_to_name_impl("john.doe@example.com", &cache),
@@ -2437,7 +2450,7 @@ mod tests {
     fn test_map_upn_to_name_script_miss_keeps_upn_when_cn_does_not_map_back() {
         // The script maps jdoe, not john.doe, to john.doe@example.com.
         let config = script_config_with("../../scripts/test_script_rename.sh");
-        let cache = create_temp_mapping_cache(&[]);
+        let (_dir, cache) = create_temp_mapping_cache(&[]);
         let name = config.map_upn_to_name_impl("john.doe@example.com", &cache);
         assert_eq!(name, "john.doe@example.com");
         assert_eq!(
@@ -2449,7 +2462,7 @@ mod tests {
     #[test]
     fn test_map_upn_to_name_script_miss_cn_maps_back() {
         let config = script_config();
-        let cache = create_temp_mapping_cache(&[]);
+        let (_dir, cache) = create_temp_mapping_cache(&[]);
         let name = config.map_upn_to_name_impl("first.last@example.com", &cache);
         assert_eq!(name, "first.last");
         assert_eq!(
@@ -2460,7 +2473,7 @@ mod tests {
 
     #[test]
     fn test_map_upn_to_name_script_other_domain_miss_is_unchanged() {
-        let cache = create_temp_mapping_cache(&[]);
+        let (_dir, cache) = create_temp_mapping_cache(&[]);
         assert_eq!(
             script_config().map_upn_to_name_impl("user@contoso.com", &cache),
             "user@contoso.com"
@@ -2478,7 +2491,7 @@ mod tests {
         "#,
         )))
         .unwrap();
-        let cache = create_temp_mapping_cache(&[]);
+        let (_dir, cache) = create_temp_mapping_cache(&[]);
         assert_eq!(
             config.map_upn_to_name_impl("first.last@example.com", &cache),
             "first.last@example.com"
@@ -2494,7 +2507,7 @@ mod tests {
         "#,
         )))
         .unwrap();
-        let cache = create_temp_mapping_cache(&[]);
+        let (_dir, cache) = create_temp_mapping_cache(&[]);
         assert_eq!(
             config.map_upn_to_name_impl("First.Last@example.com", &cache),
             "First.Last"
