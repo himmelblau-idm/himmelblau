@@ -226,6 +226,7 @@ mod tests {
         user_get_error: AtomicUsize,
         user_get_stall: AtomicBool,
         user_get_release: Notify,
+        user_get_goes_offline: AtomicBool,
         auth_token: RwLock<UserToken>,
     }
 
@@ -247,6 +248,7 @@ mod tests {
                 user_get_error: AtomicUsize::new(0),
                 user_get_stall: AtomicBool::new(false),
                 user_get_release: Notify::new(),
+                user_get_goes_offline: AtomicBool::new(false),
                 auth_token: RwLock::new(test_token()),
             }
         }
@@ -303,6 +305,12 @@ mod tests {
             self.user_get_calls.fetch_add(1, Ordering::AcqRel);
             if self.user_get_stall.load(Ordering::Acquire) {
                 self.user_get_release.notified().await;
+            }
+            if self.user_get_goes_offline.load(Ordering::Acquire) {
+                self.set_cache_state(CacheState::OfflineNextCheck(
+                    SystemTime::now() + Duration::from_secs(60),
+                ));
+                return Ok(UserTokenState::UseCached);
             }
             match self.user_get_error.load(Ordering::Acquire) {
                 1 => Err(IdpError::NotFound {
@@ -1194,6 +1202,48 @@ mod tests {
             2
         );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
+    async fn queued_refresh_stops_a_domain_once_a_refresh_finds_it_offline() {
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let resolver = setup_resolver().await;
+        let mut dbtxn = resolver.db.write().await;
+        let second = UserToken {
+            name: "second".to_string(),
+            spn: "second@example.com".to_string(),
+            uuid: uuid::Uuid::new_v4(),
+            gidnumber: 3000,
+            real_gidnumber: Some(3000),
+            ..test_token()
+        };
+        dbtxn.update_account(&second, 0).unwrap();
+        dbtxn.commit().unwrap();
+        resolver
+            .client
+            .user_get_goes_offline
+            .store(true, Ordering::Release);
+
+        for spn in [test_token().spn, second.spn.clone()] {
+            resolver
+                .get_nssaccount_name(&spn, OnExpiry::RefreshInBackground)
+                .await
+                .unwrap();
+        }
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+
+        assert_eq!(
+            resolver.client.probe_online_calls.load(Ordering::Acquire),
+            1
+        );
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+        assert!(resolver
+            .identity_refreshes
+            .lock()
+            .await
+            .next_allowed
+            .get(&second.spn)
+            .is_some_and(|retry| *retry <= SystemTime::now() + Duration::from_secs(15)));
     }
 
     #[tokio::test]
@@ -2890,7 +2940,7 @@ where
     // On shutdown, finish the refresh in progress but skip the rest of the batch.
     async fn refresh_queued_identities<T>(&self, shutdown_rx: &broadcast::Receiver<T>) {
         let queued = std::mem::take(&mut self.identity_refreshes.lock().await.queued);
-        // Identities of one domain share a provider, so probe each domain once.
+        // Identities of one domain share a provider: probe once, until a refresh finds it offline.
         let mut reachable: HashMap<String, bool> = HashMap::new();
         for spn in queued {
             if !shutdown_rx.is_empty() {
@@ -2942,6 +2992,9 @@ where
             };
             if self.refresh_usertoken(&id, Some(token)).await.is_err() {
                 warn!(account_id = %id, "Failed to refresh an expired cached identity");
+            }
+            if !matches!(self.get_cachestate(Some(&spn)).await, CacheState::Online) {
+                reachable.insert(domain.to_string(), false);
             }
         }
     }
