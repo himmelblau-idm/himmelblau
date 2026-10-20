@@ -19,7 +19,7 @@ use kanidm_lib_crypto::CryptoPolicy;
 use kanidm_lib_crypto::DbPasswordV1;
 use kanidm_lib_crypto::Password;
 use libc::umask;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use tokio::sync::{Mutex, MutexGuard};
 use uuid::Uuid;
 
@@ -151,10 +151,31 @@ pub enum DbError {
     Tpm,
 }
 
+// Use descriptor-based chmod only after a no-follow open and regular-file check.
+// O_NONBLOCK prevents a substituted FIFO from blocking this privileged path.
+// As with SQLite itself, the database's parent directory must be trusted.
+fn open_database_file_for_hardening(path: &str) -> std::io::Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "database path is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
 impl Db {
     pub fn new(path: &str) -> Result<Self, DbError> {
         let before = unsafe { umask(0o0077) };
-        let opened = Connection::open(path);
+        // Reject symlink database paths before SQLite canonicalizes them.
+        let opened = Connection::open_with_flags(
+            path,
+            OpenFlags::default() | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        );
         let _ = unsafe { umask(before) };
         let conn = opened.map_err(|e| {
             error!(err = ?e, "rusqulite error");
@@ -166,13 +187,7 @@ impl Db {
         if let Some(path) = conn.path().filter(|path| !path.is_empty()) {
             for suffix in ["", "-wal", "-shm", "-journal"] {
                 let file_path = format!("{path}{suffix}");
-                let mut options = std::fs::OpenOptions::new();
-                options.read(true);
-                if !suffix.is_empty() {
-                    // Sidecars belong to SQLite, not arbitrary symlink targets.
-                    options.custom_flags(libc::O_NOFOLLOW);
-                }
-                let file = match options.open(&file_path) {
+                let file = match open_database_file_for_hardening(&file_path) {
                     Ok(file) => file,
                     Err(e) if !suffix.is_empty() && e.kind() == std::io::ErrorKind::NotFound => {
                         continue
@@ -1197,6 +1212,40 @@ mod tests {
         std::fs::remove_file(sidecar).unwrap();
         std::fs::remove_file(target).unwrap();
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn database_hardening_rejects_primary_symlinks_and_path_replacement() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir =
+            std::env::temp_dir().join(format!("himmelblau-db-primary-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let target = dir.join("target");
+        std::fs::write(&target, "unrelated").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let path = dir.join("cache.db");
+        symlink(&target, &path).unwrap();
+        assert!(super::Db::new(path.to_str().unwrap()).is_err());
+        std::fs::remove_file(&path).unwrap();
+        let original_db = super::Db::new(path.to_str().unwrap()).unwrap();
+        let file = super::open_database_file_for_hardening(path.to_str().unwrap()).unwrap();
+        std::fs::rename(&path, dir.join("original")).unwrap();
+        symlink(&target, &path).unwrap();
+        // A replacement before the hardening open is rejected atomically.
+        assert!(super::open_database_file_for_hardening(path.to_str().unwrap()).is_err());
+        // A replacement after the open cannot redirect descriptor-based chmod.
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+        assert!(super::open_database_file_for_hardening(dir.to_str().unwrap()).is_err());
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "unrelated");
+        drop(original_db);
+        drop(file);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     use super::{Cache, CacheTxn, Db, KeyStoreTxn};
