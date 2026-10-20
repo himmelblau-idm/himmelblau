@@ -989,7 +989,12 @@ impl HimmelblauConfig {
             .as_ref()
             .and_then(|cache| cache.lookup_mapped_name(upn));
         match cached {
-            Some(mapped) if is_primary_cn && mapped.eq_ignore_ascii_case(name) => {
+            Some(mapped)
+                if is_primary_cn
+                    && mapped.eq_ignore_ascii_case(name)
+                    && (mapped == name.to_lowercase()
+                        || self.script_maps_to(&name.to_lowercase(), upn)) =>
+            {
                 name.to_lowercase()
             }
             Some(mapped) => mapped,
@@ -2426,6 +2431,24 @@ mod tests {
                 config.map_upn_to_name_impl(upn, &cache),
                 "first.last",
                 "{upn} should map to first.last"
+            );
+        }
+    }
+
+    #[test]
+    fn test_map_upn_to_name_preserves_case_sensitive_script_roundtrip() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, cache) = create_temp_mapping_cache(&[("First.Last@example.com", "First.Last")]);
+        let script = dir.path().join("case-sensitive.sh");
+        std::fs::write(&script, "#!/bin/sh\nif [ \"$1\" = First.Last ]; then echo First.Last@example.com; else echo \"$1\"; fi\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = script_config_with(script.to_str().unwrap());
+        for upn in ["First.Last@example.com", "first.last@example.com"] {
+            let name = config.map_upn_to_name_impl(upn, &cache);
+            assert_eq!(name, "First.Last");
+            assert_eq!(
+                config.map_name_to_upn_impl(&name, &create_temp_passwd(PASSWD_MINIMAL)),
+                Some("First.Last@example.com".to_string())
             );
         }
     }
