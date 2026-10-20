@@ -96,9 +96,7 @@ impl MappedNameCache {
         Ok(())
     }
 
-    /// Returns the cached name for a UPN, or `None` on a miss or a read error.
-    /// UPNs are case-insensitive, so the key is matched regardless of case,
-    /// preferring an exact match.
+    /// Cached name for a UPN, matched case-insensitively with an exact match first.
     pub fn lookup_mapped_name(&self, upn: &str) -> Option<String> {
         if !upn.contains('@') {
             return None;

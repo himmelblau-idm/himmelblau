@@ -953,13 +953,9 @@ impl HimmelblauConfig {
         Some(account_id.to_string())
     }
 
-    /// Map a UPN to the local name of the account. Without a mapping script,
-    /// cn mapping returns the local part of a primary-domain UPN. With a
-    /// script, the name comes from the mapping cache; on a miss the local part
-    /// is used when the script maps it back to the UPN, and a cached name that
-    /// only differs in case from it is normalized to it. The result must not
-    /// depend on the state of the cache, or one account gets two names.
-    /// Anything else is returned unchanged.
+    /// Map a UPN to the local name. With a mapping script the name comes from the
+    /// mapping cache, falling back to the lowercase cn when the script maps it back
+    /// to the UPN, so the result does not depend on the cache state.
     pub fn map_upn_to_name(&self, upn: &str) -> String {
         self.map_upn_to_name_impl(upn, MAPPED_NAME_CACHE)
     }
@@ -1106,7 +1102,6 @@ mod tests {
         file_path
     }
 
-    // Mapping cache path in a fresh temporary directory, which deletes it when dropped.
     fn temp_mapping_cache_path() -> (TempDir, String) {
         let dir = tempfile::tempdir().expect("Failed to create temporary directory");
         let file_path = dir
@@ -2420,7 +2415,6 @@ mod tests {
 
     #[test]
     fn test_map_upn_to_name_script_login_spelling_is_normalized() {
-        // The cache is keyed and valued by what the user typed at login.
         let (_dir, cache) = create_temp_mapping_cache(&[("First.Last@example.com", "First.Last")]);
         let config = script_config();
         for upn in [
