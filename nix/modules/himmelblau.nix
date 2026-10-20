@@ -356,6 +356,10 @@ in
           serviceConfig = {
             Type = "oneshot";
             ExecStart = "${cfg.daemonPackage}/libexec/himmelblau-init-hsm-pin";
+            RuntimeDirectory = "himmelblau-hsm-pin";
+            RuntimeDirectoryMode = "0700";
+            TemporaryFileSystem = "/run/himmelblau-hsm-pin:rw,mode=0700";
+            UMask = "0077";
           };
         };
 

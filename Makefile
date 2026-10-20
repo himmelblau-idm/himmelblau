@@ -157,10 +157,10 @@ install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper
 	  gentoo) \
 		PKGTYPE="gentoo"; INSTALL_CMD='python3 scripts/install_local.py --no-build --destdir $(DESTDIR)/';; \
 	  arch|archlinux|manjaro|cachyos) \
-		PKGTYPE="arch"; INSTALL_CMD='pacman -U --noconfirm ./packaging/himmelblau-*.pkg.tar.zst';; \
+		PKGTYPE="arch"; INSTALL_CMD='pacman -U --noconfirm ./packaging/himmelblau-[0-9]*.pkg.tar.zst';; \
 	esac; \
 	if [ -z "$$PKGTYPE" ] && command -v pacman >/dev/null 2>&1; then \
-		PKGTYPE="arch"; INSTALL_CMD='pacman -U --noconfirm ./packaging/himmelblau-*.pkg.tar.zst'; \
+		PKGTYPE="arch"; INSTALL_CMD='pacman -U --noconfirm ./packaging/himmelblau-[0-9]*.pkg.tar.zst'; \
 	fi; \
 	if [ -z "$$PKGTYPE" ]; then echo "Error: unknown distro family for install"; exit 2; fi; \
 	if [ "$$PKGTYPE" = "deb" ]; then \
@@ -168,7 +168,7 @@ install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper
 	elif [ "$$PKGTYPE" = "rpm" ]; then \
 	  ls ./packaging/*.rpm >/dev/null 2>&1 || { echo "Error: no .rpm packages in ./packaging/ — run 'make' first"; exit 4; }; \
 	elif [ "$$PKGTYPE" = "arch" ]; then \
-	  ls ./packaging/himmelblau-*.pkg.tar.zst >/dev/null 2>&1 || { echo "Error: no Arch packages in ./packaging/ — run 'make arch' first"; exit 4; }; \
+	  ls ./packaging/himmelblau-[0-9]*.pkg.tar.zst >/dev/null 2>&1 || { echo "Error: no Arch core package in ./packaging/ — run 'make arch' first"; exit 4; }; \
 	fi; \
 	echo "Installing..."; \
 	sh -c "$$INSTALL_CMD"; \
@@ -192,8 +192,20 @@ uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper/p
 	fi; \
 	if [ "$$PKGTYPE" = "arch" ]; then \
 		pkgs="himmelblau"; \
+		installed=$$(pacman -Qq) || { echo "Error: cannot query installed Arch packages."; exit 1; }; \
+		if printf '%s\n' "$$installed" | grep -Fxq himmelblau-collabora; then \
+			sudo env -u DPKG_ROOT sh src/collabora/platform/prerm remove; \
+			pkgs="$$pkgs himmelblau-collabora"; \
+		fi; \
 	else \
 		pkgs="himmelblau himmelblau-orchestrator himmelblau-apparmor himmelblau-broker himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso himmelblau-sso-policies nss-himmelblau pam-himmelblau"; \
+		if [ "$$PKGTYPE" = "deb" ]; then \
+			installed=$$(dpkg-query -W -f='$${Package} $${db:Status-Status}\n') || { echo "Error: cannot query installed Debian packages."; exit 1; }; \
+			if printf '%s\n' "$$installed" | awk '$$1 == "himmelblau-collabora" && $$2 != "not-installed" && $$2 != "config-files" { found = 1 } END { exit !found }'; then pkgs="$$pkgs himmelblau-collabora"; fi; \
+		else \
+			installed=$$(rpm -qa --qf '%{NAME}\n') || { echo "Error: cannot query installed RPM packages."; exit 1; }; \
+			if printf '%s\n' "$$installed" | grep -Fxq himmelblau-collabora; then pkgs="$$pkgs himmelblau-collabora"; fi; \
+		fi; \
 	fi; \
 	echo "Removing: $$pkgs"; \
 	$$PM $$pkgs; \

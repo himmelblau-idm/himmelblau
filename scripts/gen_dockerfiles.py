@@ -159,6 +159,7 @@ PACKAGES = [
     ("selinux", "src/selinux", False),
     ("apparmor", "src/apparmor", False),
     ("o365", "src/o365", False),
+    ("himmelblau-collabora", "src/collabora", False),
     ("himmelblau-orchestrator", "src/orchestrator", False),
 ]
 
@@ -168,6 +169,7 @@ RPM_INTERNAL_REQUIRES = {
     "src/broker": ("himmelblau",),
     "src/sso": ("himmelblau-broker",),
     "src/o365": ("himmelblau",),
+    "src/collabora": ("himmelblau-broker",),
 }
 
 CMD_TAB = "     "

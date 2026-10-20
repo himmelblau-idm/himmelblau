@@ -135,6 +135,20 @@ let
             '';
           };
 
+          himmelblau-collabora = attrs: {
+            postInstall = (attrs.postInstall or "") + ''
+              install -Dm644 platform/himmelblau-collabora.service \
+                $out/lib/systemd/user/himmelblau-collabora.service
+              install -Dm644 platform/himmelblau-collabora.desktop \
+                $out/etc/xdg/autostart/himmelblau-collabora.desktop
+
+              substituteInPlace $out/lib/systemd/user/himmelblau-collabora.service \
+                --replace-fail "/usr/bin/himmelblau-collabora" "$out/bin/himmelblau-collabora"
+              substituteInPlace $out/etc/xdg/autostart/himmelblau-collabora.desktop \
+                --replace-fail "Exec=systemctl " "Exec=${pkgs.systemd}/bin/systemctl "
+            '';
+          };
+
           pam_himmelblau = attrs: {
             extraRustcOptsForBuildRs = [
               "-l"
@@ -226,6 +240,7 @@ rec {
     sso = cargo_nix.workspaceMembers."sso".build;
     broker = cargo_nix.workspaceMembers."broker".build;
     o365 = cargo_nix.workspaceMembers."o365".build;
+    collabora = cargo_nix.workspaceMembers."himmelblau-collabora".build;
     pam = cargo_nix.workspaceMembers."pam_himmelblau".build;
     nss = cargo_nix.workspaceMembers."nss_himmelblau".build;
   };

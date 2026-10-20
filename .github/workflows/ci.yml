@@ -45,6 +45,8 @@ jobs:
           persist-credentials: false
       - name: Test maintenance diagnostics and isolation
         run: PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_stable_maintenance.py
+      - name: Test OBS credential ordering
+        run: PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_obs_workflow.py
       - name: Test slop guard policy and maintainer overrides
         run: node --test .github/scripts/test_slop_checks.js
 
@@ -222,6 +224,9 @@ jobs:
       - name: "Run tests"
         run: |
           make test-hsm-pin-init
+          python3 scripts/test_collabora_packaging.py
+          python3 scripts/test_collabora_distribution_packaging.py
+          python3 scripts/test_sso_policies_scripts.py
           cargo test
         continue-on-error: false
       - name: "Test aad-tool without donation messages"
