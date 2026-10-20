@@ -30,7 +30,7 @@ serde_cbor-0-11-2 = { package = "serde_cbor", path = "src/serde_cbor" }
 webpki-roots-0-26-11 = { package = "webpki-roots", path = "src/overrides/webpki-roots/0.26.11" }
 
 [workspace.package]
-version = "3.1.14"
+version = "3.1.15"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
