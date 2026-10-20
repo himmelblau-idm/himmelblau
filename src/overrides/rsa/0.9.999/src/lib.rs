@@ -174,7 +174,7 @@ pub struct RsaPrivateKey {
 impl Clone for RsaPrivateKey {
     fn clone(&self) -> Self {
         Self {
-            pkcs8_der: Zeroizing::new(self.pkcs8_der.as_slice().to_vec()),
+            pkcs8_der: self.pkcs8_der.clone(),
             public_key: self.public_key.clone(),
         }
     }
@@ -201,11 +201,10 @@ impl traits::PublicKeyParts for RsaPrivateKey {
 impl RsaPrivateKey {
     pub fn new<R>(_rng: &mut R, bits: usize) -> errors::Result<Self> {
         let size = match bits {
-            0 => return Err(errors::Error),
-            1..=2048 => aws_rsa::KeySize::Rsa2048,
-            2049..=3072 => aws_rsa::KeySize::Rsa3072,
-            3073..=4096 => aws_rsa::KeySize::Rsa4096,
-            4097..=8192 => aws_rsa::KeySize::Rsa8192,
+            2048 => aws_rsa::KeySize::Rsa2048,
+            3072 => aws_rsa::KeySize::Rsa3072,
+            4096 => aws_rsa::KeySize::Rsa4096,
+            8192 => aws_rsa::KeySize::Rsa8192,
             _ => return Err(errors::Error),
         };
         Self::from_private_decrypting_key(aws_rsa::PrivateDecryptingKey::generate(size)?)
@@ -220,16 +219,18 @@ impl RsaPrivateKey {
     }
 
     fn from_private_decrypting_key(key: aws_rsa::PrivateDecryptingKey) -> errors::Result<Self> {
-        let pkcs8_der = AsDer::<Pkcs8V1Der<'static>>::as_der(&key)?
-            .as_ref()
-            .to_vec();
+        let pkcs8_der = Zeroizing::new(
+            AsDer::<Pkcs8V1Der<'static>>::as_der(&key)?
+                .as_ref()
+                .to_vec(),
+        );
         let public_encrypting_key = key.public_key();
         let public_der = AsDer::<PublicKeyX509Der<'static>>::as_der(&public_encrypting_key)?
             .as_ref()
             .to_vec();
         let public_key = RsaPublicKey::from_public_key(aws_rsa::PublicKey::from_der(&public_der)?)?;
         Ok(Self {
-            pkcs8_der: Zeroizing::new(pkcs8_der),
+            pkcs8_der,
             public_key,
         })
     }
@@ -270,10 +271,12 @@ impl pkcs1_crate::DecodeRsaPrivateKey for RsaPrivateKey {
     fn from_pkcs1_der(bytes: &[u8]) -> pkcs1_crate::Result<Self> {
         let key_pair =
             aws_signature::RsaKeyPair::from_der(bytes).map_err(|_| pkcs1_crate::Error::Crypto)?;
-        let pkcs8_der = AsDer::<Pkcs8V1Der<'static>>::as_der(&key_pair)
-            .map_err(|_| pkcs1_crate::Error::Crypto)?
-            .as_ref()
-            .to_vec();
+        let pkcs8_der = Zeroizing::new(
+            AsDer::<Pkcs8V1Der<'static>>::as_der(&key_pair)
+                .map_err(|_| pkcs1_crate::Error::Crypto)?
+                .as_ref()
+                .to_vec(),
+        );
         let key = aws_rsa::PrivateDecryptingKey::from_pkcs8(&pkcs8_der)
             .map_err(|_| pkcs1_crate::Error::Crypto)?;
         Self::from_private_decrypting_key(key).map_err(|_| pkcs1_crate::Error::Crypto)
@@ -304,7 +307,7 @@ impl pkcs8::DecodePrivateKey for RsaPrivateKey {
 
 impl pkcs8::EncodePrivateKey for RsaPrivateKey {
     fn to_pkcs8_der(&self) -> pkcs8::Result<pkcs8::SecretDocument> {
-        pkcs8::SecretDocument::try_from(self.pkcs8_der.as_slice().to_vec())
+        pkcs8::SecretDocument::try_from(self.pkcs8_der.as_slice())
             .map_err(|_| pkcs8::Error::KeyMalformed)
     }
 }
@@ -557,17 +560,31 @@ impl traits::SignatureScheme for Pkcs1v15Sign {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Pss {
     digest: DigestAlgorithm,
+    salt_len: Option<usize>,
 }
 
 impl Pss {
     pub fn new<D: SelectDigestAlgorithm>() -> Self {
         Self {
             digest: D::DIGEST_ALGORITHM,
+            salt_len: None,
         }
     }
 
-    pub fn new_with_salt<D: SelectDigestAlgorithm>(_salt_len: usize) -> Self {
-        Self::new::<D>()
+    /// The backend supports digest-length salt only. Other lengths are rejected
+    /// by signing and verification rather than silently changing the request.
+    pub fn new_with_salt<D: SelectDigestAlgorithm>(salt_len: usize) -> Self {
+        Self {
+            digest: D::DIGEST_ALGORITHM,
+            salt_len: Some(salt_len),
+        }
+    }
+
+    fn validate_salt(self, digest_len: usize) -> errors::Result<()> {
+        if self.salt_len.is_some_and(|len| len != digest_len) {
+            return Err(errors::Error);
+        }
+        Ok(())
     }
 }
 
@@ -578,6 +595,7 @@ impl traits::SignatureScheme for Pss {
         private_key: &RsaPrivateKey,
         hashed: &[u8],
     ) -> errors::Result<Vec<u8>> {
+        self.validate_salt(hashed.len())?;
         let digest = self.digest.aws_digest(hashed)?;
         let pair = private_key.key_pair().map_err(|_| errors::Error)?;
         let mut signature = vec![0; pair.public_modulus_len()];
@@ -591,6 +609,7 @@ impl traits::SignatureScheme for Pss {
         hashed: &[u8],
         signature: &[u8],
     ) -> errors::Result<()> {
+        self.validate_salt(hashed.len())?;
         let digest = self.digest.aws_digest(hashed)?;
         aws_signature::UnparsedPublicKey::new(
             self.digest.pss_verification_algorithm(),
@@ -1025,6 +1044,43 @@ mod tests {
     }
 
     #[test]
+    fn pss_explicit_salt_lengths_are_enforced() {
+        fn check<D: SelectDigestAlgorithm + sha2::Digest>(key: &RsaPrivateKey, len: usize) {
+            let hashed = hash::<D>(b"explicit PSS salt");
+            let public_key = key.to_public_key();
+            let signature = key
+                .sign_with_rng(
+                    &mut SystemRandom::new(),
+                    Pss::new_with_salt::<D>(len),
+                    &hashed,
+                )
+                .unwrap();
+            public_key
+                .verify(Pss::new_with_salt::<D>(len), &hashed, &signature)
+                .unwrap();
+            public_key
+                .verify(Pss::new::<D>(), &hashed, &signature)
+                .unwrap();
+            for unsupported in [0, len - 1, len + 1] {
+                assert!(key
+                    .sign_with_rng(
+                        &mut SystemRandom::new(),
+                        Pss::new_with_salt::<D>(unsupported),
+                        &hashed
+                    )
+                    .is_err());
+                assert!(public_key
+                    .verify(Pss::new_with_salt::<D>(unsupported), &hashed, &signature)
+                    .is_err());
+            }
+        }
+        let key = test_key();
+        check::<sha2::Sha256>(&key, 32);
+        check::<sha2::Sha384>(&key, 48);
+        check::<sha2::Sha512>(&key, 64);
+    }
+
+    #[test]
     fn oaep_round_trips_with_supported_digests_and_label() {
         let key = test_key();
         let public_key = key.to_public_key();
@@ -1138,6 +1194,18 @@ mod tests {
             <RsaPrivateKey as pkcs8::DecodePrivateKey>::from_pkcs8_pem(&pkcs8_pem).unwrap();
         assert_eq!(key.n(), imported.n());
         assert_eq!(key.e(), imported.e());
+    }
+
+    #[test]
+    fn unsupported_key_sizes_are_not_rounded_up() {
+        let mut rng = SystemRandom::new();
+        for bits in [1, 1024, 2047, 2049, 3071, 3073, 4095, 4097, 8191, 8193] {
+            assert!(
+                RsaPrivateKey::new(&mut rng, bits).is_err(),
+                "accepted {bits}"
+            );
+        }
+        assert_eq!(RsaPrivateKey::new(&mut rng, 2048).unwrap().n().bits(), 2048);
     }
 
     #[test]
