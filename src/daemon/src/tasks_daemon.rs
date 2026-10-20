@@ -573,7 +573,11 @@ fn new_subid_temp_file(subid_file: &Path, dir: &Path) -> io::Result<NamedTempFil
             .open("/proc/thread-self/attr/fscreate")?;
         match unsafe { libc::write(attr.as_raw_fd(), label.as_ptr().cast(), label.len()) } {
             -1 => Err(io::Error::last_os_error()),
-            _ => Ok(()),
+            written if written as usize == label.len() => Ok(()),
+            _ => Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "short fscreate write",
+            )),
         }
     };
     let path = CString::new(subid_file.as_os_str().as_bytes())?;
@@ -586,22 +590,30 @@ fn new_subid_temp_file(subid_file: &Path, dir: &Path) -> io::Result<NamedTempFil
             label.len(),
         )
     };
-    if len <= 0 {
+    if len < 0 {
+        let error = io::Error::last_os_error();
+        // Absence of a label is normal on hosts without SELinux. Other failures
+        // do not establish absence and must not silently replace a labeled file.
+        return match error.raw_os_error() {
+            Some(libc::ENODATA) | Some(libc::ENOTSUP) => NamedTempFile::new_in(dir),
+            _ => Err(error),
+        };
+    }
+    if len == 0 {
         return NamedTempFile::new_in(dir);
     }
-    let labeled = fscreate(&label[..len as usize]);
-    if let Err(e) = &labeled {
-        tracing::warn!(
-            "Cannot keep the SELinux label of {}: {}",
-            subid_file.display(),
-            e
-        );
-    }
+    new_labeled_subid_temp_file(dir, &label[..len as usize], fscreate)
+}
+
+fn new_labeled_subid_temp_file(
+    dir: &Path,
+    label: &[u8],
+    mut fscreate: impl FnMut(&[u8]) -> io::Result<()>,
+) -> io::Result<NamedTempFile> {
+    fscreate(label)?;
     let tmp = NamedTempFile::new_in(dir);
-    if labeled.is_ok() {
-        // An empty context resets the file creation context of this thread.
-        fscreate(&[])?;
-    }
+    // Always reset the thread context, even if creating the temporary file failed.
+    fscreate(&[])?;
     tmp
 }
 
@@ -759,18 +771,16 @@ fn claim_local_task_name(
         Err(e) if e.kind() == io::ErrorKind::NotFound => HashMap::new(),
         Err(e) => return Err(format!("Failed to read {}: {}", state.display(), e)),
     };
-    // Migrate legacy UPN-keyed state only when the current UPN matches.
-    let legacy = names.remove(&owner.upn.to_lowercase());
-    // So does an owner whose tenant became known after its key was recorded with a nil tenant.
+    // A UPN is mutable and may have been reassigned: keep legacy UPN entries as
+    // separate holders. Reclaiming their name parks the range rather than adopting it.
+    // Only an immutable object key may migrate when its tenant becomes known.
     let nil_tenant = LocalTaskOwner {
         tenant_id: None,
         ..owner.clone()
     };
-    let legacy = legacy.or_else(|| {
-        owner
-            .tenant_id
-            .and_then(|_| names.remove(&nil_tenant.key()))
-    });
+    let legacy = owner
+        .tenant_id
+        .and_then(|_| names.remove(&nil_tenant.key()));
     let migrated = legacy.is_some();
     let owner = owner.key();
     let previous = names.remove(&owner).or(legacy);
@@ -798,9 +808,12 @@ fn claim_local_task_name(
     if previous.as_ref().map(TaskName::name) == Some(name) && names.len() == count && !migrated {
         return Ok(());
     }
-    let previous = previous
-        .filter(|p| p.name() != name && !names.values().any(|h| h.name() == p.name()));
-    retire(previous.as_ref().map(|p| (p.name(), p.is_local())), &evicted)?;
+    let previous =
+        previous.filter(|p| p.name() != name && !names.values().any(|h| h.name() == p.name()));
+    retire(
+        previous.as_ref().map(|p| (p.name(), p.is_local())),
+        &evicted,
+    )?;
 
     let parent = state
         .parent()
@@ -1624,17 +1637,26 @@ mod tests {
 
         assert_eq!(record_local_task_name(&state, "a@example.com", "bob"), None);
         let mut evicted = vec![];
-        claim_local_task_name(&state, &task_owner("b@example.com"), "bob", false, |_, stale| {
-            evicted = stale.to_vec();
-            Ok(())
-        })
+        claim_local_task_name(
+            &state,
+            &task_owner("b@example.com"),
+            "bob",
+            false,
+            |_, stale| {
+                evicted = stale.to_vec();
+                Ok(())
+            },
+        )
         .unwrap();
         assert_eq!(evicted, [task_owner("a@example.com").key()]);
 
-        let failed =
-            claim_local_task_name(&state, &task_owner("b@example.com"), "robert", false, |_, _| {
-                Err("x".into())
-            });
+        let failed = claim_local_task_name(
+            &state,
+            &task_owner("b@example.com"),
+            "robert",
+            false,
+            |_, _| Err("x".into()),
+        );
         assert!(failed.is_err());
         assert_eq!(
             record_local_task_name(&state, "b@example.com", "robert"),
@@ -1676,30 +1698,112 @@ mod tests {
         ] {
             let other_state = tmpdir.path().join(replacement.key());
             fs::write(&other_state, &before).unwrap();
-            claim_local_task_name(&other_state, &replacement, "bob", false, |previous, evicted| {
-                assert_eq!(previous, None);
-                assert_eq!(evicted, [owner.key()]);
-                Ok(())
-            })
+            claim_local_task_name(
+                &other_state,
+                &replacement,
+                "bob",
+                false,
+                |previous, evicted| {
+                    assert_eq!(previous, None);
+                    assert_eq!(evicted, [owner.key()]);
+                    Ok(())
+                },
+            )
             .unwrap();
         }
     }
 
     #[test]
-    fn legacy_upn_owner_is_upgraded_without_retiring_its_name() {
+    fn legacy_upn_owner_is_evicted_without_transferring_its_identity() {
         let tmpdir = tempfile::tempdir().unwrap();
         let state = tmpdir.path().join("local-task-names.json");
         fs::write(&state, br#"{"a@example.com":"bob"}"#).unwrap();
         let owner = task_owner("A@Example.com");
         claim_local_task_name(&state, &owner, "bob", false, |previous, evicted| {
             assert_eq!(previous, None);
-            assert!(evicted.is_empty());
+            assert_eq!(evicted, ["a@example.com"]);
             Ok(())
         })
         .unwrap();
         let names: HashMap<String, String> =
             serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
         assert_eq!(names, HashMap::from([(owner.key(), "bob".into())]));
+    }
+
+    #[test]
+    fn reassigned_legacy_upn_never_inherits_subid_ranges() {
+        for name in ["bob", "robert"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let state = tmp.path().join("names.json");
+            let subid = tmp.path().join("subuid");
+            fs::write(&state, br#"{"a@example.com":"bob"}"#).unwrap();
+            fs::write(&subid, "bob:100000:65536\n").unwrap();
+            let owner = task_owner("a@example.com");
+            claim_local_task_name(&state, &owner, name, false, |previous, evicted| {
+                assert!(previous.is_none());
+                reclaim_subid_range(&[owner.key()], name, evicted, &subid)
+            })
+            .unwrap();
+            add_subid_entry(name, 300000, 65536, (100000, 1000000), &subid).unwrap();
+            let contents = fs::read_to_string(&subid).unwrap();
+            assert!(!contents
+                .lines()
+                .any(|row| row == format!("{name}:100000:65536")));
+            if name == "bob" {
+                assert!(contents.contains("himmelblau-retired/a@example.com:100000:65536"));
+            } else {
+                // The different legacy name remains a separate holder, not this owner.
+                let names: HashMap<String, TaskName> =
+                    serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+                assert_eq!(names["a@example.com"].name(), "bob");
+                assert_eq!(names[&owner.key()].name(), "robert");
+            }
+        }
+    }
+
+    #[test]
+    fn subid_creation_context_failure_never_creates_an_unlabeled_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = new_labeled_subid_temp_file(tmp.path(), b"shadow_t", |_| {
+            Err(io::Error::from_raw_os_error(libc::EACCES))
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn subid_creation_context_is_reset_after_temp_creation_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut contexts = Vec::new();
+        let result =
+            new_labeled_subid_temp_file(&tmp.path().join("missing"), b"shadow_t", |label| {
+                contexts.push(label.to_vec());
+                Ok(())
+            });
+        assert!(result.is_err());
+        assert_eq!(contexts, [b"shadow_t".to_vec(), Vec::new()]);
+    }
+
+    #[test]
+    fn subid_creation_context_reset_failure_discards_temp_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = new_labeled_subid_temp_file(tmp.path(), b"shadow_t", |label| {
+            if label.is_empty() {
+                Err(io::Error::from_raw_os_error(libc::EACCES))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn unreadable_subid_label_does_not_create_a_replacement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("missing");
+        assert!(new_subid_temp_file(&missing, tmp.path()).is_err());
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 0);
     }
 
     #[test]
@@ -1783,12 +1887,14 @@ mod tests {
         let state = tmpdir.path().join("local-task-names.json");
         for contents in [b"{".as_slice(), b"[]", b"null", br#"{"a":42}"#] {
             fs::write(&state, contents).unwrap();
-            assert!(
-                claim_local_task_name(&state, &task_owner("a@example.com"), "bob", false, |_, _| {
-                    panic!("invalid state must abort before retirement")
-                })
-                .is_err()
-            );
+            assert!(claim_local_task_name(
+                &state,
+                &task_owner("a@example.com"),
+                "bob",
+                false,
+                |_, _| { panic!("invalid state must abort before retirement") }
+            )
+            .is_err());
             assert_eq!(fs::read(&state).unwrap(), contents);
         }
         // A directory gives a deterministic read error even when tests run as root.
@@ -1849,7 +1955,10 @@ mod tests {
     fn reclaiming_a_reserved_range_is_repeatable() {
         let tmpdir = tempfile::tempdir().unwrap();
         let subuid = tmpdir.path().join("subuid");
-        let (a, b) = (task_owner("a@example.com").key(), task_owner("b@example.com").key());
+        let (a, b) = (
+            task_owner("a@example.com").key(),
+            task_owner("b@example.com").key(),
+        );
         let (ra, rb) = (reserved_subid_name(&a), reserved_subid_name(&b));
         fs::write(&subuid, format!("bob:200000:65536\n{}:100000:65536\n", rb)).unwrap();
 
