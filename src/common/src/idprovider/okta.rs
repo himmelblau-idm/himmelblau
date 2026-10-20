@@ -1156,6 +1156,7 @@ impl IdProvider for OktaProvider {
         &self,
         id: &Id,
         old: Option<&UserToken>,
+        expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
@@ -1175,6 +1176,11 @@ impl IdProvider for OktaProvider {
             return match self.refresh(account, &[]).await {
                 Ok(token) => match self.identity(account, &token, Some(old)).await {
                     Ok(identity) => {
+                        if expected_identity
+                            .is_some_and(|expected| (identity.uuid, identity.tenant_id) != expected)
+                        {
+                            return Ok(UserTokenState::UseCached);
+                        }
                         self.cache_refresh(account, &token).await;
                         Ok(UserTokenState::Update(identity))
                     }

@@ -2603,7 +2603,7 @@ impl OidcProvider {
         validated_password: Option<Zeroizing<String>>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         let has_refresh_token = token.refresh_token().is_some();
-        match self.token_validate(account_id, &token).await {
+        match self.token_validate(account_id, &token, None).await {
             Ok(AuthResult::Success { token: token2 }) => {
                 let hello_enabled = self.config.lock().await.get_enable_hello();
                 let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
@@ -2650,6 +2650,7 @@ impl OidcProvider {
         &self,
         account_id: &str,
         token: &OidcTokenResponse,
+        expected_identity: Option<(Uuid, Option<Uuid>)>,
     ) -> Result<AuthResult, IdpError> {
         let tenant_id = self.tenant_id().await?;
         let (shell, account_id_claims, strip_at_suffix) = {
@@ -2679,6 +2680,9 @@ impl OidcProvider {
             error!(msg);
             return Ok(AuthResult::Denied(msg));
         }
+        if expected_identity.is_some_and(|expected| (token2.uuid, token2.tenant_id) != expected) {
+            return Err(IdpError::BadRequest);
+        }
         info!("Authentication successful for user '{}'", token2.uuid);
         if let Some(refresh_token) = token.refresh_token() {
             debug!("Caching refresh token for user '{}'", token2.uuid);
@@ -2707,6 +2711,7 @@ impl IdProvider for OidcProvider {
         &self,
         id: &Id,
         token: Option<&UserToken>,
+        expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
@@ -2794,7 +2799,10 @@ impl IdProvider for OidcProvider {
                 }
             };
 
-            return match self.token_validate(account_id, &refreshed).await {
+            return match self
+                .token_validate(account_id, &refreshed, expected_identity)
+                .await
+            {
                 Ok(AuthResult::Success { token }) => Ok(UserTokenState::Update(token)),
                 Ok(AuthResult::Denied(msg)) => {
                     error!(
@@ -3240,7 +3248,7 @@ impl IdProvider for OidcProvider {
                         })
                     })?;
 
-                match self.token_validate(account_id, &token).await {
+                match self.token_validate(account_id, &token, None).await {
                     Ok(AuthResult::Success { token }) => {
                         if $require_hello_totp {
                             if !check_hello_totp_setup!(self, account_id, keystore) {

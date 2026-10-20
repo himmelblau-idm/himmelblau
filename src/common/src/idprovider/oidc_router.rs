@@ -347,6 +347,7 @@ impl IdProvider for OidcRouter {
         &self,
         id: &Id,
         token: Option<&UserToken>,
+        expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
@@ -359,8 +360,14 @@ impl IdProvider for OidcRouter {
             return Ok(UserTokenState::UseCached);
         }
         match self.backend().await? {
-            Backend::Standard(p) => p.unix_user_get(id, token, keystore, tpm, machine_key).await,
-            Backend::Native(p) => p.unix_user_get(id, token, keystore, tpm, machine_key).await,
+            Backend::Standard(p) => {
+                p.unix_user_get(id, token, expected_identity, keystore, tpm, machine_key)
+                    .await
+            }
+            Backend::Native(p) => {
+                p.unix_user_get(id, token, expected_identity, keystore, tpm, machine_key)
+                    .await
+            }
         }
     }
 

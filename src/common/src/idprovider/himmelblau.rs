@@ -670,6 +670,7 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
@@ -685,12 +686,12 @@ impl IdProvider for HimmelblauMultiProvider {
         match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
-                    .unix_user_get(id, old_token, keystore, tpm, machine_key)
+                    .unix_user_get(id, old_token, expected_identity, keystore, tpm, machine_key)
                     .await
             }
             Providers::Himmelblau(provider) => {
                 provider
-                    .unix_user_get(id, old_token, keystore, tpm, machine_key)
+                    .unix_user_get(id, old_token, expected_identity, keystore, tpm, machine_key)
                     .await
             }
         }
@@ -1016,6 +1017,51 @@ async fn probe_entra_authority(
             CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK)
         }
     }
+}
+
+// Keep the identity check and every credential-cache write in one operation so
+// rejected reconciliation responses cannot poison later broker/SSO requests.
+async fn cache_validated_identity(
+    cache: &RefreshCache,
+    account_id: &str,
+    identity: UserToken,
+    expected_identity: Option<(Uuid, Option<Uuid>)>,
+    credential: &UnixUserToken,
+    update: PrtCacheUpdate,
+) -> AuthResult {
+    if expected_identity.is_some_and(|expected| {
+        // The mapped UserToken uses the configured Graph tenant. Check the
+        // credential's tenant too, rather than trusting that mapping alone.
+        let credential_tenant = credential
+            .tenant_id()
+            .ok()
+            .and_then(|tenant| Uuid::parse_str(&tenant).ok());
+        (identity.uuid, identity.tenant_id) != expected
+            || credential.uuid().ok() != Some(expected.0)
+            || credential_tenant.is_none()
+            || credential_tenant != expected.1
+    }) {
+        return AuthResult::Denied("Refreshed identity does not match cached user".to_string());
+    }
+    if let Some(prt) = &credential.prt {
+        match update {
+            PrtCacheUpdate::Fresh => {
+                cache
+                    .add(account_id, &RefreshCacheEntry::Prt(prt.clone()))
+                    .await
+            }
+            PrtCacheUpdate::Reused => cache.add_reused_prt(account_id, prt).await,
+        }
+    } else {
+        cache
+            .add(
+                account_id,
+                &RefreshCacheEntry::RefreshToken(credential.refresh_token.clone()),
+            )
+            .await;
+    }
+    info!("Authentication successful for user '{}'", identity.uuid);
+    AuthResult::Success { token: identity }
 }
 
 pub struct HimmelblauProvider {
@@ -1436,6 +1482,7 @@ impl IdProvider for HimmelblauProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
@@ -1900,7 +1947,13 @@ impl IdProvider for HimmelblauProvider {
             }
         };
         match self
-            .token_validate(&account_id, &token, old_token, PrtCacheUpdate::Fresh)
+            .token_validate(
+                &account_id,
+                &token,
+                old_token,
+                PrtCacheUpdate::Fresh,
+                expected_identity,
+            )
             .await
         {
             Ok(AuthResult::Success { mut token }) => {
@@ -3645,7 +3698,7 @@ impl IdProvider for HimmelblauProvider {
                 }
 
                 match self
-                    .token_validate(account_id, &token, None, prt_cache_update)
+                    .token_validate(account_id, &token, None, prt_cache_update, None)
                     .await
                 {
                     Ok(AuthResult::Success { token }) => {
@@ -3830,6 +3883,7 @@ impl IdProvider for HimmelblauProvider {
                                     &msal_token,
                                     None,
                                     PrtCacheUpdate::Reused,
+                                    None,
                                 )
                                 .await
                             {
@@ -4024,7 +4078,7 @@ impl IdProvider for HimmelblauProvider {
                         debug!("ROPC succeeded - no MFA required");
                         let token2 = enroll_and_obtain_enrolled_token!(token, Some(cred.clone()));
                         return match self
-                            .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh)
+                            .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh, None)
                             .await
                         {
                             Ok(AuthResult::Success { token }) => {
@@ -4354,7 +4408,7 @@ impl IdProvider for HimmelblauProvider {
                         };
                         let token2 = enroll_and_obtain_enrolled_token!(token, Some(cred.clone()));
                         return match self
-                            .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh)
+                            .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh, None)
                             .await
                         {
                             Ok(AuthResult::Success { token }) => {
@@ -4415,7 +4469,7 @@ impl IdProvider for HimmelblauProvider {
                 );
                 let token2 = enroll_and_obtain_enrolled_token!(token, password.clone());
                 match self
-                    .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh)
+                    .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh, None)
                     .await
                 {
                     Ok(AuthResult::Success { token: token3 }) => {
@@ -4543,7 +4597,7 @@ impl IdProvider for HimmelblauProvider {
                     enroll_and_obtain_enrolled_token!(token, password.clone())
                 };
                 match self
-                    .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh)
+                    .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh, None)
                     .await
                 {
                     Ok(AuthResult::Success { token: token3 }) => {
@@ -4643,7 +4697,7 @@ impl IdProvider for HimmelblauProvider {
                 );
                 let token2 = enroll_and_obtain_enrolled_token!(token, password.clone());
                 match self
-                    .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh)
+                    .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh, None)
                     .await
                 {
                     Ok(AuthResult::Success { token: token3 }) => {
@@ -5112,6 +5166,7 @@ impl HimmelblauProvider {
         token: &UnixUserToken,
         old_token: Option<&UserToken>,
         prt_cache_update: PrtCacheUpdate,
+        expected_identity: Option<(Uuid, Option<Uuid>)>,
     ) -> Result<AuthResult, IdpError> {
         // UUID is only used for logging; tolerate tokens where the oid claim is
         // absent or empty (e.g. device-flow tokens that lack the oid claim) by
@@ -5156,38 +5211,23 @@ impl HimmelblauProvider {
                         return Ok(AuthResult::Denied(msg));
                     }
                 }
-                info!("Authentication successful for user '{}'", uuid);
-                // If an encrypted PRT is present, store it in the mem cache
-                if let Some(prt) = &token.prt {
-                    match prt_cache_update {
-                        PrtCacheUpdate::Fresh => {
-                            self.refresh_cache
-                                .add(account_id, &RefreshCacheEntry::Prt(prt.clone()))
-                                .await;
-                        }
-                        PrtCacheUpdate::Reused => {
-                            self.refresh_cache.add_reused_prt(account_id, prt).await;
-                        }
-                    }
-                }
-                // MSA Accounts don't have PRTs, so instead cache the refresh token
-                else {
-                    self.refresh_cache
-                        .add(
-                            account_id,
-                            &RefreshCacheEntry::RefreshToken(token.refresh_token.clone()),
-                        )
-                        .await;
-                }
-                Ok(AuthResult::Success {
-                    token: self
-                        .user_token_from_unix_user_token(
-                            account_id,
-                            TokenOrObj::UserToken(Box::new(token.clone())),
-                            old_token,
-                        )
-                        .await?,
-                })
+                // Convert and validate the identity before any credential-cache write.
+                let identity = self
+                    .user_token_from_unix_user_token(
+                        account_id,
+                        TokenOrObj::UserToken(Box::new(token.clone())),
+                        old_token,
+                    )
+                    .await?;
+                Ok(cache_validated_identity(
+                    &self.refresh_cache,
+                    account_id,
+                    identity,
+                    expected_identity,
+                    token,
+                    prt_cache_update,
+                )
+                .await)
             }
             None => {
                 info!("Authentication failed for user '{}'", uuid);
@@ -5985,6 +6025,117 @@ mod tests {
     };
     use std::{cell::Cell, collections::HashMap};
     use zeroize::Zeroizing;
+
+    #[tokio::test]
+    async fn reconciliation_credentials_are_cached_only_for_the_expected_identity() {
+        use super::{cache_validated_identity, PrtCacheUpdate, RefreshCache, UserToken};
+        use uuid::Uuid;
+
+        let account = "user@example.com";
+        let identity = UserToken {
+            name: account.to_string(),
+            spn: account.to_string(),
+            uuid: Uuid::new_v4(),
+            tenant_id: Some(Uuid::new_v4()),
+            real_gidnumber: Some(2000),
+            gidnumber: 2000,
+            displayname: "User".to_string(),
+            shell: None,
+            groups: vec![],
+            valid: true,
+        };
+        let old_prt = SealedData::SoftV1 {
+            data: Zeroizing::new(vec![1]),
+            tag: [1; 16],
+            iv: [1; 16],
+        };
+        let new_prt = SealedData::SoftV1 {
+            data: Zeroizing::new(vec![2]),
+            tag: [2; 16],
+            iv: [2; 16],
+        };
+        for use_prt in [false, true] {
+            for (expected, credential_tenant) in [
+                (
+                    Some((identity.uuid, identity.tenant_id)),
+                    Some(Uuid::new_v4()),
+                ),
+                (Some((identity.uuid, identity.tenant_id)), None),
+                (None, Some(Uuid::new_v4())),
+                (None, None),
+            ]
+            .into_iter()
+            .chain(
+                [
+                    Some((Uuid::new_v4(), identity.tenant_id)),
+                    Some((identity.uuid, Some(Uuid::new_v4()))),
+                    Some((identity.uuid, None)),
+                    Some((identity.uuid, identity.tenant_id)),
+                    None,
+                ]
+                .into_iter()
+                .map(|expected| (expected, identity.tenant_id)),
+            ) {
+                let cache = RefreshCache::new();
+                if use_prt {
+                    cache
+                        .add(account, &RefreshCacheEntry::Prt(old_prt.clone()))
+                        .await;
+                } else {
+                    cache
+                        .add(account, &RefreshCacheEntry::RefreshToken("old".to_string()))
+                        .await;
+                }
+                let accepted = expected.is_none_or(|id| {
+                    id == (identity.uuid, identity.tenant_id)
+                        && credential_tenant == identity.tenant_id
+                });
+                let before = cache.export_broker_prts().await.unwrap();
+                let credential = super::UnixUserToken {
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                    expires_in: 3600,
+                    ext_expires_in: 3600,
+                    access_token: Some("unused".to_string()),
+                    refresh_token: "new".to_string(),
+                    id_token: himmelblau::auth::IdToken {
+                        oid: identity.uuid.to_string(),
+                        tid: credential_tenant
+                            .map(|id| id.to_string())
+                            .unwrap_or_default(),
+                        ..Default::default()
+                    },
+                    client_info: Default::default(),
+                    prt: use_prt.then_some(new_prt.clone()),
+                };
+                let result = cache_validated_identity(
+                    &cache,
+                    account,
+                    identity.clone(),
+                    expected,
+                    &credential,
+                    PrtCacheUpdate::Fresh,
+                )
+                .await;
+                assert_eq!(matches!(result, AuthResult::Success { .. }), accepted);
+                match cache.refresh_token(account).await.unwrap() {
+                    RefreshCacheEntry::Prt(prt) => {
+                        assert_eq!(
+                            serde_json::to_vec(&prt).unwrap(),
+                            serde_json::to_vec(if accepted { &new_prt } else { &old_prt }).unwrap()
+                        );
+                        if !accepted {
+                            // The rejected response must not reset the PRT's insertion time either.
+                            assert_eq!(cache.export_broker_prts().await.unwrap(), before);
+                        }
+                    }
+                    RefreshCacheEntry::RefreshToken(token) => {
+                        assert_eq!(token, if accepted { "new" } else { "old" })
+                    }
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn entra_authority_response_marks_online_without_following_redirects() {

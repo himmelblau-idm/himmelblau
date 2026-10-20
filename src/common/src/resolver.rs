@@ -194,6 +194,7 @@ mod tests {
         try_unseal_calls: AtomicUsize,
         user_get_error: AtomicUsize,
         auth_token: RwLock<UserToken>,
+        expected_refresh_identity: RwLock<Option<(uuid::Uuid, Option<uuid::Uuid>)>>,
     }
 
     impl OfflineFallbackProvider {
@@ -208,6 +209,7 @@ mod tests {
                 try_unseal_calls: AtomicUsize::new(0),
                 user_get_error: AtomicUsize::new(0),
                 auth_token: RwLock::new(test_token()),
+                expected_refresh_identity: RwLock::new(None),
             }
         }
 
@@ -238,10 +240,12 @@ mod tests {
             &self,
             _id: &Id,
             _token: Option<&UserToken>,
+            _expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
             _keystore: &mut D,
             _tpm: &mut tpm::provider::BoxedDynTpm,
             _machine_key: &tpm::structures::StorageKey,
         ) -> Result<UserTokenState, IdpError> {
+            *self.expected_refresh_identity.write().unwrap() = _expected_identity;
             self.user_get_calls.fetch_add(1, Ordering::AcqRel);
             match self.user_get_error.load(Ordering::Acquire) {
                 1 => Err(IdpError::NotFound {
@@ -1681,6 +1685,10 @@ mod tests {
                 .unwrap()
                 .is_none());
             assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+            assert_eq!(
+                *resolver.client.expected_refresh_identity.read().unwrap(),
+                Some((cached_uuid, cached_tenant)),
+            );
             if mode == 3 {
                 let (expired, cached) = resolver
                     .get_cached_usertoken(&Id::Name(token.name.clone()))
@@ -2708,6 +2716,7 @@ where
             .unix_user_get(
                 account_id,
                 token.as_ref().map(|(token, _)| token),
+                expected_identity,
                 &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,

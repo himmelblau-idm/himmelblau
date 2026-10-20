@@ -301,10 +301,14 @@ pub trait IdProvider {
 
     async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, _now: SystemTime) -> bool;
 
+    /// When supplied, reject any replacement identity before updating provider
+    /// credentials as well as the resolver's identity cache. Ordinary lookups
+    /// and interactive authentication do not impose this reconciliation guard.
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
         _token: Option<&UserToken>,
+        expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
