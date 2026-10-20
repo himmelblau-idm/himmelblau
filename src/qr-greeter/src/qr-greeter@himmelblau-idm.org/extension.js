@@ -62,15 +62,15 @@ function extractUserCode(message) {
     // Match "enter the code XXXXXXXXX" sentence format (Microsoft typically sends
     // 9-char codes with no hyphen, e.g. "enter the code E9Y6JX8J7 to authenticate";
     // range 6-12 is intentionally broader for forward compatibility)
-    const sentenceMatch = message.match(/enter the code\s+([A-Z0-9-]{6,12})/i);
+    const sentenceMatch = message.match(/enter the code\s*:?\s+([A-Z0-9-]{6,12})/i);
     if (sentenceMatch) return sentenceMatch[1].toUpperCase();
     // Match hyphenated code pattern (e.g. "ABCD-EFGH") - other providers
     const hyphenMatch = message.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/i);
     if (hyphenMatch) return hyphenMatch[1].toUpperCase();
-    // Fallback: bare 8-9 char alphanumeric word
+    // Fallback: bare 8-9 char alphanumeric code containing a digit.
     // userCode only contains [A-Z0-9-] so it is safe to embed directly in SVG
     // text nodes (no XML special characters can appear from this regex)
-    const bareMatch = message.match(/\b([A-Z0-9]{8,9})\b/i);
+    const bareMatch = message.match(/\b((?=[A-Z0-9]*[0-9])[A-Z0-9]{8,9})\b/i);
     if (bareMatch) return bareMatch[1].toUpperCase();
     return null;
 }

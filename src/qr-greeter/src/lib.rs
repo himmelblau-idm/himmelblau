@@ -35,4 +35,14 @@ mod tests {
 
         assert!(status.success(), "qrselection.test.js failed");
     }
+    #[test]
+    fn device_code_parser_js_test() {
+        let test_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/qr-greeter@himmelblau-idm.org/usercode.test.cjs");
+        let status = Command::new("node")
+            .arg(test_path)
+            .status()
+            .expect("failed to launch node");
+        assert!(status.success(), "usercode.test.cjs failed");
+    }
 }
