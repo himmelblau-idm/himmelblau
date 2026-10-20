@@ -516,7 +516,7 @@ impl OktaProvider {
     /// in preference to a more recent in-memory replacement.
     #[instrument(level = "debug", skip_all)]
     async fn refresh(&self, account: &str, scopes: &[String]) -> Result<okta::UserToken, IdpError> {
-        let token = self.refresh_without_caching(account, scopes).await?;
+        let token = self.refresh_without_caching(account, scopes, false).await?;
         // Unrestricted callers retain rotated credentials even if a later
         // user-info request fails. Reconciliation validates first instead.
         self.cache_refresh(account, &token).await;
@@ -530,6 +530,7 @@ impl OktaProvider {
         &self,
         account: &str,
         scopes: &[String],
+        guarded: bool,
     ) -> Result<okta::UserToken, IdpError> {
         let secret = match self
             .refresh_cache
@@ -558,6 +559,15 @@ impl OktaProvider {
                     debug!("Okta refresh credential rejected; removing cached credential");
                     self.refresh_cache.remove_refresh_token(account).await;
                     return Err(IdpError::ProviderUnauthorised);
+                }
+                if guarded
+                    && !matches!(&error, OktaError::OperationFailed(failure)
+                    if failure.stage == okta::FailureStage::Refresh)
+                {
+                    // Discovery/JWKS failures occur after receiving tokens but
+                    // before establishing their identity, not before refresh.
+                    error::log_failure("refresh_identity_validation", &error);
+                    return Err(IdpError::BadRequest);
                 }
                 Err(self.failure("refresh", &error).await)
             }
@@ -1182,10 +1192,29 @@ impl IdProvider for OktaProvider {
                 return Ok(UserTokenState::UseCached);
             }
             let refreshed = if expected_identity.is_some() {
-                self.refresh_without_caching(account, &[]).await
+                self.refresh_without_caching(account, &[], true).await
             } else {
                 self.refresh(account, &[]).await
             };
+            if let (Some(expected), Ok(token)) = (expected_identity, &refreshed) {
+                // The SDK has validated the ID token. Bind its subject before
+                // userinfo/network/account mapping can fail into cached fallback.
+                let matches = token.claims().is_some_and(|claims| {
+                    oidc_issuer_matches(&self.issuer, claims["iss"].as_str())
+                        && claims["sub"]
+                            .as_str()
+                            .filter(|sub| !sub.is_empty())
+                            .is_some_and(|sub| {
+                                (
+                                    Uuid::new_v5(&self.tenant_id, sub.as_bytes()),
+                                    Some(self.tenant_id),
+                                ) == expected
+                            })
+                });
+                if !matches {
+                    return Ok(UserTokenState::Rejected);
+                }
+            }
             return match refreshed {
                 Ok(token) => match self.identity(account, &token, Some(old)).await {
                     Ok(identity) => {
@@ -1203,6 +1232,8 @@ impl IdProvider for OktaProvider {
                 },
                 // Revoked SSO material does not revoke the local PIN or cached
                 // identity. Interactive login will recover the native session.
+                Err(IdpError::Transport) => Ok(UserTokenState::UseCached),
+                Err(_) if expected_identity.is_some() => Ok(UserTokenState::Rejected),
                 Err(IdpError::ProviderUnauthorised) => Ok(UserTokenState::UseCached),
                 Err(_) => Ok(UserTokenState::UseCached),
             };

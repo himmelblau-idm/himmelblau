@@ -350,6 +350,10 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
     for case in [
         "uuid",
         "tenant",
+        "uuid_userinfo_failure",
+        "uuid_jwks_failure",
+        "uuid_discovery_failure",
+        "tenant_userinfo_failure",
         "matching",
         "unrestricted",
         "userinfo_failure",
@@ -379,13 +383,24 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
         ];
         let server = tokio::spawn(async move {
             for (path, body) in responses {
+                if case == "uuid_discovery_failure" && path.contains("keys") {
+                    break;
+                }
+                if path.contains("userinfo")
+                    && (case.starts_with("uuid") || case.starts_with("tenant"))
+                {
+                    break; // A mismatched validated subject must never reach userinfo.
+                }
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let request = read_request(&mut stream).await;
                 assert!(request.starts_with(path), "unexpected request: {request}");
                 if request.starts_with("POST ") {
                     assert!(request.contains("refresh_token=fixture-refresh"));
                 }
-                let status = if case.ends_with("userinfo_failure") && path.contains("userinfo") {
+                let status = if (case.ends_with("userinfo_failure") && path.contains("userinfo"))
+                    || (case == "uuid_jwks_failure" && path.contains("keys"))
+                    || (case == "uuid_discovery_failure" && path.contains("openid-configuration"))
+                {
                     "503 Service Unavailable"
                 } else {
                     "200 OK"
@@ -421,8 +436,8 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
         .unwrap();
         drop(config);
         match case {
-            "uuid" => old.uuid = Uuid::new_v4(),
-            "tenant" => old.tenant_id = Some(Uuid::new_v4()),
+            value if value.starts_with("uuid") => old.uuid = Uuid::new_v4(),
+            "tenant" | "tenant_userinfo_failure" => old.tenant_id = Some(Uuid::new_v4()),
             _ => (),
         }
         let expected = (!matches!(case, "unrestricted" | "userinfo_failure"))
@@ -459,10 +474,16 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
             matches!(case, "matching" | "unrestricted"),
             "{case}"
         );
-        if matches!(case, "uuid" | "tenant") {
+        if case == "guarded_userinfo_failure" {
+            assert!(matches!(result, UserTokenState::UseCached));
+        }
+        if case.starts_with("uuid") || case.starts_with("tenant") {
             assert!(matches!(result, UserTokenState::Rejected), "{case}");
         }
-        let expected_secret = if matches!(case, "uuid" | "tenant" | "guarded_userinfo_failure") {
+        let expected_secret = if case.starts_with("uuid")
+            || case.starts_with("tenant")
+            || case == "guarded_userinfo_failure"
+        {
             "fixture-refresh"
         } else {
             "fixture-rotated"

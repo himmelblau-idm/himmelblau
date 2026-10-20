@@ -2248,6 +2248,7 @@ impl OidcApplication {
     }
 
     #[instrument(level = "debug", skip_all)]
+    #[allow(clippy::too_many_arguments)]
     async fn user_token_from_oidc(
         &self,
         token: &openidconnect::core::CoreTokenResponse,
@@ -2256,6 +2257,7 @@ impl OidcApplication {
         tenant_id: &Uuid,
         account_id_claims: &[String],
         strip_at_suffix: bool,
+        expected_identity: Option<(Uuid, Option<Uuid>)>,
     ) -> Result<UserToken, IdpError> {
         let access_token = token.access_token();
         let (userinfo, mut group_claims): (OidcUserInfoClaims, Vec<String>) =
@@ -2265,6 +2267,15 @@ impl OidcApplication {
                 error!("OIDC client not initialized");
                 return Err(IdpError::BadRequest);
             };
+        // Bind authenticated userinfo's subject before fallible account/UID mapping.
+        if expected_identity.is_some_and(|expected| {
+            (
+                Uuid::new_v5(tenant_id, userinfo.subject().as_str().as_bytes()),
+                Some(*tenant_id),
+            ) != expected
+        }) {
+            return Err(IdpError::ProviderUnauthorised);
+        }
         group_claims.sort();
         group_claims.dedup();
 
@@ -2670,6 +2681,7 @@ impl OidcProvider {
                 &tenant_id,
                 &account_id_claims,
                 strip_at_suffix,
+                expected_identity,
             )
             .await?;
         if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
@@ -2769,6 +2781,16 @@ impl IdProvider for OidcProvider {
                 Ok(refreshed) => refreshed,
                 Err(e) => {
                     let state = oidc_refresh_failure_state(&e);
+                    let state = if expected_identity.is_some()
+                        && matches!(&state, UserTokenState::UseCached)
+                        && !matches!(&e, MsalError::RequestFailed(_))
+                    {
+                        // A malformed successful response/protocol failure is not
+                        // a transport outage and cannot authorize cached claims.
+                        UserTokenState::Rejected
+                    } else {
+                        state
+                    };
                     if matches!(&state, UserTokenState::UseCached) {
                         match &e {
                             MsalError::RequestFailed(msg) => {
@@ -2791,11 +2813,7 @@ impl IdProvider for OidcProvider {
                         *cache_state =
                             CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                     } else {
-                        error!(
-                            ?e,
-                            "OIDC refresh token was rejected for '{}'; invalidating cached user",
-                            account_id
-                        );
+                        error!(?e, "OIDC refresh was rejected for '{}'", account_id);
                     }
                     return Ok(state);
                 }
@@ -2823,6 +2841,11 @@ impl IdProvider for OidcProvider {
                         account_id
                     );
                     Ok(UserTokenState::UseCached)
+                }
+                Err(_) if expected_identity.is_some() => {
+                    // A successful refresh whose identity cannot be established
+                    // must not authorize reconciliation with old cached claims.
+                    Ok(UserTokenState::Rejected)
                 }
                 Err(e) => {
                     error!(
@@ -3236,6 +3259,7 @@ impl IdProvider for OidcProvider {
                         &tenant_id,
                         &account_id_claims,
                         strip_at_suffix,
+                        None,
                     )
                     .await?;
                 tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
@@ -4052,3 +4076,7 @@ impl IdProvider for OidcProvider {
         Err(IdpError::BadRequest)
     }
 }
+
+#[cfg(test)]
+#[path = "oidc_reconciliation_tests.rs"]
+mod reconciliation_tests;
