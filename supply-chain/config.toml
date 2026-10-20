@@ -264,38 +264,6 @@ criteria = "safe-to-deploy"
 version = "0.5.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.async-broadcast]]
-version = "0.7.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.async-channel]]
-version = "2.3.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.async-executor]]
-version = "1.13.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.async-io]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.async-lock]]
-version = "3.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.async-process]]
-version = "2.3.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.async-recursion]]
-version = "1.1.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.async-signal]]
-version = "0.2.10"
-criteria = "safe-to-deploy"
-
 [[exemptions.aws-lc-rs]]
 version = "1.14.0"
 criteria = "safe-to-deploy"
@@ -356,10 +324,6 @@ criteria = "safe-to-deploy"
 version = "0.3.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.blocking]]
-version = "1.6.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.bytemuck]]
 version = "1.23.2"
 criteria = "safe-to-deploy"
@@ -378,10 +342,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.clang-sys]]
 version = "1.8.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.concurrent-queue]]
-version = "2.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.configparser]]
@@ -492,14 +452,6 @@ criteria = "safe-to-deploy"
 version = "0.7.11"
 criteria = "safe-to-deploy"
 
-[[exemptions.event-listener]]
-version = "5.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.event-listener-strategy]]
-version = "0.5.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.file-id]]
 version = "0.2.2"
 criteria = "safe-to-deploy"
@@ -510,10 +462,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.fs_extra]]
 version = "1.3.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.futures-lite]]
-version = "2.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.futures-task]]
@@ -768,20 +716,12 @@ criteria = "safe-to-deploy"
 version = "1.1.10"
 criteria = "safe-to-deploy"
 
-[[exemptions.piper]]
-version = "0.2.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.pkcs1]]
 version = "0.7.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.pkcs8]]
 version = "0.10.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.polling]]
-version = "3.7.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.polyval]]
@@ -980,9 +920,15 @@ criteria = "safe-to-deploy"
 version = "0.2.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.zbus_names]]
-version = "4.2.0"
+[[exemptions.zbus]]
+version = "6.0.0"
 criteria = "safe-to-deploy"
+notes = "AI batch review found no reported malicious behavior. Accepting an exception with unresolved descriptor-safety, authentication, and input-validation concerns."
+
+[[exemptions.zbus_utils]]
+version = "6.0.0"
+criteria = "safe-to-deploy"
+notes = "This cargo-vet exemption for zbus_utils 6.0.0 is not certification. Unresolved reported concerns include unbounded GVariant recursion, panics in generated conversions and Unicode comparisons, inconsistent signature ordering, and provisional dictionary-key validity concerns. The review synthesized four completed batch reports without independently validating source code and did not establish whole-crate integration, dependency safety, feature interactions, length/overflow behavior, downstream effects, or publisher provenance."
 
 [[exemptions.zerocopy]]
 version = "0.8.25"
@@ -992,14 +938,7 @@ criteria = "safe-to-deploy"
 version = "1.0.12"
 criteria = "safe-to-deploy"
 
-[[exemptions.zvariant]]
-version = "5.5.3"
+[[exemptions.zruntime]]
+version = "0.2.0"
 criteria = "safe-to-deploy"
-
-[[exemptions.zvariant_derive]]
-version = "5.5.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.zvariant_utils]]
-version = "3.2.0"
-criteria = "safe-to-deploy"
+notes = "This is a cargo-vet exemption for zruntime 0.2.0, not certification. Unresolved concerns include unsafe descriptor lifetime and synchronization contracts, wakeup/cancellation/panic/shutdown behavior, possible descriptor inheritance races, SIGPIPE suppression, test-directory cleanup safety, and availability risks; these have not been established as serious vulnerabilities or resolved. The review synthesized fragment reports without inspecting source or rerunning reviews, and whole-crate coverage, cross-file invariants, resolved dependencies, and artifact/publisher provenance remain unverified."
