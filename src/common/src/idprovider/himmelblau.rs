@@ -76,7 +76,6 @@ use rand::RngExt;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::thread::sleep;
 use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, Mutex, OnceCell};
@@ -1626,7 +1625,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(val) => val,
                     Err(MsalError::RequestFailed(_)) => {
                         // Retry on network failure, as these can be rather common
-                        sleep(Duration::from_millis(500));
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         net_down_check!(
                             self.client
                                 .lock()
@@ -1776,7 +1775,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(val) => val,
                     Err(MsalError::RequestFailed(_)) => {
                         // Retry on network failure, as these can be rather common
-                        sleep(Duration::from_millis(500));
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         net_down_check!(
                             client
                                 .acquire_token_by_refresh_token(
@@ -2394,7 +2393,7 @@ impl IdProvider for HimmelblauProvider {
                                      * device object. Wait 5 seconds and try again. */
                                     info!("Azure hasn't finished replicating the device...");
                                     info!("Retrying in 5 seconds");
-                                    sleep(Duration::from_secs(5));
+                                    tokio::time::sleep(Duration::from_secs(5)).await;
                                     net_down_check!(
                                         self.client
                                             .lock()
@@ -4752,7 +4751,7 @@ impl HimmelblauProvider {
                     "PRT exchange failed, retrying after network error: {:?}",
                     msg
                 );
-                sleep(Duration::from_millis(500));
+                tokio::time::sleep(Duration::from_millis(500)).await;
                 self.client
                     .lock()
                     .await

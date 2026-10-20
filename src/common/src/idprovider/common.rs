@@ -20,7 +20,6 @@ use kanidm_hsm_crypto::structures::SealedData;
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::thread::sleep;
 use std::{
     collections::HashMap,
     time::{Duration, SystemTime},
@@ -249,7 +248,7 @@ impl BadPinCounter {
         *counter += 1;
 
         // Discourage attackers by waiting for an ever increasing wait time for each bad pin
-        sleep(Duration::from_secs((*counter as u64) * 2));
+        tokio::time::sleep(Duration::from_secs((*counter as u64) * 2)).await;
     }
 
     pub(crate) async fn reset_bad_pin_count(&self, account_id: &str) {
@@ -1441,8 +1440,9 @@ mod tests {
     use super::{
         build_online_probe_client, should_block_hello_pin_attempts, should_offer_offline_hello_pin,
         should_renew_expired_try_unseal_prt, should_warn_last_hello_pin_attempt,
-        try_unseal_policy_denial, KeyType, TryUnsealPolicyDenial,
+        try_unseal_policy_denial, BadPinCounter, KeyType, TryUnsealPolicyDenial,
     };
+    use std::time::Duration;
 
     #[tokio::test]
     async fn authority_probe_does_not_follow_redirects() {
@@ -1493,6 +1493,20 @@ mod tests {
         assert!(!should_warn_last_hello_pin_attempt(0, 0));
         assert!(should_block_hello_pin_attempts(0, 0));
         assert!(should_block_hello_pin_attempts(1, 0));
+    }
+
+    #[tokio::test]
+    async fn bad_pin_delay_does_not_block_runtime() {
+        let counter = BadPinCounter::new();
+
+        let delay = tokio::time::timeout(
+            Duration::from_millis(10),
+            counter.increment_bad_pin_count("user@example.com"),
+        )
+        .await;
+
+        assert!(delay.is_err());
+        assert_eq!(counter.bad_pin_count("user@example.com").await, 1);
     }
 
     #[test]
