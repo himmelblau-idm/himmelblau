@@ -682,7 +682,33 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
             None => return NSS_STATUS_NOTFOUND,
         },
     };
-    let req = ClientRequest::NssInitgroups(account_id.clone());
+    initgroups_for_account(
+        &cfg,
+        c_user,
+        &account_id,
+        primary_gid,
+        start,
+        size,
+        groupsp,
+        limit,
+        errnop,
+    )
+}
+
+// Keep the daemon protocol path testable without changing global NSS configuration.
+#[allow(clippy::too_many_arguments)]
+unsafe fn initgroups_for_account(
+    cfg: &HimmelblauConfig,
+    c_user: &str,
+    account_id: &str,
+    primary_gid: libc::gid_t,
+    start: &mut libc::c_long,
+    size: &mut libc::c_long,
+    groupsp: &mut *mut libc::gid_t,
+    limit: libc::c_long,
+    errnop: &mut libc::c_int,
+) -> libc::c_int {
+    let req = ClientRequest::NssInitgroups(account_id.to_string());
 
     let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
         Ok(dc) => dc,
@@ -712,11 +738,11 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
             Err(_) => return NSS_STATUS_UNAVAIL,
         };
     }
-    let fallback_gids =
-        match fallback_initgroups_gids(&mut daemon_client, &cfg, c_user, &account_id) {
-            Some(gids) => gids,
-            None => return NSS_STATUS_UNAVAIL,
-        };
+    let fallback_gids = match fallback_initgroups_gids(&mut daemon_client, cfg, c_user, account_id)
+    {
+        Some(gids) => gids,
+        None => return NSS_STATUS_UNAVAIL,
+    };
 
     match append_initgroups_gids(
         fallback_gids,
@@ -976,6 +1002,139 @@ mod tests {
             homedir: "/home/test".to_string(),
             shell: "/bin/bash".to_string(),
         }
+    }
+
+    #[allow(clippy::unwrap_used, clippy::panic)]
+    fn run_initgroups_daemon_case(
+        fast: Option<Vec<u32>>,
+        fallback_ok: bool,
+        expected_status: i32,
+        expected_gids: &[u32],
+    ) {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
+        use std::time::Duration;
+        let socket_path = format!("/tmp/himmelblau-nss-{}.sock", uuid::Uuid::new_v4());
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let config_path = create_temp_config(&format!("[global]\ndomains = contoso.com\ncn_name_mapping = true\nsocket_path = {}\nunix_sock_timeout = 2\n", socket_path)).unwrap();
+        let cfg = HimmelblauConfig::new(Some(&config_path)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let accept = || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "daemon connection timed out"
+                            );
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(e) => panic!("mock daemon accept failed: {e}"),
+                    }
+                }
+            };
+            let mut stream = accept();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut buffer = [0; 1024];
+            let count = stream.read(&mut buffer).unwrap();
+            assert!(matches!(
+                serde_json::from_slice::<ClientRequest>(&buffer[..count]).unwrap(),
+                ClientRequest::NssInitgroups(_)
+            ));
+            if let Some(gids) = fast {
+                stream
+                    .write_all(
+                        &serde_json::to_vec(&ClientResponse::NssInitgroups(Some(gids))).unwrap(),
+                    )
+                    .unwrap();
+            } else {
+                // A malformed response invalidates this connection. The fallback
+                // must reconnect rather than trying to reuse a desynchronized stream.
+                stream.write_all(b"invalid JSON").unwrap();
+                drop(stream);
+                stream = accept();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+            }
+            let count = stream.read(&mut buffer).unwrap();
+            assert!(matches!(
+                serde_json::from_slice::<ClientRequest>(&buffer[..count]).unwrap(),
+                ClientRequest::NssGroups
+            ));
+            let response = if fallback_ok {
+                ClientResponse::NssGroups(vec![
+                    NssGroup {
+                        name: "primary".into(),
+                        gid: 1000,
+                        members: vec!["alice@contoso.com".into()],
+                    },
+                    NssGroup {
+                        name: "project".into(),
+                        gid: 2000,
+                        members: vec!["alice@contoso.com".into()],
+                    },
+                    NssGroup {
+                        name: "other".into(),
+                        gid: 3000,
+                        members: vec!["bob@contoso.com".into()],
+                    },
+                ])
+            } else {
+                ClientResponse::NssInitgroups(None)
+            };
+            stream
+                .write_all(&serde_json::to_vec(&response).unwrap())
+                .unwrap();
+        });
+        let mut start = 0;
+        let mut size = 0;
+        let mut groups = std::ptr::null_mut();
+        let mut errno = 0;
+        unsafe {
+            let status = initgroups_for_account(
+                &cfg,
+                "alice",
+                "alice@contoso.com",
+                1000,
+                &mut start,
+                &mut size,
+                &mut groups,
+                0,
+                &mut errno,
+            );
+            assert_eq!(status, expected_status);
+            assert_eq!(collect_groups(groups, start), expected_gids);
+            libc::free(groups.cast());
+        }
+        server.join().unwrap();
+        fs::remove_file(socket_path).unwrap();
+        fs::remove_file(config_path).unwrap();
+    }
+
+    #[test]
+    fn initgroups_empty_fast_response_uses_fallback() {
+        run_initgroups_daemon_case(Some(vec![]), true, NSS_STATUS_SUCCESS, &[2000]);
+    }
+
+    #[test]
+    fn initgroups_primary_only_fast_response_uses_fallback() {
+        run_initgroups_daemon_case(Some(vec![1000]), true, NSS_STATUS_SUCCESS, &[2000]);
+    }
+
+    #[test]
+    fn initgroups_protocol_error_reconnects_before_fallback() {
+        run_initgroups_daemon_case(None, true, NSS_STATUS_SUCCESS, &[2000]);
+    }
+
+    #[test]
+    fn initgroups_failed_fallback_is_unavailable() {
+        run_initgroups_daemon_case(Some(vec![]), false, NSS_STATUS_UNAVAIL, &[]);
     }
 
     #[test]
