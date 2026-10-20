@@ -236,6 +236,16 @@ class ReviewTests(unittest.TestCase):
             review.main()
             return exempt
 
+    def test_exemption_command_targets_project_from_other_directory(self):
+        with tempfile.TemporaryDirectory() as directory, working_directory(directory), \
+             patch.object(review.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            self.assertTrue(review.exempt_crate("example", "1.1", "reviewed note"))
+            run.assert_called_once_with(
+                ["cargo", "vet", "add-exemption", "example", "1.1",
+                 "--criteria", "safe-to-deploy", "--notes", "reviewed note"],
+                timeout=30, cwd=review.PROJECT_ROOT,
+            )
+
     def test_exemption_generated_note_requires_acceptance(self):
         self.exemption_flow(["e", ""]).assert_called_once_with("example", "1.1", "Generated exemption")
 

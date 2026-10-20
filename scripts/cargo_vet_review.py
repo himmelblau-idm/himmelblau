@@ -1118,8 +1118,6 @@ Keep your response focused and actionable.
 
             # If all methods failed, print debug info
             print(f"    Warning: All {self.provider} invocation methods failed")
-            #if result and result.stderr:
-            #    print(f"    Last error: {result.stderr[:300]}")
             if result is not None:
                 print(f"    Exit code: {result.returncode}")
                 print(f"    stderr:\n{result.stderr}")
@@ -1231,7 +1229,7 @@ def exempt_crate(crate: str, version: str, notes: str = "") -> bool:
     if notes:
         cmd.extend(["--notes", notes])
     try:
-        return subprocess.run(cmd, timeout=30).returncode == 0
+        return subprocess.run(cmd, timeout=30, cwd=PROJECT_ROOT).returncode == 0
     except (OSError, subprocess.TimeoutExpired) as error:
         print(f"Error adding exemption: {error}")
         return False
