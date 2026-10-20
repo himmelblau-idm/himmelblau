@@ -832,7 +832,14 @@ Keep your response focused and actionable.
             print(f"    Reviewing AI batch {index}/{len(batches)} ({len(batch)} chars)...")
             response = self.analyze_diff(diff_content=batch, _structured=True, **kwargs)
             try:
-                report = json.loads(response or "")
+                text = (response or "").strip()
+                # Accept a single fenced JSON response, but do not silently discard
+                # prose, additional objects, or a malformed report.
+                if text.startswith("```json\n") and text.endswith("\n```"):
+                    text = text[len("```json\n"):-len("\n```")].strip()
+                elif text.startswith("```\n") and text.endswith("\n```"):
+                    text = text[len("```\n"):-len("\n```")].strip()
+                report = json.loads(text)
                 if not isinstance(report, dict):
                     raise ValueError("expected a JSON object")
                 if type(report.get("complete")) is not bool:
@@ -859,7 +866,9 @@ Keep your response focused and actionable.
                 if not report["complete"] and report["decision"] == "accept":
                     raise ValueError("incomplete review cannot accept vetting")
                 if report["decision"] != "accept":
-                    rejection_reasons.extend(f"Batch {index}: {reason}" for reason in reasons)
+                    rejection_reasons.extend(
+                        f"Batch {index} ({report['decision']}): {reason}" for reason in reasons
+                    )
                 risks.append(report["risk"])
                 if not report["complete"]:
                     gaps.append(index)
@@ -892,11 +901,9 @@ Keep your response focused and actionable.
         synthesis = self.analyze_diff(diff_content=combined, _synthesis=True, **kwargs)
         if not synthesis:
             return "Final synthesis failed; retaining batch results.\n" + combined
-        # Coverage failures remain authoritative even if the synthesis overlooks them.
-        result = f"{coverage}\n"
-        if gaps:
-            result += f"INCOMPLETE: batches {gaps}. Do not certify.\n"
-        result += synthesis
+        # Model synthesis cannot override recorded risk, coverage, or decisions.
+        result = f"{coverage}\nHighest reported risk: {risk}\n{status}\n\n"
+        result += "Synthesis (subject to the batch constraints above):\n" + synthesis
         if kwargs.get("verbose"):
             result += "\n\nDetailed batch reports:\n" + combined
         return result
@@ -933,7 +940,10 @@ Keep your response focused and actionable.
         prompt_file = None
         diff_file = None
         try:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".diff", encoding="utf-8", delete=False) as f:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".diff", encoding="utf-8", delete=False,
+                dir=PROJECT_ROOT,
+            ) as f:
                 diff_file = f.name
                 f.write(diff_content)
             file_instructions = (
@@ -974,6 +984,8 @@ Keep your response focused and actionable.
                 )
 
             if _structured:
+                # Keep review criteria, but replace the incompatible Markdown contract.
+                prompt = prompt.split("## Your Analysis", 1)[0]
                 prompt += (
                     "\nThis file is one bounded batch of a larger diff. It may begin or end "
                     "inside a file or hunk. Review all supplied content; do not invent "
@@ -1036,21 +1048,21 @@ Keep your response focused and actionable.
                 # Method 1: Use -p flag with prompt from file
                 result = subprocess.run(
                     [self.cli_path, "-p", prompt, "--output-format", "text"],
-                    capture_output=True, text=True, timeout=600,
+                    capture_output=True, text=True, timeout=600, cwd=PROJECT_ROOT,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
                 # Method 2: Pipe prompt via stdin
                 result = subprocess.run(
                     [self.cli_path, "--output-format", "text"],
-                    input=prompt, capture_output=True, text=True, timeout=600,
+                    input=prompt, capture_output=True, text=True, timeout=600, cwd=PROJECT_ROOT,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
                 # Method 3: Use --print flag
                 result = subprocess.run(
                     [self.cli_path, "--print", prompt],
-                    capture_output=True, text=True, timeout=600,
+                    capture_output=True, text=True, timeout=600, cwd=PROJECT_ROOT,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
@@ -1060,14 +1072,14 @@ Keep your response focused and actionable.
                 # Method 1: Use -p for prompt
                 result = subprocess.run(
                     [self.cli_path, "-p", prompt],
-                    capture_output=True, text=True, timeout=600,
+                    capture_output=True, text=True, timeout=600, cwd=PROJECT_ROOT,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
                 # Method 2: Pipe prompt via stdin
                 result = subprocess.run(
                     [self.cli_path],
-                    input=prompt, capture_output=True, text=True, timeout=600,
+                    input=prompt, capture_output=True, text=True, timeout=600, cwd=PROJECT_ROOT,
                 )
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
@@ -1083,11 +1095,10 @@ Keep your response focused and actionable.
                             "exec",
                             "--cd", str(PROJECT_ROOT),
                             "--sandbox", "read-only",
-                            "--dangerously-bypass-approvals-and-sandbox",
                             "--output-last-message", output_file,
                             "-",
                         ],
-                        input=prompt, capture_output=True, text=True, timeout=600,
+                        input=prompt, capture_output=True, text=True, timeout=600, cwd=PROJECT_ROOT,
                     )
                     if result.returncode == 0:
                         with open(output_file, "r", encoding="utf-8") as f:
@@ -1513,6 +1524,12 @@ Examples:
                                 print("    Could not generate exemption note; returning to actions.")
                                 continue
                             print(f"    Exemption note: {notes}")
+                            edited = input(
+                                "    Press Enter to accept, type a replacement note, "
+                                "or Ctrl-C to cancel: "
+                            ).strip()
+                            if edited:
+                                notes = edited
                         else:
                             notes = input("    No AI review available. Exemption note (optional): ").strip()
                     except (KeyboardInterrupt, EOFError):
