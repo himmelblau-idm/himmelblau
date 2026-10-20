@@ -1026,7 +1026,11 @@ class BackportManager:
             return False
 
     def run_make_vet(self) -> tuple[bool, str]:
-        """Run make vet and return success status and output."""
+        """Run interactive make vet, returning success and a failure summary.
+
+        Inherit stdin/stdout/stderr so prompts, pagers, and diagnostics remain
+        visible live. Capturing output here would hide interactive prompts.
+        """
         print_color("\nRunning `make vet`...", "blue")
         try:
             result = subprocess.run(
@@ -1039,7 +1043,7 @@ class BackportManager:
                 return True, ""
             else:
                 print_color("  make vet failed", "red")
-                return False, ""
+                return False, f"make vet exited with status {result.returncode}; see output above"
         except subprocess.TimeoutExpired:
             return False, "make vet timed out"
         except Exception as e:
@@ -1886,7 +1890,7 @@ Examples:
         # Run make vet
         vet_success, vet_output = manager.run_make_vet()
         if not vet_success:
-            print_color(f"\nmake vet failed for {version_str}", "yellow")
+            print_color(f"\nmake vet failed for {version_str}: {vet_output}", "yellow")
             print("  You may need to address vet issues manually")
             # Continue anyway - vet issues shouldn't block the PR creation
 
