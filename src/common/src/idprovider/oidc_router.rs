@@ -30,6 +30,7 @@ pub(crate) struct OidcRouter {
     native: Result<Arc<OktaProvider>, okta::OktaError>,
     config: Arc<Mutex<HimmelblauConfig>>,
     selection: Mutex<Selection>,
+    selecting: Mutex<()>,
 }
 
 enum Backend<'a> {
@@ -120,6 +121,7 @@ impl OidcRouter {
             native,
             config: config.clone(),
             selection: Mutex::new(Selection::Pending),
+            selecting: Mutex::new(()),
         };
         router.select_if_due().await;
         Ok(router)
@@ -130,10 +132,19 @@ impl OidcRouter {
     }
 
     async fn select_if_due(&self) {
-        let mut selection = self.selection.lock().await;
-        if *selection != Selection::Pending {
+        // Lookups read `selection`, so discovery runs without holding it.
+        let _attempt = self.selecting.lock().await;
+        if *self.selection.lock().await != Selection::Pending {
             return;
         }
+        let mut selection = Selection::Pending;
+        self.discover_selection(&mut selection).await;
+        if selection != Selection::Pending {
+            *self.selection.lock().await = selection;
+        }
+    }
+
+    async fn discover_selection(&self, selection: &mut Selection) {
         match *self.standard.state.lock().await {
             CacheState::Offline => return,
             CacheState::OfflineNextCheck(time) if time > SystemTime::now() => return,
@@ -284,6 +295,8 @@ impl OidcRouter {
     }
 
     async fn backend(&self) -> Result<Backend<'_>, IdpError> {
+        // Callers that need a backend still wait for a selection in progress.
+        drop(self.selecting.lock().await);
         match *self.selection.lock().await {
             Selection::InteractionCode => self
                 .native
@@ -322,6 +335,7 @@ impl IdProvider for OidcRouter {
     }
 
     async fn probe_online(&self, account_id: Option<&str>, now: SystemTime) -> bool {
+        self.select_if_due().await;
         match self.backend().await {
             Ok(Backend::Standard(p)) => p.probe_online(account_id, now).await,
             Ok(Backend::Native(p)) => p.probe_online(account_id, now).await,
@@ -657,10 +671,14 @@ mod tests {
     use crate::db::Cache;
     use serde_json::json;
 
-    #[allow(clippy::unwrap_used)]
     async fn pending_router() -> OidcRouter {
+        router_for_issuer("https://127.0.0.1:9").await
+    }
+
+    #[allow(clippy::unwrap_used)]
+    async fn router_for_issuer(issuer: &str) -> OidcRouter {
         let mut config = HimmelblauConfig::new(Some("/dev/null")).unwrap();
-        config.set("global", "oidc_issuer_url", "https://127.0.0.1:9");
+        config.set("global", "oidc_issuer_url", issuer);
         config.set("global", "oidc_force_interaction_code", "true");
         config.set("oidc", "app_id", "fixture-client");
         let config = Arc::new(Mutex::new(config));
@@ -675,6 +693,7 @@ mod tests {
             native,
             config,
             selection: Mutex::new(Selection::Pending),
+            selecting: Mutex::new(()),
         }
     }
 
@@ -724,10 +743,8 @@ mod tests {
         *router.standard.state.lock().await = CacheState::Online;
         assert!(!router.probe_online(None, SystemTime::now()).await);
         assert!(*router.selection.lock().await == Selection::Pending);
-        assert!(matches!(
-            *router.standard.state.lock().await,
-            CacheState::Online
-        ));
+        assert!(matches!(*router.standard.state.lock().await,
+            CacheState::OfflineNextCheck(time) if time > SystemTime::now()));
 
         let deadline = SystemTime::now() + Duration::from_secs(60);
         *router.standard.state.lock().await = CacheState::OfflineNextCheck(deadline);
@@ -743,6 +760,45 @@ mod tests {
                 assert!(!router.probe_online(None, SystemTime::now()).await);
             }
         }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn cache_state_does_not_wait_for_backend_selection() {
+        // Accepts connections but never answers, so discovery stalls.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let router =
+            router_for_issuer(&format!("https://{}", listener.local_addr().unwrap())).await;
+        *router.standard.state.lock().await = CacheState::Online;
+
+        let selection = router.select_if_due();
+        tokio::pin!(selection);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), &mut selection)
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), router.get_cachestate(None))
+                .await
+                .is_ok()
+        );
+        assert_eq!(*router.selection.lock().await, Selection::Pending);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn backend_waits_for_a_selection_in_progress() {
+        let router = pending_router().await;
+        let attempt = router.selecting.lock().await;
+        *router.selection.lock().await = Selection::StandardOidc;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), router.backend())
+                .await
+                .is_err()
+        );
+        drop(attempt);
+        assert!(router.backend().await.is_ok());
     }
 
     #[tokio::test]
