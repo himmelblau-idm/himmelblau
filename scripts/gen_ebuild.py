@@ -74,14 +74,18 @@ def find_cargo_toml_files(root: Path):
 
 def get_workspace_metadata(repo_root: Path) -> dict:
     """Extract version and license from workspace Cargo.toml."""
+    defaults = {
+        "version": "0.0.0", "license": "GPL-3.0-or-later", "rust_version": "1.70",
+        "homepage": "https://github.com/himmelblau-idm/himmelblau",
+    }
     cargo_toml = repo_root / "Cargo.toml"
     if not cargo_toml.exists():
-        return {"version": "0.0.0", "license": "GPL-3.0-or-later", "rust_version": "1.70"}
+        return defaults
 
     try:
         data = load_toml(cargo_toml)
     except Exception:
-        return {"version": "0.0.0", "license": "GPL-3.0-or-later", "rust_version": "1.70"}
+        return defaults
 
     workspace = data.get("workspace", {})
     package = workspace.get("package", {})
@@ -113,7 +117,9 @@ def extract_rpm_assets(toml_data: dict, cargo_path: Path, repo_root: Path) -> li
         mode = asset.get("mode", "755")
 
         # Resolve source path relative to crate or repo root
-        if src.startswith("target/") or src.startswith("platform/"):
+        if src.startswith("target/") or (
+            src.startswith("platform/") and not (crate_dir / src).is_file()
+        ):
             resolved_src = src
         else:
             abs_src = (crate_dir / src).resolve()
@@ -167,6 +173,11 @@ def generate_install_commands(repo_root: Path) -> str:
     if not assets:
         return _fallback_install()
 
+    return render_install_commands(assets)
+
+
+def render_install_commands(assets: list) -> str:
+    """Render install commands for a set of resolved Cargo package assets."""
     lines = []
 
     # Group assets by type for cleaner output
@@ -176,6 +187,7 @@ def generate_install_commands(repo_root: Path) -> str:
     pam_modules = []
     configs = []
     systemd_units = []
+    systemd_user_units = []
     man_pages = []
     other = []
 
@@ -204,6 +216,8 @@ def generate_install_commands(repo_root: Path) -> str:
         elif "/systemd/system/" in dest and src_basename.endswith(".service"):
             # Only actual .service files, not drop-in configs
             systemd_units.append((src, dest))
+        elif "/systemd/user/" in dest and src_basename.endswith((".service", ".timer", ".socket")):
+            systemd_user_units.append((src, dest))
         elif dest.startswith("/etc/"):
             configs.append((src, dest))
         elif "/man/" in dest:
@@ -215,12 +229,18 @@ def generate_install_commands(repo_root: Path) -> str:
     if binaries:
         lines.append("\t# Install binaries")
         for src, dest in binaries:
-            lines.append(f'\tdobin "${{S}}/{src}"')
+            if not dest.endswith("/") and os.path.basename(dest) != os.path.basename(src):
+                lines.append(f'\tnewbin "${{S}}/{src}" "{os.path.basename(dest)}"')
+            else:
+                lines.append(f'\tdobin "${{S}}/{src}"')
 
     if sbinaries:
         lines.append("\n\t# Install system binaries")
         for src, dest in sbinaries:
-            lines.append(f'\tdosbin "${{S}}/{src}"')
+            if not dest.endswith("/") and os.path.basename(dest) != os.path.basename(src):
+                lines.append(f'\tnewsbin "${{S}}/{src}" "{os.path.basename(dest)}"')
+            else:
+                lines.append(f'\tdosbin "${{S}}/{src}"')
 
     if libraries:
         lines.append("\n\t# Install NSS library")
@@ -240,6 +260,11 @@ def generate_install_commands(repo_root: Path) -> str:
         lines.append("\n\t# Install systemd units")
         for src, dest in systemd_units:
             lines.append(f'\tsystemd_dounit "${{S}}/{src}"')
+
+    if systemd_user_units:
+        lines.append("\n\t# Install systemd user units")
+        for src, dest in systemd_user_units:
+            lines.append(f'\tsystemd_douserunit "${{S}}/{src}"')
 
     if configs:
         lines.append("\n\t# Install configuration files")
@@ -333,7 +358,7 @@ SRC_URI="https://github.com/himmelblau-idm/himmelblau/archive/refs/tags/${{PV}}.
 LICENSE="{license}"
 SLOT="0"
 KEYWORDS="~amd64"
-IUSE="+tpm"
+IUSE="+tpm collabora"
 
 # Allow network access for cargo to fetch dependencies
 # For inclusion in ::gentoo, CRATES variable should be populated instead
@@ -370,6 +395,11 @@ src_compile() {{
 
 src_install() {{
 {install_commands}
+
+\t# The experimental bridge is opt-in, matching the separate DEB/RPM package.
+\tif use collabora; then
+{collabora_install_commands}
+\tfi
 
 \t# Documentation
 \tdodoc README.md
@@ -409,6 +439,23 @@ def generate_ebuild(repo_root: Path) -> str:
 
     # Generate install commands
     install_commands = generate_install_commands(repo_root)
+    collabora_assets = collect_all_assets(repo_root, ["broker", "himmelblau-collabora"])
+    if collabora_assets:
+        collabora_install_commands = render_install_commands(collabora_assets)
+    else:
+        # Keep the parser-free fallback usable on older Python installations.
+        collabora_install_commands = '''\tnewsbin "${S}/target/release/broker" himmelblau_broker
+\tsystemd_douserunit "${S}/src/broker/platform/himmelblau-broker.service"
+\tinsinto /usr/share/dbus-1/services
+\tdoins "${S}/src/broker/platform/com.microsoft.identity.broker1.service"
+\tdobin "${S}/target/release/himmelblau-collabora"
+\tsystemd_douserunit "${S}/src/collabora/platform/himmelblau-collabora.service"
+\tinsinto /etc/xdg/autostart
+\tdoins "${S}/src/collabora/platform/himmelblau-collabora.desktop"'''
+    collabora_install_commands = "\n".join(
+        "\t" + line if line else line
+        for line in collabora_install_commands.splitlines()
+    )
 
     return EBUILD_TEMPLATE.format(
         homepage=metadata["homepage"],
@@ -418,6 +465,7 @@ def generate_ebuild(repo_root: Path) -> str:
         rdepend=rdepend,
         bdepend=bdepend,
         install_commands=install_commands,
+        collabora_install_commands=collabora_install_commands,
     )
 
 
