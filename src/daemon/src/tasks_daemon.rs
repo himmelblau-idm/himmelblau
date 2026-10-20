@@ -564,13 +564,15 @@ fn lock_subid_file(subid_file: &Path) -> Result<SubidLock, String> {
 
 /// Replace a subid file with a fully synced temporary file, keeping its permissions.
 fn replace_subid_file(subid_file: &Path, contents: &str) -> io::Result<()> {
-    let mut tmp = NamedTempFile::new_in(subid_file.parent().unwrap_or(Path::new("/etc")))?;
+    let dir = subid_file.parent().unwrap_or(Path::new("/etc"));
+    let mut tmp = NamedTempFile::new_in(dir)?;
     tmp.as_file()
         .set_permissions(fs::metadata(subid_file)?.permissions())?;
     tmp.write_all(contents.as_bytes())?;
     tmp.as_file().sync_all()?;
     tmp.persist(subid_file).map_err(|e| e.error)?;
-    Ok(())
+    // The rename is only durable once the directory entry is synced as well.
+    fs::File::open(dir)?.sync_all()
 }
 
 /// Move a retired name's subid range to the owner's new name (unless that name already has one).
@@ -692,6 +694,16 @@ fn claim_local_task_name(
     };
     // Migrate legacy UPN-keyed state only when the current UPN matches.
     let legacy = names.remove(&owner.upn.to_lowercase());
+    // So does an owner whose tenant became known after its key was recorded with a nil tenant.
+    let nil_tenant = LocalTaskOwner {
+        tenant_id: None,
+        ..owner.clone()
+    };
+    let legacy = legacy.or_else(|| {
+        owner
+            .tenant_id
+            .and_then(|_| names.remove(&nil_tenant.key()))
+    });
     let migrated = legacy.is_some();
     let owner = owner.key();
     let previous = names.insert(owner.clone(), name.to_string()).or(legacy);
@@ -1590,6 +1602,29 @@ mod tests {
         let state = tmpdir.path().join("local-task-names.json");
         fs::write(&state, br#"{"a@example.com":"bob"}"#).unwrap();
         let owner = task_owner("A@Example.com");
+        claim_local_task_name(&state, &owner, "bob", |previous, evicted| {
+            assert_eq!(previous, None);
+            assert!(evicted.is_empty());
+            Ok(())
+        })
+        .unwrap();
+        let names: HashMap<String, String> =
+            serde_json::from_slice(&fs::read(&state).unwrap()).unwrap();
+        assert_eq!(names, HashMap::from([(owner.key(), "bob".into())]));
+    }
+
+    #[test]
+    fn nil_tenant_owner_is_upgraded_when_the_tenant_becomes_known() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let state = tmpdir.path().join("local-task-names.json");
+        let owner = task_owner("a@example.com");
+        let nil_tenant = LocalTaskOwner {
+            tenant_id: None,
+            ..owner.clone()
+        };
+        let names = HashMap::from([(nil_tenant.key(), "bob".to_string())]);
+        fs::write(&state, serde_json::to_vec(&names).unwrap()).unwrap();
+
         claim_local_task_name(&state, &owner, "bob", |previous, evicted| {
             assert_eq!(previous, None);
             assert!(evicted.is_empty());

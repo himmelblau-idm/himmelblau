@@ -674,10 +674,10 @@ optional {
 optional {
 	require {
 		type etc_t;
-		class dir { add_name remove_name write };
+		class dir { add_name open read remove_name write };
 		class file { create link rename setattr unlink };
 	}
-	allow himmelblaud_tasks_t etc_t:dir { add_name remove_name write };
+	allow himmelblaud_tasks_t etc_t:dir { add_name open read remove_name write };
 	allow himmelblaud_tasks_t etc_t:file { create link rename setattr unlink };
 }
 
