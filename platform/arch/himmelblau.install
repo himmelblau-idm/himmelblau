@@ -28,18 +28,12 @@ _configure_keyring() {
     # it does on a local password login.
     sed -i -E '/^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so/ {/use_authtok/! s/$/ use_authtok/}' "$conf"
 
-    # Migrate only the prelude control previously installed by this script.
-    if ! sed -i -E 's/^([[:space:]]*auth[[:space:]]+\[success=ok ignore=2 default=2)(\][[:space:]]+pam_himmelblau\.so[[:space:]]+ignore_unknown_user set_authtok[[:space:]]*)$/\1 abort=die\2/' "$conf"; then
-        echo "warning: failed to update Himmelblau keyring cancellation control" >&2
-        return 1
-    fi
-
     grep -q 'himmelblau-keyring-prelude' "$conf" && return 0
 
     tmp=$(mktemp) || return 0
 
     # The line patched above sits after `auth include system-local-login`, where
-    # aad-tool puts pam_himmelblau behind `success=done`. A successful Hello PIN login
+    # aad-tool puts pam_himmelblau as `sufficient`. A successful Hello PIN login
     # therefore returns from the whole auth stack before pam_gnome_keyring is
     # reached, and the keyring never sees the PIN. Run the pair up front instead,
     # and jump over it for anyone pam_himmelblau does not claim, so local
@@ -47,7 +41,7 @@ _configure_keyring() {
     awk '
         !ins && /^[[:space:]]*auth[[:space:]]/ {
             print "# himmelblau-keyring-prelude"
-            print "auth       [success=ok ignore=2 default=2 abort=die] pam_himmelblau.so ignore_unknown_user set_authtok"
+            print "auth       [success=ok ignore=2 default=2] pam_himmelblau.so ignore_unknown_user set_authtok"
             print "auth       optional                        pam_gnome_keyring.so use_authtok"
             print "auth       [default=done]                  pam_permit.so"
             ins = 1

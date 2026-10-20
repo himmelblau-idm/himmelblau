@@ -944,7 +944,7 @@ macro_rules! pam_fail {
         ));
 
         thread::sleep(Duration::from_secs(2));
-        // Abort the auth attempt, and don't continue executing the stack
+        // End this Himmelblau attempt; PAM controls determine stack fallback.
         return PamWhatNext::Finish(PamResultCode::PAM_ABORT);
     }};
 }

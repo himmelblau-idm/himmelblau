@@ -334,7 +334,7 @@ Setup PAM
     # vim /etc/pam.d/common-auth
     auth        required      pam_env.so
     auth        [default=1 ignore=ignore success=ok] pam_localuser.so
-    auth        [success=done new_authtok_reqd=done abort=die default=ignore] pam_himmelblau.so
+    auth        sufficient    pam_himmelblau.so
     auth        sufficient    pam_unix.so nullok try_first_pass
     auth        required      pam_deny.so
 

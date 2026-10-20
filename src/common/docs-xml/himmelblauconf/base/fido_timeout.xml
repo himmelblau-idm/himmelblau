@@ -21,8 +21,10 @@ disables QR transport without stopping the security-key attempt.
 If Bluetooth remains powered off and no security-key method is available,
 the power-on wait stops before the deadline to request password authentication.
 Timeouts during an active QR or security-key attempt still fail authentication.
-Keyboard interrupts pending during PAM authentication abort the attempt
-instead of switching to a different authentication method.
+Keyboard interrupts pending during PAM authentication cancel the current
+Himmelblau attempt instead of switching to another Himmelblau authentication
+method. The PAM application's stack controls determine whether authentication
+then continues through another PAM module.
 In the Entra FIDO flow, interactive PIN input runs on the PAM caller thread.
 Its input timeout and signal handling are controlled by the PAM application,
 not this option.

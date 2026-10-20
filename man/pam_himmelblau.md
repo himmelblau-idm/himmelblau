@@ -39,6 +39,11 @@
 
 Configuring PAM ensures authentication requests go through Entra ID when appropriate.
 
+Cancelling passkey authentication ends the current Himmelblau attempt and stops
+its active passkey transports. The PAM application's stack controls determine
+whether authentication then continues through another module; cancellation does
+not force the entire PAM stack to stop.
+
 ## Automatic setup
 
 On Ubuntu/Debian:
@@ -56,9 +61,6 @@ pam-config --add --himmelblau
 ```
 
 The `aad-tool configure-pam` command also inserts recommended directives (dry-run unless `--really` is used).
-It also updates matching existing authentication entries to stop the stack on
-`PAM_ABORT`, preserving their other control actions. The optional `try_unseal`
-entry is unchanged.
 
 ## Manual configuration
 
@@ -70,18 +72,11 @@ In `/etc/pam.d/common-auth`, ensure that the `pam_himmelblau.so` module is place
 auth        required      pam_env.so
 auth        [default=1 ignore=ignore success=ok] pam_localuser.so
 auth        sufficient    pam_unix.so nullok try_first_pass
-auth        [success=done new_authtok_reqd=done abort=die default=ignore] pam_himmelblau.so ignore_unknown_user
+auth        sufficient    pam_himmelblau.so ignore_unknown_user
 auth        required      pam_deny.so
 ```
 
 Configure `/etc/pam.d/common-account` in a similar manner.
-
-The `abort=die` action stops authentication when passkey authentication is
-cancelled, rather than falling through to another module. Keep `default=ignore`
-so unknown users and other non-success results retain their existing fallback
-behavior. On existing installations, review the generated PAM configuration on
-the test machine and reapply the relevant configuration tool; package upgrades
-may preserve locally configured PAM files.
 
 ```pam
 account    [success=ok auth_err=die default=ignore] pam_himmelblau.so ignore_unknown_user
@@ -130,9 +125,9 @@ password	required	pam_deny.so
   The user did not meet the required credential policy.
 
 - **PAM_ABORT**  
-  Authentication was cancelled, or a critical, unrecoverable failure occurred,
-  such as a panic inside the `himmelblaud` service. Authentication controls must
-  include `abort=die` to stop the PAM stack on this result.
+  The Himmelblau attempt was cancelled, or a critical, unrecoverable failure
+  occurred, such as a panic inside the `himmelblaud` service. The configured PAM
+  controls determine whether this stops the stack or permits fallback.
 
 # SEE ALSO
 
