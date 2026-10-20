@@ -79,6 +79,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.16.1 -> 1.16.2"
 
+[[audits.aws-lc-rs]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.18.1 -> 1.18.2"
+
 [[audits.aws-lc-sys]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -559,6 +564,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.11.14 -> 0.11.16"
 
+[[audits.quinn-proto]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.11.16 -> 0.11.19"
+
 [[audits.rand_core]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -613,6 +623,11 @@ version = "0.1.1"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.103.6 -> 0.103.10"
+
+[[audits.rustls-webpki]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.103.15 -> 0.103.16"
 
 [[audits.salsa20]]
 who = "David Mulder <dmulder@samba.org>"
@@ -928,6 +943,16 @@ version = "0.2.3"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.0.4 -> 1.0.6"
+
+[[audits.webpki-root-certs]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.0.6 -> 1.0.10"
+
+[[audits.webpki-roots]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.0.1 -> 1.0.10"
 
 [[audits.zbus]]
 who = "David Mulder <dmulder@samba.org>"

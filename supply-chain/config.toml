@@ -107,7 +107,7 @@ version = "1.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.aws-lc-sys]]
-version = "0.38.0"
+version = "0.46.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.axum]]
@@ -273,6 +273,11 @@ criteria = "safe-to-deploy"
 [[exemptions.dbus-tokio]]
 version = "0.7.6"
 criteria = "safe-to-deploy"
+
+[[exemptions.der]]
+version = "0.8.2"
+criteria = "safe-to-deploy"
+notes = "This cargo-vet exemption for der 0.8.2 is an exemption, not certification. Unresolved reported concerns include invalid typed `SetOfRef` elements being accepted and silently omitted, suppressed ordering-comparison errors, and reader/nesting/PEM interactions, including state changes after failed nested-reader setup. Both review batches reported complete coverage of their supplied diffs, but the synthesis relied on reports without independently validating source code, regression tests, or cross-file correctness."
 
 [[exemptions.der_derive]]
 version = "0.7.3"
@@ -892,10 +897,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.web-time]]
 version = "1.1.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.webpki-roots]]
-version = "0.26.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.webpki-roots]]
