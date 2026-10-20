@@ -4040,20 +4040,29 @@ where
         let Some(tok) = token else {
             return Ok(None);
         };
+        let requested: Vec<_> = tok.groups.iter().map(|group| group.gidnumber).collect();
+        let owners: HashMap<_, _> = {
+            let mut txn = self.db.write().await;
+            txn.get_groups_by_gids(&requested)
+                .map_err(|_| ResolverError)?
+                .into_iter()
+                .map(|group| (group.gidnumber, group))
+                .collect()
+        };
         let mut gids = Vec::with_capacity(tok.groups.len());
         for group in &tok.groups {
             // A raw claim is not proof of ownership of a cached numeric GID.
             // In particular, a real provider group can replace a synthetic
             // primary group after the user token was cached. Check at lookup
             // time in both modes, rather than relying on memberof_t alone.
-            match self.get_grouptoken(Id::Gid(group.gidnumber)).await {
-                Ok(Some(cached)) if cached.uuid != group.uuid => {
+            match owners.get(&group.gidnumber) {
+                Some(cached) if cached.uuid != group.uuid => {
                     debug!(
                         gid = group.gidnumber,
                         "skipping supplementary group owned by another identity"
                     );
                 }
-                Ok(Some(cached))
+                Some(cached)
                     if self.initgroups_mode == InitgroupsMode::Full
                         || !self.token_gidattr(&cached).is_empty() =>
                 {
@@ -4061,10 +4070,10 @@ where
                 }
                 // Full mode intentionally permits claims without an NSS row,
                 // but never claims whose GID has a different known owner.
-                Ok(None) if self.initgroups_mode == InitgroupsMode::Full => {
+                None if self.initgroups_mode == InitgroupsMode::Full => {
                     gids.push(group.gidnumber);
                 }
-                Ok(Some(_)) | Ok(None) | Err(_) => {
+                Some(_) | None => {
                     debug!(
                         gid = group.gidnumber,
                         "skipping supplementary group with no verified NSS identity"

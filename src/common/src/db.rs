@@ -120,6 +120,8 @@ pub trait CacheTxn {
 
     fn get_groups(&mut self) -> Result<Vec<GroupToken>, CacheError>;
 
+    fn get_groups_by_gids(&mut self, gids: &[u32]) -> Result<Vec<GroupToken>, CacheError>;
+
     fn update_group_with_owner(
         &mut self,
         grp: &GroupToken,
@@ -1367,6 +1369,41 @@ impl<'a> CacheTxn for DbTxn<'a> {
             .collect())
     }
 
+    fn get_groups_by_gids(&mut self, gids: &[u32]) -> Result<Vec<GroupToken>, CacheError> {
+        // Keep every batch in this transaction's snapshot and below SQLite's
+        // historical 999-variable limit. Do not scan unrelated cached groups.
+        let mut gids = gids.to_vec();
+        gids.sort_unstable();
+        gids.dedup();
+        let mut groups = Vec::new();
+        for chunk in gids.chunks(500) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let mut stmt = self
+                .conn
+                .prepare(&format!(
+                    "SELECT gidnumber, token FROM group_t WHERE gidnumber IN ({placeholders})"
+                ))
+                .map_err(|e| self.sqlite_error("batch group prepare", &e))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk), |row| {
+                    Ok((row.get::<_, u32>(0)?, row.get::<_, Vec<u8>>(1)?))
+                })
+                .map_err(|e| self.sqlite_error("batch group query", &e))?;
+            for row in rows {
+                let (gid, data) = row.map_err(|e| self.sqlite_error("batch group row", &e))?;
+                // A malformed owner must not look like an unclaimed GID to
+                // Full initgroups. Fail the snapshot rather than grant it.
+                let group: GroupToken =
+                    serde_json::from_slice(&data).map_err(|_| CacheError::SerdeJson)?;
+                if group.gidnumber != gid {
+                    return Err(CacheError::Parse);
+                }
+                groups.push(group);
+            }
+        }
+        Ok(groups)
+    }
+
     fn update_group_with_owner(
         &mut self,
         grp: &GroupToken,
@@ -1605,6 +1642,59 @@ impl<'a> Drop for DbTxn<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn group_owner_snapshot_batches_requested_gids_and_rejects_corruption() {
+        let db = Db::new("").unwrap();
+        let mut txn = db.write().await;
+        txn.migrate().unwrap();
+        let requested: Vec<u32> = (10000..11205).collect();
+        for gid in requested.iter().step_by(2).chain(std::iter::once(&20000)) {
+            let group = super::GroupToken {
+                name: format!("group-{gid}"),
+                spn: format!("group-{gid}"),
+                uuid: uuid::Uuid::from_u128(u128::from(*gid)),
+                gidnumber: *gid,
+            };
+            txn.update_group(&group, 0).unwrap();
+        }
+        assert!(txn.get_groups_by_gids(&[]).unwrap().is_empty());
+        let mut with_duplicates = requested.clone();
+        with_duplicates.extend_from_slice(&requested);
+        let mut found: Vec<_> = txn
+            .get_groups_by_gids(&with_duplicates)
+            .unwrap()
+            .into_iter()
+            .map(|group| group.gidnumber)
+            .collect();
+        found.sort_unstable();
+        assert_eq!(
+            found,
+            requested.iter().step_by(2).copied().collect::<Vec<_>>()
+        );
+        txn.conn
+            .execute(
+                "UPDATE group_t SET token = ?1 WHERE gidnumber = 10000",
+                [b"invalid".as_slice()],
+            )
+            .unwrap();
+        assert!(matches!(
+            txn.get_groups_by_gids(&requested),
+            Err(CacheError::SerdeJson)
+        ));
+        // Corrupt unrelated rows do not prevent a targeted valid lookup.
+        assert_eq!(txn.get_groups_by_gids(&[20000]).unwrap().len(), 1);
+        txn.conn
+            .execute(
+                "UPDATE group_t SET gidnumber = 20001 WHERE gidnumber = 20000",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            txn.get_groups_by_gids(&[20001]),
+            Err(CacheError::Parse)
+        ));
+    }
+
     #[tokio::test]
     async fn duplicate_account_purge_removes_legacy_primary_group() {
         use crate::idprovider::himmelblau::synthetic_primary_group;
