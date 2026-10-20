@@ -201,11 +201,10 @@ impl traits::PublicKeyParts for RsaPrivateKey {
 impl RsaPrivateKey {
     pub fn new<R>(_rng: &mut R, bits: usize) -> errors::Result<Self> {
         let size = match bits {
-            0 => return Err(errors::Error),
-            1..=2048 => aws_rsa::KeySize::Rsa2048,
-            2049..=3072 => aws_rsa::KeySize::Rsa3072,
-            3073..=4096 => aws_rsa::KeySize::Rsa4096,
-            4097..=8192 => aws_rsa::KeySize::Rsa8192,
+            2048 => aws_rsa::KeySize::Rsa2048,
+            3072 => aws_rsa::KeySize::Rsa3072,
+            4096 => aws_rsa::KeySize::Rsa4096,
+            8192 => aws_rsa::KeySize::Rsa8192,
             _ => return Err(errors::Error),
         };
         Self::from_private_decrypting_key(aws_rsa::PrivateDecryptingKey::generate(size)?)
@@ -220,16 +219,18 @@ impl RsaPrivateKey {
     }
 
     fn from_private_decrypting_key(key: aws_rsa::PrivateDecryptingKey) -> errors::Result<Self> {
-        let pkcs8_der = AsDer::<Pkcs8V1Der<'static>>::as_der(&key)?
-            .as_ref()
-            .to_vec();
+        let pkcs8_der = Zeroizing::new(
+            AsDer::<Pkcs8V1Der<'static>>::as_der(&key)?
+                .as_ref()
+                .to_vec(),
+        );
         let public_encrypting_key = key.public_key();
         let public_der = AsDer::<PublicKeyX509Der<'static>>::as_der(&public_encrypting_key)?
             .as_ref()
             .to_vec();
         let public_key = RsaPublicKey::from_public_key(aws_rsa::PublicKey::from_der(&public_der)?)?;
         Ok(Self {
-            pkcs8_der: Zeroizing::new(pkcs8_der),
+            pkcs8_der,
             public_key,
         })
     }
@@ -270,10 +271,12 @@ impl pkcs1_crate::DecodeRsaPrivateKey for RsaPrivateKey {
     fn from_pkcs1_der(bytes: &[u8]) -> pkcs1_crate::Result<Self> {
         let key_pair =
             aws_signature::RsaKeyPair::from_der(bytes).map_err(|_| pkcs1_crate::Error::Crypto)?;
-        let pkcs8_der = AsDer::<Pkcs8V1Der<'static>>::as_der(&key_pair)
-            .map_err(|_| pkcs1_crate::Error::Crypto)?
-            .as_ref()
-            .to_vec();
+        let pkcs8_der = Zeroizing::new(
+            AsDer::<Pkcs8V1Der<'static>>::as_der(&key_pair)
+                .map_err(|_| pkcs1_crate::Error::Crypto)?
+                .as_ref()
+                .to_vec(),
+        );
         let key = aws_rsa::PrivateDecryptingKey::from_pkcs8(&pkcs8_der)
             .map_err(|_| pkcs1_crate::Error::Crypto)?;
         Self::from_private_decrypting_key(key).map_err(|_| pkcs1_crate::Error::Crypto)
@@ -557,17 +560,22 @@ impl traits::SignatureScheme for Pkcs1v15Sign {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Pss {
     digest: DigestAlgorithm,
+    salt_len: Option<usize>,
 }
 
 impl Pss {
     pub fn new<D: SelectDigestAlgorithm>() -> Self {
         Self {
             digest: D::DIGEST_ALGORITHM,
+            salt_len: None,
         }
     }
 
-    pub fn new_with_salt<D: SelectDigestAlgorithm>(_salt_len: usize) -> Self {
-        Self::new::<D>()
+    pub fn new_with_salt<D: SelectDigestAlgorithm>(salt_len: usize) -> Self {
+        Self {
+            digest: D::DIGEST_ALGORITHM,
+            salt_len: Some(salt_len),
+        }
     }
 }
 
@@ -579,6 +587,14 @@ impl traits::SignatureScheme for Pss {
         hashed: &[u8],
     ) -> errors::Result<Vec<u8>> {
         let digest = self.digest.aws_digest(hashed)?;
+        // The backend only supports digest-length salt. Never silently substitute
+        // that policy for an explicitly requested incompatible length.
+        if self
+            .salt_len
+            .is_some_and(|len| len != digest.as_ref().len())
+        {
+            return Err(errors::Error);
+        }
         let pair = private_key.key_pair().map_err(|_| errors::Error)?;
         let mut signature = vec![0; pair.public_modulus_len()];
         pair.sign_digest(self.digest.pss_signing_algorithm(), &digest, &mut signature)?;
@@ -592,6 +608,14 @@ impl traits::SignatureScheme for Pss {
         signature: &[u8],
     ) -> errors::Result<()> {
         let digest = self.digest.aws_digest(hashed)?;
+        // The backend only supports digest-length salt. Never silently substitute
+        // that policy for an explicitly requested incompatible length.
+        if self
+            .salt_len
+            .is_some_and(|len| len != digest.as_ref().len())
+        {
+            return Err(errors::Error);
+        }
         aws_signature::UnparsedPublicKey::new(
             self.digest.pss_verification_algorithm(),
             &public_key.pkcs1_der,
@@ -1141,8 +1165,47 @@ mod tests {
     }
 
     #[test]
-    fn zero_bit_key_generation_is_rejected() {
+    fn unsupported_key_sizes_are_rejected() {
         let mut rng = SystemRandom::new();
-        assert!(RsaPrivateKey::new(&mut rng, 0).is_err());
+        for bits in [0, 1, 1024, 2047, 2049, 3071, 3073, 4095, 4097, 8191, 8193] {
+            assert!(RsaPrivateKey::new(&mut rng, bits).is_err());
+        }
+    }
+    #[test]
+    fn pss_explicit_salt_length_is_enforced() {
+        let key = test_key();
+        let public = key.to_public_key();
+        let mut rng = SystemRandom::new();
+        let hashed = digest::digest(&digest::SHA256, b"salt contract");
+        let signature = key
+            .sign_with_rng(
+                &mut rng,
+                Pss::new_with_salt::<sha2::Sha256>(32),
+                hashed.as_ref(),
+            )
+            .unwrap();
+        public
+            .verify(
+                Pss::new_with_salt::<sha2::Sha256>(32),
+                hashed.as_ref(),
+                &signature,
+            )
+            .unwrap();
+        for salt_len in [0, 20, 31, 33, 64] {
+            assert!(key
+                .sign_with_rng(
+                    &mut rng,
+                    Pss::new_with_salt::<sha2::Sha256>(salt_len),
+                    hashed.as_ref()
+                )
+                .is_err());
+            assert!(public
+                .verify(
+                    Pss::new_with_salt::<sha2::Sha256>(salt_len),
+                    hashed.as_ref(),
+                    &signature
+                )
+                .is_err());
+        }
     }
 }
