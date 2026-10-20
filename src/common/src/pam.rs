@@ -76,6 +76,8 @@ pub struct Options {
     pub no_info_prompt: bool,
     pub set_authtok: bool,
     pub try_unseal: bool,
+    /// Denied attempts before giving up with PAM_MAXTRIES; 0 asks again forever.
+    pub max_tries: u32,
     /// Only set by CLI (aad-tool auth-test --force-reauth), not parsed from PAM module arguments.
     pub force_reauth: bool,
 }
@@ -94,6 +96,15 @@ impl TryFrom<&Vec<&CStr>> for Options {
         };
 
         let try_unseal = gopts.contains("try_unseal");
+        let max_tries = gopts
+            .iter()
+            .find_map(|o| o.strip_prefix("max_tries="))
+            .map_or(0, |v| {
+                v.parse().unwrap_or_else(|_| {
+                    println!("Invalid max_tries={} ignored", v);
+                    0
+                })
+            });
         Ok(Options {
             debug: gopts.contains("debug"),
             use_first_pass: gopts.contains("use_first_pass") || try_unseal,
@@ -103,6 +114,7 @@ impl TryFrom<&Vec<&CStr>> for Options {
             no_info_prompt: gopts.contains("no_info_prompt"),
             set_authtok: gopts.contains("set_authtok") || gopts.contains("keyring_authtok"),
             try_unseal,
+            max_tries,
             force_reauth: false,
         })
     }
