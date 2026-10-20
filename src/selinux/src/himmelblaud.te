@@ -681,6 +681,14 @@ optional {
 	allow himmelblaud_tasks_t etc_t:file { create link rename setattr unlink };
 }
 
+# Create replaced subid files with the label of the file they replace.
+optional {
+	require {
+		class process setfscreate;
+	}
+	allow himmelblaud_tasks_t self:process setfscreate;
+}
+
 optional {
 	require {
 		type shadow_t;
@@ -778,7 +786,7 @@ optional {
 	}
 	type_transition himmelblaud_tasks_t home_root_t:dir user_home_dir_t;
 	type_transition himmelblaud_tasks_t home_root_t:lnk_file user_home_dir_t;
-	allow himmelblaud_tasks_t user_home_dir_t:dir { create setattr };
+	allow himmelblaud_tasks_t user_home_dir_t:dir { create rename setattr };
 }
 
 optional {

@@ -563,10 +563,52 @@ fn lock_subid_file(subid_file: &Path) -> Result<SubidLock, String> {
     Err(format!("Timed out locking {}", subid_file.display()))
 }
 
+/// Create the replacement with the SELinux context of the file it replaces (a random file in
+/// `/etc` would be `etc_t`, not `shadow_t`). Without a context there is nothing to preserve.
+fn new_subid_temp_file(subid_file: &Path, dir: &Path) -> io::Result<NamedTempFile> {
+    use std::os::fd::AsRawFd;
+    let fscreate = |label: &[u8]| -> io::Result<()> {
+        let attr = OpenOptions::new()
+            .write(true)
+            .open("/proc/thread-self/attr/fscreate")?;
+        match unsafe { libc::write(attr.as_raw_fd(), label.as_ptr().cast(), label.len()) } {
+            -1 => Err(io::Error::last_os_error()),
+            _ => Ok(()),
+        }
+    };
+    let path = CString::new(subid_file.as_os_str().as_bytes())?;
+    let mut label = [0u8; 1024];
+    let len = unsafe {
+        libc::getxattr(
+            path.as_ptr(),
+            b"security.selinux\0".as_ptr().cast(),
+            label.as_mut_ptr().cast(),
+            label.len(),
+        )
+    };
+    if len <= 0 {
+        return NamedTempFile::new_in(dir);
+    }
+    let labeled = fscreate(&label[..len as usize]);
+    if let Err(e) = &labeled {
+        tracing::warn!(
+            "Cannot keep the SELinux label of {}: {}",
+            subid_file.display(),
+            e
+        );
+    }
+    let tmp = NamedTempFile::new_in(dir);
+    if labeled.is_ok() {
+        // An empty context resets the file creation context of this thread.
+        fscreate(&[])?;
+    }
+    tmp
+}
+
 /// Replace a subid file with a fully synced temporary file, keeping its permissions.
 fn replace_subid_file(subid_file: &Path, contents: &str) -> io::Result<()> {
     let dir = subid_file.parent().unwrap_or(Path::new("/etc"));
-    let mut tmp = NamedTempFile::new_in(dir)?;
+    let mut tmp = new_subid_temp_file(subid_file, dir)?;
     tmp.as_file()
         .set_permissions(fs::metadata(subid_file)?.permissions())?;
     tmp.write_all(contents.as_bytes())?;
