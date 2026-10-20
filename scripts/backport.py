@@ -96,18 +96,6 @@ class AnalysisCache:
                 return {}
         return {}
 
-    @staticmethod
-    def _legacy_analysis_is_safe(analysis: dict) -> bool:
-        """Return True when legacy unscoped analysis can be reused safely.
-
-        Legacy cache entries predate target-aware scoping. A cached SKIP/MAYBE
-        from a prior run (for a different target set) can incorrectly suppress
-        valid backports. Reuse only positive BACKPORT decisions from legacy
-        cache; force re-analysis for SKIP/MAYBE.
-        """
-        verdict = str(analysis.get("verdict", "")).upper()
-        return verdict == "BACKPORT"
-
     def get(self, commit_sha: str, analysis_scope: Optional[str] = None) -> Optional[dict]:
         """Get cached analysis for a commit and optional target scope."""
         if not self.enabled:
@@ -120,11 +108,7 @@ class AnalysisCache:
                 if isinstance(analysis, dict):
                     return analysis
 
-            # Backward compatibility: reuse legacy unscoped cache only when
-            # safe (BACKPORT). Never reuse legacy SKIP/MAYBE.
-            legacy = data.get("analysis")
-            if isinstance(legacy, dict) and self._legacy_analysis_is_safe(legacy):
-                return legacy
+            # Unscoped verdicts cannot establish applicability to these targets.
             return None
         analysis = data.get("analysis")
         return analysis if isinstance(analysis, dict) else None
@@ -1638,6 +1622,7 @@ Examples:
 
     # Check whether each commit already exists per target branch.
     # Keep commits that are missing from at least one target branch.
+    commits_already_in_all_targets = 0
     already_present_by_commit: dict[str, set[str]] = {}
     commits_needing_analysis: list[Commit] = []
     for commit in commits:
@@ -1650,13 +1635,14 @@ Examples:
             already_present_by_commit[commit.sha] = present_targets
         if len(present_targets) < len(versions):
             commits_needing_analysis.append(commit)
+        else:
+            commits_already_in_all_targets += 1
 
     commits = commits_needing_analysis
 
     # Reverse to apply oldest commits first (git log returns newest first)
     commits = list(reversed(commits))
 
-    commits_already_in_all_targets = original_count - len(commits)
     print(f"  Found {original_count} commits, {len(commits)} after filtering")
     print(f"  (Filtered out merge commits, dependabot updates, and CI-only changes)")
     if commits_already_in_all_targets > 0:
