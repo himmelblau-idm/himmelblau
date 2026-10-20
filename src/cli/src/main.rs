@@ -137,6 +137,46 @@ fn preserve_numeric_account_success(existing_line: &str) -> Option<String> {
     ))
 }
 
+// Preserve custom success jumps and other actions while making abort terminal.
+fn auth_control_with_abort(existing_line: &str) -> String {
+    let indentation = &existing_line[..existing_line.len() - existing_line.trim_start().len()];
+    let existing_line = existing_line.trim_start();
+    if let (Some(start), Some(end)) = (existing_line.find('['), existing_line.find(']')) {
+        let mut actions: Vec<&str> = existing_line[start + 1..end]
+            .split_whitespace()
+            .map(|action| {
+                if action.starts_with("abort=") {
+                    "abort=die"
+                } else {
+                    action
+                }
+            })
+            .collect();
+        if !actions.contains(&"abort=die") {
+            actions.push("abort=die");
+        }
+        return format!(
+            "{}{}[{}]{}",
+            indentation,
+            &existing_line[..start],
+            actions.join(" "),
+            &existing_line[end + 1..]
+        );
+    }
+    let mut parts = existing_line.splitn(3, char::is_whitespace);
+    let stack = parts.next().unwrap_or("auth");
+    let rest = existing_line[stack.len()..].trim_start();
+    let split = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let control = match &rest[..split] {
+        "sufficient" => "success=done new_authtok_reqd=done abort=die default=ignore",
+        "required" => "success=ok new_authtok_reqd=ok ignore=ignore abort=die default=bad",
+        "requisite" => "success=ok new_authtok_reqd=ok ignore=ignore abort=die default=die",
+        "optional" => "success=ok new_authtok_reqd=ok abort=die default=ignore",
+        _ => return existing_line.to_string(),
+    };
+    format!("{indentation}{stack} [{control}]{}", &rest[split..])
+}
+
 #[instrument(skip(after_pred, before_pred))]
 fn insert_module_line(
     pam_file: &str,
@@ -182,8 +222,12 @@ fn insert_module_line(
             return Ok(());
         }
 
-        let updated_line = preserve_numeric_account_success(&lines[existing_index])
-            .unwrap_or_else(|| module_line.to_string());
+        let updated_line = if stack_type == "auth" && desired_opts.contains("set_authtok") {
+            auth_control_with_abort(&lines[existing_index])
+        } else {
+            preserve_numeric_account_success(&lines[existing_index])
+                .unwrap_or_else(|| module_line.to_string())
+        };
         if updated_line == lines[existing_index] {
             debug!("{} already contains pam_himmelblau; skipping", pam_file);
             return Ok(());
@@ -345,11 +389,11 @@ fn configure_pam(
                 auth_file,
                 // Set PAM_AUTHTOK from Hello PIN so downstream modules (e.g. gnome-keyring)
                 // can unlock using use_authtok.
-                "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
+                "auth\t[success=done new_authtok_reqd=done abort=die default=ignore]\tpam_himmelblau.so ignore_unknown_user set_authtok",
                 None,
                 // pam_himmelblau should always come first on the auth stack
                 Some(&|_: &str| true),
-                false,
+                true,
                 dry_run,
             )?;
         }
@@ -2512,7 +2556,7 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::HimmelblauUnixParser;
-    use super::{insert_module_line, preserve_numeric_account_success};
+    use super::{auth_control_with_abort, insert_module_line, preserve_numeric_account_success};
     use clap::CommandFactory;
     use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
     use himmelblau_unix_common::tpm::resolve_hsm_type;
@@ -2783,6 +2827,46 @@ mod tests {
             content,
             format!("{}\naccount required pam_unix.so\n", ACCOUNT_LINE)
         );
+        remove_temp_file(&path)
+    }
+
+    #[test]
+    fn auth_abort_migration_preserves_existing_actions() {
+        for control in [
+            "sufficient",
+            "required",
+            "requisite",
+            "optional",
+            "[success=2 ignore=ignore default=ignore]",
+            "[success=ok abort=ignore default=2]",
+        ] {
+            let line = format!("auth {control} pam_himmelblau.so ignore_unknown_user set_authtok");
+            let updated = auth_control_with_abort(&line);
+            assert!(updated.contains("abort=die"));
+            assert!(!updated.contains("abort=ignore"));
+            assert_eq!(auth_control_with_abort(&updated), updated);
+            if control.contains("success=2") {
+                assert!(updated.contains("success=2"));
+            }
+            if control.contains("default=2") {
+                assert!(updated.contains("default=2"));
+            }
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn auth_abort_migrates_installed_rule_and_honors_dry_run() -> anyhow::Result<()> {
+        let original = "auth [success=2 default=ignore] pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n";
+        let path = temp_pam_file("auth-abort", original)?;
+        let desired = "auth [success=done new_authtok_reqd=done abort=die default=ignore] pam_himmelblau.so ignore_unknown_user set_authtok";
+        insert_module_line(path.to_str().unwrap(), desired, None, None, true, true)?;
+        assert_eq!(read_to_string(&path)?, original);
+        insert_module_line(path.to_str().unwrap(), desired, None, None, true, false)?;
+        let updated = read_to_string(&path)?;
+        assert!(updated.contains("success=2 default=ignore abort=die"));
+        insert_module_line(path.to_str().unwrap(), desired, None, None, true, false)?;
+        assert_eq!(read_to_string(&path)?, updated);
         remove_temp_file(&path)
     }
 

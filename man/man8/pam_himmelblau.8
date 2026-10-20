@@ -129,7 +129,7 @@ unknown users are not implicitly allowed.
 auth        required      pam_env.so
 auth        [default=1 ignore=ignore success=ok] pam_localuser.so
 auth        sufficient    pam_unix.so nullok try_first_pass
-auth        sufficient    pam_himmelblau.so ignore_unknown_user
+auth        [success=done new_authtok_reqd=done abort=die default=ignore]    pam_himmelblau.so ignore_unknown_user
 auth        required      pam_deny.so
 .EE
 .PP
@@ -211,8 +211,10 @@ The user did not meet the required credential policy.
 .PD 0
 .P
 .PD
-A critical, unrecoverable failure occurred\(emsuch as a panic inside the
-\f[CR]himmelblaud\f[R] service.
+Authentication was aborted, including a failed or cancelled FIDO attempt.
+The authentication rule must include \f[CR]abort=die\f[R] to stop the PAM
+stack; \f[CR]sufficient\f[R] alone allows unsuccessful results to fall
+through to later modules.
 .SH SEE ALSO
 \f[B]himmelblaud(8)\f[R], \f[B]aad\-tool(1)\f[R],
 \f[B]himmelblau.conf(5)\f[R], \f[B]pam(8)\f[R]

@@ -28,6 +28,8 @@ _configure_keyring() {
     # it does on a local password login.
     sed -i -E '/^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so/ {/use_authtok/! s/$/ use_authtok/}' "$conf"
 
+    # Upgrade an existing prelude without changing its success/skip behavior.
+    sed -i 's/\[success=ok ignore=2 default=2\]/[success=ok ignore=2 abort=die default=2]/' "$conf"
     grep -q 'himmelblau-keyring-prelude' "$conf" && return 0
 
     tmp=$(mktemp) || return 0
@@ -41,7 +43,7 @@ _configure_keyring() {
     awk '
         !ins && /^[[:space:]]*auth[[:space:]]/ {
             print "# himmelblau-keyring-prelude"
-            print "auth       [success=ok ignore=2 default=2] pam_himmelblau.so ignore_unknown_user set_authtok"
+            print "auth       [success=ok ignore=2 abort=die default=2] pam_himmelblau.so ignore_unknown_user set_authtok"
             print "auth       optional                        pam_gnome_keyring.so use_authtok"
             print "auth       [default=done]                  pam_permit.so"
             ins = 1

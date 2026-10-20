@@ -67,7 +67,7 @@ In `/etc/pam.d/common-auth`, ensure that the `pam_himmelblau.so` module is place
 auth        required      pam_env.so
 auth        [default=1 ignore=ignore success=ok] pam_localuser.so
 auth        sufficient    pam_unix.so nullok try_first_pass
-auth        sufficient    pam_himmelblau.so ignore_unknown_user
+auth        [success=done new_authtok_reqd=done abort=die default=ignore]    pam_himmelblau.so ignore_unknown_user
 auth        required      pam_deny.so
 ```
 
@@ -120,7 +120,7 @@ password	required	pam_deny.so
   The user did not meet the required credential policy.
 
 - **PAM_ABORT**  
-  A critical, unrecoverable failure occurred—such as a panic inside the `himmelblaud` service.
+  Authentication was aborted, including a failed or cancelled FIDO attempt. The authentication rule must include `abort=die` to stop the PAM stack; `sufficient` alone allows unsuccessful results to fall through to later modules.
 
 # SEE ALSO
 
