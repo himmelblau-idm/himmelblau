@@ -215,6 +215,8 @@ mod tests {
         check_online_result: AtomicBool,
         probe_online_result: AtomicBool,
         unreachable_domain: RwLock<Option<String>>,
+        probe_stall: AtomicBool,
+        probe_release: Notify,
         cache_state_calls: AtomicUsize,
         check_online_calls: AtomicUsize,
         probe_online_calls: AtomicUsize,
@@ -234,6 +236,8 @@ mod tests {
                 check_online_result: AtomicBool::new(true),
                 probe_online_result: AtomicBool::new(true),
                 unreachable_domain: RwLock::new(None),
+                probe_stall: AtomicBool::new(false),
+                probe_release: Notify::new(),
                 cache_state_calls: AtomicUsize::new(0),
                 check_online_calls: AtomicUsize::new(0),
                 probe_online_calls: AtomicUsize::new(0),
@@ -272,6 +276,9 @@ mod tests {
 
         async fn probe_online(&self, account_id: Option<&str>, _now: SystemTime) -> bool {
             self.probe_online_calls.fetch_add(1, Ordering::AcqRel);
+            if self.probe_stall.load(Ordering::Acquire) {
+                self.probe_release.notified().await;
+            }
             let unreachable = self
                 .unreachable_domain
                 .read()
@@ -1190,6 +1197,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn queued_refresh_skips_an_entry_cleared_during_the_probe() {
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let resolver = setup_resolver().await;
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver
+            .get_nssaccount_name(&test_token().spn, OnExpiry::RefreshInBackground)
+            .await
+            .unwrap();
+        resolver.client.probe_stall.store(true, Ordering::Release);
+
+        let clear = async {
+            while resolver.client.probe_online_calls.load(Ordering::Acquire) == 0 {
+                tokio::task::yield_now().await;
+            }
+            resolver
+                .delete_cache_usertoken(test_token().uuid)
+                .await
+                .unwrap();
+            resolver.client.probe_release.notify_one();
+        };
+        tokio::join!(resolver.refresh_queued_identities(&shutdown_rx), clear);
+
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        assert!(resolver.get_cached_usertokens().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalidate_lets_lookups_queue_a_refresh_again() {
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let resolver = setup_resolver().await;
+        let spn = test_token().spn;
+        resolver
+            .get_nssaccount_name(&spn, OnExpiry::RefreshInBackground)
+            .await
+            .unwrap();
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+        resolver
+            .get_nssaccount_name(&spn, OnExpiry::RefreshInBackground)
+            .await
+            .unwrap();
+        assert!(resolver.identity_refreshes.lock().await.queued.is_empty());
+
+        resolver.invalidate().await.unwrap();
+        resolver
+            .get_nssaccount_name(&spn, OnExpiry::RefreshInBackground)
+            .await
+            .unwrap();
+        assert_eq!(resolver.identity_refreshes.lock().await.queued, vec![spn]);
+    }
+
+    #[tokio::test]
     async fn queued_refresh_stops_at_shutdown() {
         let resolver = setup_resolver().await;
         resolver.client.user_get_error.store(6, Ordering::Release);
@@ -1244,7 +1302,6 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(5), lookups)
                 .await
                 .expect("lookup waited for the refresh");
-            // Sign-in needs the HSM lock, so it still waits for the stalled request.
             assert!(
                 tokio::time::timeout(Duration::from_millis(200), resolver.hsm.lock())
                     .await
@@ -2738,6 +2795,7 @@ where
             .and_then(|_| dbtxn.clear_hello_keys())
             .and_then(|_| dbtxn.commit())
             .map_err(|_| ())?;
+        *self.identity_refreshes.lock().await = IdentityRefreshes::default();
 
         // Also delete the generated himmelblau.conf. This unjoins the host!
         let path = Path::new(SERVER_CONFIG_PATH);
@@ -2754,7 +2812,9 @@ where
         dbtxn
             .invalidate()
             .and_then(|_| dbtxn.commit())
-            .map_err(|_| ResolverError)
+            .map_err(|_| ResolverError)?;
+        self.identity_refreshes.lock().await.next_allowed.clear();
+        Ok(())
     }
 
     #[cfg(test)]
@@ -2837,14 +2897,17 @@ where
                 break;
             }
             let id = Id::Name(spn.clone());
-            let token = match self.lookup_cached_usertoken(&id).await {
-                Ok((true, Some(token))) => token,
+            match self.lookup_cached_usertoken(&id).await {
+                Ok((true, Some(_))) => {}
                 Ok(_) => continue,
                 Err(_) => {
                     warn!(account_id = %id, "Failed to read a queued identity");
                     continue;
                 }
-            };
+            }
+            if !shutdown_rx.is_empty() {
+                break;
+            }
             let domain = spn
                 .rsplit_once('@')
                 .map_or(spn.as_str(), |(_, domain)| domain);
@@ -2873,6 +2936,10 @@ where
                     .insert(spn, retry);
                 continue;
             }
+            // The entry may have been cleared or refreshed while the probe ran.
+            let Ok((true, Some(token))) = self.lookup_cached_usertoken(&id).await else {
+                continue;
+            };
             if self.refresh_usertoken(&id, Some(token)).await.is_err() {
                 warn!(account_id = %id, "Failed to refresh an expired cached identity");
             }
