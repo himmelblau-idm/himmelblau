@@ -828,8 +828,14 @@ fn handle_pam_auth_response_success() -> PamWhatNext {
     PamWhatNext::Finish(code)
 }
 
-fn handle_pam_auth_response_denied(state: &AuthenticateState, msg: &str) -> PamWhatNext {
+fn handle_pam_auth_response_denied(state: &mut AuthenticateState, msg: &str) -> PamWhatNext {
     state.msg_printer.print_text(msg);
+    state.denials += 1;
+    if state.opts.max_tries != 0 && state.denials >= state.opts.max_tries {
+        // Callers that answer prompts without the user (display managers)
+        // would otherwise resubmit the same credentials forever.
+        return PamWhatNext::Finish(PamResultCode::PAM_MAXTRIES);
+    }
     thread::sleep(Duration::from_secs(2));
     let req = ClientRequest::PamAuthenticateInit(
         state.account_id.to_string(),
@@ -1468,6 +1474,7 @@ struct AuthenticateState {
     poll_attempt: i32,
     polling_interval: u32,
     enrollment_qr_active: bool,
+    denials: u32,
 }
 
 impl AuthenticateState {
@@ -1582,6 +1589,7 @@ pub fn authenticate_with_client(
         poll_attempt: -1,
         polling_interval: 2,
         enrollment_qr_active: false,
+        denials: 0,
     };
 
     // This is the initial request to the daemon
@@ -2023,9 +2031,41 @@ mod tests {
                 poll_attempt: 0,
                 polling_interval: 0,
                 enrollment_qr_active: false,
+                denials: 0,
             },
             listener,
         )
+    }
+
+    #[test]
+    fn max_tries_ends_authentication_after_denials() {
+        let args = [c"ignore_unknown_user", c"max_tries=2"].to_vec();
+        assert_eq!(Options::try_from(&args).unwrap().max_tries, 2);
+        assert_eq!(
+            Options::try_from(&vec![c"max_tries=x"]).unwrap().max_tries,
+            0
+        );
+
+        let printer = Arc::new(RecordingPrinter::default());
+        let (mut state, listener) = test_password_state(printer.clone());
+        // 0 (the default) asks again after every denial.
+        assert!(matches!(
+            handle_pam_auth_response_denied(&mut state, "denied"),
+            PamWhatNext::Next(ClientRequest::PamAuthenticateInit(..))
+        ));
+
+        state.denials = 0;
+        state.opts.max_tries = 2;
+        assert!(matches!(
+            handle_pam_auth_response_denied(&mut state, "denied"),
+            PamWhatNext::Next(ClientRequest::PamAuthenticateInit(..))
+        ));
+        assert!(matches!(
+            handle_pam_auth_response_denied(&mut state, "denied"),
+            PamWhatNext::Finish(PamResultCode::PAM_MAXTRIES)
+        ));
+        assert_eq!(printer.text.lock().unwrap().len(), 3);
+        fs::remove_file(listener.local_addr().unwrap().as_pathname().unwrap()).unwrap();
     }
 
     #[test]
