@@ -792,7 +792,12 @@ Keep your response focused and actionable.
         if self._cli_available is not None:
             return self._cli_available
 
-        self._cli_available = shutil.which(self.cli_path) is not None
+        executable = shutil.which(self.cli_path)
+        self._cli_available = executable is not None
+        if executable is not None:
+            # Resolve relative overrides and relative PATH entries in the caller's
+            # directory before provider subprocesses switch to PROJECT_ROOT.
+            self.cli_path = os.path.abspath(executable)
         return self._cli_available
 
     # Keep each independent review comfortably below a single session's budget.

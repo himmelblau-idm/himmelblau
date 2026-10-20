@@ -14,6 +14,16 @@ from unittest.mock import patch
 import cargo_vet_review as review
 
 
+@contextlib.contextmanager
+def working_directory(path):
+    previous = Path.cwd()
+    try:
+        review.os.chdir(path)
+        yield
+    finally:
+        review.os.chdir(previous)
+
+
 class ReviewTests(unittest.TestCase):
     kwargs = dict(crate_name="example", old_version="1.0", new_version="1.1",
                   publisher="publisher", verbose=False)
@@ -80,6 +90,42 @@ class ReviewTests(unittest.TestCase):
                 result = self.batches([bad, self.report(), "Looks safe; certify."])
                 self.assertIn("Do not certify", result)
                 self.assertIn("1/2 batches complete", result)
+
+    def test_relative_provider_paths_survive_workspace_cwd(self):
+        for provider, attempts in (("claude", 3), ("gemini", 2), ("codex", 1)):
+            for use_path in (False, True):
+                with self.subTest(provider=provider, use_path=use_path), \
+                     tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    caller = root / "caller"
+                    caller.mkdir()
+                    executable = caller / provider
+                    executable.write_text("#!/bin/sh\nexit 99\n")
+                    executable.chmod(0o700)
+                    with working_directory(caller), \
+                         patch.dict(review.os.environ, {"PATH": "."}):
+                        analyzer = review.AIAnalyzer(
+                            provider, path=None if use_path else "./" + provider,
+                        )
+                        self.assertTrue(analyzer.is_available())
+                        self.assertEqual(analyzer.cli_path, str(executable))
+                        def run(command, **kwargs):
+                            self.assertEqual(command[0], str(executable))
+                            self.assertEqual(kwargs["cwd"], root)
+                            # No executable is run, including the fixture above.
+                            return subprocess.CompletedProcess(command, 1, "", "mock failure")
+                        with patch.object(review, "PROJECT_ROOT", root), \
+                             patch.object(review.subprocess, "run", side_effect=run) as mocked:
+                            self.assertIsNone(analyzer.analyze_diff("source", **self.kwargs))
+                        self.assertEqual(mocked.call_count, attempts)
+
+    def test_missing_provider_does_not_launch(self):
+        analyzer = review.AIAnalyzer("codex", path="./missing-provider")
+        with tempfile.TemporaryDirectory() as directory, working_directory(directory), \
+             patch.object(review.subprocess, "run") as mocked:
+            self.assertFalse(analyzer.is_available())
+            self.assertIsNone(analyzer.analyze_diff("source", **self.kwargs))
+            mocked.assert_not_called()
 
     def test_provider_workspace_and_cleanup_on_all_invocations(self):
         for provider, attempts in (("claude", 3), ("gemini", 2), ("codex", 1)):
