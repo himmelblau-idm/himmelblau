@@ -47,6 +47,7 @@ use libc::uid_t;
 use libc::{lchown, umask};
 use libkrimes::proto::KerberosCredentials;
 use sd_notify::NotifyState;
+use serde::{Deserialize, Serialize};
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
@@ -622,7 +623,7 @@ fn migrate_subid_entry(previous: &str, name: &str, subid_file: &Path) -> Result<
 /// Give `name` the range reserved for its owner and park a stale holder's range under that
 /// holder's reservation. The owner's reservation stays as the marker, so repeating it is a no-op.
 fn reclaim_subid_range(
-    owner_key: &str,
+    owner_keys: &[String],
     name: &str,
     evicted: &[String],
     subid_file: &Path,
@@ -634,12 +635,14 @@ fn reclaim_subid_range(
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(format!("Failed to read {}: {:?}", subid_file.display(), e)),
     };
-    let own = format!("{}:", reserved_subid_name(owner_key));
     let current = format!("{}:", name);
     let holder = evicted
         .first()
         .map(|old| format!("{}:", reserved_subid_name(old)));
-    let restored = contents.lines().find_map(|line| line.strip_prefix(&own));
+    let restored = owner_keys.iter().find_map(|key| {
+        let own = format!("{}:", reserved_subid_name(key));
+        contents.lines().find_map(|line| line.strip_prefix(&own))
+    });
     let mut can_park = holder
         .as_ref()
         .is_some_and(|h| !contents.lines().any(|line| line.starts_with(h)));
@@ -678,15 +681,37 @@ fn is_local_passwd_user(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Remember the owner's last local name. `retire` gets the previous name (if it changed and nobody
-/// else took it) and the stale holders of `name`; the name is only recorded if it succeeds.
+/// `Local` names were /etc/passwd accounts when claimed, so their subid rows are not Himmelblau's.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum TaskName {
+    Himmelblau(String),
+    Local { local: String },
+}
+
+impl TaskName {
+    fn name(&self) -> &str {
+        match self {
+            TaskName::Himmelblau(name) | TaskName::Local { local: name } => name,
+        }
+    }
+
+    fn is_local(&self) -> bool {
+        matches!(self, TaskName::Local { .. })
+    }
+}
+
+/// Remember the owner's last local name (`local`: an /etc/passwd account). `retire` gets the
+/// previous name and its `local` flag (if it changed and nobody else took it) and the stale holders
+/// of `name` with Himmelblau-owned rows; the name is only recorded if it succeeds.
 fn claim_local_task_name(
     state: &Path,
     owner: &LocalTaskOwner,
     name: &str,
-    retire: impl FnOnce(Option<&str>, &[String]) -> Result<(), String>,
+    local: bool,
+    retire: impl FnOnce(Option<(&str, bool)>, &[String]) -> Result<(), String>,
 ) -> Result<(), String> {
-    let mut names: HashMap<String, String> = match fs::read(state) {
+    let mut names: HashMap<String, TaskName> = match fs::read(state) {
         Ok(data) => serde_json::from_slice(&data)
             .map_err(|e| format!("Invalid local task state in {}: {}", state.display(), e))?,
         Err(e) if e.kind() == io::ErrorKind::NotFound => HashMap::new(),
@@ -706,19 +731,31 @@ fn claim_local_task_name(
     });
     let migrated = legacy.is_some();
     let owner = owner.key();
-    let previous = names.insert(owner.clone(), name.to_string()).or(legacy);
+    let previous = names.remove(&owner).or(legacy);
+    // An unchanged name keeps the provenance it was first claimed with.
+    let local = local && !matches!(&previous, Some(p) if p.name() == name && !p.is_local());
+    let record = name.to_string();
+    let record = if local {
+        TaskName::Local { local: record }
+    } else {
+        TaskName::Himmelblau(record)
+    };
+    names.insert(owner.clone(), record);
+    // Rows of a name that was and still is a local account stay with that account.
     let evicted: Vec<String> = names
         .iter()
-        .filter(|(holder, held)| **holder != owner && *held == name)
+        .filter(|(holder, held)| **holder != owner && held.name() == name)
+        .filter(|(_, held)| !(local && held.is_local()))
         .map(|(holder, _)| holder.clone())
         .collect();
-    names.retain(|holder, held| *holder == owner || held != name);
-    if previous.as_deref() == Some(name) && evicted.is_empty() && !migrated {
+    let count = names.len();
+    names.retain(|holder, held| *holder == owner || held.name() != name);
+    if previous.as_ref().map(TaskName::name) == Some(name) && names.len() == count && !migrated {
         return Ok(());
     }
     let previous = previous
-        .filter(|previous| previous != name && !names.values().any(|held| held == previous));
-    retire(previous.as_deref(), &evicted)?;
+        .filter(|p| p.name() != name && !names.values().any(|h| h.name() == p.name()));
+    retire(previous.as_ref().map(|p| (p.name(), p.is_local())), &evicted)?;
 
     let parent = state
         .parent()
@@ -760,16 +797,23 @@ fn retire_previous_local_name(
     mapped_local: Option<&str>,
 ) -> Result<(), String> {
     let state = Path::new(LOCAL_TASK_NAMES_CACHE);
-    claim_local_task_name(state, owner, name, |previous, evicted| {
+    let local = is_local_passwd_user(name);
+    // The owner's range may still be parked under its key from before its tenant was known.
+    let nil_tenant = LocalTaskOwner {
+        tenant_id: None,
+        ..owner.clone()
+    };
+    let owner_keys = [owner.key(), nil_tenant.key()];
+    claim_local_task_name(state, owner, name, local, |previous, evicted| {
         let subid_files = [Path::new("/etc/subuid"), Path::new("/etc/subgid")];
-        if !is_local_passwd_user(name) {
+        if !local || !evicted.is_empty() {
             // A stale holder keeps its range under its own key, so the new owner gets a fresh one,
             // and an evicted owner returning under another name gets its reserved range back.
             for subid_file in subid_files {
-                reclaim_subid_range(&owner.key(), name, evicted, subid_file)?;
+                reclaim_subid_range(&owner_keys, name, evicted, subid_file)?;
             }
         }
-        let Some(previous) = previous else {
+        let Some((previous, previous_local)) = previous else {
             return Ok(());
         };
 
@@ -782,9 +826,9 @@ fn retire_previous_local_name(
             remove_user_from_group(previous, group)?;
         }
 
-        // Rows tracked for this owner move on even if a local account took the name since; only
-        // the owner's own user-map account keeps the rows of the local account it maps to.
-        if mapped_local != Some(previous) {
+        // Rows tracked for this owner move on even if a local account took the name since; only a
+        // still existing account claimed as local, or the owner's user-map account, keeps them.
+        if !(previous_local && is_local_passwd_user(previous)) && mapped_local != Some(previous) {
             for subid_file in subid_files {
                 migrate_subid_entry(previous, name, subid_file)?;
             }
@@ -1477,8 +1521,8 @@ mod tests {
 
     fn record_local_task_name(state: &Path, owner: &str, name: &str) -> Option<String> {
         let mut retired = None;
-        claim_local_task_name(state, &task_owner(owner), name, |previous, _| {
-            retired = previous.map(str::to_string);
+        claim_local_task_name(state, &task_owner(owner), name, false, |previous, _| {
+            retired = previous.map(|(previous, _)| previous.to_string());
             Ok(())
         })
         .unwrap();
@@ -1535,7 +1579,7 @@ mod tests {
 
         assert_eq!(record_local_task_name(&state, "a@example.com", "bob"), None);
         let mut evicted = vec![];
-        claim_local_task_name(&state, &task_owner("b@example.com"), "bob", |_, stale| {
+        claim_local_task_name(&state, &task_owner("b@example.com"), "bob", false, |_, stale| {
             evicted = stale.to_vec();
             Ok(())
         })
@@ -1543,7 +1587,7 @@ mod tests {
         assert_eq!(evicted, [task_owner("a@example.com").key()]);
 
         let failed =
-            claim_local_task_name(&state, &task_owner("b@example.com"), "robert", |_, _| {
+            claim_local_task_name(&state, &task_owner("b@example.com"), "robert", false, |_, _| {
                 Err("x".into())
             });
         assert!(failed.is_err());
@@ -1559,7 +1603,7 @@ mod tests {
         let state = tmpdir.path().join("local-task-names.json");
         let subuid = tmpdir.path().join("subuid");
         let owner = task_owner("a@example.com");
-        claim_local_task_name(&state, &owner, "bob", |_, _| Ok(())).unwrap();
+        claim_local_task_name(&state, &owner, "bob", false, |_, _| Ok(())).unwrap();
         fs::write(&subuid, "bob:100000:65536\n").unwrap();
         let before = fs::read(&state).unwrap();
         let renamed = LocalTaskOwner {
@@ -1567,7 +1611,7 @@ mod tests {
             ..owner.clone()
         };
 
-        claim_local_task_name(&state, &renamed, "bob", |_, _| {
+        claim_local_task_name(&state, &renamed, "bob", false, |_, _| {
             panic!("an unchanged local account must not be retired after a UPN rename")
         })
         .unwrap();
@@ -1587,7 +1631,7 @@ mod tests {
         ] {
             let other_state = tmpdir.path().join(replacement.key());
             fs::write(&other_state, &before).unwrap();
-            claim_local_task_name(&other_state, &replacement, "bob", |previous, evicted| {
+            claim_local_task_name(&other_state, &replacement, "bob", false, |previous, evicted| {
                 assert_eq!(previous, None);
                 assert_eq!(evicted, [owner.key()]);
                 Ok(())
@@ -1602,7 +1646,7 @@ mod tests {
         let state = tmpdir.path().join("local-task-names.json");
         fs::write(&state, br#"{"a@example.com":"bob"}"#).unwrap();
         let owner = task_owner("A@Example.com");
-        claim_local_task_name(&state, &owner, "bob", |previous, evicted| {
+        claim_local_task_name(&state, &owner, "bob", false, |previous, evicted| {
             assert_eq!(previous, None);
             assert!(evicted.is_empty());
             Ok(())
@@ -1625,7 +1669,7 @@ mod tests {
         let names = HashMap::from([(nil_tenant.key(), "bob".to_string())]);
         fs::write(&state, serde_json::to_vec(&names).unwrap()).unwrap();
 
-        claim_local_task_name(&state, &owner, "bob", |previous, evicted| {
+        claim_local_task_name(&state, &owner, "bob", false, |previous, evicted| {
             assert_eq!(previous, None);
             assert!(evicted.is_empty());
             Ok(())
@@ -1643,7 +1687,7 @@ mod tests {
         for contents in [b"{".as_slice(), b"[]", b"null", br#"{"a":42}"#] {
             fs::write(&state, contents).unwrap();
             assert!(
-                claim_local_task_name(&state, &task_owner("a@example.com"), "bob", |_, _| {
+                claim_local_task_name(&state, &task_owner("a@example.com"), "bob", false, |_, _| {
                     panic!("invalid state must abort before retirement")
                 })
                 .is_err()
@@ -1655,6 +1699,7 @@ mod tests {
             tmpdir.path(),
             &task_owner("a@example.com"),
             "bob",
+            false,
             |_, _| { panic!("unreadable state must abort before retirement") }
         )
         .is_err());
@@ -1712,7 +1757,7 @@ mod tests {
         fs::write(&subuid, format!("bob:200000:65536\n{}:100000:65536\n", rb)).unwrap();
 
         for _ in 0..2 {
-            reclaim_subid_range(&b, "bob", &[a.clone()], &subuid).unwrap();
+            reclaim_subid_range(&[b.clone()], "bob", &[a.clone()], &subuid).unwrap();
             assert_eq!(
                 fs::read_to_string(&subuid).unwrap(),
                 format!("{ra}:200000:65536\n{rb}:100000:65536\nbob:100000:65536\n")
