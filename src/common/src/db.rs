@@ -10,6 +10,7 @@
 
 use std::convert::TryFrom;
 use std::fmt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::time::Duration;
 
 use crate::idprovider::interface::{GroupToken, Id, UserToken};
@@ -153,11 +154,41 @@ pub enum DbError {
 impl Db {
     pub fn new(path: &str) -> Result<Self, DbError> {
         let before = unsafe { umask(0o0077) };
-        let conn = Connection::open(path).map_err(|e| {
+        let opened = Connection::open(path);
+        let _ = unsafe { umask(before) };
+        let conn = opened.map_err(|e| {
             error!(err = ?e, "rusqulite error");
             DbError::Sqlite
         })?;
-        let _ = unsafe { umask(before) };
+        // Tighten upgraded databases too: umask only affects newly created files.
+        // Existing WAL/shared-memory/journal files can contain the same sensitive data.
+        // SQLite reports an empty path for temporary and in-memory databases.
+        if let Some(path) = conn.path().filter(|path| !path.is_empty()) {
+            for suffix in ["", "-wal", "-shm", "-journal"] {
+                let file_path = format!("{path}{suffix}");
+                let mut options = std::fs::OpenOptions::new();
+                options.read(true);
+                if !suffix.is_empty() {
+                    // Sidecars belong to SQLite, not arbitrary symlink targets.
+                    options.custom_flags(libc::O_NOFOLLOW);
+                }
+                let file = match options.open(&file_path) {
+                    Ok(file) => file,
+                    Err(e) if !suffix.is_empty() && e.kind() == std::io::ErrorKind::NotFound => {
+                        continue
+                    }
+                    Err(e) => {
+                        error!(err = ?e, "unable to open database file for permission hardening");
+                        return Err(DbError::Sqlite);
+                    }
+                };
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| {
+                        error!(err = ?e, "unable to restrict database permissions");
+                        DbError::Sqlite
+                    })?;
+            }
+        }
         // We only build a single thread. If we need more than one, we'll
         // need to re-do this to account for path = "" for debug.
         let crypto_policy = CryptoPolicy::time_target(Duration::from_millis(250));
@@ -1089,6 +1120,84 @@ impl<'a> Drop for DbTxn<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn database_permissions_are_restricted_on_creation_and_upgrade() {
+        use std::os::unix::fs::PermissionsExt;
+        let path =
+            std::env::temp_dir().join(format!("himmelblau-db-mode-{}", uuid::Uuid::new_v4()));
+        let name = path.to_str().unwrap();
+        drop(super::Db::new(name).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        drop(super::Db::new(name).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::remove_file(path).unwrap();
+        assert!(super::Db::new(":memory:").is_ok());
+        assert!(super::Db::new("").is_ok());
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn database_upgrade_restricts_existing_wal_sidecars() {
+        use std::os::unix::fs::PermissionsExt;
+        let path =
+            std::env::temp_dir().join(format!("himmelblau-db-wal-mode-{}", uuid::Uuid::new_v4()));
+        let name = path.to_str().unwrap();
+        // Keep this connection open so SQLite retains its actual WAL and SHM files.
+        let existing = rusqlite::Connection::open(name).unwrap();
+        existing.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE test (value TEXT); INSERT INTO test VALUES ('private');").unwrap();
+        for suffix in ["", "-wal", "-shm"] {
+            std::fs::set_permissions(
+                format!("{name}{suffix}"),
+                std::fs::Permissions::from_mode(0o640),
+            )
+            .unwrap();
+        }
+        let upgraded = super::Db::new(name).unwrap();
+        for suffix in ["", "-wal", "-shm"] {
+            assert_eq!(
+                std::fs::metadata(format!("{name}{suffix}"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        drop(upgraded);
+        drop(existing);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn database_hardening_does_not_follow_sidecar_symlinks() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let path =
+            std::env::temp_dir().join(format!("himmelblau-db-link-mode-{}", uuid::Uuid::new_v4()));
+        let name = path.to_str().unwrap();
+        drop(super::Db::new(name).unwrap());
+        let target = format!("{name}-unrelated");
+        std::fs::write(&target, "unrelated").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let sidecar = format!("{name}-shm");
+        symlink(&target, &sidecar).unwrap();
+        assert!(super::Db::new(name).is_err());
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        std::fs::remove_file(sidecar).unwrap();
+        std::fs::remove_file(target).unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
 
     use super::{Cache, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
