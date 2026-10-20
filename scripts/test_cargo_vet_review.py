@@ -95,6 +95,8 @@ class ReviewTests(unittest.TestCase):
                     path = Path(re.search(r"available at: (.+)\n", prompt).group(1))
                     paths.append(path)
                     self.assertEqual(path.parent, root)
+                    self.assertTrue(path.name.startswith(".cargo-vet-review-"))
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o600)
                     self.assertEqual(path.read_text(), "untrusted source")
                     if provider == "codex":
                         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
@@ -114,6 +116,26 @@ class ReviewTests(unittest.TestCase):
                 self.assertTrue(all(not path.exists() for path in paths))
                 if provider == "codex":
                     self.assertEqual(result, "Reviewed source fully")
+
+    def test_orphaned_review_input_cannot_be_accidentally_staged(self):
+        # Simulate a leftover after an uncatchable termination: finally cannot
+        # remove it, but normal git add must not publish its crate contents.
+        ignore_rules = (review.PROJECT_ROOT / ".gitignore").read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+            (root / ".gitignore").write_text(ignore_rules)
+            orphan = root / ".cargo-vet-review-orphan.diff"
+            orphan.write_text("private untrusted crate source")
+            (root / "legitimate.diff").write_text("a patch intended for review")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            staged = subprocess.run(
+                ["git", "ls-files"], cwd=root, check=True,
+                capture_output=True, text=True,
+            ).stdout.splitlines()
+            self.assertNotIn(orphan.name, staged)
+            self.assertIn("legitimate.diff", staged)
+            self.assertEqual(orphan.read_text(), "private untrusted crate source")
 
     def test_temporary_files_are_removed_on_provider_errors(self):
         create_temp = tempfile.NamedTemporaryFile

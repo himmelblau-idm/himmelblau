@@ -940,9 +940,11 @@ Keep your response focused and actionable.
         prompt_file = None
         diff_file = None
         try:
+            # Stay inside the provider workspace. The narrow .gitignore rule
+            # also keeps an orphan out of git add after SIGKILL skips finally.
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".diff", encoding="utf-8", delete=False,
-                dir=PROJECT_ROOT,
+                mode="w", prefix=".cargo-vet-review-", suffix=".diff",
+                encoding="utf-8", delete=False, dir=PROJECT_ROOT,
             ) as f:
                 diff_file = f.name
                 f.write(diff_content)
