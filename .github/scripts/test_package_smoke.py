@@ -101,6 +101,53 @@ class ProbeTests(unittest.TestCase):
                 self.assertNotEqual(before["keys"], guest.state_snapshot()["keys"])
 
 
+class SocketStateTests(unittest.TestCase):
+    def test_healthy_accepts_listening_and_running_sockets(self):
+        properties = {"Result": "success", "MainPID": "123", "NRestarts": "0"}
+        for states in [("listening",) * 3, ("running",) * 3, ("running", "listening", "running")]:
+            with self.subTest(states=states), patch.object(guest, "ready", return_value=True), \
+                 patch.object(guest.time, "sleep"), patch.object(guest, "properties", return_value=properties), \
+                 patch.object(guest, "loaded_sockets", return_value=guest.SOCKETS), \
+                 patch.object(guest, "ctl", side_effect=[subprocess.CompletedProcess([], 0, state + "\n", "")
+                                                        for state in (*states, "LoadState=not-found")]) as ctl:
+                guest.healthy()
+                self.assertEqual([call.args[1] for call in ctl.call_args_list[:3]], guest.SOCKETS)
+
+    def test_healthy_rejects_inactive_or_unexpected_socket_states(self):
+        properties = {"Result": "success", "MainPID": "123", "NRestarts": "0"}
+        for state in ("dead", "failed", "start-pre", "stop-pre", "", "unknown"):
+            for unit in guest.SOCKETS:
+                states = [state if candidate == unit else "listening" for candidate in guest.SOCKETS]
+                with self.subTest(state=state, unit=unit), patch.object(guest, "ready", return_value=True), \
+                     patch.object(guest.time, "sleep"), patch.object(guest, "properties", return_value=properties), \
+                     patch.object(guest, "loaded_sockets", return_value=guest.SOCKETS), \
+                     patch.object(guest, "ctl", side_effect=[subprocess.CompletedProcess([], 0, value + "\n", "")
+                                                            for value in states]):
+                    with self.assertRaisesRegex(RuntimeError, "Socket.*" + unit):
+                        guest.healthy()
+
+    def test_activation_requires_listening_before_client_request(self):
+        for state in ("listening", "running", "dead", "failed", ""):
+            def ctl(*args, **kwargs):
+                output = state if "--property=SubState" in args else guest.SERVICES[1]
+                return subprocess.CompletedProcess(args, 1 if args[0] == "is-active" else 0, output, "")
+            invocations = [{"InvocationID": value} for value in ("initial", "restarted", "", "activated")]
+            with self.subTest(state=state), patch.object(guest, "loaded_sockets", return_value=guest.SOCKETS), \
+                 patch.object(guest, "healthy") as healthy, patch.object(guest, "identities", return_value=["tux"]), \
+                 patch.object(guest, "properties", side_effect=invocations), patch.object(guest, "ctl", side_effect=ctl), \
+                 patch.object(guest, "wait_for", side_effect=lambda description, predicate: self.assertTrue(predicate())), \
+                 patch.object(guest, "command", return_value=subprocess.CompletedProcess([], 0, "working!\n", "")) as command:
+                if state == "listening":
+                    guest.lifecycle()
+                    command.assert_called_once_with("aad-tool", "status", check=False)
+                    self.assertEqual(healthy.call_count, 4)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "Socket unavailable for activation"):
+                        guest.lifecycle()
+                    command.assert_not_called()
+                    self.assertEqual(healthy.call_count, 3)
+
+
 class VersionComparisonTests(unittest.TestCase):
     def test_rpm_guest_accepts_only_explicit_comparison_results(self):
         for output, code in [("older\n", 0), ("not-older\n", 3)]:

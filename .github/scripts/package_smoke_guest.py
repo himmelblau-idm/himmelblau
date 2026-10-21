@@ -106,8 +106,9 @@ def healthy():
             if properties(unit) != before[unit]:
                 raise RuntimeError("Service changed/restarted during observation: " + unit)
     for unit in loaded_sockets():
-        if ctl("show", unit, "--property=SubState", "--value").stdout.strip() != "listening":
-            raise RuntimeError("Socket is not listening: " + unit)
+        # Accept=false sockets become running when their service is activated.
+        if ctl("show", unit, "--property=SubState", "--value").stdout.strip() not in ("listening", "running"):
+            raise RuntimeError("Socket is not active: " + unit)
     # A missing oneshot is allowed only on historical baselines, but its failure is never ignored.
     init = ctl("show", "himmelblau-hsm-pin-init.service", "--property=LoadState,Result", check=False).stdout
     if "LoadState=loaded" in init and "Result=success" not in init:
