@@ -13,7 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Sandbox:
-    def __init__(self, root, active=False, selinux=False, debian=False, policy_updated=True):
+    def __init__(self, root, active=False, selinux=False, debian=False, policy_updated=True,
+                 container=False):
         self.root = root
         bindir = root / 'bin'
         bindir.mkdir(parents=True)
@@ -74,7 +75,7 @@ case "$operation" in
         done;;
 esac
 ''')
-        for name, status in [('systemd-tmpfiles', 0), ('systemd-detect-virt', 1),
+        for name, status in [('systemd-tmpfiles', 0), ('systemd-detect-virt', 0 if container else 1),
                              ('selinuxenabled', 0 if selinux else 1),
                              ('make', 0), ('semodule', 0), ('restorecon', 0)]:
             (bindir / name).write_text('#!/bin/sh\nexit %d\n' % status)
@@ -101,6 +102,8 @@ esac
             if not path.is_symlink():
                 path.chmod(0o755)
         (root / 'run/systemd/system').mkdir(parents=True)
+        (root / 'proc').mkdir()
+        (root / 'proc/cmdline').write_text('')
         if selinux:
             for directory in ('usr/share/selinux/packages/himmelblaud', 'usr/share/selinux/devel'):
                 (root / directory).mkdir(parents=True, exist_ok=True)
@@ -114,7 +117,7 @@ esac
 
     def source(self, source, arg='1', timeout=10):
         # One pass: inserted roots may themselves contain /var/ or /run/.
-        source = re.sub(r'/(?:etc|run|usr/lib|usr/share|var)/',
+        source = re.sub(r'/(?:etc|run|usr/lib|usr/share|var|proc)/|/\.live-installer',
                         lambda match: str(self.root) + match.group(0), source)
         script = self.root / 'maintscript'
         script.write_text(source)
@@ -169,6 +172,100 @@ class InstallLifecycleTests(unittest.TestCase):
         box.run('src/daemon/scripts/posttrans')
         self.assertEqual(len(list(box.states.iterdir())), 2)
         self.assertFalse((self.root / 'run/himmelblau-package-restart').exists())
+
+    def test_container_upgrade_recovers_after_legacy_preun_stop(self):
+        for policy in ('absent', 'unchanged', 'updated'):
+            for active in (False, True):
+                with self.subTest(policy=policy, previously_active=active):
+                    box = Sandbox(self.root / policy / str(active), active=active,
+                                  selinux=policy != 'absent',
+                                  policy_updated=policy == 'updated', container=True)
+                    commands = box.run('src/daemon/scripts/postinst', '2')
+                    self.assertNotIn('try-restart', commands)
+                    box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+                    box.run('src/daemon/scripts/posttrans')
+                    if policy == 'updated':
+                        self.assertFalse(list(box.states.iterdir()))
+                        box.run('src/selinux/scripts/postinst')
+                    self.assertEqual(len(list(box.states.iterdir())), 2 if active else 0)
+                    self.assertFalse((box.root / 'run/himmelblau-package-restart').exists())
+
+    def test_container_upgrade_recovers_only_previously_active_services(self):
+        box = Sandbox(self.root, container=True)
+        (box.states / 'himmelblaud.service').touch()
+        box.run('src/daemon/scripts/postinst', '2')
+        box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+        box.run('src/daemon/scripts/posttrans')
+        self.assertEqual([p.name for p in box.states.iterdir()], ['himmelblaud.service'])
+        self.assertFalse((box.root / 'run/himmelblau-package-restart').exists())
+
+    def test_container_policy_recovery_handles_success_failure_and_skip(self):
+        # Seed markers separately to exercise the SELinux guard independently
+        # from whether the daemon's earlier postinst captured running services.
+        for case in ('success', 'missing_makefile', 'missing_sources',
+                     'compile_failure', 'install_failure', 'policy_type_mismatch',
+                     'disabled_config', 'start_failure'):
+            with self.subTest(case=case):
+                box = Sandbox(self.root / case, selinux=True, container=True)
+                markers = box.root / 'run/himmelblau-package-restart'
+                markers.mkdir()
+                (markers / 'himmelblaud.service').touch()
+                if case == 'missing_makefile':
+                    (box.root / 'usr/share/selinux/devel/Makefile').unlink()
+                elif case == 'missing_sources':
+                    shutil.rmtree(box.root / 'usr/share/selinux/packages/himmelblaud')
+                elif case == 'compile_failure':
+                    box.env['TEST_MAKE_STATUS'] = '1'
+                elif case == 'install_failure':
+                    box.env['TEST_SEMODULE_STATUS'] = '1'
+                elif case in ('policy_type_mismatch', 'disabled_config'):
+                    folder = box.root / 'etc/selinux'
+                    folder.mkdir(parents=True)
+                    (folder / 'config').write_text('SELINUXTYPE=mls\n' if case == 'policy_type_mismatch'
+                                                 else 'SELINUX=disabled\n')
+                elif case == 'start_failure':
+                    box.env['TEST_START_FAIL'] = '1'
+                box.run('src/selinux/scripts/postinst')
+                if case == 'start_failure':
+                    self.assertFalse(list(box.states.iterdir()))
+                    self.assertTrue((markers / 'himmelblaud.service').is_file())
+                else:
+                    self.assertEqual([p.name for p in box.states.iterdir()], ['himmelblaud.service'])
+                    self.assertFalse(markers.exists())
+
+    def test_container_fresh_install_does_not_start_daemons(self):
+        box = Sandbox(self.root, selinux=True, container=True)
+        box.run('src/daemon/scripts/postinst', '1')
+        box.run('src/daemon/scripts/posttrans')
+        commands = box.run('src/selinux/scripts/postinst')
+        self.assertNotIn('try-restart', commands)
+        self.assertFalse(list(box.states.iterdir()))
+        self.assertFalse((box.root / 'run/himmelblau-package-restart').exists())
+
+    def test_live_images_do_not_capture_or_recover_services(self):
+        for indicator in ('boot=live', 'rd.live.image', 'run/live', '.live-installer'):
+            for container in (False, True):
+                with self.subTest(indicator=indicator, container=container):
+                    box = Sandbox(self.root / indicator / str(container), active=True,
+                                  selinux=True, container=container)
+                    if indicator == 'run/live':
+                        (box.root / indicator).mkdir()
+                    elif indicator == '.live-installer':
+                        (box.root / indicator).touch()
+                    else:
+                        (box.root / 'proc/cmdline').write_text(indicator)
+                    commands = box.run('src/daemon/scripts/postinst', '2')
+                    markers = box.root / 'run/himmelblau-package-restart'
+                    self.assertFalse(markers.exists())
+                    self.assertNotIn('try-restart', commands)
+                    # Even an existing marker must not bypass the live-image guard.
+                    markers.mkdir()
+                    (markers / 'himmelblaud.service').touch()
+                    box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+                    commands = box.run('src/selinux/scripts/postinst')
+                    self.assertFalse(list(box.states.iterdir()))
+                    self.assertTrue((markers / 'himmelblaud.service').is_file())
+                    self.assertNotIn('try-restart', commands)
 
     def test_upgrade_waits_for_selinux_posttrans(self):
         box = Sandbox(self.root, active=True, selinux=True)

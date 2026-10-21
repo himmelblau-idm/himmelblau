@@ -1,14 +1,19 @@
 #!/bin/sh
 set -e
 
-# Detect if running on a Live system where service start should be skipped
-is_live_system() {
+# Detect live images independently of containers with running services.
+is_live_image() {
     # Check common Live system indicators
     grep -q 'boot=live' /proc/cmdline 2>/dev/null && return 0
     grep -q 'rd.live' /proc/cmdline 2>/dev/null && return 0
     [ -d /run/live ] && return 0
     [ -f /.live-installer ] && return 0
-    # Check if running in a container (dracut/systemd-nspawn)
+    return 1
+}
+
+# Preserve the normal startup restriction for live images and containers.
+is_live_system() {
+    is_live_image && return 0
     systemd-detect-virt -c -q 2>/dev/null && return 0
     return 1
 }
@@ -132,7 +137,8 @@ elif command -v systemctl >/dev/null 2>&1; then
     case "${1:-}" in
         ''|*[!0-9]*) ;;
         *)
-            if [ "$1" -gt 1 ] && [ -d /run/systemd/system ] && ! is_live_system; then
+            # Running containers also need recovery after legacy %preun stops.
+            if [ "$1" -gt 1 ] && [ -d /run/systemd/system ] && ! is_live_image; then
                 state_dir=/run/himmelblau-package-restart
                 for unit in himmelblaud.service himmelblaud-tasks.service; do
                     if systemctl is-active --quiet "$unit"; then
