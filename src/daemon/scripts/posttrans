@@ -34,7 +34,8 @@ selinux_updated_in_transaction() {
 
 # Restore pre-upgrade running services after the old package's %preun stop.
 # Defer only when the SELinux package was installed in this transaction and its
-# later %posttrans will load/relabel policy and consume the same markers.
+# later %posttrans exit handler will attempt recovery after loading policy,
+# including when the policy script skips or fails its installation.
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/himmelblau-package-restart ]; then
     if selinux_updated_in_transaction; then
         echo "Deferring upgrade service recovery until SELinux policy installation"

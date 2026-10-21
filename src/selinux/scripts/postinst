@@ -13,6 +13,33 @@ is_live_system() {
   return 1
 }
 
+# Always consume deferred upgrade markers, including policy skip/failure paths.
+# Existing policy may still allow startup; a failed start keeps its marker.
+recover_upgrade_services() {
+  [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ] || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  is_live_system && return 0
+  state_dir=/run/himmelblau-package-restart
+  [ -d "$state_dir" ] || return 0
+  systemctl daemon-reload >/dev/null 2>&1 || :
+  for unit in himmelblaud.service himmelblaud-tasks.service; do
+    if [ -f "$state_dir/$unit" ]; then
+      # Wait for readiness outside the package process. Retain retry state
+      # when the start fails, including if the policy could not be installed.
+      (
+        if systemctl start "$unit"; then
+          rm -f "$state_dir/$unit"
+          rmdir "$state_dir" 2>/dev/null || true
+        fi
+      ) </dev/null >/dev/null 2>&1 &
+    fi
+  done
+  rmdir "$state_dir" 2>/dev/null || true
+}
+
+# Install before configuration is sourced or any early exit is possible.
+trap recover_upgrade_services 0
+
 SELINUX_SRC_DIR="/usr/share/selinux/packages/himmelblaud"
 SELINUX_MAKEFILE="/usr/share/selinux/devel/Makefile"
 SELINUX_POLICYTYPE="targeted"
@@ -67,22 +94,6 @@ if selinux_configured; then
         if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ] && ! is_live_system; then
           systemctl daemon-reload >/dev/null 2>&1 || :
           systemctl --no-block try-restart himmelblaud.service himmelblaud-tasks.service >/dev/null 2>&1 || :
-          # Old RPM %preun may have stopped previously running daemons after
-          # the new daemon %post. Recover them only after policy is installed.
-          state_dir=/run/himmelblau-package-restart
-          for unit in himmelblaud.service himmelblaud-tasks.service; do
-              if [ -f "$state_dir/$unit" ]; then
-                  # Wait for readiness outside the package process. A queued
-                  # job can fail after systemd accepts it; keep its marker.
-                  (
-                      if systemctl start "$unit"; then
-                          rm -f "$state_dir/$unit"
-                          rmdir "$state_dir" 2>/dev/null || true
-                      fi
-                  ) </dev/null >/dev/null 2>&1 &
-              fi
-          done
-          rmdir "$state_dir" 2>/dev/null || true
 
         fi
 

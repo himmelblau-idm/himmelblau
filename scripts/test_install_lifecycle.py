@@ -78,6 +78,9 @@ esac
                              ('selinuxenabled', 0 if selinux else 1),
                              ('make', 0), ('semodule', 0), ('restorecon', 0)]:
             (bindir / name).write_text('#!/bin/sh\nexit %d\n' % status)
+        for name in ('make', 'semodule'):
+            variable = 'TEST_' + name.upper() + '_STATUS'
+            (bindir / name).write_text('#!/bin/sh\nexit "${%s:-0}"\n' % variable)
         (bindir / 'rpm').write_text('''#!/bin/sh
 [ "${TEST_RPM_QUERY_FAIL:-0}" = 0 ] || exit 1
 case "$*" in
@@ -129,6 +132,8 @@ esac
             source = source.rstrip()
             if source.endswith('exit 0'):
                 source = source[:-len('exit 0')]
+            source = source.replace('trap recover_upgrade_services 0',
+                                    "trap 'recover_upgrade_services; wait' 0")
             source += '\nwait\n'
         return self.source(source, arg, timeout)
 
@@ -175,6 +180,44 @@ class InstallLifecycleTests(unittest.TestCase):
         box.run('src/selinux/scripts/postinst')
         self.assertEqual(len(list(box.states.iterdir())), 2)
         self.assertFalse((self.root / 'run/himmelblau-package-restart').exists())
+
+    def test_selinux_failure_and_skip_paths_recover_deferred_services(self):
+        cases = ('missing_makefile', 'missing_sources', 'compile_failure',
+                 'install_failure', 'policy_type_mismatch', 'disabled_config')
+        for case in cases:
+            for active in (False, True):
+                with self.subTest(case=case, previously_active=active):
+                    box = Sandbox(self.root / case / str(active), active=active, selinux=True)
+                    box.run('src/daemon/scripts/postinst', '2' if active else '1')
+                    box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+                    box.run('src/daemon/scripts/posttrans')
+                    self.assertFalse(list(box.states.iterdir()))
+                    if case == 'missing_makefile':
+                        (box.root / 'usr/share/selinux/devel/Makefile').unlink()
+                    elif case == 'missing_sources':
+                        shutil.rmtree(box.root / 'usr/share/selinux/packages/himmelblaud')
+                    elif case == 'compile_failure':
+                        box.env['TEST_MAKE_STATUS'] = '1'
+                    elif case == 'install_failure':
+                        box.env['TEST_SEMODULE_STATUS'] = '1'
+                    else:
+                        folder = box.root / 'etc/selinux'
+                        folder.mkdir(parents=True)
+                        (folder / 'config').write_text('SELINUXTYPE=mls\n' if case == 'policy_type_mismatch'
+                                                     else 'SELINUX=disabled\n')
+                    box.run('src/selinux/scripts/postinst')
+                    self.assertEqual(len(list(box.states.iterdir())), 2 if active else 0)
+                    self.assertFalse((box.root / 'run/himmelblau-package-restart').exists())
+
+    def test_failed_policy_and_failed_start_retain_recovery_markers(self):
+        box = Sandbox(self.root, active=True, selinux=True)
+        box.run('src/daemon/scripts/postinst', '2')
+        box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+        box.run('src/daemon/scripts/posttrans')
+        box.env.update(TEST_SEMODULE_STATUS='1', TEST_START_FAIL='1')
+        box.run('src/selinux/scripts/postinst')
+        self.assertFalse(list(box.states.iterdir()))
+        self.assertEqual(len(list((box.root / 'run/himmelblau-package-restart').iterdir())), 2)
 
     def test_inactive_upgrade_stays_inactive(self):
         box = Sandbox(self.root)
