@@ -72,9 +72,14 @@ if selinux_configured; then
           state_dir=/run/himmelblau-package-restart
           for unit in himmelblaud.service himmelblaud-tasks.service; do
               if [ -f "$state_dir/$unit" ]; then
-                  if systemctl --no-block start "$unit"; then
-                      rm -f "$state_dir/$unit"
-                  fi
+                  # Wait for readiness outside the package process. A queued
+                  # job can fail after systemd accepts it; keep its marker.
+                  (
+                      if systemctl start "$unit"; then
+                          rm -f "$state_dir/$unit"
+                          rmdir "$state_dir" 2>/dev/null || true
+                      fi
+                  ) </dev/null >/dev/null 2>&1 &
               fi
           done
           rmdir "$state_dir" 2>/dev/null || true
