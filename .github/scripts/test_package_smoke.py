@@ -101,6 +101,73 @@ class ProbeTests(unittest.TestCase):
                 self.assertNotEqual(before["keys"], guest.state_snapshot()["keys"])
 
 
+class VersionComparisonTests(unittest.TestCase):
+    def test_rpm_guest_accepts_only_explicit_comparison_results(self):
+        for output, code in [("older\n", 0), ("not-older\n", 3)]:
+            with self.subTest(output=output), \
+                 patch.object(guest.sys, "argv", ["guest", "rpm-older", "expression"]), \
+                 patch.object(guest, "command", return_value=subprocess.CompletedProcess([], 0, output, "")) as command:
+                with self.assertRaises(SystemExit) as result:
+                    guest.main()
+                self.assertEqual(result.exception.code, code)
+                command.assert_called_once_with("rpm", "--eval", "expression")
+
+    def test_rpm_guest_rejects_empty_or_unexpected_output(self):
+        for output in ("", "\n", "unexpected", "older\nnot-older\n"):
+            with self.subTest(output=output), \
+                 patch.object(guest.sys, "argv", ["guest", "rpm-older", "expression"]), \
+                 patch.object(guest, "command", return_value=subprocess.CompletedProcess([], 0, output, "")):
+                with self.assertRaisesRegex(RuntimeError, "Unexpected RPM version comparison result"):
+                    guest.main()
+
+    def test_rpm_guest_command_failures_are_not_comparison_results(self):
+        with patch.object(guest.sys, "argv", ["guest", "rpm-older", "expression"]):
+            for code in (1, 2, 3):
+                with self.subTest(code=code), \
+                     patch.object(guest.subprocess, "run", return_value=subprocess.CompletedProcess([], code, "older", "rpm failed")):
+                    with self.assertRaisesRegex(RuntimeError, "rpm failed"):
+                        guest.main()
+            for error in (OSError("rpm missing"), subprocess.TimeoutExpired("rpm", 15)):
+                with self.subTest(error=error), patch.object(guest.subprocess, "run", side_effect=error):
+                    with self.assertRaises(type(error)):
+                        guest.main()
+
+    def test_harness_uses_family_specific_false_exit_codes(self):
+        for fmt, not_older in [("deb", 1), ("rpm", 3)]:
+            with tempfile.TemporaryDirectory() as tmp:
+                spec = {"distro": "test", "architecture": "amd64", "format": fmt,
+                        "expected_packages": [{"name": "himmelblau", "version": "4.0.8-1"}]}
+                harness = smoke.Harness(spec, Path(tmp), Path(tmp) / "logs")
+                rows = [{"name": "himmelblau", "version": "4.0.7-1"}]
+                for code in (0, 1, 2, 3, 125, 127, 255):
+                    with self.subTest(format=fmt, code=code), patch.object(harness, "exec", return_value=code) as execute:
+                        if code in (0, not_older):
+                            self.assertEqual(harness.older("test", rows), code == 0)
+                        else:
+                            with self.assertRaisesRegex(RuntimeError, "Native package version comparison failed"):
+                                harness.older("test", rows)
+                        if fmt == "deb":
+                            execute.assert_called_once_with("test", "dpkg", "--compare-versions", "4.0.7-1",
+                                                            "lt", "4.0.8-1", check=False)
+                        else:
+                            self.assertEqual(execute.call_args.args[:4],
+                                             ("test", "python3", "/smoke/package_smoke_guest.py", "rpm-older"))
+                            self.assertIn('then print("older") else print("not-older") end', execute.call_args.args[4])
+                            self.assertEqual(execute.call_args.kwargs, {"check": False})
+
+    def test_harness_requires_both_baseline_packages_to_be_older(self):
+        for fmt, not_older in [("deb", 1), ("rpm", 3)]:
+            with tempfile.TemporaryDirectory() as tmp:
+                spec = {"distro": "test", "architecture": "amd64", "format": fmt,
+                        "expected_packages": [{"name": name, "version": "4.0.8-1"} for name in sorted(smoke.CORE)]}
+                harness = smoke.Harness(spec, Path(tmp), Path(tmp) / "logs")
+                rows = [{"name": name, "version": "4.0.7-1"} for name in sorted(smoke.CORE)]
+                for codes, expected in [([0, 0], True), ([0, not_older], False)]:
+                    with self.subTest(format=fmt, codes=codes), patch.object(harness, "exec", side_effect=codes) as execute:
+                        self.assertEqual(harness.older("test", rows), expected)
+                        self.assertEqual(execute.call_count, 2)
+
+
 class BaselineTests(unittest.TestCase):
     spec = {"tag": "4.0.7", "distro": "ubuntu24.04", "format": "deb", "architecture": "amd64", "rpm": "x86_64"}
     metadata = b"Package: himmelblau\nVersion: 4.0.7-ubuntu24.04\nArchitecture: amd64\nFilename: ./core.deb\nSHA256: abc\n\nPackage: nss-himmelblau\nVersion: 4.0.7-ubuntu24.04\nArchitecture: amd64\nFilename: ./nss.deb\nSHA256: def\n"

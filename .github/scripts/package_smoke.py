@@ -291,12 +291,14 @@ class Harness:
                 raise ValueError("Invalid baseline package version")
             if self.spec["format"] == "deb":
                 command = ["dpkg", "--compare-versions", row["version"], "lt", expected[row["name"]]]
+                not_older = 1
             else:
-                expression = f'%{{lua: if rpm.vercmp("{row["version"]}", "{expected[row["name"]]}") < 0 then print("older") end}}'
+                expression = f'%{{lua: if rpm.vercmp("{row["version"]}", "{expected[row["name"]]}") < 0 then print("older") else print("not-older") end}}'
                 # Have the guest assert rpm's result, rather than its unconditional zero exit status.
                 command = ["python3", "/smoke/package_smoke_guest.py", "rpm-older", expression]
+                not_older = 3  # Keep a valid false result distinct from guest/runtime failures.
             code = self.exec(container, *command, check=False)
-            if code == 1:
+            if code == not_older:
                 return False
             if code:
                 raise RuntimeError("Native package version comparison failed")

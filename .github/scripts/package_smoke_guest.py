@@ -213,7 +213,12 @@ def main():
             if value != expected:
                 raise RuntimeError("Installed package identity differs: {} != {}".format(value, expected))
     elif phase == "rpm-older":
-        sys.exit(0 if command("rpm", "--eval", sys.argv[2]).stdout.strip() == "older" else 1)
+        result = command("rpm", "--eval", sys.argv[2]).stdout.strip()
+        if result == "older":
+            sys.exit(0)
+        if result == "not-older":
+            sys.exit(3)
+        raise RuntimeError("Unexpected RPM version comparison result: " + repr(result))
     else:
         raise ValueError("Unknown phase: " + phase)
 
