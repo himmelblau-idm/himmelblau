@@ -3461,6 +3461,12 @@ where
                 if expected_identity.is_some_and(|(uuid, tenant_id)| {
                     n_tok.uuid != uuid || n_tok.tenant_id != tenant_id
                 }) {
+                    warn!(
+                        ?expected_identity,
+                        returned_uuid = %n_tok.uuid,
+                        returned_tenant = ?n_tok.tenant_id,
+                        "Rejecting mismatched reconciliation provider identity"
+                    );
                     return Ok(None);
                 }
                 match self

@@ -1019,6 +1019,18 @@ async fn cache_validated_identity(
     }) {
         return AuthResult::Denied("Refreshed identity does not match cached user".to_string());
     }
+    cache_credential(cache, account_id, credential, update).await;
+    info!("Authentication successful for user '{}'", identity.uuid);
+    AuthResult::Success { token: identity }
+}
+
+// Shared by validated identities and the legacy unguarded mapping-error path.
+async fn cache_credential(
+    cache: &RefreshCache,
+    account_id: &str,
+    credential: &UnixUserToken,
+    update: PrtCacheUpdate,
+) {
     if let Some(prt) = &credential.prt {
         match update {
             PrtCacheUpdate::Fresh => {
@@ -1036,8 +1048,6 @@ async fn cache_validated_identity(
             )
             .await;
     }
-    info!("Authentication successful for user '{}'", identity.uuid);
-    AuthResult::Success { token: identity }
 }
 
 // None keeps the existing unguarded lookup fallback. A guarded denial must
@@ -5173,14 +5183,31 @@ impl HimmelblauProvider {
                         return Ok(AuthResult::Denied(msg));
                     }
                 }
-                // Convert and validate the identity before any credential-cache write.
-                let identity = self
+                // Guarded reconciliation must finish mapping before cache writes.
+                // Normal refresh retains rotated credentials if mapping is unavailable,
+                // but only after the existing requested-account/SPN validation above.
+                let identity = match self
                     .user_token_from_unix_user_token(
                         account_id,
                         TokenOrObj::UserToken(Box::new(token.clone())),
                         old_token,
                     )
-                    .await?;
+                    .await
+                {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        if expected_identity.is_none() {
+                            cache_credential(
+                                &self.refresh_cache,
+                                account_id,
+                                token,
+                                prt_cache_update,
+                            )
+                            .await;
+                        }
+                        return Err(error);
+                    }
+                };
                 Ok(cache_validated_identity(
                     &self.refresh_cache,
                     account_id,
@@ -6086,6 +6113,51 @@ mod tests {
                 matches!(provider.refresh_cache.refresh_token(&old.name).await.unwrap(),
                 RefreshCacheEntry::RefreshToken(secret) if secret == "original")
             );
+        }
+        // A matching raw credential still cannot mutate guarded state when
+        // RFC2307 mapping fails. The unrestricted path must retain rotation.
+        credential.id_token.oid = old.uuid.to_string();
+        credential.id_token.tid = tenant.to_string();
+        for use_prt in [false, true] {
+            credential.prt = use_prt.then_some(SealedData::SoftV1 {
+                data: Zeroizing::new(vec![2]),
+                tag: [2; 16],
+                iv: [2; 16],
+            });
+            for guarded in [true, false] {
+                provider
+                    .refresh_cache
+                    .add(
+                        &old.name,
+                        &RefreshCacheEntry::RefreshToken("original".into()),
+                    )
+                    .await;
+                let result = provider
+                    .validate_refreshed_token(
+                        &old.name,
+                        &credential,
+                        Some(&old),
+                        guarded.then_some((old.uuid, old.tenant_id)),
+                    )
+                    .await;
+                assert!(matches!(result, Err(IdpError::BadRequest)));
+                match provider
+                    .refresh_cache
+                    .refresh_token(&old.name)
+                    .await
+                    .unwrap()
+                {
+                    RefreshCacheEntry::RefreshToken(secret) => {
+                        assert_eq!(secret, if guarded { "original" } else { "replacement" });
+                        assert!(guarded || !use_prt);
+                    }
+                    RefreshCacheEntry::Prt(SealedData::SoftV1 { data, .. }) => {
+                        assert!(!guarded && use_prt);
+                        assert_eq!(&*data, &[2]);
+                    }
+                    _ => panic!("unexpected cached credential"),
+                }
+            }
         }
         // The raw-credential guard retains the supported consumer aliases.
         credential.id_token.oid = old.uuid.to_string();
