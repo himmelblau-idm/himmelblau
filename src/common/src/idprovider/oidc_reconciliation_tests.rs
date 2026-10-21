@@ -13,6 +13,10 @@ async fn reconciliation_oidc_rejects_unverified_or_replacement_claims() {
         "matching_missing_account",
         "userinfo_failure",
         "malformed_refresh",
+        "temporarily_unavailable",
+        "server_error",
+        "invalid_grant",
+        "invalid_client",
         "matching",
         "unrestricted",
     ] {
@@ -49,11 +53,19 @@ async fn reconciliation_oidc_rejects_unverified_or_replacement_claims() {
         if case == "malformed_refresh" {
             responses[2].1 = json!({"refresh_token":"replacement-refresh","token_type":"Bearer"});
         }
+        let oauth_error = matches!(
+            case,
+            "temporarily_unavailable" | "server_error" | "invalid_grant" | "invalid_client"
+        );
+        if oauth_error {
+            responses[2].1 =
+                json!({"error":case,"error_description":"fixture token endpoint error"});
+        }
         let metadata: DeviceProviderMetadata =
             serde_json::from_value(responses[0].1.clone()).unwrap();
         let server = tokio::spawn(async move {
             for (path, body) in responses.into_iter().skip(2) {
-                if case == "malformed_refresh" && path.contains("userinfo") {
+                if (case == "malformed_refresh" || oauth_error) && path.contains("userinfo") {
                     break;
                 }
                 let (mut stream, _) = listener.accept().await.unwrap();
@@ -70,7 +82,9 @@ async fn reconciliation_oidc_rejects_unverified_or_replacement_claims() {
                     }
                 }
                 assert!(String::from_utf8_lossy(&bytes).starts_with(path));
-                let status = if case == "userinfo_failure" && path.contains("userinfo") {
+                let status = if oauth_error {
+                    "503 Service Unavailable"
+                } else if case == "userinfo_failure" && path.contains("userinfo") {
                     "503 Service Unavailable"
                 } else {
                     "200 OK"
@@ -157,6 +171,10 @@ async fn reconciliation_oidc_rejects_unverified_or_replacement_claims() {
         .unwrap();
         if matches!(case, "matching" | "unrestricted") {
             assert!(matches!(state, UserTokenState::Update(_)), "{case}");
+        } else if matches!(case, "temporarily_unavailable" | "server_error") {
+            assert!(matches!(state, UserTokenState::UseCached), "{case}");
+        } else if case == "invalid_grant" {
+            assert!(matches!(state, UserTokenState::NotFound), "{case}");
         } else {
             assert!(matches!(state, UserTokenState::Rejected), "{case}");
         }

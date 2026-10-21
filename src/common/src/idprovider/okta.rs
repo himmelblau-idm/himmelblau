@@ -1228,7 +1228,13 @@ impl IdProvider for OktaProvider {
                         self.cache_refresh(account, &token).await;
                         Ok(UserTokenState::Update(identity))
                     }
-                    Err(IdpError::Transport) => Ok(UserTokenState::UseCached),
+                    Err(IdpError::Transport) => {
+                        // The SDK-authenticated issuer/subject above already bound
+                        // this credential to the expected identity. Keep rotation
+                        // even when userinfo is temporarily unavailable.
+                        self.cache_refresh(account, &token).await;
+                        Ok(UserTokenState::UseCached)
+                    }
                     Err(_) if expected_identity.is_some() => Ok(UserTokenState::Rejected),
                     Err(_) => Ok(UserTokenState::NotFound),
                 },

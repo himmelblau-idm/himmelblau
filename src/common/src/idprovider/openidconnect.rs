@@ -2789,9 +2789,12 @@ impl IdProvider for OidcProvider {
                     let state = if expected_identity.is_some()
                         && matches!(&state, UserTokenState::UseCached)
                         && !matches!(&e, MsalError::RequestFailed(_))
+                        && !matches!(&e, MsalError::AcquireTokenFailed(response)
+                            if matches!(response.error.as_str(), "temporarily_unavailable" | "server_error"))
                     {
-                        // A malformed successful response/protocol failure is not
-                        // a transport outage and cannot authorize cached claims.
+                        // Transport and explicit transient OAuth failures return
+                        // no replacement credential. A malformed successful response
+                        // or other protocol failure cannot authorize cached claims.
                         UserTokenState::Rejected
                     } else {
                         state

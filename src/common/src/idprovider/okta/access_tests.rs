@@ -480,10 +480,7 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
         if case.starts_with("uuid") || case.starts_with("tenant") {
             assert!(matches!(result, UserTokenState::Rejected), "{case}");
         }
-        let expected_secret = if case.starts_with("uuid")
-            || case.starts_with("tenant")
-            || case == "guarded_userinfo_failure"
-        {
+        let expected_secret = if case.starts_with("uuid") || case.starts_with("tenant") {
             "fixture-refresh"
         } else {
             "fixture-rotated"
