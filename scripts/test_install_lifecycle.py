@@ -305,11 +305,15 @@ class InstallLifecycleTests(unittest.TestCase):
         self.assertFalse(list(box.states.iterdir()))
 
     def test_ssh_upgrade_queues_restart(self):
-        box = Sandbox(self.root)
-        (box.states / 'ssh.service').touch()
-        commands = box.run('src/sshd-config/scripts/postinst')
-        self.assertIn('--no-block try-restart ssh', commands)
-        self.assertIn('started ssh.service', commands)
+        for unit in ('ssh', 'sshd'):
+            with self.subTest(active_unit=unit):
+                box = Sandbox(self.root / unit)
+                (box.states / (unit + '.service')).touch()
+                commands = box.run('src/sshd-config/scripts/postinst')
+                self.assertIn('--no-block try-restart ' + unit + '\n', commands)
+                self.assertIn('started ' + unit + '.service', commands)
+                self.assertEqual([p.name for p in box.states.iterdir()], [unit + '.service'])
+                self.assertNotIn('unexpected-unconditional-restart', commands)
 
     def test_failed_upgrade_erase_then_fresh_reinstall_stays_inactive(self):
         box = Sandbox(self.root, active=True)

@@ -13,5 +13,12 @@ fi
 # Do not start an SSH server that the administrator left inactive.
 if command -v systemctl >/dev/null 2>&1; then
     echo "Queuing restart of an active SSH service..."
-    systemctl --no-block try-restart ssh 2>/dev/null || systemctl --no-block try-restart sshd 2>/dev/null || true
+    # try-restart succeeds for an inactive unit, so its status cannot select
+    # between the Debian and RPM unit names. Select the active server first.
+    for unit in ssh sshd; do
+        if systemctl is-active --quiet "$unit" 2>/dev/null; then
+            systemctl --no-block try-restart "$unit" 2>/dev/null || true
+            break
+        fi
+    done
 fi
