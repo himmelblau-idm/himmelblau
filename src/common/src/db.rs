@@ -170,10 +170,28 @@ fn open_database_file_for_hardening(path: &str) -> std::io::Result<std::fs::File
 
 impl Db {
     pub fn new(path: &str) -> Result<Self, DbError> {
+        // systemd DynamicUser/CacheDirectory can symlink the trusted parent.
+        // Resolve only that parent, never the database leaf. Keep SQLite's
+        // special temporary, memory and URI names unchanged.
+        let resolved_path = if !path.is_empty() && path != ":memory:" && !path.starts_with("file:")
+        {
+            let path = std::path::Path::new(path);
+            let parent = path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let parent = parent.canonicalize().map_err(|e| {
+                error!(err = ?e, "unable to resolve database parent directory");
+                DbError::Sqlite
+            })?;
+            parent.join(path.file_name().ok_or(DbError::Sqlite)?)
+        } else {
+            std::path::PathBuf::from(path)
+        };
         let before = unsafe { umask(0o0077) };
-        // Reject symlink database paths before SQLite canonicalizes them.
+        // Reject a symlink leaf before SQLite canonicalizes the filename.
         let opened = Connection::open_with_flags(
-            path,
+            resolved_path,
             OpenFlags::default() | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         );
         let _ = unsafe { umask(before) };
@@ -1212,6 +1230,37 @@ mod tests {
         std::fs::remove_file(sidecar).unwrap();
         std::fs::remove_file(target).unwrap();
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn database_allows_trusted_symlinked_parent_but_rejects_leaf() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root =
+            std::env::temp_dir().join(format!("himmelblau-db-parent-{}", uuid::Uuid::new_v4()));
+        let private = root.join("private");
+        std::fs::create_dir_all(&private).unwrap();
+        symlink(&private, root.join("cache")).unwrap();
+        let path = root.join("cache/cache.db");
+        drop(super::Db::new(path.to_str().unwrap()).unwrap());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        drop(super::Db::new(path.to_str().unwrap()).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let target = private.join("target");
+        std::fs::write(&target, "unrelated").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let link = root.join("cache/link.db");
+        symlink(&target, &link).unwrap();
+        assert!(super::Db::new(link.to_str().unwrap()).is_err());
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "unrelated");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
