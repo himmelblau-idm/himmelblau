@@ -510,21 +510,28 @@ fn mapped_shadow_from_nssuser(
 
 fn initgroups_member_matches(
     member: &str,
-    c_user: &str,
     account_id: &str,
     cfg: &HimmelblauConfig,
+    user_map: &UserMap,
 ) -> bool {
-    member.eq_ignore_ascii_case(c_user)
-        || member.eq_ignore_ascii_case(account_id)
-        || cfg.map_upn_to_name(member).eq_ignore_ascii_case(c_user)
+    // UPNs name identities, not display aliases. Never reduce a different UPN
+    // to a CN that can collide with an explicitly mapped local account.
+    if member.contains('@') {
+        return member.eq_ignore_ascii_case(account_id);
+    }
+    // Resolve local aliases in the same precedence order as the NSS entrypoint.
+    user_map
+        .get_upn_from_local(member)
+        .or_else(|| cfg.map_name_to_upn(member))
+        .is_some_and(|upn| upn.eq_ignore_ascii_case(account_id))
 }
 
 fn fallback_initgroups_gids(
     daemon_client: &mut DaemonClientBlocking,
     cfg: &HimmelblauConfig,
-    c_user: &str,
     account_id: &str,
 ) -> Option<Vec<libc::gid_t>> {
+    let user_map = UserMap::new(&cfg.get_user_map_file());
     match daemon_client.call_and_wait(&ClientRequest::NssGroups, cfg.get_unix_sock_timeout()) {
         Ok(ClientResponse::NssGroups(groups)) => {
             let gids = groups
@@ -533,7 +540,7 @@ fn fallback_initgroups_gids(
                     group
                         .members
                         .iter()
-                        .any(|member| initgroups_member_matches(member, c_user, account_id, cfg))
+                        .any(|member| initgroups_member_matches(member, account_id, cfg, &user_map))
                 })
                 .map(|group| group.gid)
                 .collect();
@@ -684,7 +691,6 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
     };
     initgroups_for_account(
         &cfg,
-        c_user,
         &account_id,
         primary_gid,
         start,
@@ -699,7 +705,6 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
 #[allow(clippy::too_many_arguments)]
 unsafe fn initgroups_for_account(
     cfg: &HimmelblauConfig,
-    c_user: &str,
     account_id: &str,
     primary_gid: libc::gid_t,
     start: &mut libc::c_long,
@@ -738,8 +743,7 @@ unsafe fn initgroups_for_account(
             Err(_) => return NSS_STATUS_UNAVAIL,
         };
     }
-    let fallback_gids = match fallback_initgroups_gids(&mut daemon_client, cfg, c_user, account_id)
-    {
+    let fallback_gids = match fallback_initgroups_gids(&mut daemon_client, cfg, account_id) {
         Some(gids) => gids,
         None => return NSS_STATUS_UNAVAIL,
     };
@@ -1007,6 +1011,7 @@ mod tests {
     #[allow(clippy::unwrap_used, clippy::panic)]
     fn run_initgroups_daemon_case(
         fast: Option<Vec<u32>>,
+        conflicting_map: bool,
         fallback_ok: bool,
         expected_status: i32,
         expected_gids: &[u32],
@@ -1016,7 +1021,18 @@ mod tests {
         use std::time::Duration;
         let socket_path = format!("/tmp/himmelblau-nss-{}.sock", uuid::Uuid::new_v4());
         let listener = UnixListener::bind(&socket_path).unwrap();
-        let config_path = create_temp_config(&format!("[global]\ndomains = contoso.com\ncn_name_mapping = true\nsocket_path = {}\nunix_sock_timeout = 2\n", socket_path)).unwrap();
+        let user_map_path = create_temp_config(if conflicting_map {
+            "alice:bob@contoso.com\n"
+        } else {
+            ""
+        })
+        .unwrap();
+        let config_path = create_temp_config(&format!("[global]\ndomains = contoso.com\ncn_name_mapping = true\nuser_map_file = {}\nsocket_path = {}\nunix_sock_timeout = 2\n", user_map_path, socket_path)).unwrap();
+        let account_id = if conflicting_map {
+            "bob@contoso.com"
+        } else {
+            "alice@contoso.com"
+        };
         let cfg = HimmelblauConfig::new(Some(&config_path)).unwrap();
         listener.set_nonblocking(true).unwrap();
         let server = std::thread::spawn(move || {
@@ -1044,7 +1060,7 @@ mod tests {
             let count = stream.read(&mut buffer).unwrap();
             assert!(matches!(
                 serde_json::from_slice::<ClientRequest>(&buffer[..count]).unwrap(),
-                ClientRequest::NssInitgroups(_)
+                ClientRequest::NssInitgroups(ref requested) if requested == account_id
             ));
             if let Some(gids) = fast {
                 stream
@@ -1099,8 +1115,7 @@ mod tests {
         unsafe {
             let status = initgroups_for_account(
                 &cfg,
-                "alice",
-                "alice@contoso.com",
+                account_id,
                 1000,
                 &mut start,
                 &mut size,
@@ -1115,57 +1130,84 @@ mod tests {
         server.join().unwrap();
         fs::remove_file(socket_path).unwrap();
         fs::remove_file(config_path).unwrap();
+        fs::remove_file(user_map_path).unwrap();
+    }
+
+    #[test]
+    fn initgroups_conflicting_alias_does_not_grant_other_users_groups() {
+        for fast in [Some(vec![]), Some(vec![1000]), None] {
+            run_initgroups_daemon_case(fast, true, true, NSS_STATUS_SUCCESS, &[3000]);
+        }
     }
 
     #[test]
     fn initgroups_empty_fast_response_uses_fallback() {
-        run_initgroups_daemon_case(Some(vec![]), true, NSS_STATUS_SUCCESS, &[2000]);
+        run_initgroups_daemon_case(Some(vec![]), false, true, NSS_STATUS_SUCCESS, &[2000]);
     }
 
     #[test]
     fn initgroups_primary_only_fast_response_uses_fallback() {
-        run_initgroups_daemon_case(Some(vec![1000]), true, NSS_STATUS_SUCCESS, &[2000]);
+        run_initgroups_daemon_case(Some(vec![1000]), false, true, NSS_STATUS_SUCCESS, &[2000]);
     }
 
     #[test]
     fn initgroups_protocol_error_reconnects_before_fallback() {
-        run_initgroups_daemon_case(None, true, NSS_STATUS_SUCCESS, &[2000]);
+        run_initgroups_daemon_case(None, false, true, NSS_STATUS_SUCCESS, &[2000]);
     }
 
     #[test]
     fn initgroups_failed_fallback_is_unavailable() {
-        run_initgroups_daemon_case(Some(vec![]), false, NSS_STATUS_UNAVAIL, &[]);
+        run_initgroups_daemon_case(Some(vec![]), false, false, NSS_STATUS_UNAVAIL, &[]);
     }
 
     #[test]
-    fn initgroups_member_matching_accepts_raw_and_mapped_names() -> Result<(), String> {
+    fn initgroups_member_matching_requires_same_canonical_identity() -> Result<(), String> {
         let cfg = test_config()?;
-
-        assert!(initgroups_member_matches(
+        let path = create_temp_config("alice:bob@contoso.com\n")?;
+        let user_map = UserMap::new(&path);
+        fs::remove_file(path).ok();
+        assert!(!initgroups_member_matches(
             "alice@contoso.com",
-            "alice",
-            "alice@contoso.com",
-            &cfg
+            "bob@contoso.com",
+            &cfg,
+            &user_map
         ));
         assert!(initgroups_member_matches(
+            "bob@contoso.com",
+            "bob@contoso.com",
+            &cfg,
+            &user_map
+        ));
+        assert!(initgroups_member_matches(
+            "alice",
+            "bob@contoso.com",
+            &cfg,
+            &user_map
+        ));
+        assert!(!initgroups_member_matches(
+            "alice",
             "alice@contoso.com",
-            "alice@contoso.com",
-            "alice@contoso.com",
-            &cfg
+            &cfg,
+            &user_map
         ));
         assert!(initgroups_member_matches(
             "ALICE@contoso.com",
-            "alice",
             "alice@contoso.com",
-            &cfg
+            &cfg,
+            &user_map
         ));
         assert!(!initgroups_member_matches(
-            "bob@contoso.com",
-            "alice",
+            "alice@fabrikam.com",
             "alice@contoso.com",
-            &cfg
+            &cfg,
+            &user_map
         ));
-
+        assert!(initgroups_member_matches(
+            "carol",
+            "carol@contoso.com",
+            &cfg,
+            &user_map
+        ));
         Ok(())
     }
 
