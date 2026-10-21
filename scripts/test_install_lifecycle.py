@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 
@@ -16,6 +17,10 @@ class InstallLifecycleTests(unittest.TestCase):
             bindir = root / 'bin'
             bindir.mkdir()
             log = root / 'commands'
+            # Keep distro helpers out of PATH: finding the real Debian helper
+            # would take a different branch and could contact host systemd.
+            for command in ('sh', 'grep', 'awk', 'md5sum', 'rm', 'rmdir', 'sed'):
+                (bindir / command).symlink_to(shutil.which(command))
             # Model systemctl's important contract: try-restart leaves an inactive
             # service alone, while restart starts it. Never contact host systemd.
             (bindir / 'systemctl').write_text('''#!/bin/sh
@@ -30,7 +35,8 @@ esac
             for name, status in [('systemd-tmpfiles', 0), ('systemd-detect-virt', 1), ('selinuxenabled', 0 if selinux else 1), ('make', 0), ('semodule', 0), ('restorecon', 0)]:
                 (bindir / name).write_text('#!/bin/sh\nexit %d\n' % status)
             for path in bindir.iterdir():
-                path.chmod(0o755)
+                if not path.is_symlink():
+                    path.chmod(0o755)
             if selinux:
                 for directory in ('usr/share/selinux/packages/himmelblaud',
                                   'usr/share/selinux/devel', 'run/systemd/system'):
@@ -43,7 +49,7 @@ esac
                 source = source.replace(prefix, str(root) + prefix)
             script = root / 'postinst'
             script.write_text(source)
-            env = dict(os.environ, PATH=str(bindir) + ':/usr/bin:/bin',
+            env = dict(os.environ, PATH=str(bindir),
                        COMMAND_LOG=str(log), TEST_ACTIVE=str(int(active)), DPKG_ROOT='')
             result = subprocess.run(['sh', str(script), '1'], env=env,
                                     capture_output=True, text=True, timeout=10)
