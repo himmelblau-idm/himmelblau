@@ -34,6 +34,17 @@ use kanidm_hsm_crypto::{
 
 const DBV_MAIN: &str = "main";
 
+// UNION permits separate name/SPN range indexes. Drive legacy candidates from
+// accounts rather than scanning all groups; the final membership probe is indexed.
+const UNUSED_PRIMARY_GROUPS_QUERY: &str = "SELECT token FROM group_t WHERE uuid IN (
+    SELECT uuid FROM group_t WHERE name GLOB 'himmelblau-primary-group-*'
+    UNION
+    SELECT uuid FROM group_t WHERE spn GLOB 'himmelblau-primary-group-*'
+    UNION
+    SELECT g.uuid FROM account_t AS a CROSS JOIN group_t AS g ON g.uuid = a.uuid
+    WHERE g.name = g.spn AND g.spn = a.spn
+) AND NOT EXISTS (SELECT 1 FROM memberof_t WHERE memberof_t.g_uuid = group_t.uuid)";
+
 #[async_trait]
 pub trait Cache {
     type Txn<'db>
@@ -717,6 +728,13 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 .map_err(|e| self.sqlite_error("invalidate legacy accounts", &e))?;
         }
 
+        // Additive/idempotent so existing version-2 caches gain the index too.
+        // Cleanup and group-ownership checks probe by g_uuid, never a_uuid.
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS memberof_group_account_idx ON memberof_t(g_uuid, a_uuid)",
+            [],
+        ).map_err(|e| self.sqlite_error("memberof group index", &e))?;
+
         self.set_db_version(DBV_MAIN, 2)?;
 
         Ok(())
@@ -1139,7 +1157,9 @@ impl<'a> CacheTxn for DbTxn<'a> {
         // Only unreferenced deterministic synthetic rows and legacy per-user
         // fallback rows may be removed. A second cached account sharing the old
         // GID keeps its row alive.
-        let mut stmt = self.conn.prepare("SELECT token FROM group_t WHERE (name GLOB 'himmelblau-primary-group-*' OR spn GLOB 'himmelblau-primary-group-*' OR (name = spn AND EXISTS (SELECT 1 FROM account_t WHERE account_t.uuid = group_t.uuid AND account_t.spn = group_t.spn))) AND NOT EXISTS (SELECT 1 FROM memberof_t WHERE memberof_t.g_uuid = group_t.uuid)")
+        let mut stmt = self
+            .conn
+            .prepare(UNUSED_PRIMARY_GROUPS_QUERY)
             .map_err(|e| self.sqlite_error("unused groups prepare", &e))?;
         let rows = stmt
             .query_map([], |row| row.get::<_, Vec<u8>>(0))
@@ -1686,6 +1706,96 @@ impl<'a> Drop for DbTxn<'a> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn primary_group_cleanup_uses_indexes_and_preserves_candidates() {
+        let db = Db::new("").unwrap();
+        let mut txn = db.write().await;
+        txn.migrate().unwrap();
+        // Also exercise upgrading an existing version-2 cache, not only creation.
+        txn.conn
+            .execute("DROP INDEX memberof_group_account_idx", [])
+            .unwrap();
+        txn.migrate().unwrap();
+        for (id, name, spn) in [
+            (
+                "synthetic",
+                "himmelblau-primary-group-2400",
+                "himmelblau-primary-group-2400",
+            ),
+            (
+                "alias",
+                "himmelblau-primary-group-2500-synthetic-1",
+                "himmelblau-primary-group-2500-synthetic-1",
+            ),
+            (
+                "reserved-spn",
+                "ordinary-label",
+                "himmelblau-primary-group-2600",
+            ),
+            ("legacy", "legacy@example.com", "legacy@example.com"),
+            ("mismatch", "mismatch@example.com", "mismatch@example.com"),
+            ("ordinary", "ordinary", "ordinary"),
+            (
+                "active",
+                "himmelblau-primary-group-2700",
+                "himmelblau-primary-group-2700",
+            ),
+        ] {
+            txn.conn.execute("INSERT INTO group_t(uuid,name,spn,gidnumber,token,expiry) VALUES(?1,?2,?3,(SELECT COUNT(*) FROM group_t),?1,0)", rusqlite::params![id,name,spn]).unwrap();
+        }
+        for (id, spn) in [
+            ("legacy", "legacy@example.com"),
+            ("mismatch", "new@example.com"),
+        ] {
+            txn.conn.execute("INSERT INTO account_t(uuid,name,spn,gidnumber,token,expiry) VALUES(?1,?1,?2,(SELECT COUNT(*) FROM account_t),?1,123)", rusqlite::params![id,spn]).unwrap();
+        }
+        txn.conn
+            .execute(
+                "INSERT INTO memberof_t(g_uuid,a_uuid) VALUES('active','legacy')",
+                [],
+            )
+            .unwrap();
+        let select = |query: &str| {
+            let mut stmt = txn.conn.prepare(query).unwrap();
+            let mut rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows.sort();
+            rows
+        };
+        let original = "SELECT token FROM group_t WHERE (name GLOB 'himmelblau-primary-group-*' OR spn GLOB 'himmelblau-primary-group-*' OR (name = spn AND EXISTS (SELECT 1 FROM account_t WHERE account_t.uuid = group_t.uuid AND account_t.spn = group_t.spn))) AND NOT EXISTS (SELECT 1 FROM memberof_t WHERE memberof_t.g_uuid = group_t.uuid)";
+        assert_eq!(select(super::UNUSED_PRIMARY_GROUPS_QUERY), select(original));
+        assert_eq!(
+            select(super::UNUSED_PRIMARY_GROUPS_QUERY),
+            vec!["alias", "legacy", "reserved-spn", "synthetic"]
+        );
+        let mut stmt = txn
+            .conn
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN {}",
+                super::UNUSED_PRIMARY_GROUPS_QUERY
+            ))
+            .unwrap();
+        let plan = stmt
+            .query_map([], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|line| line.contains("SEARCH memberof_t")
+                && line.contains("memberof_group_account_idx")),
+            "{plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|line| line.contains("SCAN group_t")
+                || line.contains("SCAN memberof_t")
+                || line == "SCAN g"),
+            "{plan:?}"
+        );
+    }
+
     #[tokio::test]
     async fn group_owner_snapshot_batches_requested_gids_and_rejects_corruption() {
         let db = Db::new("").unwrap();
