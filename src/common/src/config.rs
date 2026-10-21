@@ -911,6 +911,14 @@ impl HimmelblauConfig {
         if account_id.contains('@') {
             return Some(account_id.to_string());
         }
+        if self.learned_name_mapping_enabled() {
+            let alias_key = account_id.to_lowercase();
+            if Self::is_local_unix_name(&alias_key, passwd_path)
+                || Self::is_reserved_unix_name(&alias_key)
+            {
+                return None;
+            }
+        }
         let name_cache = if passwd_path == "/etc/passwd" && self.learned_name_mapping_enabled() {
             MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly).ok()
         } else {
@@ -991,8 +999,16 @@ impl HimmelblauConfig {
                     }
                 }
             } else if learned_name_mapping {
+                let alias_key = account_id.to_lowercase();
+                // Preserve exact local identities above, but do not let a normalized
+                // cloud alias claim a different local or reserved Unix identity.
+                if Self::is_local_unix_name(&alias_key, passwd_path)
+                    || Self::is_reserved_unix_name(&alias_key)
+                {
+                    return None;
+                }
                 if let Some(name_cache) = name_cache {
-                    return name_cache.get_upn_from_learned_name(&account_id.to_lowercase());
+                    return name_cache.get_upn_from_learned_name(&alias_key);
                 } else {
                     return None;
                 }
@@ -2400,6 +2416,23 @@ mod tests {
             config.map_upn_to_name_with_passwd_impl("alice@example.com", Some(&cache), &passwd),
             "alice@example.com"
         );
+        for name in ["Alice", "ALICE", "GDM", "PAM_UNIX_NON_EXISTENT_PROBE"] {
+            assert_eq!(
+                config.map_name_to_upn_with_cache_impl(name, &passwd, Some(&cache)),
+                None
+            );
+            assert_eq!(config.map_name_to_upn_impl(name, &passwd), None);
+        }
+        for upn in ["alice@example.com", "Alice@Example.COM"] {
+            assert_eq!(
+                config.map_name_to_upn_with_cache_impl(upn, &passwd, Some(&cache)),
+                Some(upn.to_string())
+            );
+            assert_eq!(
+                config.map_name_to_upn_impl(upn, &passwd),
+                Some(upn.to_string())
+            );
+        }
         drop(cache);
         let _ = fs::remove_file(cache_path);
         let _ = fs::remove_file(passwd);
