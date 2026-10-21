@@ -3959,6 +3959,15 @@ impl IdProvider for HimmelblauProvider {
                     Some(Err(MsalError::ChangePassword)) => {
                         return Ok(password_change_required(cred_handler, cred));
                     }
+                    Some(Err(MsalError::RequestFailed(msg))) => {
+                        let url = extract_base_url!(msg);
+                        info!(?url, "Network down detected");
+                        let mut state = self.state.lock().await;
+                        *state =
+                            CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                        // Let the resolver enter the offline method without a credential denial.
+                        return Err(IdpError::Transport);
+                    }
                     Some(Err(e)) => {
                         // ROPC failed - this could be a bad password or other error
                         debug!("ROPC failed: {:?} - authentication denied", e);
