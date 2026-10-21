@@ -12,6 +12,12 @@ if [ -d /run/systemd/system ]; then
     fi
 fi
 
+# Failed upgrade recovery must not authorize startup after a fresh reinstall.
+# RPM passes 0 only for the final erase, including when systemd is unavailable.
+if [ "${1:-}" = 0 ]; then
+    rm -rf /run/himmelblau-package-restart
+fi
+
 # Globally disable user timer on package removal (not during upgrades)
 if [ "$1" = remove ] || [ "$1" = purge ]; then
     if command -v deb-systemd-helper >/dev/null 2>&1; then

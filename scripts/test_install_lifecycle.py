@@ -24,39 +24,53 @@ class Sandbox:
                         'install', 'touch', 'mv', 'sleep'):
             (bindir / command).symlink_to(shutil.which(command))
         (bindir / 'systemctl').write_text('''#!/bin/sh
-printf '%s\\n' "$*" >> "$COMMAND_LOG"
+printf '%s\n' "$*" >> "$COMMAND_LOG"
 operation=
+units=
 for arg do
-    case "$arg" in --*) ;; *) operation="$arg"; break;; esac
+    case "$arg" in
+        --*) ;;
+        *)
+            if [ -z "$operation" ]; then
+                operation="$arg"
+            else
+                case "$arg" in
+                    *.service) units="$units $arg";;
+                    ssh|sshd) units="$units $arg.service";;
+                esac
+            fi;;
+    esac
 done
 case "$operation" in
     is-active)
-        for arg do
-            case "$arg" in *.service) test -f "$TEST_STATES/$arg" || exit 3;; esac
+        for arg in $units; do
+            test -f "$TEST_STATES/$arg" || exit 3
         done;;
-    restart) exit 99;;
+    restart) echo unexpected-unconditional-restart >> "$COMMAND_LOG"; exit 99;;
     try-restart|start)
         if [ "$operation" = try-restart ]; then
             case " $* " in *" --no-block "*) :;; *) exit 98;; esac
         fi
-        for arg do
-            case "$arg" in *.service)
+        for arg in $units; do
                 if [ "$operation" = start ]; then
                     # --no-block accepts the job before its result is known.
                     # Blocking starts wait, then report the simulated result.
-                    case " $* " in *" --no-block "*) exit 0;; esac
+                    case " $* " in *" --no-block "*)
+                        if [ "${TEST_START_FAIL:-0}" != 0 ] || [ "${TEST_START_DELAY:-0}" != 0 ]; then
+                            exit 0
+                        fi;;
+                    esac
                     sleep "${TEST_START_DELAY:-0}"
                     [ "${TEST_START_FAIL:-0}" = 0 ] || exit 1
                 fi
                 if [ "$operation" = start ] || [ -f "$TEST_STATES/$arg" ]; then
                     touch "$TEST_STATES/$arg"
                     echo "started $arg" >> "$COMMAND_LOG"
-                fi;;
-            esac
+                fi
         done;;
     stop)
-        for arg do
-            case "$arg" in *.service) rm -f "$TEST_STATES/$arg";; esac
+        for arg in $units; do
+            rm -f "$TEST_STATES/$arg"
         done;;
 esac
 ''')
@@ -78,7 +92,8 @@ esac
             # interpreter directly so the private PATH remains self-contained.
             (bindir / 'deb-systemd-invoke').write_text(
                 '#!/bin/sh\nprintf "deb-systemd-invoke %%s\\n" "$*" >> "$COMMAND_LOG"\n'
-                '[ "$1" = try-restart ] || exit 0\nexec "%s" -c "import time; time.sleep(2)"\n' % shutil.which('python3'))
+                'case "$1" in restart|try-restart) ;; *) exit 0;; esac\n'
+                'exec "%s" -c "import time; time.sleep(2)"\n' % shutil.which('python3'))
         for path in bindir.iterdir():
             if not path.is_symlink():
                 path.chmod(0o755)
@@ -134,7 +149,8 @@ class InstallLifecycleTests(unittest.TestCase):
 
     def test_fresh_install_does_not_start_unconfigured_daemon(self):
         box = Sandbox(self.root)
-        box.run('src/daemon/scripts/postinst')
+        commands = box.run('src/daemon/scripts/postinst')
+        self.assertNotIn('unexpected-unconditional-restart', commands)
         self.assertFalse(list(box.states.iterdir()))
         self.assertFalse((self.root / 'run/himmelblau-package-restart').exists())
 
@@ -235,12 +251,14 @@ class InstallLifecycleTests(unittest.TestCase):
 
     def test_policy_install_does_not_start_unconfigured_daemon(self):
         box = Sandbox(self.root, selinux=True)
-        box.run('src/selinux/scripts/postinst')
+        commands = box.run('src/selinux/scripts/postinst')
+        self.assertNotIn('unexpected-unconditional-restart', commands)
         self.assertFalse(list(box.states.iterdir()))
 
     def test_ssh_install_does_not_start_inactive_server(self):
         box = Sandbox(self.root)
-        box.run('src/sshd-config/scripts/postinst')
+        commands = box.run('src/sshd-config/scripts/postinst')
+        self.assertNotIn('unexpected-unconditional-restart', commands)
         self.assertFalse(list(box.states.iterdir()))
 
     def test_ssh_upgrade_queues_restart(self):
@@ -248,6 +266,31 @@ class InstallLifecycleTests(unittest.TestCase):
         (box.states / 'ssh.service').touch()
         commands = box.run('src/sshd-config/scripts/postinst')
         self.assertIn('--no-block try-restart ssh', commands)
+        self.assertIn('started ssh.service', commands)
+
+    def test_failed_upgrade_erase_then_fresh_reinstall_stays_inactive(self):
+        box = Sandbox(self.root, active=True)
+        box.run('src/daemon/scripts/postinst', '2')
+        box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+        box.env['TEST_START_FAIL'] = '1'
+        box.run('src/daemon/scripts/posttrans')
+        markers = box.root / 'run/himmelblau-package-restart'
+        self.assertTrue(markers.exists())
+        box.run('src/daemon/scripts/prerm', '0')
+        self.assertFalse(markers.exists())
+        box.run('src/daemon/scripts/postrm', '0')
+        box.env['TEST_START_FAIL'] = '0'
+        box.run('src/daemon/scripts/postinst', '1')
+        box.run('src/daemon/scripts/posttrans')
+        self.assertFalse(list(box.states.iterdir()))
+
+    def test_postrm_clears_markers_if_prerm_was_skipped(self):
+        box = Sandbox(self.root)
+        markers = box.root / 'run/himmelblau-package-restart'
+        markers.mkdir()
+        (markers / 'himmelblaud.service').touch()
+        box.run('src/daemon/scripts/postrm', '0')
+        self.assertFalse(markers.exists())
 
 
 if __name__ == '__main__':
