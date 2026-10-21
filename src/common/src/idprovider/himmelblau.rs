@@ -157,6 +157,17 @@ fn retain_valid_entra_groups(groups: &mut Vec<GroupToken>) {
     });
 }
 
+fn cached_entra_groups(old_token: Option<&UserToken>) -> Vec<GroupToken> {
+    let mut groups = old_token
+        .map(|token| token.groups.clone())
+        .unwrap_or_default();
+    // Cached claims predate current namespace validation. Filter both Graph
+    // failure and missing-access-token fallbacks before any identity mapping,
+    // including user_map entries that use a local passwd identity directly.
+    retain_valid_entra_groups(&mut groups);
+    groups
+}
+
 fn reconcile_static_primary_group(
     groups: &mut Vec<GroupToken>,
     user_uuid: Uuid,
@@ -5206,10 +5217,7 @@ impl HimmelblauProvider {
                         /* If we failed to fetch the groups, and we have an old
                          * token, preserve the existing cached group memberships.
                          */
-                        match old_token {
-                            Some(old_token) => old_token.groups.clone(),
-                            None => vec![],
-                        }
+                        cached_entra_groups(old_token)
                     }
                 };
                 posix_attrs = if self.config.lock().await.get_id_attr_map() == IdAttr::Rfc2307 {
@@ -5243,10 +5251,7 @@ impl HimmelblauProvider {
                 /* If we failed to fetch the groups, and we have an old
                  * token, preserve the existing cached group memberships.
                  */
-                groups = match old_token {
-                    Some(old_token) => old_token.groups.clone(),
-                    None => vec![],
-                };
+                groups = cached_entra_groups(old_token);
                 posix_attrs = HashMap::new();
             }
         };
@@ -5950,11 +5955,11 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
-        is_unavailable_mfa_method_error, local_user_ids_from_passwd, mfa_flow_uses_push_hint,
-        password_change_required, reconcile_primary_group, reconcile_static_primary_group,
-        retain_valid_entra_groups, synthetic_primary_group, unexpired_prt_entry, CONSENT_REQUIRED,
-        PASSWORD_RESET_REGISTRATION_REQUIRED,
+        cached_entra_groups, is_device_removed_error, is_mfa_required_for_enrollment,
+        is_sspr_required, is_unavailable_mfa_method_error, local_user_ids_from_passwd,
+        mfa_flow_uses_push_hint, password_change_required, reconcile_primary_group,
+        reconcile_static_primary_group, retain_valid_entra_groups, synthetic_primary_group,
+        unexpired_prt_entry, CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::idprovider::common::RefreshCacheEntry;
     use crate::idprovider::interface::{
@@ -6059,6 +6064,47 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert!(groups.iter().any(|group| group.uuid == ordinary.uuid));
         assert!(groups.iter().any(|group| group.uuid == synthetic.uuid));
+    }
+
+    #[test]
+    fn cached_entra_refresh_filters_reserved_claims_before_user_mapping() {
+        let synthetic = synthetic_primary_group(2400);
+        let ordinary = GroupToken {
+            name: "ordinary".into(),
+            spn: "ordinary".into(),
+            uuid: Uuid::new_v4(),
+            gidnumber: 2500,
+        };
+        let mut name_collision = ordinary.clone();
+        name_collision.name = synthetic.name.clone();
+        let mut spn_collision = ordinary.clone();
+        spn_collision.spn = synthetic.spn.clone();
+        let old = super::UserToken {
+            name: "mapped".into(),
+            spn: "mapped@example.com".into(),
+            uuid: Uuid::new_v4(),
+            gidnumber: 1000,
+            real_gidnumber: Some(1000),
+            displayname: "Mapped User".into(),
+            shell: None,
+            tenant_id: None,
+            valid: true,
+            groups: vec![
+                ordinary.clone(),
+                name_collision,
+                spn_collision,
+                synthetic.clone(),
+            ],
+        };
+        // This is the common fallback used before the user_map/ID-map choice
+        // for both a failed Graph request and a missing access token.
+        let groups = cached_entra_groups(Some(&old));
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].uuid, ordinary.uuid);
+        assert_eq!(groups[1].uuid, synthetic.uuid);
+        assert_eq!(old.groups.len(), 4);
+        assert_eq!(old.real_gidnumber, Some(1000));
+        assert!(cached_entra_groups(None).is_empty());
     }
 
     #[test]
