@@ -32,8 +32,35 @@ class MatrixTests(unittest.TestCase):
             self.assertEqual(spec["channel"], "smoke")
             self.assertTrue(smoke.CORE.issubset(spec["expected"]))
             self.assertTrue(all("ci123.2" in p["version"] for p in spec["expected_packages"]))
+            registry, separator, _ = spec["image"].partition("/")
+            self.assertTrue(separator and ("." in registry or ":" in registry or registry == "localhost"),
+                            f"Unqualified runtime image: {spec['image']}")
             self.assertNotIn("cargo", smoke.containerfile(spec))
             self.assertNotIn("DynamicUser=", smoke.containerfile(spec))
+
+    def test_matrix_qualifies_short_images_and_preserves_explicit_registries(self):
+        cases = [
+            ("ubuntu:24.04", "docker.io/ubuntu:24.04"),
+            ("fedora", "docker.io/fedora"),
+            ("rockylinux/rockylinux:9", "docker.io/rockylinux/rockylinux:9"),
+            ("opensuse/tumbleweed:latest", "docker.io/opensuse/tumbleweed:latest"),
+            ("ubuntu@sha256:" + "a" * 64, "docker.io/ubuntu@sha256:" + "a" * 64),
+            ("registry.suse.com/bci/bci-base:16.0", "registry.suse.com/bci/bci-base:16.0"),
+            ("docker.io/library/ubuntu:24.04", "docker.io/library/ubuntu:24.04"),
+            ("registry:5000/team/image:tag", "registry:5000/team/image:tag"),
+            ("localhost/team/image:tag", "localhost/team/image:tag"),
+            ("localhost:5000/image:tag", "localhost:5000/image:tag"),
+        ]
+        spec = {"distro": "test", "tag": "4.0.8", "format": "rpm",
+                "expected": sorted(smoke.CORE), "expected_packages": []}
+        for image, expected in cases:
+            config = {"test": {"family": "rpm", "image": image}}
+            with self.subTest(image=image), patch.object(smoke.packages, "source_text", return_value=""), \
+                 patch.object(smoke.packages, "generator_config", return_value=(config, [])), \
+                 patch.object(smoke.nightly_packages, "matrix", return_value={"include": [{"spec": json.dumps(spec)}]}):
+                actual = json.loads(smoke.matrix("a" * 40, 123, 2)["include"][0]["spec"])
+                self.assertEqual(actual["image"], expected)
+                self.assertTrue(smoke.containerfile(actual).startswith("FROM " + expected + "\n"))
 
     def test_workflow_only_runs_on_requested_stable_branches(self):
         workflow = (smoke.ROOT / ".github/workflows/package-smoke.yml").read_text()

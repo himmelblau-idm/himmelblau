@@ -43,6 +43,10 @@ def matrix(sha, run_id, attempt):
         spec["family"] = cfg["family"]
         spec["image"] = ("registry.suse.com/bci/bci-base:15.7" if spec["distro"] == "sle15sp7"
                          else cfg["image"])
+        # Podman must not prompt for a registry when Docker's config uses short names.
+        registry, separator, _ = spec["image"].partition("/")
+        if not separator or not ("." in registry or ":" in registry or registry == "localhost"):
+            spec["image"] = "docker.io/" + spec["image"]
         if cfg.get("scc"):
             raise ValueError(f"Secret-dependent target needs an explicit coverage decision: {spec['distro']}")
         # Reuse public repository setup, without the compiler/development bootstrap.
