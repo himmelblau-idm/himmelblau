@@ -52,7 +52,7 @@ use crate::{
     impl_create_decoupled_hello_key, impl_handle_hello_pin_totp_auth,
     impl_himmelblau_hello_key_helpers, impl_himmelblau_offline_auth_init,
     impl_himmelblau_offline_auth_step, impl_himmelblau_try_unseal, impl_offline_break_glass,
-    impl_provision_hello_key, impl_provision_or_create_hello_key,
+    impl_probe_online, impl_provision_hello_key, impl_provision_or_create_hello_key,
     impl_setup_hello_totp_with_storage_key, impl_unix_user_access, load_cached_prt,
     load_cached_prt_for_try_unseal, seal_prt_with_existing_hello_key,
 };
@@ -551,6 +551,29 @@ impl IdProvider for HimmelblauMultiProvider {
         true
     }
 
+    async fn probe_online(&self, account_id: Option<&str>, now: SystemTime) -> bool {
+        let providers: Vec<_> = match account_id {
+            Some(account_id) => match idp_get_domain_for_account!(self, account_id) {
+                Ok(domain) => match self.find_provider(domain).await {
+                    Ok(provider) => vec![provider],
+                    Err(..) => return false,
+                },
+                Err(..) => return false,
+            },
+            None => self.providers.lock().await.values().cloned().collect(),
+        };
+        for provider in providers {
+            let online = match provider.as_ref() {
+                Providers::Oidc(provider) => provider.probe_online(account_id, now).await,
+                Providers::Himmelblau(provider) => provider.probe_online(account_id, now).await,
+            };
+            if !online {
+                return false;
+            }
+        }
+        true
+    }
+
     async fn unix_user_access<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
@@ -938,20 +961,16 @@ impl IdProvider for HimmelblauMultiProvider {
         Err(IdpError::BadRequest)
     }
 
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: Option<&str>,
-        keystore: &mut D,
-    ) -> CacheState {
+    async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
         match account_id {
             Some(account_id) => match idp_get_domain_for_account!(self, account_id) {
                 Ok(domain) => match self.find_provider(domain).await {
                     Ok(provider) => match provider.as_ref() {
                         Providers::Oidc(provider) => {
-                            return provider.get_cachestate(Some(account_id), keystore).await
+                            return provider.get_cachestate(Some(account_id)).await
                         }
                         Providers::Himmelblau(provider) => {
-                            return provider.get_cachestate(Some(account_id), keystore).await
+                            return provider.get_cachestate(Some(account_id)).await
                         }
                     },
                     Err(..) => return CacheState::Offline,
@@ -962,17 +981,15 @@ impl IdProvider for HimmelblauMultiProvider {
                 let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
                 for provider in providers {
                     match provider.as_ref() {
-                        Providers::Oidc(provider) => {
-                            match provider.get_cachestate(None, keystore).await {
-                                CacheState::Offline => return CacheState::Offline,
-                                CacheState::OfflineNextCheck(time) => {
-                                    return CacheState::OfflineNextCheck(time)
-                                }
-                                _ => continue,
+                        Providers::Oidc(provider) => match provider.get_cachestate(None).await {
+                            CacheState::Offline => return CacheState::Offline,
+                            CacheState::OfflineNextCheck(time) => {
+                                return CacheState::OfflineNextCheck(time)
                             }
-                        }
+                            _ => continue,
+                        },
                         Providers::Himmelblau(provider) => {
-                            match provider.get_cachestate(None, keystore).await {
+                            match provider.get_cachestate(None).await {
                                 CacheState::Offline => return CacheState::Offline,
                                 CacheState::OfflineNextCheck(time) => {
                                     return CacheState::OfflineNextCheck(time)
@@ -1231,8 +1248,13 @@ impl IdProvider for HimmelblauProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
-        impl_check_online!(self, tpm, now)
+    async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
+        impl_check_online!(self, now)
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    async fn probe_online(&self, _account_id: Option<&str>, now: SystemTime) -> bool {
+        impl_probe_online!(self, now)
     }
 
     #[instrument(skip(
@@ -1953,7 +1975,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    #[instrument(skip(self, account_id, _token, keystore, tpm, _machine_key, _shutdown_rx))]
+    #[instrument(skip(self, account_id, _token, keystore, _tpm, _machine_key, _shutdown_rx))]
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -1962,7 +1984,7 @@ impl IdProvider for HimmelblauProvider {
         no_hello_pin: bool,
         force_reauth: bool,
         keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
@@ -2135,7 +2157,7 @@ impl IdProvider for HimmelblauProvider {
                         "Console password-only mode: requesting password first to check sign-in frequency",
                     );
                     // Check if the network is up before prompting for password
-                    if !self.attempt_online(tpm, SystemTime::now()).await {
+                    if !self.attempt_online(SystemTime::now()).await {
                         return Ok((
                             AuthRequest::InitDenied {
                                 msg: tr("Network outage detected."),
@@ -2159,7 +2181,7 @@ impl IdProvider for HimmelblauProvider {
                 if !auth_init.passwordless() {
                     // Check if the network is even up prior to sending a
                     // password prompt.
-                    if !self.attempt_online(tpm, SystemTime::now()).await {
+                    if !self.attempt_online(SystemTime::now()).await {
                         return Ok((
                             AuthRequest::InitDenied {
                                 msg: tr("Network outage detected."),
@@ -2281,7 +2303,7 @@ impl IdProvider for HimmelblauProvider {
         } else {
             // Check if the network is even up prior to sending a PIN prompt,
             // otherwise we duplicate the PIN prompt when the network goes down.
-            if !self.attempt_online(tpm, SystemTime::now()).await {
+            if !self.attempt_online(SystemTime::now()).await {
                 // We are offline, fail the authentication now
                 debug!("Network down encountered during online auth init");
                 return Err(IdpError::BadRequest);
@@ -4774,11 +4796,7 @@ impl IdProvider for HimmelblauProvider {
         Err(IdpError::BadRequest)
     }
 
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        _account_id: Option<&str>,
-        _keystore: &mut D,
-    ) -> CacheState {
+    async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState {
         (*self.state.lock().await).clone()
     }
 }
@@ -4860,7 +4878,7 @@ impl HimmelblauProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn attempt_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
+    async fn attempt_online(&self, now: SystemTime) -> bool {
         let authority_host = self
             .graph
             .authority_host()

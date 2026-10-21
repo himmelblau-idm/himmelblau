@@ -323,6 +323,12 @@ pub trait IdProvider {
 
     async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, _now: SystemTime) -> bool;
 
+    /// Like `check_online`, but needs no HSM and re-verifies an `Online` state, which
+    /// can be stale after resume. Providers without a probe report true.
+    async fn probe_online(&self, _account_id: Option<&str>, _now: SystemTime) -> bool {
+        true
+    }
+
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
@@ -467,11 +473,7 @@ pub trait IdProvider {
         _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError>;
 
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        _account_id: Option<&str>,
-        _keystore: &mut D,
-    ) -> CacheState;
+    async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState;
 
     async fn offline_break_glass(&self, _ttl: Option<u64>) -> Result<(), IdpError>;
 
