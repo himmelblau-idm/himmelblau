@@ -992,7 +992,7 @@ impl HimmelblauConfig {
                 }
             } else if learned_name_mapping {
                 if let Some(name_cache) = name_cache {
-                    return name_cache.get_upn_from_learned_name(account_id);
+                    return name_cache.get_upn_from_learned_name(&account_id.to_lowercase());
                 } else {
                     return None;
                 }
@@ -2476,13 +2476,30 @@ mod tests {
             config.map_name_to_upn_with_cache_impl("alice", &passwd, Some(&cache)),
             Some("alice@company.com".to_string())
         );
+        for name in ["Alice", "ALICE"] {
+            assert_eq!(
+                config.map_name_to_upn_with_cache_impl(name, &passwd, Some(&cache)),
+                Some("alice@company.com".to_string())
+            );
+        }
         assert_eq!(
             config.map_upn_to_name_with_cache_impl("ALICE@COMPANY.COM", Some(&cache)),
             "alice"
         );
 
+        fs::write(
+            &passwd,
+            format!("{PASSWD_MINIMAL}Alice:x:1000:1000::/home/Alice:/bin/sh\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.map_name_to_upn_with_cache_impl("Alice", &passwd, Some(&cache)),
+            Some("Alice".to_string())
+        );
+
         drop(cache);
         let _ = fs::remove_file(cache_path);
+        let _ = fs::remove_file(passwd);
     }
 
     #[test]
