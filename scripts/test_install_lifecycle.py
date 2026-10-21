@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Sandbox:
-    def __init__(self, root, active=False, selinux=False, debian=False):
+    def __init__(self, root, active=False, selinux=False, debian=False, policy_updated=True):
         self.root = root
         bindir = root / 'bin'
         bindir.mkdir(parents=True)
@@ -54,6 +54,14 @@ esac
                              ('selinuxenabled', 0 if selinux else 1),
                              ('make', 0), ('semodule', 0), ('restorecon', 0)]:
             (bindir / name).write_text('#!/bin/sh\nexit %d\n' % status)
+        (bindir / 'rpm').write_text('''#!/bin/sh
+[ "${TEST_RPM_QUERY_FAIL:-0}" = 0 ] || exit 1
+case "$*" in
+    *himmelblau-selinux) printf '%s' "$TEST_POLICY_TID";;
+    *himmelblau) printf '%s' 200;;
+    *) exit 1;;
+esac
+''')
         if debian:
             (bindir / 'deb-systemd-helper').write_text('#!/bin/sh\nexit 0\n')
             # Model an invocation held until readiness is reported. Use the
@@ -72,7 +80,8 @@ esac
             for unit in ('himmelblaud.service', 'himmelblaud-tasks.service'):
                 (self.states / unit).touch()
         self.env = dict(os.environ, PATH=str(bindir), COMMAND_LOG=str(self.log),
-                        TEST_STATES=str(self.states), DPKG_ROOT='')
+                        TEST_STATES=str(self.states), DPKG_ROOT='',
+                        TEST_POLICY_TID='200' if policy_updated else '100')
 
     def source(self, source, arg='1', timeout=10):
         # One pass: inserted roots may themselves contain /var/ or /run/.
@@ -130,6 +139,23 @@ class InstallLifecycleTests(unittest.TestCase):
         box.run('src/daemon/scripts/postinst', '2')
         box.run('src/daemon/scripts/posttrans')
         self.assertFalse(list(box.states.iterdir()))
+
+    def test_daemon_only_upgrade_recovers_with_existing_selinux_package(self):
+        box = Sandbox(self.root, active=True, selinux=True, policy_updated=False)
+        box.run('src/daemon/scripts/postinst', '2')
+        box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+        # No SELinux posttrans runs in this transaction.
+        box.run('src/daemon/scripts/posttrans')
+        self.assertEqual(len(list(box.states.iterdir())), 2)
+        self.assertFalse((self.root / 'run/himmelblau-package-restart').exists())
+
+    def test_failed_transaction_query_does_not_defer_recovery(self):
+        box = Sandbox(self.root, active=True, selinux=True)
+        box.env['TEST_RPM_QUERY_FAIL'] = '1'
+        box.run('src/daemon/scripts/postinst', '2')
+        box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+        box.run('src/daemon/scripts/posttrans')
+        self.assertEqual(len(list(box.states.iterdir())), 2)
 
     def test_new_prerm_does_not_stop_upgrade(self):
         box = Sandbox(self.root, active=True)

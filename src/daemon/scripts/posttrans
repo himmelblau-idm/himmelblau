@@ -18,12 +18,25 @@ if [ -f "$saved_config" ] && [ ! -e "$config_file" ] && [ ! -L "$config_file" ];
     fi
 fi
 
+# Installed policy sources alone do not imply a later SELinux %posttrans: a
+# daemon-only upgrade leaves the policy package outside the transaction. RPM's
+# INSTALLTID identifies the transaction that installed each package.
+selinux_updated_in_transaction() {
+    command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled || return 1
+    [ -d /usr/share/selinux/packages/himmelblaud ] || return 1
+    daemon_tid=$(rpm -q --qf '%{INSTALLTID}' himmelblau 2>/dev/null) || return 1
+    policy_tid=$(rpm -q --qf '%{INSTALLTID}' himmelblau-selinux 2>/dev/null) || return 1
+    case "$daemon_tid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$daemon_tid" = "$policy_tid" ]
+}
+
 # Restore pre-upgrade running services after the old package's %preun stop.
-# If SELinux is active, its package's later %posttrans must load/relabel the
-# policy first and consume the same markers there instead.
+# Defer only when the SELinux package was installed in this transaction and its
+# later %posttrans will load/relabel policy and consume the same markers.
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/himmelblau-package-restart ]; then
-    if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled &&
-       [ -d /usr/share/selinux/packages/himmelblaud ]; then
+    if selinux_updated_in_transaction; then
         echo "Deferring upgrade service recovery until SELinux policy installation"
     else
         state_dir=/run/himmelblau-package-restart
