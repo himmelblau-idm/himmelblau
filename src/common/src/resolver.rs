@@ -2775,6 +2775,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transport_fallback_after_staging_cannot_republish_a_replaced_identity() {
+        let resolver = setup_resolver().await;
+        resolver.client.user_get_error.store(3, Ordering::Release);
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        // Snapshot A.
+        let (mut older, _) = resolver
+            .pam_account_authenticate_init(
+                "testuser@example.com",
+                "gdm-password",
+                false,
+                false,
+                shutdown_rx,
+            )
+            .await
+            .unwrap();
+        // Replacement B (same UUID, different tenant) is cached with its password.
+        let mut replacement = test_token();
+        replacement.tenant_id = Some(uuid::Uuid::new_v4());
+        *resolver.client.auth_token.write().unwrap() = replacement.clone();
+        complete_test_auth(&resolver, true).await;
+        // The older session then reaches SetupPin, which advances its generation.
+        resolver.client.user_get_error.store(4, Ordering::Release);
+        let response = resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::Password {
+                    cred: "old-secret".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, PamAuthResponse::SetupPin { .. }));
+        // Hello provisioning loses transport.
+        resolver
+            .client
+            .step_transport_error
+            .store(true, Ordering::Release);
+        assert!(resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::SetupPin {
+                    pin: "123456".into(),
+                },
+            )
+            .await
+            .is_err());
+        assert!(matches!(older, AuthSession::Denied));
+        assert_eq!(
+            resolver.client.offline_init_calls.load(Ordering::Acquire),
+            0
+        );
+        // B's cached password can't carry the stale snapshot through.
+        assert!(resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::Password {
+                    cred: "new-secret".into(),
+                },
+            )
+            .await
+            .is_err());
+        let cached = resolver.get_cached_usertokens().await.unwrap();
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].tenant_id, replacement.tenant_id);
+    }
+
+    #[tokio::test]
     async fn online_auth_init_offline_fallback_does_not_reenter_db_lock() {
         let resolver = setup_resolver().await;
         let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
@@ -4898,6 +4965,7 @@ where
                 } = auth_session
                 {
                     if !*online_at_init
+                        || *identity_staged
                         || matches!(
                             cred_handler,
                             AuthCredHandler::InteractionCode(..)
@@ -4907,6 +4975,9 @@ where
                     {
                         // Preserve the online-only second-factor/reauth guards,
                         // and never repeatedly restart a failing offline flow.
+                        // Once the online identity is staged for PIN/TOTP setup,
+                        // cache_generation no longer belongs to the token
+                        // snapshot: fail closed rather than pair the two.
                         *auth_session = AuthSession::Denied;
                         return Err(ResolverError);
                     }
