@@ -63,6 +63,7 @@ async fn reconciliation_oidc_rejects_unverified_or_replacement_claims() {
         }
         let metadata: DeviceProviderMetadata =
             serde_json::from_value(responses[0].1.clone()).unwrap();
+        let (finished_tx, mut finished_rx) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(async move {
             for (path, body) in responses.into_iter().skip(2) {
                 if (case == "malformed_refresh" || oauth_error) && path.contains("userinfo") {
@@ -91,6 +92,16 @@ async fn reconciliation_oidc_rejects_unverified_or_replacement_claims() {
                 };
                 let body = body.to_string();
                 stream.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            }
+            // Keep the listener alive until the provider returns. An extra
+            // request is a direct test failure, not a timeout or refused port.
+            tokio::select! {
+                biased;
+                connection = listener.accept() => {
+                    let (_stream, _) = connection.unwrap();
+                    panic!("unexpected request after terminal response in {case}");
+                }
+                _ = &mut finished_rx => {}
             }
         });
         let mut config = HimmelblauConfig::new(Some("/dev/null")).unwrap();
@@ -169,6 +180,11 @@ async fn reconciliation_oidc_rejects_unverified_or_replacement_claims() {
         .await
         .unwrap()
         .unwrap();
+        let _ = finished_tx.send(());
+        tokio::time::timeout(Duration::from_secs(10), server)
+            .await
+            .unwrap()
+            .expect("fixture received an unexpected provider request");
         if matches!(case, "matching" | "unrestricted") {
             assert!(matches!(state, UserTokenState::Update(_)), "{case}");
         } else if matches!(case, "temporarily_unavailable" | "server_error") {
@@ -187,9 +203,5 @@ async fn reconciliation_oidc_rejects_unverified_or_replacement_claims() {
             matches!(provider.refresh_cache.refresh_token(account).await.unwrap(),RefreshCacheEntry::RefreshToken(value) if value == secret),
             "{case}"
         );
-        tokio::time::timeout(Duration::from_secs(10), server)
-            .await
-            .unwrap()
-            .unwrap();
     }
 }

@@ -381,6 +381,7 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
             ("GET /oauth2/default/v1/keys ", json!({"keys":[jwk]})),
             ("GET /oauth2/default/v1/userinfo ", userinfo.clone()),
         ];
+        let (finished_tx, mut finished_rx) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(async move {
             for (path, body) in responses {
                 if case == "uuid_discovery_failure" && path.contains("keys") {
@@ -408,6 +409,16 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
                 let body = body.to_string();
                 let response = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                 stream.write_all(response.as_bytes()).await.unwrap();
+            }
+            // Keep the listener alive until the provider returns. An extra
+            // request is a direct test failure, not a timeout or refused port.
+            tokio::select! {
+                biased;
+                connection = listener.accept() => {
+                    let (_stream, _) = connection.unwrap();
+                    panic!("unexpected request after terminal response in {case}");
+                }
+                _ = &mut finished_rx => {}
             }
         });
         let mut provider = provider().await;
@@ -469,6 +480,11 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
         .await
         .unwrap()
         .unwrap();
+        let _ = finished_tx.send(());
+        tokio::time::timeout(Duration::from_secs(10), server)
+            .await
+            .unwrap()
+            .expect("fixture received an unexpected provider request");
         assert_eq!(
             matches!(result, UserTokenState::Update(_)),
             matches!(case, "matching" | "unrestricted"),
@@ -490,9 +506,5 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
             RefreshCacheEntry::RefreshToken(secret) if secret == expected_secret),
             "{case}"
         );
-        tokio::time::timeout(Duration::from_secs(10), server)
-            .await
-            .unwrap()
-            .unwrap();
     }
 }

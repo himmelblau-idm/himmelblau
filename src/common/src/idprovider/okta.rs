@@ -1238,8 +1238,10 @@ impl IdProvider for OktaProvider {
                     Err(_) if expected_identity.is_some() => Ok(UserTokenState::Rejected),
                     Err(_) => Ok(UserTokenState::NotFound),
                 },
-                // Revoked SSO material does not revoke the local PIN or cached
-                // identity. Interactive login will recover the native session.
+                // Transport may reuse claims, but guarded authentication rejection
+                // must not authorize reconciliation. Rejected preserves the local
+                // PIN and identity cache; unrestricted refresh keeps its fallback.
+                // Interactive login can recover a revoked native session.
                 Err(IdpError::Transport) => Ok(UserTokenState::UseCached),
                 Err(_) if expected_identity.is_some() => Ok(UserTokenState::Rejected),
                 Err(IdpError::ProviderUnauthorised) => Ok(UserTokenState::UseCached),
