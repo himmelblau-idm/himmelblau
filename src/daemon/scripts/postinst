@@ -110,7 +110,7 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
         if [ "$skip_start" -eq 1 ]; then
             echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
         else
-            deb-systemd-invoke restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
+            deb-systemd-invoke try-restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
         fi
     fi
 
@@ -127,7 +127,8 @@ elif command -v systemctl >/dev/null 2>&1; then
     # Reload systemd to pick up the new service files from /usr/lib/systemd/system/
     systemctl daemon-reload || true
 
-    # Enable and start Himmelblau daemons if systemd is available
+    # Enable Himmelblau daemons, but only restart an already running installation.
+    # A fresh installation must be configured before its first explicit start.
     # On Live systems, skip service start - the HSM PIN will be generated at first boot
     # via the himmelblau-hsm-pin-init.service oneshot when deployed to real hardware.
     if is_live_system; then
@@ -137,14 +138,14 @@ elif command -v systemctl >/dev/null 2>&1; then
         # Enable HSM PIN init service separately (may not exist on older systemd)
         systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
     else
-        echo "Enabling and starting Himmelblau services..."
+        echo "Enabling Himmelblau services; restarting only existing daemons..."
         systemctl enable himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         # Enable HSM PIN init service separately (may not exist on older systemd)
         systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
         if [ "$skip_start" -eq 1 ]; then
             echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
         else
-            systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+            systemctl --no-block try-restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         fi
     fi
 

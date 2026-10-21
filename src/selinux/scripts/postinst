@@ -62,10 +62,11 @@ if selinux_configured; then
         [ -d /var/lib/private/himmelblaud ]   && restorecon -RFv /var/lib/private/himmelblaud || :
         [ -d /var/lib/himmelblaud ]           && restorecon -RFv /var/lib/himmelblaud || :
 
-        # Restart daemons now that the policy is loaded (if present)
+        # Restart existing daemons after loading policy. Fresh installations must
+        # be configured before the installer explicitly starts them.
         if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ] && ! is_live_system; then
           systemctl daemon-reload >/dev/null 2>&1 || :
-          systemctl restart himmelblaud.service himmelblaud-tasks.service >/dev/null 2>&1 || :
+          systemctl --no-block try-restart himmelblaud.service himmelblaud-tasks.service >/dev/null 2>&1 || :
         fi
 
         echo "SELinux policy module installed successfully"
