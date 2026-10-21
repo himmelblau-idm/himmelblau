@@ -1,0 +1,126 @@
+name: Package smoke
+
+on:
+  pull_request:
+    branches: [stable-2.x, stable-3.x, stable-4.x]
+  push:
+    branches: [stable-2.x, stable-3.x, stable-4.x]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test smoke tooling
+        run: python3 .github/scripts/test_package_smoke.py
+      - name: Derive package targets from this commit
+        id: matrix
+        run: python3 .github/scripts/package_smoke.py prepare
+
+  build:
+    name: Build ${{ fromJSON(matrix.spec).distro }} ${{ fromJSON(matrix.spec).architecture }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ fromJSON(matrix.spec).runner }}
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ fromJSON(matrix.spec).source_sha }}
+          persist-credentials: false
+      - name: Build packages using existing distro packaging
+        env:
+          TARGET_SPEC: ${{ matrix.spec }}
+        run: python3 .github/scripts/package_smoke.py build
+      - name: Retain this commit's packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-packages-${{ fromJSON(matrix.spec).distro }}-${{ fromJSON(matrix.spec).architecture }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 3
+
+  smoke:
+    name: Systemd and NSS ${{ fromJSON(matrix.spec).distro }} ${{ fromJSON(matrix.spec).architecture }}
+    needs: [prepare, build]
+    # Successful targets still run when another matrix build fails.
+    if: ${{ always() && needs.prepare.result == 'success' && !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ fromJSON(matrix.spec).runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ fromJSON(matrix.spec).source_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: smoke-packages-${{ fromJSON(matrix.spec).distro }}-${{ fromJSON(matrix.spec).architecture }}
+          path: artifacts
+      - name: Install Podman on the runner
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+      - name: Test installation, systemd lifecycle, NSS, and upgrades
+        env:
+          TARGET_SPEC: ${{ matrix.spec }}
+          GH_TOKEN: ${{ github.token }}
+        run: sudo --preserve-env=TARGET_SPEC,GH_TOKEN,GITHUB_STEP_SUMMARY python3 .github/scripts/package_smoke.py smoke
+      - name: Remove remaining test containers
+        if: always()
+        env:
+          DISTRO: ${{ fromJSON(matrix.spec).distro }}
+          ARCHITECTURE: ${{ fromJSON(matrix.spec).architecture }}
+        run: |
+          if command -v podman >/dev/null; then
+            for mode in fresh upgrade; do
+              name="himmelblau-smoke-$DISTRO-$ARCHITECTURE-$mode"
+              if sudo podman container exists "$name"; then
+                sudo podman rm --force --time 10 "$name"
+              fi
+            done
+          fi
+      - name: Upload diagnostics and explicit test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-results-${{ fromJSON(matrix.spec).distro }}-${{ fromJSON(matrix.spec).architecture }}
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+
+  required:
+    name: Package systemd smoke
+    if: always()
+    needs: [prepare, build, smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: smoke-results-*
+          path: results
+      - name: Require every selected target's result
+        env:
+          MATRIX: ${{ needs.prepare.outputs.matrix }}
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/package_smoke_results.py results

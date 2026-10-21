@@ -228,6 +228,9 @@ When a device authorization response includes `verification_uri_complete`, Himme
 
 ## Contributing
 
+Stable-branch package installation, systemd lifecycle, upgrades, and unauthenticated
+NSS checks are described in [Package smoke CI](.github/PACKAGE-SMOKE.md).
+
 > **Note:** The packages you build here are from the current development branch and are intended for testing and evaluation. **Do not deploy to production.** Use a VM or a non-critical host.
 
 ### Build packages for your host distro
