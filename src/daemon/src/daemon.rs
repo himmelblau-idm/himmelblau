@@ -43,7 +43,7 @@ use himmelblau_unix_common::constants::{
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::{Id, IdProvider};
-use himmelblau_unix_common::resolver::{AuthSession, Resolver};
+use himmelblau_unix_common::resolver::{AuthSession, OnExpiry, Resolver};
 use himmelblau_unix_common::unix_config::UidAttr;
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{
@@ -492,7 +492,7 @@ async fn handle_client(
             ClientRequest::NssAccountByUid(gid) => {
                 trace!("nssaccountbyuid req");
                 cachelayer
-                    .get_nssaccount_gid(gid)
+                    .get_nssaccount_gid(gid, OnExpiry::RefreshInBackground)
                     .await
                     .map(ClientResponse::NssAccount)
                     .unwrap_or_else(|_| {
@@ -504,7 +504,7 @@ async fn handle_client(
                 let account_id = account_id.to_lowercase();
                 trace!("nssaccountbyname req");
                 cachelayer
-                    .get_nssaccount_name(account_id.as_str())
+                    .get_nssaccount_name(account_id.as_str(), OnExpiry::RefreshInBackground)
                     .await
                     .map(ClientResponse::NssAccount)
                     .unwrap_or_else(|_| {
@@ -549,7 +549,7 @@ async fn handle_client(
                 let account_id = account_id.to_lowercase();
                 trace!("nssinitgroups req");
                 cachelayer
-                    .get_initgroups(account_id.as_str())
+                    .get_initgroups(account_id.as_str(), OnExpiry::RefreshIfReachable)
                     .await
                     .map(ClientResponse::NssInitgroups)
                     .unwrap_or_else(|_| {
@@ -989,7 +989,7 @@ async fn handle_client(
                         None // not consulted; root is always authorized
                     } else {
                         cachelayer
-                            .get_nssaccount_name(&account_id)
+                            .get_nssaccount_name(&account_id, OnExpiry::Refresh)
                             .await
                             .ok()
                             .flatten()
@@ -1081,7 +1081,10 @@ async fn handle_client(
                     // NOTE: this intentionally uses `get_nssaccount_gid()` even though
                     // `ucred.uid()` is a UID. In the current NSS mapping, the resolver
                     // looks up the account via `gidnumber`, which is used as the NSS uid.
-                    let account_id = match cachelayer.get_nssaccount_gid(ucred.uid()).await {
+                    let account_id = match cachelayer
+                        .get_nssaccount_gid(ucred.uid(), OnExpiry::Refresh)
+                        .await
+                    {
                         Ok(Some(nss_user)) => nss_user.name,
                         _ => {
                             error!(
@@ -1726,6 +1729,12 @@ mod tests {
     }
 }
 
+fn notify_noop_reload() -> io::Result<()> {
+    let monotonic_usec = NotifyState::monotonic_usec_now()?;
+    sd_notify::notify(&[NotifyState::Reloading, monotonic_usec])?;
+    sd_notify::notify(&[NotifyState::Ready])
+}
+
 async fn process_etc_passwd_group(
     cachelayer: &Resolver<HimmelblauMultiProvider>,
 ) -> Result<(), Box<dyn Error>> {
@@ -2186,6 +2195,7 @@ async fn main() -> ExitCode {
             let mut c_broadcast_rx = broadcast_tx.subscribe();
             let mut d_broadcast_rx = broadcast_tx.subscribe();
             let local_groups_broadcast_rx = broadcast_tx.subscribe();
+            let identity_refresh_broadcast_rx = broadcast_tx.subscribe();
 
             let local_groups_cachelayer = cachelayer.clone();
             let local_groups_task_channel_tx = task_channel_tx.clone();
@@ -2198,6 +2208,13 @@ async fn main() -> ExitCode {
                     local_groups_broadcast_rx,
                 )
                 .await;
+            });
+
+            let identity_refresh_cachelayer = cachelayer.clone();
+            let identity_refresher = tokio::spawn(async move {
+                identity_refresh_cachelayer
+                    .refresh_expired_identities(identity_refresh_broadcast_rx)
+                    .await;
             });
 
             let task_b = tokio::spawn(async move {
@@ -2398,6 +2415,17 @@ async fn main() -> ExitCode {
                 info!("Stopped resolver");
             });
 
+            // systemd checks for the reload signal handler when it receives READY=1.
+            let mut sighup = match tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::hangup(),
+            ) {
+                Ok(signal) => signal,
+                Err(e) => {
+                    error!("Failed to register SIGHUP handler: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
             info!("Server started ...");
 
             if systemd_booted {
@@ -2435,12 +2463,12 @@ async fn main() -> ExitCode {
                     } => {
                         // Ignore
                     }
-                    Some(()) = async move {
-                        let sigterm = tokio::signal::unix::SignalKind::hangup();
-                        #[allow(clippy::unwrap_used)]
-                        tokio::signal::unix::signal(sigterm).unwrap().recv().await
-                    } => {
-                        // Ignore
+                    Some(()) = sighup.recv() => {
+                        if systemd_booted {
+                            if let Err(e) = notify_noop_reload() {
+                                error!("Failed to acknowledge systemd reload: {}", e);
+                            }
+                        }
                     }
                     Some(()) = async move {
                         let sigterm = tokio::signal::unix::SignalKind::user_defined1();
@@ -2508,6 +2536,7 @@ async fn main() -> ExitCode {
             let _ = task_a.await;
             let _ = task_b.await;
             let _ = local_groups_reconciler.await;
+            let _ = identity_refresher.await;
             let _ = task_c.await;
             let _ = task_d.await;
 

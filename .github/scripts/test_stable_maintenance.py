@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import email.utils
 import hashlib
 import http.server
 import io
@@ -26,6 +27,8 @@ SCRIPT = Path(__file__).with_name("stable_maintenance.py")
 DOCKERFILE = SCRIPT.parent.parent / "stable-maintenance.Dockerfile"
 ORPHAN_FIXTURE_FAILURE = "grandchild {orphan} survived the process-group kill"
 WORKFLOW = SCRIPT.parent.parent / "workflows" / "stable-maintenance.yml"
+STAGE_WORKFLOW = WORKFLOW.with_name("stable-maintenance-stage.yml")
+BRANCH_WORKFLOW = WORKFLOW.with_name("stable-maintenance-branch.yml")
 SPEC = importlib.util.spec_from_file_location("stable_maintenance", SCRIPT)
 assert SPEC and SPEC.loader
 sm = importlib.util.module_from_spec(SPEC)
@@ -122,6 +125,34 @@ class BranchAndCliTests(unittest.TestCase):
             state.save({"skip": True})
             self.assertEqual(state.load(), {"skip": True})
             self.assertEqual(os.stat(state.path).st_mode & 0o777, 0o600)
+
+    def test_git_automatic_maintenance_finishes_before_command_returns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = sm.Runner(root)
+            runner.git(["init", "-b", "main"])
+            # Checkout configuration must not re-enable background writers.
+            for key in ("maintenance.autoDetach", "gc.autoDetach"):
+                runner.git(["config", key, "true"])
+                self.assertEqual(runner.git(["config", "--get", key]).stdout.strip(), "false")
+            runner.git(["config", "maintenance.gc.enabled", "false"])
+            runner.git(["config", "maintenance.loose-objects.enabled", "true"])
+            runner.git(["config", "maintenance.loose-objects.auto", "1"])
+            runner.git(["hash-object", "-w", "--stdin"], input_text="loose object fixture")
+            trace = root / "trace.jsonl"
+            runner.env["GIT_TRACE2_EVENT"] = str(trace)
+            runner.git(["commit", "--allow-empty", "-m", "Trigger automatic maintenance"])
+            events = [json.loads(line) for line in trace.read_text().splitlines()]
+            calls = [event["argv"] for event in events if event["event"] == "child_start"
+                     and event.get("argv", [])[:3] == ["git", "maintenance", "run"]]
+            self.assertTrue(calls, "the real Git command must still run automatic maintenance")
+            for argv in calls:
+                self.assertNotIn("--detach", argv)
+            starts = {event["sid"] for event in events if event["event"] == "start"}
+            exits = {event["sid"] for event in events if event["event"] == "exit"}
+            self.assertEqual(starts, exits, "all Git children must finish before temporary cleanup")
+            self.assertTrue(list((root / ".git/objects/pack").glob("*.pack")),
+                            "housekeeping must still pack the loose fixture object")
 
     def test_registry_cache_grants_read_access_without_write_or_file_execute(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1133,7 +1164,7 @@ sys.exit(int(sys.argv[1]))
         )
 
     def test_workflow_uses_runtime_paths_and_containerized_tools(self):
-        workflow = WORKFLOW.read_text()
+        workflow = STAGE_WORKFLOW.read_text()
         self.assertNotIn("MAINTENANCE_PROJECT_CARGO_HOME: ${{ runner.temp }}", workflow)
         self.assertNotIn("STATE_DIR: ${{ runner.temp }}/stable-maintenance\n", workflow)
         self.assertIn("MAINTENANCE_PROJECT_CARGO_HOME=%s", workflow)
@@ -1172,7 +1203,7 @@ sys.exit(int(sys.argv[1]))
         self.assertIn("permission-workflows: write", workflow)
         self.assertIn("GITHUB_TOKEN: ${{ steps.publish-token.outputs.token }}", workflow)
 
-        concurrency = maintain_job.split("    concurrency:\n", 1)[1].split("    env:\n", 1)[0]
+        concurrency = WORKFLOW.read_text().split("    concurrency:\n", 1)[1].split("    uses:", 1)[0]
         self.assertIn("group: stable-maintenance-azure-quota\n", concurrency)
         self.assertNotIn("${{", concurrency)
         self.assertIn("cancel-in-progress: false\n", concurrency)
@@ -1200,12 +1231,15 @@ sys.exit(int(sys.argv[1]))
         self.assertIn('Acquire::https::Timeout "30";', config_text)
         self.assertIn('APT::Update::Error-Mode "any";', config_text)
         install_block = dockerfile.split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
-        self.assertTrue(install_block.startswith("--kill-after=15s 35m /bin/sh -ec "))
+        self.assertTrue(install_block.startswith("--kill-after=15s 35m /bin/bash -o pipefail -ec "))
         install_shell = shlex.split(install_block.replace("\\\n", ""))[-1]
-        self.assertIn('apt-get update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
-        self.assertIn('apt-get install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
-        subprocess.run(["/bin/sh", "-n", "-c", install_shell], check=True)
-        build_step = WORKFLOW.read_text().split(
+        self.assertIn('apt_get update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        self.assertIn('apt_get install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        subprocess.run(["/bin/bash", "-n", "-c", install_shell], check=True)
+        # Exercise the exact production function/filter with real APT transport,
+        # replacing only installation's entry point with apt-helper download-file.
+        probe_shell = install_shell.split('echo "apt-provision: stage=update"', 1)[0] + 'apt_get "$@"'
+        build_step = STAGE_WORKFLOW.read_text().split(
             "      - name: Build pinned maintenance image without credentials\n", 1,
         )[1].split("\n      - name:", 1)[0]
         self.assertIn("timeout-minutes: 45", build_step)
@@ -1215,7 +1249,10 @@ sys.exit(int(sys.argv[1]))
             with self.subTest(failures=failures, valid_hash=valid_hash), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 config_path = root / "apt.conf"
-                config_path.write_text(config_text)
+                config_path.write_text(config_text + 'DiagnosticTest::Canary "SECRET-CONFIG";\n')
+                apt_entry = root / "apt-get"
+                apt_entry.write_text('#!/bin/sh\nexec /usr/lib/apt/apt-helper "$@"\n')
+                apt_entry.chmod(0o700)
                 class Handler(http.server.BaseHTTPRequestHandler):
                     requests = 0
                     def log_message(self, *args): pass
@@ -1234,7 +1271,8 @@ sys.exit(int(sys.argv[1]))
                 try:
                     digest = hashlib.sha256(payload if valid_hash else b"different bytes").hexdigest()
                     result = subprocess.run([
-                        "/usr/lib/apt/apt-helper", "-c", str(config_path),
+                        "/bin/bash", "-o", "pipefail", "-ec", probe_shell, "apt-probe",
+                        "-c", str(config_path),
                         # The loopback fixture uses the test user's private temp
                         # directory; no package installation or production UID
                         # policy is involved, and some test containers prohibit
@@ -1243,10 +1281,21 @@ sys.exit(int(sys.argv[1]))
                         "download-file",
                         f"http://127.0.0.1:{server.server_port}/package.deb", str(root / "package.deb"),
                         f"SHA256:{digest}",
-                    ], capture_output=True, text=True, timeout=25)
+                    ], capture_output=True, text=True, timeout=25,
+                        env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"]})
                 finally:
                     server.shutdown(); server.server_close(); worker.join(timeout=2)
-                self.assertEqual(result.returncode == 0, succeeds, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0 if succeeds else 100, result.stdout + result.stderr)
+                output = result.stdout + result.stderr
+                self.assertNotIn("Config-Item:", output)
+                self.assertNotIn("SECRET-CONFIG", output)
+                self.assertNotIn("600%20URI%20Acquire", output)
+                if failures:
+                    self.assertIn("apt-download-debug:", output)
+                    self.assertRegex(output, "503.*Service Unavailable")
+                    self.assertEqual(output.count("apt-download-debug:"), min(failures, 4))
+                    if succeeds:
+                        self.assertLess(output.index("apt-download-debug:"), output.index("Fetched"))
                 if succeeds:
                     self.assertEqual(Handler.requests, 3)
                     self.assertEqual((root / "package.deb").read_bytes(), payload)
@@ -1254,6 +1303,110 @@ sys.exit(int(sys.argv[1]))
                     self.assertEqual(Handler.requests, 4)  # Initial attempt plus three retries.
                 else:
                     self.assertIn("Hash Sum mismatch", result.stdout + result.stderr)
+
+    @unittest.skipUnless(Path("/usr/bin/apt-get").exists(), "native APT unavailable")
+    def test_image_index_refresh_recovers_after_per_file_retries_are_exhausted(self):
+        """Use real APT indexes; only backoff sleeps are replaced by a recorder."""
+        dockerfile = DOCKERFILE.read_text()
+        block = dockerfile.split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
+        shell = shlex.split(block.replace("\\\n", ""))[-1]
+        prefix = shell.split('echo "apt-provision: stage=update"', 1)[0]
+        probe = prefix + ("apt_update" if "apt_update() (" in prefix else 'apt_get update --snapshot "$UBUNTU_SNAPSHOT"')
+        policy = shlex.split(dockerfile.split("RUN printf '%s\\n'", 1)[1].split("\n\n", 1)[0].replace("\\\n", ""))[:-2]
+        package_index = b"Package: maintenance-fixture\nVersion: 1.0\nArchitecture: amd64\nDescription: fixture\n\n"
+        release = ("Origin: Fixture\nSuite: stable\nCodename: stable\nArchitectures: amd64\nComponents: main\n"
+                   + "Date: " + email.utils.formatdate(usegmt=True) + "\nSHA256:\n "
+                   + hashlib.sha256(package_index).hexdigest() + f" {len(package_index)} main/binary-amd64/Packages\n").encode()
+        for failures, expected_attempts in ((8, 3), (100, 4)):
+            with self.subTest(failures=failures), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for path in ("lists/partial", "cache/archives/partial", "bin", "temp"):
+                    (root / path).mkdir(parents=True)
+                class Handler(http.server.BaseHTTPRequestHandler):
+                    index_requests = 0
+                    def log_message(self, *args): pass
+                    def do_GET(self):
+                        if self.path == "/dists/stable/Release":
+                            payload = release
+                        elif self.path == "/dists/stable/main/binary-amd64/Packages":
+                            Handler.index_requests += 1
+                            if Handler.index_requests <= failures:
+                                self.send_error(503); return
+                            payload = package_index
+                        else:
+                            self.send_error(404); return
+                        self.send_response(200)
+                        self.send_header("Content-Length", str(len(payload)))
+                        self.end_headers(); self.wfile.write(payload)
+                server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                worker = threading.Thread(target=server.serve_forever, daemon=True); worker.start()
+                # Unsigned trust is confined to this loopback fixture. Production
+                # signed snapshot sources and package installation are untouched.
+                sources = root / "sources.list"
+                sources.write_text(f"deb [trusted=yes] http://127.0.0.1:{server.server_port} stable main\n")
+                config = root / "apt.conf"
+                config.write_text("\n".join(policy) + "\n" +
+                    f'Dir::Etc::sourcelist "{sources}";\nDir::Etc::sourceparts "-";\nDir::Etc::parts "-";\n'
+                    f'Dir::State::lists "{root / "lists"}";\nDir::Cache "{root / "cache"}";\n'
+                    'Acquire::Languages "none";\n' +
+                    'APT::Sandbox::User "' + __import__("pwd").getpwuid(os.geteuid()).pw_name + '";\n')
+                sleeper = root / "bin/sleep"
+                sleeper.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$SLEEP_LOG"\n'); sleeper.chmod(0o700)
+                try:
+                    result = subprocess.run(["/bin/bash", "-o", "pipefail", "-ec", probe], capture_output=True, text=True,
+                        timeout=50, env={**os.environ, "APT_CONFIG": str(config), "UBUNTU_SNAPSHOT": "20260924T000000Z",
+                                         "TMPDIR": str(root / "temp"), "SLEEP_LOG": str(root / "sleeps"),
+                                         "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"]})
+                finally:
+                    server.shutdown(); server.server_close(); worker.join(timeout=2)
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 0 if failures == 8 else 100, output)
+                self.assertEqual(Handler.index_requests, failures + 1 if failures == 8 else 16, output)
+                self.assertEqual((root / "sleeps").read_text().splitlines(), ["60", "120", "240"][:expected_attempts - 1])
+                self.assertEqual(list((root / "temp").iterdir()), [])
+                self.assertNotIn("Config-Item:", output)
+                self.assertNotIn("600%20URI%20Acquire", output)
+
+    def test_image_index_refresh_only_retries_transient_fetch_failures(self):
+        """Only exhausted transient HTTP fetch failures may repeat the update."""
+        block = DOCKERFILE.read_text().split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
+        shell = shlex.split(block.replace("\\\n", ""))[-1]
+        probe = shell.split('echo "apt-provision: stage=update"', 1)[0] + "apt_update"
+        transient = "E: Failed to fetch https://snapshot.invalid/index  503 Service Unavailable"
+        cases = (
+            (100, "E: Failed to fetch https://snapshot.invalid/index  404 Not Found", "", 100),
+            (100, "E: Failed to fetch https://snapshot.invalid/index  Hash Sum mismatch", "", 100),
+            (100, transient + "\nE: The repository is not signed.", "", 100),
+            (100, transient + "\nE: Sub-process /usr/bin/dpkg returned an error code (1)", "", 100),
+            (100, "E: Unknown failure", "", 100),
+            (137, transient, "", 137),
+            (100, transient, "tee", 9),
+            (100, transient, "sleep", 7),
+        ) + tuple((100, f"E: Failed to fetch https://snapshot.invalid/index  {code} Remote failure", "", 0)
+                  for code in (408, 429, 500, 502, 503, 504))
+        for status, output, broken, expected in cases:
+            with self.subTest(output=output, broken=broken), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); (root / "temp").mkdir()
+                apt = root / "apt-get"
+                apt.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALL_LOG"\n'
+                               + 'if [ "$(wc -l < "$CALL_LOG")" -gt 1 ]; then exit 0; fi\n'
+                               + "printf '%s\\n' " + shlex.quote(output) + f"\nexit {status}\n")
+                apt.chmod(0o700)
+                sleeper = root / "sleep"
+                sleeper.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$SLEEP_LOG"\n' +
+                                   ("exit 7\n" if broken == "sleep" else "")); sleeper.chmod(0o700)
+                if broken == "tee":
+                    tee = root / "tee"; tee.write_text("#!/bin/sh\ncat\nexit 9\n"); tee.chmod(0o700)
+                result = subprocess.run(["/bin/bash", "-o", "pipefail", "-ec", probe], capture_output=True, text=True,
+                    timeout=5, env={**os.environ, "UBUNTU_SNAPSHOT": "20260924T000000Z", "TMPDIR": str(root / "temp"),
+                                    "CALL_LOG": str(root / "calls"), "SLEEP_LOG": str(root / "sleeps"),
+                                    "PATH": str(root) + os.pathsep + os.environ["PATH"]})
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                calls = (root / "calls").read_text().splitlines()
+                self.assertEqual(len(calls), 2 if expected == 0 else 1)
+                self.assertTrue(calls[0].endswith("update --snapshot 20260924T000000Z"))
+                self.assertEqual((root / "sleeps").exists(), broken == "sleep" or expected == 0)
+                self.assertEqual(list((root / "temp").iterdir()), [])
 
     def test_checkout_regular_file_accepts_regular_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1602,6 +1755,61 @@ class CargoVetTests(unittest.TestCase):
                 self.assertNotIn("SECRET", output.getvalue())
                 self.assertNotIn("::error::", output.getvalue())
 
+    def test_upstream_vet_runtime_errors_have_fixed_diagnostics(self):
+        # Wording from cargo-vet v0.10.2 errors.rs. These runtime errors can
+        # replace its normal coverage report during the unlocked review check.
+        cases = (
+            ("failed to start download of https://SECRET.invalid/token?SECRET", "download"),
+            ("failed to read download from https://SECRET.invalid", "download"),
+            ("failed to write download to /SECRET", "download"),
+            ("There are some issues with your third-party policy entries", "crate-policy"),
+            ("There are some issues with your policy.audit-as-crates-io entries", "audit-as-crates-io"),
+            ("Your cargo-vet store (supply-chain) has consistency errors", "store-consistency"),
+            ("The supply-chain store was created with a newer version of cargo-vet (SECRET)", "store-version"),
+            ("Failed to initialize the cargo-vet store (supply-chain)", "store-io"),
+            ("Couldn't create the store (supply-chain)", "store-io"),
+            ("Couldn't acquire the store", "store-io"),
+            ("Couldn't acquire the store's (supply-chain's) lock", "store-io"),
+            ("Failed to commit store", "store-io"),
+            ("Some of your imported audits changed their criteria descriptions", "criteria-change"),
+            ("Failed to create cache root dir: /SECRET", "cache"),
+            ("Failed to unpack .crate at /SECRET", "package-source"),
+            ("Failed to diff package", "diff"),
+        )
+        for message, hint in cases:
+            with self.subTest(hint=hint, message=message):
+                result = sm.CommandResult(255, json.dumps({"error": {"message": message,
+                    "causes": ["SECRET\n::error::SECRET"]}}), "")
+                output = io.StringIO()
+                with mock.patch.object(sm, "isolated_vet_command", side_effect=[
+                        sm.CommandResult(255, VET_LOCKED_FAILURE, ""), result]), \
+                     mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError):
+                    sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
+                diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                self.assertEqual(diagnostic["stage"], "review-check")
+                self.assertEqual(diagnostic["hints"], [hint])
+                self.assertEqual(diagnostic["http_statuses"], [])
+                self.assertNotIn("SECRET", output.getvalue())
+                self.assertNotIn("::error::", output.getvalue())
+
+    def test_vet_transport_diagnostics_extract_only_bounded_status_numbers(self):
+        result = sm.CommandResult(255, json.dumps({"error": {"message":
+            "failed to start download of https://SECRET.invalid/401/999; HTTP status server error (503); "
+            "HTTP status client error (403 Forbidden); status code: 502; status code 503; "
+            "status code 200; status code 5030; dns error; invalid peer certificate"}}), "::error::SECRET")
+        output = io.StringIO()
+        with mock.patch.object(sm.sys, "stderr", output):
+            sm.report_vet_diagnostics(result, "review-check")
+        diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+        self.assertEqual(diagnostic["hints"], ["download", "dns", "tls"])
+        self.assertEqual(diagnostic["http_statuses"], [403, 502, 503])
+        self.assertNotIn("SECRET", output.getvalue())
+        self.assertNotIn("::error::", output.getvalue())
+        with mock.patch.object(sm.sys, "stderr", output := io.StringIO()):
+            sm.report_vet_diagnostics(sm.CommandResult(255,
+                " ".join(f"status code {code}" for code in range(400, 500)), ""), "locked-check")
+        self.assertEqual(len(json.loads(output.getvalue().removeprefix("vet-diagnostics: "))["http_statuses"]), 8)
+
     def test_vet_timeout_retains_primary_error_and_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
@@ -1829,6 +2037,94 @@ class CargoVetTests(unittest.TestCase):
         with self.assertRaises(sm.MaintenanceError):
             sm.serialize_audit('serde]]\nwho="attacker', None, "1.0.0")
 
+    def test_approved_audits_are_formatted_offline_before_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            first = sm.serialize_audit("cc", "1.4.2", "1.4.4")
+            last = sm.serialize_audit("zzz", None, "1.0.0")
+            baseline = "# cargo-vet audits file\n\n" + first + "\n" + last
+            originals = {"audits.toml": baseline, "config.toml": "# policy\n", "imports.lock": "# imports\n"}
+            for name, data in originals.items():
+                (root / "supply-chain" / name).write_text(data)
+            items = [sm.VetItem("cc", "1.4.4", "1.4.7"), sm.VetItem("aaa", None, "2.0.0")]
+            formatted = ("# cargo-vet audits file\n\n" + sm.serialize_audit("aaa", None, "2.0.0")
+                         + "\n" + first + "\n" + sm.serialize_audit("cc", "1.4.4", "1.4.7") + "\n" + last)
+            stores = []
+
+            def fmt(_runner, command, **kwargs):
+                self.assertEqual(command, ["cargo", "vet", "fmt"])
+                self.assertFalse(kwargs["network"])
+                self.assertFalse(kwargs["source_rw"])
+                self.assertFalse(kwargs["cache_rw"])
+                store = kwargs["vet_store"]
+                stores.append(store)
+                self.assertNotIn(root, store.parents)
+                pending = (store / "audits.toml").read_text()
+                self.assertEqual(pending, baseline + "\n" + sm.serialize_audit("cc", "1.4.4", "1.4.7")
+                                 + "\n" + sm.serialize_audit("aaa", None, "2.0.0"))
+                for name, data in originals.items():
+                    self.assertEqual((root / "supply-chain" / name).read_text(), data)
+                (store / "audits.toml").write_text(formatted)
+                for name in ("config.toml", "imports.lock"):
+                    (store / name).write_text("# Disposable formatting rewrite\n")
+                return sm.CommandResult(0, "", "")
+
+            with mock.patch.object(sm, "contained_repo_command", side_effect=fmt) as command:
+                runner = mock.Mock(root=root)
+                sm.append_reviewed_audits(runner, Path(tmp), [])
+                command.assert_not_called()
+                sm.append_reviewed_audits(runner, Path(tmp), items)
+                command.assert_called_once()
+            self.assertEqual((root / "supply-chain/audits.toml").read_text(), formatted)
+            for name in ("config.toml", "imports.lock"):
+                self.assertEqual((root / "supply-chain" / name).read_text(), originals[name])
+            self.assertTrue(all(not store.exists() for store in stores))
+
+    def test_audit_formatter_cannot_publish_partial_or_changed_certifications(self):
+        for outcome in ("removed", "added", "duplicate", "criteria", "who", "notes", "policy", "malformed", "symlink", "error", "timeout"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                (root / "supply-chain").mkdir(parents=True)
+                baseline = '# Keep local audits\n[criteria.local]\ndescription="Local criterion"\n'
+                originals = {"audits.toml": baseline, "config.toml": "# Policy\n", "imports.lock": "# Imports\n"}
+                for name, data in originals.items():
+                    (root / "supply-chain" / name).write_text(data)
+                stores = []
+                failure = (sm.CommandCaptureError("bounded capture failed", "timeout", sm.CommandResult(-9, "", ""))
+                           if outcome == "timeout" else sm.MaintenanceError("formatter failed"))
+
+                def fmt(_runner, command, **kwargs):
+                    store = kwargs["vet_store"]
+                    stores.append(store)
+                    pending = store / "audits.toml"
+                    text = pending.read_text()
+                    if outcome == "removed": text = baseline
+                    elif outcome == "added": text += "\n" + sm.serialize_audit("unreviewed", None, "9.0.0")
+                    elif outcome == "duplicate": text += "\n" + sm.serialize_audit("cc", "1.4.4", "1.4.7")
+                    elif outcome == "criteria": text = text.replace('criteria = "safe-to-deploy"', 'criteria = "safe-to-run"')
+                    elif outcome == "who": text = text.replace(sm.AUDIT_WHO, "Someone else")
+                    elif outcome == "notes": text += 'notes = "Changed rationale"\n'
+                    elif outcome == "policy": text = text.replace('description="Local criterion"', 'description="Weaker criterion"')
+                    elif outcome == "malformed": text = "not valid TOML"
+                    elif outcome == "symlink":
+                        pending.unlink()
+                        pending.symlink_to(root / "supply-chain/audits.toml")
+                        return sm.CommandResult(0, "", "")
+                    pending.write_text(text)
+                    if outcome in ("error", "timeout"):
+                        raise failure
+                    return sm.CommandResult(0, "", "")
+
+                with mock.patch.object(sm, "contained_repo_command", side_effect=fmt), \
+                     self.assertRaises(sm.MaintenanceError) as caught:
+                    sm.append_reviewed_audits(mock.Mock(root=root), Path(tmp), [sm.VetItem("cc", "1.4.4", "1.4.7")])
+                if outcome in ("error", "timeout"):
+                    self.assertIs(caught.exception, failure)
+                for name, data in originals.items():
+                    self.assertEqual((root / "supply-chain" / name).read_text(), data)
+                self.assertTrue(all(not store.exists() for store in stores))
+
     def test_rejection_only_vet_run_does_not_create_empty_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
@@ -1904,6 +2200,10 @@ class CargoVetTests(unittest.TestCase):
                     store = kwargs["vet_store"]
                     calls.append(store)
                     audits = (root / "supply-chain/audits.toml").read_text()
+                    if command == ["cargo", "vet", "fmt"]:
+                        self.assertIn('[[audits.example]]', (store / "audits.toml").read_text())
+                        self.assertNotIn('[[audits.example]]', audits)
+                        return sm.CommandResult(0, "", "")
                     self.assertEqual((store / "audits.toml").read_text(), audits)
                     if command == ["cargo", "vet", "check", "--output-format=json"]:
                         return sm.CommandResult(255, VET_CHECK_REPORT, "")
@@ -1949,13 +2249,14 @@ class CargoVetTests(unittest.TestCase):
                 self.assertTrue(calls)
                 self.assertTrue(all(not path.exists() for path in calls))
 
-    def test_final_validation_rejects_locked_vet_gaps(self):
+    def test_final_validation_records_locked_vet_gaps_as_manual_work(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "source"
             (root / "supply-chain").mkdir(parents=True)
             (root / "supply-chain/audits.toml").write_text("# Current audits\n")
             state = sm.State(Path(tmp) / "state")
             runner = mock.Mock(root=root)
+            runner.git.side_effect = lambda command: sm.CommandResult(0, "a" * 40 if command[0] == "rev-parse" else "", "")
             stores = []
             def contained(_runner, command, **kwargs):
                 if command[:2] == ["cargo", "vet"]:
@@ -1965,10 +2266,12 @@ class CargoVetTests(unittest.TestCase):
                     return sm.CommandResult(1, VET_LOCKED_FAILURE, "")
                 return sm.CommandResult(0, "", "")
             with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
-                 mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
-                 self.assertRaisesRegex(sm.MaintenanceError, "final gate reports uncovered"):
+                 mock.patch.object(sm, "contained_repo_command", side_effect=contained):
                 sm.phase_validate(mock.Mock(), state, runner)
             self.assertNotIn("cargo-vet: passed", state.load()["gate_results"])
+            self.assertEqual(state.load()["manual_audit_work"], [{"gate": "cargo-vet", "reason": "findings"}])
+            self.assertEqual(state.load()["manual_audit_head"], "a" * 40)
+            self.assertNotIn("validated_head", state.load())
             self.assertEqual(len(stores), 1)
             self.assertFalse(stores[0].exists())
 
@@ -2052,6 +2355,7 @@ class CargoVetTests(unittest.TestCase):
                 return sm.CommandResult(1, VET_LOCKED_FAILURE, "")
             with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
                  mock.patch.object(sm, "contained_cargo_update", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "refresh_dependency_vet_imports") as refresh, \
                  mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
                  mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}), \
                  mock.patch.object(sm, "direct_registry_packages", return_value=[]), \
@@ -2062,6 +2366,7 @@ class CargoVetTests(unittest.TestCase):
                     state, runner, mock.Mock(), {sm.VetItem("example", None, "1.0.1")}, "# Audits\n",
                 )
             self.assertEqual(accepted, [])
+            refresh.assert_called_once_with(runner)
             self.assertEqual(rejected, [sm.asdict(sm.VetItem("example", "0.9.0", "1.0.0"))])
             self.assertEqual(decide.call_args.args[2], sm.VetItem("example", "0.9.0", "1.0.0"))
             restore.assert_called_once_with(runner, "baseline")
@@ -2188,6 +2493,276 @@ class ManifestRewriteTests(unittest.TestCase):
             self.assertEqual(changed, ["Cargo.toml"])
             self.assertIn("workspace = true", manifest.read_text())
             self.assertIn('foo = "1.2.1"', (root / "Cargo.toml").read_text())
+
+
+class DependencyImportRefreshTests(unittest.TestCase):
+    def test_review_service_failures_revert_one_candidate_and_keep_independent_updates(self):
+        for stage in ("versions", "timestamp", "timezone", "imports", "report", "timeout", "format", "format-timeout", "format-mutation", "batch-format", "outage", "rollback"):
+            with self.subTest(stage=stage), self.repository() as (root, runner, state):
+                names = ("alpha", "broken", "gamma")
+                initial = {name: "1.0.0" for name in names}
+                lock = root / "Cargo.lock"
+                lock.write_text(json.dumps(initial))
+                runner.git(["add", "Cargo.lock"])
+                runner.git(["commit", "-m", "Fixture baseline graph"])
+                baseline_imports = (root / "supply-chain/imports.lock").read_text()
+                lock.write_text(json.dumps({name: "1.1.0" for name in names}))
+                (root / "supply-chain/imports.lock").write_text("batch imports\n")
+                runner.git(["add", "."])
+                runner.git(["commit", "-m", "deps(rust): bump the all-cargo-updates group across 1 directory with 3 updates"])
+                value = state.load()
+                value.update({"dependency_updates": [
+                    {"crate": name, "old": "1.0.0", "new": "1.1.0", "direct": False} for name in names],
+                    "dependency_candidates": {f"{name}@1.0.0": ["1.1.0"] for name in names}})
+                state.save(value)
+                active = None
+                reviews = 0
+                rollback_error = sm.MaintenanceError("rollback failed")
+
+                def metadata(*args):
+                    graph = json.loads(lock.read_text())
+                    return {"packages": [{"name": name, "version": version,
+                        "source": "registry+https://github.com/rust-lang/crates.io-index", "id": name}
+                        for name, version in graph.items()]}
+
+                def update(_runner, crate, old, candidate):
+                    nonlocal active
+                    active = crate
+                    graph = json.loads(lock.read_text())
+                    if crate == "gamma" and stage != "outage":
+                        self.assertEqual(graph["alpha"], "1.1.0")
+                        self.assertEqual(graph["broken"], "1.0.0")
+                        self.assertIn("audits.alpha", (root / "supply-chain/audits.toml").read_text())
+                        self.assertEqual((root / "supply-chain/imports.lock").read_text(), "alpha imports\n")
+                    graph[crate] = candidate
+                    lock.write_text(json.dumps(graph))
+                    return sm.CommandResult(0, "", "")
+
+                def releases(crate):
+                    if crate == "broken" and stage == "versions":
+                        raise sm.HTTPStatusError(429)
+                    return [{"num": "1.1.0", "created_at": (
+                        "not-a-date" if crate == "broken" and stage == "timestamp" else
+                        "2025-01-01T00:00:00" if crate == "broken" and stage == "timezone" else
+                        "2025-01-01T00:00:00Z")}]
+
+                def refresh(*args):
+                    (root / "supply-chain/imports.lock").write_text(f"{active} imports\n")
+                    if active == "broken" and stage == "imports":
+                        (root / "supply-chain/audits.toml").write_text("partial SECRET rewrite\n")
+                        raise sm.MaintenanceError("HTTP request failed")
+
+                def review(*args):
+                    nonlocal reviews
+                    reviews += 1
+                    if reviews == 1:
+                        if stage == "batch-format":
+                            return [sm.VetItem("broken", "1.0.0", "1.1.0")]
+                        raise sm.MaintenanceError("HTTP request failed")
+                    if stage == "outage" or (active == "broken" and stage in ("report", "timeout")):
+                        if stage == "timeout":
+                            raise sm.CommandCaptureError("SECRET", "timeout", sm.CommandResult(-9, "", ""))
+                        raise sm.MaintenanceError("SECRET malformed report")
+                    return [sm.VetItem(active, "1.0.0", "1.1.0")]
+
+                def fmt(_runner, command, **kwargs):
+                    self.assertEqual(command, ["cargo", "vet", "fmt"])
+                    if (active in (None, "broken") and stage == "batch-format") or (active == "broken" and stage.startswith("format")):
+                        # Even partial formatter writes are disposable. The
+                        # earlier accepted alpha audit and imports survive.
+                        pending = kwargs["vet_store"] / "audits.toml"
+                        if stage == "format-mutation":
+                            pending.write_text(pending.read_text().replace('criteria = "safe-to-deploy"', 'criteria = "safe-to-run"'))
+                            return sm.CommandResult(0, "", "")
+                        pending.write_text("partial formatter write\n")
+                        if stage == "format-timeout":
+                            raise sm.CommandCaptureError("SECRET", "timeout", sm.CommandResult(-9, "", ""))
+                        raise sm.MaintenanceError("SECRET formatter failed")
+                    return sm.CommandResult(0, "", "")
+
+                with mock.patch.object(sm, "cargo_metadata", side_effect=metadata), \
+                     mock.patch.object(sm, "direct_registry_packages", return_value=[]), \
+                     mock.patch.object(sm, "contained_cargo_update", side_effect=update), \
+                     mock.patch.object(sm, "crates_releases", side_effect=releases), \
+                     mock.patch.object(sm, "refresh_dependency_vet_imports", side_effect=refresh), \
+                     mock.patch.object(sm, "reviewable_vet_gaps", side_effect=review), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
+                     mock.patch.object(sm, "AzureAI", return_value=mock.Mock()), \
+                     mock.patch.object(sm, "safe_vet_decision", side_effect=lambda *args: not (stage == "rollback" and active == "broken")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=fmt), \
+                     mock.patch.object(sm, "locked_vet_gaps", return_value=[]) as final, \
+                     mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                    if stage == "rollback":
+                        with mock.patch.object(sm, "restore_worktree", side_effect=rollback_error) as restore:
+                            with self.assertRaises(sm.MaintenanceError) as caught:
+                                sm.phase_vet_dependencies(mock.Mock(), state, runner)
+                        self.assertIs(caught.exception, rollback_error)
+                        restore.assert_called_once()
+                        final.assert_not_called()
+                        continue
+                    sm.phase_vet_dependencies(mock.Mock(), state, runner)
+                    final.assert_called_once()
+                graph = json.loads(lock.read_text())
+                self.assertEqual(graph, initial if stage == "outage" else {"alpha": "1.1.0", "broken": "1.0.0", "gamma": "1.1.0"})
+                expected = [] if stage == "outage" else ["alpha", "gamma"]
+                self.assertEqual([x["crate"] for x in state.load()["dependency_updates"]], expected)
+                self.assertEqual([x["crate"] for x in state.load()["vet_accepted"]], expected)
+                self.assertIn("broken", [x["crate"] for x in state.load()["vet_rejected"]])
+                self.assertNotIn("SECRET", output.getvalue())
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertEqual((root / "supply-chain/config.toml").read_text(), "# Keep policy and exemptions\n")
+                self.assertEqual((root / "supply-chain/imports.lock").read_text(),
+                                 baseline_imports if stage == "outage" else "gamma imports\n")
+                self.assertEqual(build.call_count, 2 if stage in ("versions", "timestamp", "timezone") else 3)
+
+    @contextmanager
+    def repository(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            for name, content in {
+                "Cargo.toml": '[dependencies]\nexample = "1.0.0"\n',
+                "Cargo.lock": "1.0.0\n",
+                "supply-chain/config.toml": "# Keep policy and exemptions\n",
+                "supply-chain/audits.toml": "# Keep local audits\n",
+                "supply-chain/imports.lock": "# Baseline imports\n",
+            }.items():
+                (root / name).write_text(content)
+            runner = sm.Runner(root)
+            for command in (["init"], ["config", "user.name", "Maintenance test"],
+                            ["config", "user.email", "test@example.invalid"],
+                            ["add", "."], ["commit", "-m", "Initial metadata"]):
+                runner.git(command)
+            state = sm.State(Path(tmp) / "state")
+            state.save({"started_at": "2026-10-15T00:00:00Z"})
+            yield root, runner, state
+
+    def test_update_records_new_graph_imports_in_the_owned_dependency_commit(self):
+        with self.repository() as (root, runner, state):
+            target = sm.DirectTarget("example-id", "example", "1.0.0", ((str(root / "Cargo.toml"), "example"),))
+            events = []
+            def update(*args):
+                (root / "Cargo.lock").write_text("1.0.1\n")
+                return sm.CommandResult(0, "", "")
+            def build(*args):
+                events.append("build")
+                return sm.CommandResult(0, "", "")
+            def contained(_runner, command, **kwargs):
+                if command == ["cargo", "audit", "--json"]:
+                    return sm.CommandResult(0, '{"vulnerabilities":{"list":[]}}', "")
+                self.assertEqual(command, ["cargo", "vet", "regenerate", "imports"])
+                self.assertEqual(events, ["build"])
+                self.assertEqual((root / "Cargo.lock").read_text(), "1.0.1\n")
+                self.assertIn('example = "1.0.1"', (root / "Cargo.toml").read_text())
+                events.append("refresh")
+                (root / "supply-chain/imports.lock").write_text("# Updated graph imports\n")
+                (root / "supply-chain/config.toml").write_text("# Pruned exemptions\n")
+                (root / "supply-chain/audits.toml").write_text("# Pruned audits\n")
+                return sm.CommandResult(0, "", "")
+            with mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}), \
+                 mock.patch.object(sm, "direct_registry_packages", return_value=[target]), \
+                 mock.patch.object(sm, "crates_releases", return_value=[
+                     {"num": "1.0.1", "created_at": "2020-01-01T00:00:00Z"}]), \
+                 mock.patch.object(sm, "contained_cargo_update", side_effect=update), \
+                 mock.patch.object(sm, "locked_build", side_effect=build), \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=contained):
+                sm.phase_update_dependencies(mock.Mock(), state, runner)
+            self.assertEqual(events, ["build", "refresh"])
+            self.assertTrue(runner.git(["show", "-s", "--format=%s"]).stdout.startswith("deps(rust): bump the all-cargo-updates group"))
+            self.assertEqual(set(runner.git(["diff", "--name-only", "HEAD^", "HEAD"]).stdout.splitlines()),
+                             {"Cargo.lock", "Cargo.toml", "supply-chain/imports.lock"})
+            self.assertEqual((root / "supply-chain/config.toml").read_text(), "# Keep policy and exemptions\n")
+            self.assertEqual((root / "supply-chain/audits.toml").read_text(), "# Keep local audits\n")
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
+    def test_refresh_preserves_pending_work_and_rejects_other_changes(self):
+        for unexpected in (False, True):
+            with self.subTest(unexpected=unexpected), self.repository() as (root, runner, _state):
+                (root / "Cargo.lock").write_text("pending candidate\n")
+                runner.git(["add", "Cargo.lock"])
+                (root / "supply-chain/audits.toml").write_text("pending accepted audit\n")
+                def contained(*args, **kwargs):
+                    (root / "supply-chain/imports.lock").write_text("new imports\n")
+                    (root / "supply-chain/config.toml").write_text("pruned policy\n")
+                    (root / "supply-chain/audits.toml").write_text("pruned audits\n")
+                    if unexpected:
+                        (root / "Cargo.lock").write_text("unexpected rewrite\n")
+                    return sm.CommandResult(0, "", "")
+                with mock.patch.object(sm, "contained_repo_command", side_effect=contained):
+                    if unexpected:
+                        with self.assertRaisesRegex(sm.MaintenanceError, "unexpected path"):
+                            sm.refresh_dependency_vet_imports(runner)
+                    else:
+                        sm.refresh_dependency_vet_imports(runner)
+                        self.assertEqual((root / "Cargo.lock").read_text(), "pending candidate\n")
+                self.assertEqual((root / "supply-chain/audits.toml").read_text(), "pending accepted audit\n")
+                self.assertEqual((root / "supply-chain/config.toml").read_text(), "# Keep policy and exemptions\n")
+
+    def test_fallback_refreshes_lower_candidate_and_rolls_back_rejected_imports(self):
+        for covered in (True, False):
+            with self.subTest(covered=covered), self.repository() as (root, runner, state):
+                baseline = runner.git(["rev-parse", "HEAD"]).stdout
+                (root / "Cargo.lock").write_text("1.1.0\n")
+                (root / "supply-chain/imports.lock").write_text("# Rejected batch imports\n")
+                runner.git(["add", "."])
+                runner.git(["commit", "-m", "deps(rust): bump the all-cargo-updates group across 1 directory with 1 update"])
+                value = state.load()
+                value.update({"dependency_updates": [{"crate": "example", "old": "1.0.0", "new": "1.1.0", "direct": False}],
+                              "dependency_candidates": {"example@1.0.0": ["1.1.0", "1.0.1"]}})
+                state.save(value)
+                def update(*args):
+                    self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Baseline imports\n")
+                    (root / "Cargo.lock").write_text("1.0.1\n")
+                    return sm.CommandResult(0, "", "")
+                def contained(_runner, command, **kwargs):
+                    self.assertEqual(command, ["cargo", "vet", "regenerate", "imports"])
+                    self.assertEqual((root / "Cargo.lock").read_text(), "1.0.1\n")
+                    (root / "supply-chain/imports.lock").write_text("# Lower candidate imports\n")
+                    return sm.CommandResult(0, "", "")
+                def review(*args):
+                    self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Lower candidate imports\n")
+                    return [] if covered else [sm.VetItem("example", "1.0.0", "1.0.1")]
+                with mock.patch.object(sm, "contained_cargo_update", side_effect=update), \
+                     mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}), \
+                     mock.patch.object(sm, "crates_releases", return_value=[]), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     mock.patch.object(sm, "reviewable_vet_gaps", side_effect=review), \
+                     mock.patch.object(sm, "safe_vet_decision", return_value=False):
+                    sm._fallback_after_vet_rejection(state, runner, mock.Mock(),
+                        {sm.VetItem("example", "1.0.0", "1.1.0")}, "# Keep local audits\n")
+                build.assert_called_once()
+                self.assertEqual(len(state.load()["dependency_updates"]), int(covered))
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                if covered:
+                    self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Lower candidate imports\n")
+                    self.assertIn("supply-chain/imports.lock", runner.git(["diff", "--name-only", "HEAD^", "HEAD"]).stdout)
+                else:
+                    self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, baseline)
+                    self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Baseline imports\n")
+
+    def test_failed_refresh_restores_every_store_file_and_preserves_the_error(self):
+        for reason in ("failure", "timeout", "output-limit"):
+            with self.subTest(reason=reason), self.repository() as (root, runner, _state):
+                (root / "Cargo.lock").write_text("pending candidate\n")
+                runner.git(["add", "Cargo.lock"])
+                (root / "supply-chain/audits.toml").write_text("pending accepted audit\n")
+                originals = {name: (root / "supply-chain" / name).read_bytes()
+                             for name in ("config.toml", "audits.toml", "imports.lock")}
+                before = runner.git(["diff", "--binary", "HEAD"]).stdout
+                error = (sm.MaintenanceError("regeneration failed") if reason == "failure" else
+                         sm.CommandCaptureError("capture failed", reason, sm.CommandResult(-9, "partial", "")))
+                def contained(*args, **kwargs):
+                    for name in originals:
+                        (root / "supply-chain" / name).write_text("partially rewritten store\n")
+                    raise error
+                with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     self.assertRaises(sm.MaintenanceError) as caught:
+                    sm.refresh_dependency_vet_imports(runner)
+                self.assertIs(caught.exception, error)
+                for name, content in originals.items():
+                    self.assertEqual((root / "supply-chain" / name).read_bytes(), content)
+                self.assertEqual(runner.git(["diff", "--binary", "HEAD"]).stdout, before)
 
 
 class CommitFilteringTests(unittest.TestCase):
@@ -2471,8 +3046,60 @@ class MutationBoundaryTests(unittest.TestCase):
             runner.git.assert_any_call(["reset", "--hard", pre_head])
 
 
+@contextmanager
+def registry_clock():
+    clock = [0.0]
+    def sleep(delay):
+        clock[0] += delay
+    with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}, create=True), \
+         mock.patch.object(sm.time, "monotonic", side_effect=lambda: clock[0]), \
+         mock.patch.object(sm.time, "sleep", side_effect=sleep):
+        yield clock
+
+
 class MarkerConflictAndAITests(unittest.TestCase):
     SHA = "a" * 40
+
+    def test_registry_failure_reports_context_without_exposing_response_or_url(self):
+        secret = "SECRET-URL-HEADER-ERROR"
+        failures = [
+            (sm.urllib.error.HTTPError("https://host/" + secret, 429, secret, {"retry-after": "1"}, None), "http-status-429"),
+            (sm.urllib.error.HTTPError("https://host/" + secret, 503, secret, {}, None), "http-status-503"),
+            (sm.urllib.error.URLError(secret), "transport-error"),
+            (sm.urllib.error.URLError(TimeoutError(secret)), "transport-timeout"),
+        ]
+        for failure, reason in failures:
+            with self.subTest(reason=reason), registry_clock(), \
+                 mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                with self.assertRaises(sm.MaintenanceError) as caught:
+                    sm.crates_releases("example")
+                self.assertIs(caught.exception.__cause__, failure)
+                self.assertEqual(output.getvalue().splitlines()[-1],
+                                 f"registry-debug: operation=versions crate=example reason={reason}")
+                self.assertNotIn(secret, output.getvalue())
+
+    def test_vet_review_errors_are_distinct_from_negative_decisions(self):
+        item = sm.VetItem("example", "0.9.0", "1.0.0")
+        for error, reason in ((sm.HTTPStatusError(503), "http-status-503"),
+                              (sm.MaintenanceError("HTTP request failed"), "transport-error"),
+                              (sm.MaintenanceError("SECRET ::error:: source content"), "unclassified-error")):
+            with self.subTest(reason=reason), \
+                 mock.patch.object(sm, "_vet_decision", side_effect=error), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                self.assertFalse(sm.safe_vet_decision(mock.Mock(), mock.Mock(), item, Path("cache")))
+                self.assertEqual(output.getvalue(), f"vet-review-debug: crate=example reason={reason}\n")
+                self.assertNotIn("SECRET", output.getvalue())
+        for decision in (True, False):
+            with mock.patch.object(sm, "_vet_decision", return_value=decision), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                self.assertIs(sm.safe_vet_decision(mock.Mock(), mock.Mock(), item, Path("cache")), decision)
+                self.assertEqual(output.getvalue(), "")
+        with mock.patch.object(sm, "_vet_decision", side_effect=sm.MaintenanceError("SECRET")), \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+            self.assertFalse(sm.safe_vet_decision(mock.Mock(), mock.Mock(),
+                             sm.VetItem("SECRET\n::error:: injected", None, "1.0.0"), Path("cache")))
+            self.assertEqual(output.getvalue(), "vet-review-debug: crate=invalid reason=unclassified-error\n")
 
     def test_http_status_and_transport_diagnostics_do_not_echo_secrets(self):
         secret = "credential-model-content"
@@ -2482,9 +3109,9 @@ class MarkerConflictAndAITests(unittest.TestCase):
             (sm.urllib.error.URLError(TimeoutError(secret)), "transport-timeout"),
         ]
         for failure, reason in failures:
-            with self.subTest(reason=reason), mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
+            with self.subTest(reason=reason), registry_clock(), mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
                 with self.assertRaises(sm.MaintenanceError) as caught:
-                    sm.http_json("https://example.invalid")
+                    sm.http_json("https://example.invalid", attempts=1)
                 self.assertEqual(sm.diagnostic_reason(caught.exception), reason)
                 self.assertNotIn(secret, str(caught.exception))
 
@@ -2508,9 +3135,9 @@ class MarkerConflictAndAITests(unittest.TestCase):
         headers["x-ratelimit-remaining-requests"] = "secret-do-not-log"
         headers["x-private-header"] = "secret-do-not-log"
         failure = sm.urllib.error.HTTPError("https://secret-do-not-log", 429, "secret-do-not-log", headers, None)
-        with mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
+        with registry_clock(), mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
             with self.assertRaises(sm.HTTPStatusError) as caught:
-                sm.http_json("https://example.invalid")
+                sm.http_json("https://example.invalid", attempts=1)
         error = caught.exception
         self.assertEqual(error.status, 429)
         self.assertEqual(error.retry_after, 61)
@@ -2554,7 +3181,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
         ai = object.__new__(sm.AzureAI)
         ai.key, ai.model, ai.url = "secret-do-not-log", "model", "https://example.invalid"
         data = "x" * 1033558
-        for headers, expected in (({"retry-after-ms": "61000"}, 61), ({"retry-after": "65.5"}, 65.5), ({}, 60)):
+        for headers, expected in (({"retry-after-ms": "61000"}, 61), ({"retry-after": "65.5"}, 65.5), ({}, 120)):
             with self.subTest(headers=headers):
                 failure = sm.HTTPStatusError(429, headers)
                 output = io.StringIO()
@@ -2577,7 +3204,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
              self.assertRaisesRegex(sm.MaintenanceError, "bounded retries"):
             ai.call("instructions", data, sm.BOOL_SCHEMA, "result")
         self.assertEqual(request.call_count, sm.MAX_AI_ATTEMPTS)
-        self.assertEqual(sleep.call_args_list, [mock.call(70), mock.call(130)])
+        self.assertEqual(sleep.call_args_list, [mock.call(130), mock.call(250), mock.call(490), *[mock.call(600)] * 6])
         self.assertEqual(sum(line.startswith("azure-debug:") for line in output.getvalue().splitlines()), sm.MAX_AI_ATTEMPTS)
         self.assertIn("limit_tokens=150000 remaining_tokens=0", output.getvalue())
 
@@ -2585,7 +3212,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
         ai = object.__new__(sm.AzureAI)
         ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
         output = io.StringIO()
-        with mock.patch.object(sm, "http_json", side_effect=sm.HTTPStatusError(429, {"retry-after": "301"})) as request, \
+        with mock.patch.object(sm, "http_json", side_effect=sm.HTTPStatusError(429, {"retry-after": "5401"})) as request, \
              mock.patch.object(sm.time, "sleep") as sleep, \
              mock.patch.object(sm.sys, "stderr", output):
             with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget") as caught:
@@ -2593,7 +3220,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
         self.assertEqual(sm.diagnostic_reason(caught.exception), "azure-retry-wait-too-long")
         self.assertEqual(request.call_count, 1)
         sleep.assert_not_called()
-        self.assertIn("retry_after_s=301", output.getvalue())
+        self.assertIn("retry_after_s=5401", output.getvalue())
 
     def test_azure_failure_diagnostics_are_bounded_and_sanitized(self):
         ai = object.__new__(sm.AzureAI)
@@ -2614,7 +3241,8 @@ class MarkerConflictAndAITests(unittest.TestCase):
                 with self.assertRaises(sm.MaintenanceError):
                     ai.call(secret, secret, sm.BOOL_SCHEMA, secret)
             lines = output.getvalue().splitlines()
-            self.assertEqual(sum(line.startswith("azure-debug:") for line in lines), sm.MAX_AI_ATTEMPTS)
+            self.assertEqual(sum(line.startswith("azure-debug:") for line in lines),
+                             1 if stage == "http-request" else sm.MAX_AI_ATTEMPTS)
             self.assertIn("stage=" + stage, lines[-1])
             self.assertIn("reason=" + reason, lines[-1])
             self.assertNotIn(secret, output.getvalue())
@@ -2731,6 +3359,8 @@ class MarkerConflictAndAITests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["rev-parse", "HEAD"]:
                     return sm.CommandResult(0, cutoff + "\n", "")
+                if argv == ["diff", "--no-renames", "--name-only", "-z", cutoff, "HEAD", "--"]:
+                    return sm.CommandResult(0, "src/a.rs\0", "")
                 if argv[:2] == ["cherry-pick", "-x"]:
                     self.assertIn(argv[2], [earlier, later])
                     return sm.CommandResult(0, "", "")
@@ -2867,6 +3497,751 @@ class MarkerConflictAndAITests(unittest.TestCase):
         with mock.patch.object(sm, "http_json", side_effect=responses) as request, mock.patch.object(sm.time, "sleep"):
             self.assertEqual(ai.call("instructions", "data", sm.BOOL_SCHEMA, "decision"), {"decision": True})
             self.assertEqual(request.call_count, 3)
+
+
+class BoundedVetReviewTests(unittest.TestCase):
+    ITEM = sm.VetItem("example", "0.9.0", "1.0.0")
+
+    def test_vet_transport_paces_actual_retries_chunks_and_new_dependency_clients(self):
+        first = object.__new__(sm.AzureAI)
+        first.key, first.model, first.url = "key", "model", "https://example.invalid"
+        second = object.__new__(sm.AzureAI)
+        second.key, second.model, second.url = first.key, first.model, first.url
+        with registry_clock() as clock:
+            starts = []
+            def request(*args):
+                starts.append(clock[0])
+                if len(starts) == 1:
+                    raise sm.HTTPStatusError(503, {"retry-after": "120"})
+                return b'{"output_text":"{\\"decision\\":true}"}'
+            with mock.patch.object(sm, "_http_once", side_effect=request):
+                for client, name in ((first, "cargo_vet_chunk"), (first, "cargo_vet_chunk"),
+                                     (first, "cargo_vet_integration"), (second, "cargo_vet_decision")):
+                    self.assertEqual(client.call("instructions", "data", sm.BOOL_SCHEMA, name), {"decision": True})
+            self.assertEqual(starts, [0, 120, 150, 180, 210])
+        # Ordinary Azure decisions do not acquire the vet-only pacing interval.
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", return_value=b'{"output_text":"{\\"decision\\":true}"}'):
+            for _ in range(2):
+                first.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            self.assertEqual(clock[0], 0)
+
+    def test_vet_transport_pacing_consumes_the_same_cumulative_budget(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        with registry_clock() as clock, mock.patch.object(sm, "MAX_AI_RETRY_SECONDS", 25), \
+             mock.patch.object(sm, "_http_once", return_value=b'{"output_text":"{\\"decision\\":true}"}') as request:
+            ai.call("instructions", "data", sm.BOOL_SCHEMA, "cargo_vet_decision")
+            with self.assertRaisesRegex(sm.MaintenanceError, "Azure retry delay exceeds bounded wait budget"):
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "cargo_vet_decision")
+            request.assert_called_once()
+            self.assertEqual(clock[0], 0)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["example.invalid"], 30)
+
+    def test_split_covers_files_hunks_unicode_and_oversized_lines_exactly(self):
+        material = (b"diff --git a/lib.rs b/lib.rs\n@@ -1 +1 @@\n" + ("+\u03bb\U0001f600" * 25000).encode()
+                    + b"\ndiff --git a/build.rs b/build.rs\n@@ -1 +1 @@\n" + b"+build()\n" * 13000)
+        chunks = sm.split_vet_review_material(material)
+        self.assertGreater(len(chunks), 2)
+        self.assertEqual(b"".join(chunk.data for chunk in chunks), material)
+        position = 0
+        for chunk in chunks:
+            self.assertEqual(chunk.start, position)
+            self.assertEqual(chunk.end - chunk.start, len(chunk.data))
+            self.assertEqual(chunk.data, material[chunk.start:chunk.end])
+            self.assertLessEqual(len(chunk.data), sm.VET_REVIEW_CHUNK_BYTES)
+            for data in (chunk.data, chunk.before, chunk.after):
+                data.decode("utf-8")
+            self.assertLessEqual(len(chunk.before), sm.VET_REVIEW_OVERLAP_BYTES)
+            self.assertLessEqual(len(chunk.after), sm.VET_REVIEW_OVERLAP_BYTES)
+            position = chunk.end
+        self.assertEqual(position, len(material))
+
+    def test_large_actual_vet_path_uses_bounded_complete_review_and_integration(self):
+        # Match the problematic request's scale without calling live services.
+        header = b"diff --git a/lib.rs b/lib.rs\n@@ -1 +1 @@\n"
+        diff_bytes = header + b"+" * (2388108 - len(header))
+        diff = sm.CommandResult(0, diff_bytes.decode(), "")
+        expected_material = diff_bytes + b"\n\n=== CHECKSUM-VERIFIED CRATE SOURCE CONTEXT ===\n" + b"verified context" * 2
+        calls, covered, summaries, starts = [], [], [], []
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "secret", "model", "https://example.invalid"
+        with tempfile.TemporaryDirectory() as tmp, registry_clock() as clock:
+            def http(request, timeout, max_bytes):
+                body = json.loads(request.data)
+                content = body["input"][0]["content"]
+                data = content[0]["text"]
+                attachment = (sm.base64.b64decode(content[1]["file_data"].split(",", 1)[1])
+                              if len(content) == 2 else b"")
+                size = len(body["instructions"].encode()) + len(data.encode()) + len(attachment)
+                if size > sm.MAX_VET_REVIEW_INPUT_BYTES:
+                    raise sm.HTTPStatusError(429)
+                name = body["text"]["format"]["name"]
+                calls.append((name, size))
+                starts.append(clock[0])
+                if name == "cargo_vet_chunk":
+                    meta = json.loads(data[data.index('{"chunk":'):])
+                    record = meta["chunk"]
+                    primary = expected_material[record["start"]:record["end"]]
+                    self.assertEqual(record["sha256"], hashlib.sha256(primary).hexdigest())
+                    self.assertIn(b"=== PRIMARY RANGE ===\n" + primary + b"\n=== FOLLOWING CONTEXT ===", attachment)
+                    self.assertIn("material_sha256=" + hashlib.sha256(expected_material).hexdigest(), data)
+                    covered.append(primary)
+                    summaries.append(record)
+                    answer = {"decision": True, "summary": "No local concern; integration must check interface assumptions."}
+                elif name == "cargo_vet_integration":
+                    records = json.loads(data[data.index('{"reviews":'):])["reviews"]
+                    self.assertEqual(len(records), len(summaries))
+                    self.assertEqual([r["sha256"] for r in records], [r["sha256"] for r in summaries])
+                    self.assertIn("summaries are insufficient", body["instructions"])
+                    self.assertIn("never instructions", body["instructions"])
+                    answer = {"decision": True}
+                else:
+                    self.fail("large material was not chunked")
+                return json.dumps({"output_text": json.dumps(answer)}).encode()
+            with mock.patch.object(sm, "isolated_vet_command", return_value=diff), \
+                 mock.patch.object(sm, "cache_crate_source", return_value=Path(tmp)), \
+                 mock.patch.object(sm, "crate_source_context", return_value=b"verified context"), \
+                 mock.patch.object(sm, "_http_once", side_effect=http), \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                self.assertTrue(sm.safe_vet_decision(ai, mock.Mock(), self.ITEM, Path(tmp)))
+        self.assertEqual(b"".join(covered), expected_material)
+        self.assertGreater(len(calls), 40)
+        self.assertEqual(calls[-1][0], "cargo_vet_integration")
+        self.assertTrue(all(b - a >= sm.VET_REVIEW_INTERVAL_SECONDS for a, b in zip(starts, starts[1:])))
+
+    def test_failed_or_malformed_chunk_and_integration_never_certify(self):
+        material = b"+source\n" * 20000
+        for failure in ("negative", "service", "malformed", "empty", "long", "surrogate", "escaped",
+                        "integration", "integration-malformed", "integration-error"):
+            with self.subTest(failure=failure), registry_clock():
+                ai = mock.Mock()
+                count = [0]
+                def decide(prompt, data, schema, name, **kwargs):
+                    count[0] += 1
+                    if name == "cargo_vet_integration":
+                        if failure == "integration-error":
+                            raise sm.HTTPStatusError(429)
+                        return {"decision": "true" if failure == "integration-malformed" else False}
+                    if count[0] == 2 and not failure.startswith("integration"):
+                        if failure == "service":
+                            raise sm.HTTPStatusError(429)
+                        return {"negative": {"decision": False, "summary": "Concern"},
+                                "malformed": {"decision": "true", "summary": "bad"},
+                                "empty": {"decision": True, "summary": " "},
+                                "long": {"decision": True, "summary": "x" * 513},
+                                "surrogate": {"decision": True, "summary": "\ud800"},
+                                "escaped": {"decision": True, "summary": "\\" * 300}}[failure]
+                    return {"decision": True, "summary": "Check cross-file assumptions during integration."}
+                ai.call.side_effect = decide
+                try:
+                    result = sm.review_vet_material(ai, self.ITEM, "instructions", "identity", "example.diff", material, len(material))
+                except sm.MaintenanceError:
+                    result = False
+                self.assertFalse(result)
+                names = [c.args[3] for c in ai.call.call_args_list]
+                if failure.startswith("integration"):
+                    self.assertEqual(names[-1], "cargo_vet_integration")
+                else:
+                    self.assertEqual(names, ["cargo_vet_chunk", "cargo_vet_chunk"])
+
+    def test_invalid_incomplete_or_excessive_material_is_rejected_before_review(self):
+        material = b"x" * (sm.MAX_VET_REVIEW_INPUT_BYTES + 1)
+        valid = sm.split_vet_review_material(material)
+        broken = [valid[:-1], valid[1:], [], [valid[0], valid[0], *valid[1:]],
+                  [sm.VetReviewChunk(0, valid[0].end, b"wrong", b"", b""), *valid[1:]]]
+        for chunks in broken:
+            ai = mock.Mock()
+            with self.subTest(chunks=len(chunks)), mock.patch.object(sm, "split_vet_review_material", return_value=chunks), \
+                 self.assertRaisesRegex(sm.MaintenanceError, "coverage is incomplete"):
+                sm.review_vet_material(ai, self.ITEM, "instructions", "identity", "example.diff", material, len(material))
+            ai.call.assert_not_called()
+        for bad in (b"", b"x" * (sm.MAX_AI_INPUT_BYTES + 1), b"x" * 100000 + b"\xff"):
+            with self.subTest(bad_length=len(bad)), self.assertRaises(sm.MaintenanceError):
+                sm.split_vet_review_material(bad)
+        with mock.patch.object(sm, "MAX_VET_REVIEW_CHUNKS", 1), self.assertRaises(sm.MaintenanceError):
+            sm.split_vet_review_material(material)
+
+    def test_maximum_material_and_summary_sizes_keep_integration_bounded(self):
+        ai = mock.Mock()
+        sizes = []
+        def decide(prompt, data, schema, name, attachment=None):
+            sizes.append(len(prompt.encode()) + len(data.encode()) + (len(attachment[1]) if attachment else 0))
+            return {"decision": True, "summary": "x" * 510} if name == "cargo_vet_chunk" else {"decision": True}
+        ai.call.side_effect = decide
+        material = b"x" * sm.MAX_AI_INPUT_BYTES
+        with registry_clock(), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+            self.assertTrue(sm.review_vet_material(ai, self.ITEM, "instructions", "identity", "example.diff", material, len(material)))
+        self.assertGreater(len(sizes), 80)
+        self.assertLessEqual(max(sizes), sm.MAX_VET_REVIEW_INPUT_BYTES)
+        self.assertEqual(ai.call.call_args.args[3], "cargo_vet_integration")
+
+    def test_continuation_headers_keep_current_file_hunk_and_source_identity(self):
+        first = b"diff --git a/old.rs b/old.rs\n@@ -1 +1 @@\n+old\n"
+        second = b"diff --git a/new.rs b/new.rs\n@@ -1 +1 @@\n+" + b"x" * 100000
+        diff = first + second
+        context = b"\n--- example 0.9.0: src/lib.rs ---\nold\n--- example 1.0.0: src/lib.rs ---\nnew"
+        material = diff + context
+        self.assertEqual(sm.vet_review_section_headers(material, len(first) + len(second) - 10, len(diff)),
+                         ["diff --git a/new.rs b/new.rs", "@@ -1 +1 @@"])
+        self.assertEqual(sm.vet_review_section_headers(material, len(first), len(diff)),
+                         ["diff --git a/new.rs b/new.rs"])
+        self.assertEqual(sm.vet_review_section_headers(material, len(material) - 1, len(diff)),
+                         ["--- example 1.0.0: src/lib.rs ---"])
+        with self.assertRaises(sm.MaintenanceError):
+            sm.vet_review_section_headers(b"diff --git " + b"x" * 5000 + b"\n+source", 5010, 5019)
+
+    def test_vet_input_cap_is_enforced_by_the_real_client(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "secret", "model", "https://example.invalid"
+        for name in ("cargo_vet_decision", "cargo_vet_chunk", "cargo_vet_integration"):
+            with self.subTest(name=name), mock.patch.object(sm, "http_json") as request, \
+                 self.assertRaisesRegex(sm.MaintenanceError, "input exceeds size limit"):
+                ai.call("instructions", "x" * sm.MAX_VET_REVIEW_INPUT_BYTES, sm.BOOL_SCHEMA, name)
+            request.assert_not_called()
+
+
+class NetworkRetryTests(unittest.TestCase):
+    def test_unrelated_http_origin_progresses_during_wait_and_request(self):
+        for blocked_at in ("cooldown", "request"):
+            entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+            errors = []
+            def pause():
+                entered.set()
+                if not release.wait(3):
+                    raise AssertionError("test did not release blocked operation")
+            def request(req, *args):
+                if "slow.invalid" in req.full_url and blocked_at == "request":
+                    pause()
+                return b'{}'
+            def sleep(delay):
+                pause()
+                sm._HTTP_NEXT_REQUEST.clear()
+            def run(url, done=None):
+                try:
+                    sm.http_json(url)
+                except BaseException as exc:
+                    errors.append(exc)
+                finally:
+                    if done is not None:
+                        done.set()
+            with self.subTest(blocked_at=blocked_at), mock.patch.dict(sm._HTTP_NEXT_REQUEST, {}, clear=True), \
+                 mock.patch.object(sm, "_http_once", side_effect=request), mock.patch.object(sm.time, "sleep", side_effect=sleep):
+                if blocked_at == "cooldown":
+                    sm._HTTP_NEXT_REQUEST["slow.invalid"] = sm.time.monotonic() + 60
+                slow = threading.Thread(target=run, args=("https://slow.invalid",))
+                fast = threading.Thread(target=run, args=("https://fast.invalid", completed))
+                slow.start()
+                try:
+                    self.assertTrue(entered.wait(1))
+                    fast.start()
+                    self.assertTrue(completed.wait(1), "unrelated origin blocked by HTTP lock")
+                finally:
+                    release.set()
+                    slow.join(3)
+                    if fast.ident is not None:
+                        fast.join(3)
+                self.assertFalse(slow.is_alive())
+                self.assertFalse(fast.is_alive())
+                self.assertEqual(errors, [])
+
+    def test_http_rechecks_extended_cooldown_before_reserving_registry_slot(self):
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", return_value=b'{}') as request:
+            delays = []
+            def sleep(delay):
+                delays.append(delay)
+                clock[0] += delay
+                if len(delays) == 1:
+                    sm._HTTP_NEXT_REQUEST["*"] = clock[0] + 7
+            sm._HTTP_NEXT_REQUEST["crates.io"] = 5
+            with mock.patch.object(sm.time, "sleep", side_effect=sleep):
+                self.assertEqual(sm.http_json("https://crates.io/api/v1/crates/example"), {})
+            self.assertEqual(delays, [5, 7])
+            self.assertEqual(clock[0], 12)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["crates.io"], 17)
+            request.assert_called_once()
+
+    def test_azure_wait_exhaustion_uses_type_independent_of_message(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        with registry_clock(), mock.patch.object(sm.NetworkWaitBudget, "sleep", \
+                side_effect=sm.NetworkWaitBudgetExceeded("changed diagnostic wording")), \
+             mock.patch.object(sm, "_http_once") as request:
+            sm._HTTP_NEXT_REQUEST["example.invalid"] = 1
+            with self.assertRaisesRegex(sm.MaintenanceError, "Azure retry delay exceeds bounded wait budget"):
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            request.assert_not_called()
+
+    def test_azure_permanent_http_failures_stop_without_retrying_or_sleeping(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        for status in (400, 401, 403, 404, 422):
+            error = sm.HTTPStatusError(status)
+            with self.subTest(status=status), registry_clock() as clock, \
+                 mock.patch.object(sm, "_http_once", side_effect=error) as request:
+                with self.assertRaises(sm.HTTPStatusError) as caught:
+                    ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+                self.assertIs(caught.exception, error)
+                request.assert_called_once()
+                self.assertEqual(clock[0], 0)
+
+        for status in (408, 429, 500, 502, 503, 504):
+            with self.subTest(transient=status), registry_clock() as clock, \
+                 mock.patch.object(sm.secrets, "randbelow", return_value=0), \
+                 mock.patch.object(sm, "_http_once", side_effect=[sm.HTTPStatusError(status),
+                     b'{"output_text":"{\\"decision\\":true}"}']) as request:
+                self.assertEqual(ai.call("instructions", "data", sm.BOOL_SCHEMA, "result"), {"decision": True})
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(clock[0], 120 if status == 429 else 30)
+
+    def test_azure_and_http_share_one_cumulative_wait_budget(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=[
+                sm.HTTPStatusError(503, {"retry-after": "3000"}),
+                sm.HTTPStatusError(503, {"retry-after": "3000"}),
+                b'{"output_text":"{\\"decision\\":true}"}']) as request:
+            with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            self.assertEqual(request.call_count, 2)
+            self.assertLessEqual(clock[0], 5400)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["example.invalid"], 6000)
+            with mock.patch.object(sm, "_http_once", return_value=b'{}'):
+                sm.http_json("https://example.invalid/another-operation")
+            self.assertEqual(clock[0], 6000)
+
+    def test_long_throttle_window_recovers_on_tenth_http_and_native_attempt(self):
+        with registry_clock() as clock, \
+             mock.patch.object(sm, "_http_once", side_effect=[*[sm.HTTPStatusError(429)] * 9, b'{}']) as request:
+            self.assertEqual(sm.http_json("https://example.invalid"), {})
+            self.assertEqual(request.call_count, 10)
+            self.assertEqual(clock[0], 4440)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            failed = sm.CommandResult(255, "", "HTTP status client error (429 Too Many Requests)")
+            passed = sm.CommandResult(0, VET_SUCCESS, "")
+            with registry_clock() as clock, \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=[*[failed] * 9, passed]) as run:
+                self.assertIs(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                     Path(tmp), network=True), passed)
+                self.assertEqual(run.call_count, 10)
+                self.assertEqual(clock[0], 4440)
+
+    def test_azure_long_recovery_and_cumulative_server_wait_budget(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        with registry_clock() as clock, mock.patch.object(sm.secrets, "randbelow", return_value=0), \
+             mock.patch.object(sm, "http_json", side_effect=[*[sm.HTTPStatusError(429)] * 9,
+                               {"output_text": '{"decision":true}'}]) as request:
+            self.assertEqual(ai.call("instructions", "data", sm.BOOL_SCHEMA, "result"), {"decision": True})
+            self.assertEqual(request.call_count, 10)
+            self.assertEqual(clock[0], 4440)
+        with registry_clock() as clock, \
+             mock.patch.object(sm, "http_json", side_effect=sm.HTTPStatusError(429, {"retry-after": "3000"})) as request:
+            with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(clock[0], 3000)
+
+    def test_http_error_bodies_close_before_retry_and_on_permanent_failure(self):
+        class UnreadBody(io.BytesIO):
+            def read(self, *args, **kwargs):
+                raise AssertionError("error bodies must not be read")
+
+        for binary in (False, True):
+            for status in (429, 503, 403):
+                body = UnreadBody(b"SECRET response body")
+                error = sm.urllib.error.HTTPError("https://example.invalid/SECRET", status,
+                                                 "SECRET", {"retry-after": "1"} if status != 403 else {}, body)
+                response = mock.MagicMock()
+                response.__enter__.return_value = response
+                response.status = 200
+                response.read.return_value = b'{}'
+                calls = []
+
+                def request(*args, **kwargs):
+                    calls.append(True)
+                    if len(calls) == 1:
+                        raise error
+                    self.assertTrue(body.closed)
+                    return response
+
+                try:
+                    with self.subTest(binary=binary, status=status), registry_clock() as clock, \
+                         mock.patch.object(sm.urllib.request, "urlopen", side_effect=request), \
+                         mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                        read = sm.http_bytes if binary else sm.http_json
+                        if status == 403:
+                            with self.assertRaises(sm.HTTPStatusError) as caught:
+                                read("https://example.invalid")
+                            self.assertEqual(caught.exception.status, 403)
+                            self.assertIs(caught.exception.__cause__, error)
+                            self.assertEqual(len(calls), 1)
+                            self.assertEqual(clock[0], 0)
+                        else:
+                            self.assertEqual(read("https://example.invalid"), b'{}' if binary else {})
+                            self.assertEqual(len(calls), 2)
+                            self.assertEqual(clock[0], 1)
+                        self.assertTrue(body.closed)
+                        self.assertNotIn("SECRET", output.getvalue())
+                finally:
+                    error.close()
+
+    @staticmethod
+    def response(body, *, declared=None, method="GET", status=200, chunked=False):
+        class Socket:
+            def makefile(self, mode):
+                headers = f"HTTP/1.1 {status} Test\r\n".encode()
+                if chunked:
+                    headers += b"Transfer-Encoding: chunked\r\n"
+                elif declared is not None:
+                    headers += f"Content-Length: {declared}\r\n".encode()
+                return io.BytesIO(headers + b"\r\n" + body)
+        response = sm.http.client.HTTPResponse(Socket(), method=method)
+        response.begin()
+        return response
+
+    def test_secondary_throttle_does_not_wait_for_unexhausted_primary_quota(self):
+        for status in (403, 429):
+            for remaining in ("100", None):
+                headers = {"retry-after": "60", "x-ratelimit-reset": "2800"}
+                if remaining is not None:
+                    headers["x-ratelimit-remaining"] = remaining
+                with self.subTest(status=status, remaining=remaining), \
+                     mock.patch.object(sm.time, "time", return_value=1000), registry_clock() as clock:
+                    error = sm.HTTPStatusError(status, headers)
+                    with mock.patch.object(sm, "_http_once", side_effect=[error, b'{}']):
+                        self.assertEqual(error.retry_after, 60)
+                        self.assertEqual(sm.http_json("https://api.github.com/resource"), {})
+                        self.assertEqual(clock[0], 60)
+
+    def test_truncated_content_length_json_recovers_before_parsing(self):
+        # The prefix is valid JSON: checking only parsing would accept it.
+        responses = [self.response(b'{}', declared=5), self.response(b'{}', declared=2)]
+        with registry_clock() as clock, mock.patch.object(sm.urllib.request, "urlopen", side_effect=responses) as request:
+            self.assertEqual(sm.http_json("https://example.invalid"), {})
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(clock[0], 30)
+
+    def test_truncated_archive_recovers_before_checksum_validation(self):
+        archive = b"verified archive bytes"
+        metadata = json.dumps({"version": {"checksum": hashlib.sha256(archive).hexdigest()}}).encode()
+        responses = [self.response(metadata, declared=len(metadata)),
+                     self.response(archive[:4], declared=len(archive)),
+                     self.response(archive, declared=len(archive))]
+        with registry_clock() as clock, mock.patch.object(sm.urllib.request, "urlopen", side_effect=responses) as request:
+            self.assertEqual(sm.download_crate_archive("example", "1.0.0"), archive)
+            self.assertEqual(request.call_count, 3)
+            self.assertEqual(clock[0], 30)
+
+    def test_content_length_detection_preserves_size_and_bodyless_cases(self):
+        for body, declared in ((b"12345678", 8), (b"12", 8)):
+            with self.subTest(body=body), registry_clock(), mock.patch.object(sm.urllib.request, "urlopen",
+                    return_value=self.response(body, declared=declared)) as request:
+                with self.assertRaisesRegex(sm.MaintenanceError, "size limit"):
+                    sm.http_bytes("https://example.invalid", max_bytes=3)
+                request.assert_called_once()
+        for response in (self.response(b"", declared=99, method="HEAD"),
+                         self.response(b"", status=204),
+                         self.response(b"12", declared=2),
+                         self.response(b"12"),
+                         self.response(b"2\r\n12\r\n0\r\n\r\n", chunked=True)):
+            with registry_clock(), mock.patch.object(sm.urllib.request, "urlopen", return_value=response) as request:
+                self.assertIn(sm.http_bytes("https://example.invalid", max_bytes=3), (b"", b"12"))
+                request.assert_called_once()
+
+    def test_incomplete_http_body_recovers_without_echoing_partial_data(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.read.side_effect = [sm.http.client.IncompleteRead(b"SECRET partial body"), b'{}']
+        with registry_clock() as clock, mock.patch.object(sm.urllib.request, "urlopen", return_value=response) as request, \
+             mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+            self.assertEqual(sm.http_json("https://example.invalid"), {})
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(clock[0], 30.0)
+            self.assertNotIn("SECRET", output.getvalue())
+
+    def test_native_vet_network_failures_retry_with_fresh_stores(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            audits = root / "supply-chain/audits.toml"; audits.write_text("# accepted audit\n")
+            stores = []
+            def command(runner, argv, **kwargs):
+                store = kwargs["vet_store"]
+                stores.append(store)
+                self.assertEqual((store / "audits.toml").read_text(), "# accepted audit\n")
+                self.assertFalse(kwargs["source_rw"])
+                (store / "audits.toml").write_text("# discarded partial write\n")
+                if len(stores) < 3:
+                    return sm.CommandResult(255, json.dumps({"error": {"message":
+                        "HTTP status client error (429 Too Many Requests) at SECRET"}}), "")
+                return sm.CommandResult(255, VET_CHECK_REPORT, "")
+            with registry_clock() as clock, mock.patch.object(sm, "contained_repo_command", side_effect=command), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                result = sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                 Path(tmp), network=True)
+                self.assertEqual(clock[0], 360.0)
+                self.assertEqual(result.stdout, VET_CHECK_REPORT)
+                self.assertNotIn("SECRET", output.getvalue())
+                # Native throttling also slows the next Python HTTP request.
+                sm._HTTP_NEXT_REQUEST["*"] = clock[0] + 5
+                with mock.patch.object(sm, "_http_once", return_value=b'{}'):
+                    sm.http_json("https://api.github.com/resource")
+                self.assertEqual(clock[0], 365.0)
+            self.assertEqual(audits.read_text(), "# accepted audit\n")
+            self.assertEqual(len(set(stores)), 3)
+            self.assertTrue(all(not store.exists() for store in stores))
+
+    def test_native_vet_permanent_coverage_offline_and_capture_errors_are_not_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            for network, result in ((False, sm.CommandResult(255, "", "status code: 429")),
+                                    (True, sm.CommandResult(255, VET_CHECK_REPORT, "status code: 429")),
+                                    (True, sm.CommandResult(255, '{"error": {"message": "invalid policy"}}', ""))):
+                with registry_clock(), mock.patch.object(sm, "contained_repo_command", return_value=result) as run:
+                    self.assertIs(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                         Path(tmp), network=network), result)
+                    run.assert_called_once()
+            failure = sm.CommandCaptureError("timeout", "timeout", sm.CommandResult(-9, "status code: 429", ""))
+            with registry_clock(), mock.patch.object(sm, "contained_repo_command", side_effect=failure) as run:
+                with self.assertRaises(sm.CommandCaptureError) as caught:
+                    sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"], Path(tmp), network=True)
+                self.assertIs(caught.exception, failure)
+                run.assert_called_once()
+
+    def test_native_vet_malformed_conclusions_reach_sanitized_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            for conclusion in ([], {}):
+                malformed = sm.CommandResult(255, json.dumps({"conclusion": conclusion}), "SECRET")
+                with self.subTest(conclusion=conclusion), registry_clock(), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=[
+                         sm.CommandResult(255, VET_LOCKED_FAILURE, ""), malformed]) as run, \
+                     mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                    with self.assertRaises(sm.MaintenanceError):
+                        sm.reviewable_vet_gaps(mock.Mock(root=root), Path(tmp))
+                    self.assertEqual(run.call_count, 2)
+                    diagnostic = json.loads(output.getvalue().removeprefix("vet-diagnostics: "))
+                    self.assertEqual(diagnostic["stage"], "review-check")
+                    self.assertEqual(diagnostic["conclusion"], "unknown")
+                    self.assertNotIn("SECRET", output.getvalue())
+
+    def test_native_vet_operation_timeout_retries_but_coverage_remains_a_decision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            failure = sm.CommandResult(255, json.dumps({"error": {"message":
+                "error sending request: operation timed out at SECRET"}}), "")
+            success = sm.CommandResult(0, VET_SUCCESS, "")
+            with registry_clock() as clock, \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=[failure, success]) as run, \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                self.assertIs(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                     Path(tmp), network=True), success)
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(clock[0], 30.0)
+                self.assertIn("reason=transport-error", output.getvalue())
+                self.assertNotIn("SECRET", output.getvalue())
+            for conclusion in ("fail (vetting)", "fail (violation)"):
+                decision = sm.CommandResult(255, json.dumps({"conclusion": conclusion}), "operation timed out")
+                with self.subTest(conclusion=conclusion), registry_clock() as clock, \
+                     mock.patch.object(sm, "contained_repo_command", return_value=decision) as run:
+                    self.assertIs(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                         Path(tmp), network=True), decision)
+                    run.assert_called_once()
+                    self.assertEqual(clock[0], 0)
+
+    def test_json_and_binary_reads_recover_from_transient_failures(self):
+        for error in (sm.HTTPStatusError(408), sm.HTTPStatusError(500), sm.HTTPStatusError(502),
+                      sm.HTTPStatusError(503), sm.HTTPStatusError(504),
+                      sm.MaintenanceError("HTTP request failed"), sm.MaintenanceError("HTTP request timed out")):
+            for binary in (False, True):
+                with self.subTest(error=sm.diagnostic_reason(error), binary=binary), registry_clock() as clock, \
+                     mock.patch.object(sm, "_http_once", side_effect=[error, error, b'{}']) as request:
+                    result = sm.http_bytes("https://api.github.com/resource") if binary else sm.http_json("https://api.github.com/resource")
+                    self.assertEqual(result, b'{}' if binary else {})
+                    self.assertEqual(request.call_count, 3)
+                    self.assertEqual(clock[0], 90.0)
+
+    def test_cooldown_survives_across_json_and_binary_calls(self):
+        error = sm.HTTPStatusError(429, {"retry-after": "7"})
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=[error, b'bytes']):
+            with self.assertRaises(sm.HTTPStatusError):
+                sm.http_json("https://api.github.com/one", attempts=1)
+            self.assertEqual(sm.http_bytes("https://api.github.com/two"), b'bytes')
+            self.assertEqual(clock[0], 7.0)
+
+    def test_http_throttle_also_delays_the_next_native_vet_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; (root / "supply-chain").mkdir(parents=True)
+            with registry_clock() as clock, \
+                 mock.patch.object(sm, "_http_once", side_effect=sm.HTTPStatusError(429, {"retry-after": "7"})), \
+                 mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")):
+                with self.assertRaises(sm.HTTPStatusError):
+                    sm.http_json("https://crates.io/api/v1/example", attempts=1)
+                self.assertEqual(sm.isolated_vet_command(mock.Mock(root=root), ["cargo", "vet", "check"],
+                                                       Path(tmp), network=True).returncode, 0)
+                self.assertEqual(clock[0], 7.0)
+
+    def test_mutations_retry_explicit_throttles_but_not_ambiguous_writes(self):
+        for method in ("POST", "PATCH", "DELETE"):
+            with self.subTest(method=method), registry_clock() as clock, \
+                 mock.patch.object(sm, "_http_once", side_effect=[sm.HTTPStatusError(429, {"retry-after": "2"}), b'{}']) as request:
+                self.assertEqual(sm.http_json("https://api.github.com/resource", method=method, body={"safe": True}), {})
+                self.assertEqual(clock[0], 2.0)
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(request.call_args.args[0].data, b'{"safe": true}')
+            for error in (sm.HTTPStatusError(503), sm.MaintenanceError("HTTP request failed")):
+                with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=error) as request:
+                    with self.assertRaises(sm.MaintenanceError) as caught:
+                        sm.http_json("https://api.github.com/resource", method=method)
+                    self.assertIs(caught.exception, error)
+                    request.assert_called_once()
+                    with mock.patch.object(sm, "_http_once", return_value=b'{}'):
+                        sm.http_json("https://api.github.com/resource")
+                    self.assertEqual(clock[0], 30.0)
+
+    def test_github_403_reset_time_is_respected(self):
+        with mock.patch.object(sm.time, "time", return_value=1000):
+            error = sm.HTTPStatusError(403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1011"})
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=[error, b'{}']):
+            self.assertEqual(sm.http_json("https://api.github.com/resource"), {})
+            self.assertEqual(clock[0], 11.0)
+
+    def test_versions_and_source_metadata_share_pacing_and_identity(self):
+        calls = []
+        archive = b"verified crate bytes"
+        def request(req, timeout, max_bytes):
+            calls.append((clock[0], req.full_url, req.get_header("User-agent")))
+            return json.dumps({"versions": []} if req.full_url.endswith("/versions") else {
+                "version": {"checksum": hashlib.sha256(archive).hexdigest()}}).encode()
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=request), \
+             mock.patch.object(sm, "http_bytes", return_value=archive) as download:
+            self.assertEqual(sm.crates_releases("example"), [])
+            self.assertEqual(sm.download_crate_archive("example", "1.0.0"), archive)
+        self.assertEqual([call[0] for call in calls], [0.0, 5.0])
+        self.assertTrue(all(call[2] == sm.CRATES_IO_USER_AGENT for call in calls))
+        download.assert_called_once_with("https://static.crates.io/crates/example/example-1.0.0.crate")
+
+    def test_429_honors_retry_after_and_then_recovers(self):
+        calls = []
+        responses = [sm.HTTPStatusError(429, {"retry-after": "2"}),
+                     sm.HTTPStatusError(429, {"retry-after": "3"}), b'{"versions": []}']
+        def request(*args, **kwargs):
+            calls.append(clock[0])
+            result = responses.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=request):
+            self.assertEqual(sm.crates_releases("example"), [])
+        self.assertEqual(calls, [0.0, 5.0, 10.0])
+
+    def test_persistent_429_exhausts_and_retains_cross_call_cooldown(self):
+        error = sm.HTTPStatusError(429, {"retry-after": "1"})
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=error) as request:
+            with self.assertRaises(sm.HTTPStatusError) as caught:
+                sm.crates_releases("example")
+            self.assertIs(caught.exception, error)
+            self.assertEqual(request.call_count, 10)
+            self.assertEqual(clock[0], 45.0)
+            with mock.patch.object(sm, "_http_once", return_value=b'{"versions": []}'):
+                sm.crates_releases("later")
+            self.assertEqual(clock[0], 50.0)
+
+    def test_long_retry_after_fails_closed_without_early_cross_call_request(self):
+        error = sm.HTTPStatusError(429, {"retry-after": "5401"})
+        with registry_clock(), mock.patch.object(sm, "_http_once", side_effect=error) as request:
+            for crate in ("example", "later"):
+                with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
+                    sm.crates_releases(crate)
+            request.assert_called_once()
+
+    def test_retry_wait_budget_is_cumulative(self):
+        error = sm.HTTPStatusError(429, {"retry-after": "3000"})
+        with registry_clock() as clock, mock.patch.object(sm, "_http_once", side_effect=error) as request:
+            with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget"):
+                sm.crates_releases("example")
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(clock[0], 3000.0)
+
+    def test_real_http_429_recovers_and_sends_application_user_agent(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            calls = []
+            def log_message(self, *args): pass
+            def do_GET(self):
+                self.calls.append((__import__("time").monotonic(), self.headers.get("User-Agent")))
+                if len(self.calls) < 3:
+                    self.send_response(429)
+                    self.send_header("Retry-After", "0")
+                    body = b"SECRET server response"
+                else:
+                    self.send_response(200)
+                    body = b'{"versions": []}'
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        real_http = sm.http_json
+        def loopback(url, **kwargs):
+            self.assertEqual(url, "https://crates.io/api/v1/crates/example/versions")
+            return real_http(f"http://127.0.0.1:{server.server_port}/versions", **kwargs)
+        try:
+            with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}), \
+                 mock.patch.object(sm, "http_json", side_effect=loopback), \
+                 mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+                self.assertEqual(sm.crates_releases("example"), [])
+                self.assertNotIn("SECRET", output.getvalue())
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+        self.assertEqual(len(Handler.calls), 3)
+        self.assertTrue(all(b[0] - a[0] >= 1.0 for a, b in zip(Handler.calls, Handler.calls[1:])))
+        self.assertTrue(all(row[1] == sm.CRATES_IO_USER_AGENT for row in Handler.calls))
+
+    def test_real_binary_download_recovers_from_503(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            requests = 0
+            def log_message(self, *args): pass
+            def do_GET(self):
+                Handler.requests += 1
+                self.send_response(503 if Handler.requests < 3 else 200)
+                self.send_header("Retry-After", "0")
+                body = b"temporary" if Handler.requests < 3 else b"verified archive bytes"
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}):
+                self.assertEqual(sm.http_bytes(f"http://127.0.0.1:{server.server_port}/archive"), b"verified archive bytes")
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+        self.assertEqual(Handler.requests, 3)
+
+    def test_permanent_errors_are_not_retried(self):
+        for error in (sm.HTTPStatusError(403), sm.HTTPStatusError(400), sm.HTTPStatusError(404),
+                      sm.MaintenanceError("HTTP response exceeded size limit"),
+                      sm.MaintenanceError("HTTP endpoint returned invalid JSON")):
+            with self.subTest(error=type(error).__name__), registry_clock(), \
+                 mock.patch.object(sm, "_http_once", side_effect=error) as request:
+                with self.assertRaises(sm.MaintenanceError) as caught:
+                    sm.crates_io_json("crates/example/versions")
+                self.assertIs(caught.exception, error)
+                request.assert_called_once()
+
+    def test_archive_still_rejects_mismatched_bytes(self):
+        with registry_clock(), mock.patch.object(sm, "http_json", return_value={
+            "version": {"checksum": hashlib.sha256(b"expected").hexdigest()}}), \
+             mock.patch.object(sm, "http_bytes", return_value=b"altered"):
+            with self.assertRaisesRegex(sm.MaintenanceError, "checksum mismatch"):
+                sm.download_crate_archive("example", "1.0.0")
 
 
 class CrateArchiveTests(unittest.TestCase):
@@ -3261,9 +4636,684 @@ class MaintenanceHistoryTests(unittest.TestCase):
                     self.assertIn('version = "4.0.5"', (root / "Cargo.toml").read_text())
 
 
+class CheckpointMaintenanceTests(unittest.TestCase):
+    repository = MaintenanceHistoryTests.repository
+    commit = MaintenanceHistoryTests.commit
+
+    def test_workflow_has_ordered_fresh_jobs_and_only_final_publication(self):
+        branch = BRANCH_WORKFLOW.read_text()
+        stage = STAGE_WORKFLOW.read_text()
+        stages = (*sm.CHECKPOINT_STAGES, "final")
+        for previous, current in zip(stages, stages[1:]):
+            block = branch.split(f"\n  {current}:\n", 1)[1].split("\n\n", 1)[0]
+            self.assertIn(f"needs: {previous}", block)
+            self.assertIn(f"previous-stage: {previous}", block)
+            for field in ("head", "digest", "ref", "artifact"):
+                self.assertIn(f"needs.{previous}.outputs.{field}", block)
+        self.assertEqual(branch.count("uses: ./.github/workflows/stable-maintenance-stage.yml"), 7)
+        self.assertIn("MAINTENANCE_TOOLING_COMMIT: ${{ github.sha }}", stage)
+        self.assertIn("run: env -u MAINTENANCE_TOOLING_COMMIT python3 tooling/.github/scripts/test_stable_maintenance.py", stage)
+        self.assertNotIn("workflow_run:", stage + branch + WORKFLOW.read_text())
+        self.assertNotIn("continue-on-error:", stage + branch)
+        for name in ("Release —", "Validate —", "Create scoped publication token", "Publish —"):
+            block = stage.split("      - name: " + name, 1)[1].split("\n      - name:", 1)[0]
+            self.assertIn("inputs.stage == 'final'", block)
+        checkpoint = stage.split("      - name: Create scoped checkpoint token", 1)[1].split("      - name: Checkpoint", 1)[0]
+        self.assertNotIn("permission-pull-requests: write", checkpoint)
+        self.assertIn("if-no-files-found: error", stage)
+        self.assertIn("ref: ${{ github.sha }}", stage)
+        self.assertNotIn("ref: ${{ inputs.checkpoint-ref }}", stage)
+
+    def test_checkpoint_round_trip_exact_commit_and_data_only_state(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}):
+            root = Path(tmp); runner = self.repository(root / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "fix.rs").write_text("fn fixed() {}\n")
+            main = self.commit(runner, "Fix source")
+            remote = root / "remote.git"
+            runner.git(["clone", "--bare", str(runner.root), str(remote)])
+            runner.git(["remote", "set-url", "origin", str(remote)])
+            runner.git(["checkout", "stable-4.x"])
+            runner.git(["cherry-pick", "-x", main])
+            staged = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state = sm.State(root / "state")
+            state.save({"branch": "stable-4.x", "main_head": main, "original_head": baseline,
+                        "cutoff": baseline, "started_at": "2026-10-17T00:00:00Z", "last_phase": "backports",
+                        "automation_branch": sm.AUTOMATION_PREFIX + "test", "vet_accepted": [{"crate": "ok", "old": "1.0.0", "new": "1.0.1"}],
+                        "gate_results": ["fake gates"], "validated_head": staged, "raw_model": "SECRET"})
+            output = root / "output"
+            env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "MAINTENANCE_TOOLING_COMMIT": main,
+                   "GITHUB_TOKEN": "SECRET", "GITHUB_OUTPUT": str(output), "GITHUB_REPOSITORY": "himmelblau-idm/himmelblau"}
+            def push(current, directory, repo, ref, token, *, source_sha="HEAD"):
+                current.git(["push", "origin", f"{source_sha}:refs/heads/{ref}"])
+            args = mock.Mock(branch="stable-4.x", stage="backports-1")
+            sm._HTTP_NEXT_REQUEST["secret.cognitiveservices.azure.com"] = sm.time.monotonic() + 120
+            with mock.patch.dict(os.environ, env), mock.patch.object(sm, "secure_github_push", side_effect=push):
+                sm.phase_checkpoint(args, state, runner)
+            outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+            payload = (state.directory / "checkpoint.json").read_bytes()
+            transport = json.loads(payload)["transport"]
+            self.assertEqual(runner.git(["ls-tree", "-r", transport]).stdout, "")
+            self.assertEqual(runner.git(["rev-parse", transport + "^"]).stdout.strip(), staged)
+            self.assertNotIn(b"SECRET", payload)
+            self.assertNotIn(b"secret.cognitiveservices", payload)
+            self.assertNotIn(b"gate_results", payload)
+            self.assertNotIn(b"validated_head", payload)
+            clone = root / "fresh"
+            runner.git(["clone", "--branch", "stable-4.x", str(remote), str(clone)])
+            fresh = sm.Runner(clone)
+            resumed = sm.State(root / "resumed")
+            (resumed.directory / "checkpoint.json").write_bytes(payload)
+            resume = mock.Mock(branch="stable-4.x", stage="backports-1", expected_head=outputs["head"],
+                               expected_digest=outputs["digest"], checkpoint_ref=outputs["ref"])
+            sm._HTTP_NEXT_REQUEST.clear()
+            with mock.patch.dict(os.environ, env):
+                sm.phase_resume(resume, resumed, fresh)
+            self.assertEqual(fresh.git(["rev-parse", "HEAD"]).stdout.strip(), staged)
+            self.assertEqual(fresh.git(["branch", "--show-current"]).stdout.strip(), "stable-4.x")
+            self.assertEqual(resumed.load()["vet_accepted"], state.load()["vet_accepted"])
+            self.assertTrue(resumed.load()["checkpointed"])
+            self.assertNotIn("gate_results", resumed.load())
+            self.assertGreater(sm._HTTP_NEXT_REQUEST["*"] - sm.time.monotonic(), 100)
+            # Matching artifact name is insufficient: changed bytes, another
+            # stage/run/tooling snapshot, changed remote refs, and gate claims fail.
+            for change in ("bytes", "stage", "run", "tooling", "ref", "ref-moved", "stable", "gates", "transport-tree", "transport-parent", "cooldown"):
+                with self.subTest(change=change):
+                    candidate = json.loads(payload)
+                    altered_env = dict(env)
+                    args2 = mock.Mock(branch="stable-4.x", stage="backports-1", expected_head=outputs["head"],
+                                      expected_digest=outputs["digest"], checkpoint_ref=outputs["ref"])
+                    if change == "stage": args2.stage = "vet"
+                    if change == "run": altered_env["GITHUB_RUN_ID"] = "124"
+                    if change == "tooling": altered_env["MAINTENANCE_TOOLING_COMMIT"] = "a" * 40
+                    if change == "ref": args2.expected_head = baseline
+                    if change == "ref-moved":
+                        sm.Runner(remote).git(["update-ref", f"refs/heads/{outputs['ref']}", main])
+                    if change == "stable":
+                        fresh.git(["push", "origin", f"{main}:refs/heads/stable-4.x"])
+                    if change == "gates": candidate["state"]["gate_results"] = ["forged"]
+                    if change == "cooldown": candidate["state"]["network_not_before"] = float("nan")
+                    if change.startswith("transport-"):
+                        tree = runner.git(["rev-parse", staged + "^{tree}"]).stdout.strip() if change == "transport-tree" else runner.git(["mktree"], input_text="").stdout.strip()
+                        parent = staged if change == "transport-tree" else baseline
+                        candidate["transport"] = runner.git(["commit-tree", tree, "-p", parent, "-m", "Invalid transport"]).stdout.strip()
+                        runner.git(["push", "--force", "origin", f"{candidate['transport']}:refs/heads/{outputs['ref']}"])
+                    raw = json.dumps(candidate).encode() if change in {"bytes", "gates", "transport-tree", "transport-parent", "cooldown"} else payload
+                    if change in {"gates", "transport-tree", "transport-parent", "cooldown"}: args2.expected_digest = hashlib.sha256(raw).hexdigest()
+                    (resumed.directory / "checkpoint.json").write_bytes(raw)
+                    with mock.patch.dict(os.environ, altered_env), self.assertRaises(sm.MaintenanceError):
+                        sm.phase_resume(args2, resumed, fresh)
+                    if change == "stable":
+                        fresh.git(["push", "--force", "origin", f"{baseline}:refs/heads/stable-4.x"])
+                    if change == "ref-moved" or change.startswith("transport-"):
+                        sm.Runner(remote).git(["update-ref", f"refs/heads/{outputs['ref']}", transport])
+
+    def test_checkpoint_rejects_failed_inflight_dirty_and_incomplete_phases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(root / "state")
+            env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "MAINTENANCE_TOOLING_COMMIT": head}
+            for problem in ("failed_phase", "backport_inflight", "dirty", "wrong-phase"):
+                value = {"branch": "stable-4.x", "main_head": head, "original_head": head, "last_phase": "backports"}
+                if problem in {"failed_phase", "backport_inflight"}: value[problem] = "failed"
+                if problem == "dirty": (runner.root / "untracked.rs").write_text("dirty\n")
+                if problem == "wrong-phase": value["last_phase"] = "resume"
+                state.save(value)
+                with self.subTest(problem=problem), mock.patch.dict(os.environ, env), \
+                     mock.patch.object(sm, "secure_github_push") as push, self.assertRaises(sm.MaintenanceError):
+                    sm.phase_checkpoint(mock.Mock(branch="stable-4.x", stage="backports-1"), state, runner)
+                push.assert_not_called()
+                if problem == "dirty": (runner.root / "untracked.rs").unlink()
+
+    def test_cooldown_survives_separate_phase_processes_and_job_handoff(self):
+        # Exercise main(), not only phase functions: the workflow starts a new
+        # interpreter for each phase, including checkpoint, resume and prepare.
+        harness = r'''
+import hashlib, importlib.util, json, os, sys
+from pathlib import Path
+from unittest import mock
+spec = importlib.util.spec_from_file_location("stable_maintenance", sys.argv[1])
+sm = importlib.util.module_from_spec(spec); sys.modules[spec.name] = sm; spec.loader.exec_module(sm)
+repo, directory, phase, mode = sys.argv[2:6]
+clock = [100.0]
+sleeps = []
+def sleep(delay):
+    sleeps.append(delay); clock[0] += delay
+def work(args, state, runner):
+    sm._HTTP_NEXT_REQUEST["secret.azure.invalid"] = clock[0] + 120
+    state.event("backports", "completed candidate processing")
+    if mode == "failure": raise sm.MaintenanceError("fixture failure")
+def push(runner, directory, repo, ref, token, *, source_sha="HEAD"):
+    runner.git(["push", "origin", f"{source_sha}:refs/heads/{ref}"])
+args = ["--repo-dir", repo, "--state-dir", directory, phase, "--branch", "stable-4.x"]
+if phase in {"checkpoint", "resume"}: args += ["--stage", "backports-1"]
+if phase == "resume":
+    outputs = dict(line.split("=", 1) for line in Path(os.environ["GITHUB_OUTPUT"]).read_text().splitlines())
+    args += ["--expected-head", outputs["head"], "--expected-digest", outputs["digest"], "--checkpoint-ref", outputs["ref"]]
+with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=lambda: 1000 + clock[0] - 100, sleep=sleep)), \
+     mock.patch.dict(sm.PHASES, {"backports": work}), \
+     mock.patch.object(sm, "secure_github_push", side_effect=push), \
+     mock.patch.object(sm, "contained_repo_command") as command:
+    result = sm.main(args)
+    print(json.dumps({"result": result, "sleeps": sleeps, "commands": command.call_count,
+                      "deadline": sm.State(Path(directory)).load().get("network_not_before")}))
+'''
+        for mode in ("success", "failure"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); runner = self.repository(root / "repo")
+                head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                remote = root / "remote.git"
+                runner.git(["clone", "--bare", str(runner.root), str(remote)])
+                runner.git(["remote", "set-url", "origin", str(remote)])
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(root / "state")
+                state.save({"branch": "stable-4.x", "main_head": head, "original_head": head, "cutoff": head})
+                env = dict(os.environ, GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1",
+                           MAINTENANCE_TOOLING_COMMIT=head, MAINTENANCE_TOOLING_SHA256=hashlib.sha256(SCRIPT.read_bytes()).hexdigest(),
+                           GITHUB_OUTPUT=str(root / "output"), GITHUB_REPOSITORY="himmelblau-idm/himmelblau")
+                def run(phase, source=runner.root, progress=state.directory):
+                    result = subprocess.run([sys.executable, "-B", "-c", harness, str(SCRIPT), str(source), str(progress), phase, mode],
+                                            env=env, text=True, capture_output=True, check=True)
+                    return json.loads(result.stdout.splitlines()[-1])
+                result = run("backports")
+                self.assertEqual(result["result"], 0 if mode == "success" else 1)
+                self.assertEqual(result["deadline"], 1120)
+                self.assertNotIn("secret.azure.invalid", state.path.read_text())
+                if mode == "failure":
+                    self.assertEqual(state.load()["failed_phase"], "backports")
+                    # Even the failure-report process must not erase cooldown.
+                    self.assertEqual(run("report")["deadline"], 1120)
+                    continue
+                self.assertEqual(run("checkpoint")["result"], 0)
+                payload = (state.directory / "checkpoint.json").read_bytes()
+                self.assertEqual(json.loads(payload)["state"]["network_not_before"], 1120)
+                clone = root / "fresh"
+                runner.git(["clone", "--branch", "stable-4.x", str(remote), str(clone)])
+                resumed = sm.State(root / "resumed")
+                (resumed.directory / "checkpoint.json").write_bytes(payload)
+                self.assertEqual(run("resume", clone, resumed.directory)["result"], 0)
+                result = run("prepare", clone, resumed.directory)
+                self.assertEqual(result["result"], 0)
+                self.assertEqual(result["sleeps"], [120])
+                self.assertEqual(result["commands"], 1)
+
+    def test_cooldown_snapshot_keeps_later_deadline_and_rejects_invalid_state(self):
+        with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}), \
+             mock.patch.object(sm, "time", mock.Mock(time=lambda: 1000, monotonic=lambda: 100)):
+            value = {"network_not_before": 1500}
+            self.assertEqual(sm.snapshot_network_deadline(value), 1500)
+            sm._HTTP_NEXT_REQUEST["service.invalid"] = 200
+            self.assertEqual(sm.snapshot_network_deadline(value), 1500)
+            sm._HTTP_NEXT_REQUEST["service.invalid"] = 700
+            self.assertEqual(sm.snapshot_network_deadline(value), 1600)
+            sm.restore_network_cooldown(value)
+            self.assertEqual(sm._HTTP_NEXT_REQUEST["*"], 600)
+            for invalid in (True, None, "1500", -1, float("nan"), float("inf")):
+                with self.subTest(invalid=invalid), self.assertRaises(sm.MaintenanceError):
+                    sm.restore_network_cooldown({"network_not_before": invalid})
+
+    def test_batch_deadline_reverts_only_inflight_and_next_batch_sees_prefix(self):
+        for expired_at in ("review", "build", "packaging", "format"):
+            with self.subTest(expired_at=expired_at), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                (runner.root / "first.rs").write_text("fn first() {}\n")
+                first = self.commit(runner, "Fix first")
+                (runner.root / "next.rs").write_text("fn next() {}\n")
+                second = self.commit(runner, "Fix next")
+                (runner.root / "later.rs").write_text("fn later() {}\n")
+                third = self.commit(runner, "Fix independent later")
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": base, "main_head": third})
+                ai = mock.Mock()
+                def review(instructions, data, schema, name):
+                    if "Fix next" in data and expired_at == "review":
+                        raise sm.BackportBatchExpired()
+                    return {"decision": True, "reason": "bug-fix"}
+                ai.call.side_effect = review
+                def build(current):
+                    if (current.root / "next.rs").exists() and expired_at == "build":
+                        raise sm.BackportBatchExpired()
+                    return sm.CommandResult(0, "", "")
+                def fmt(current, pre):
+                    if (current.root / "next.rs").exists() and expired_at == "format":
+                        raise sm.BackportBatchExpired()
+                def packaging(current, pre):
+                    if (current.root / "next.rs").exists() and expired_at == "packaging":
+                        raise sm.BackportBatchExpired()
+                with mock.patch.object(sm, "AzureAI", return_value=ai), mock.patch.object(sm, "locked_build", side_effect=build), \
+                     mock.patch.object(sm, "check_backport_packaging", side_effect=packaging), \
+                     mock.patch.object(sm, "format_backport", side_effect=fmt), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                    sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                saved = state.load()
+                self.assertEqual(saved["backports_applied"], [first])
+                self.assertEqual(saved["backport_cursor"], 2)
+                self.assertEqual(saved["backport_remaining"], [third])
+                self.assertEqual(saved["backports_deferred"], [second])
+                self.assertNotIn("backport_inflight", saved)
+                self.assertFalse((runner.root / "next.rs").exists())
+                self.assertEqual(sm.maintenance_main_through(saved), base)
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                with mock.patch.object(sm, "AzureAI", return_value=mock.Mock(call=mock.Mock(return_value={"decision": True, "reason": "bug-fix"}))), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as builds, \
+                     mock.patch.object(sm, "format_backport"), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                    sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                self.assertEqual(state.load()["backports_applied"], [first, third])
+                self.assertEqual(state.load()["backport_remaining"], [])
+                self.assertEqual(state.load()["backports_deferred"], [second])
+                self.assertEqual(sm.maintenance_main_through(state.load()), base)
+                self.assertEqual(builds.call_count, 2)  # Fresh baseline plus new attempt.
+
+    def test_batch_budget_prevents_long_sleep_and_restores_global_deadline(self):
+        with mock.patch.object(sm, "BACKPORT_BATCH_DEADLINE", 10), mock.patch.object(sm.time, "monotonic", return_value=5), \
+             mock.patch.object(sm.time, "sleep") as sleep:
+            with self.assertRaises(sm.BackportBatchExpired):
+                sm.NetworkWaitBudget(5400).sleep(6, "network budget")
+            sleep.assert_not_called()
+        with mock.patch.object(sm, "_phase_backport_batch", side_effect=sm.MaintenanceError("fatal")):
+            with self.assertRaises(sm.MaintenanceError):
+                sm.phase_backports(mock.Mock(budget_seconds=3), mock.Mock(), mock.Mock())
+        self.assertIsNone(sm.BACKPORT_BATCH_DEADLINE)
+
+    def test_unstarted_candidate_is_handed_off_without_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "fix.rs").write_text("fn fixed() {}\n")
+            fix = self.commit(runner, "Fix source")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": base, "main_head": fix})
+            with mock.patch.object(sm, "backport_time_remaining", side_effect=sm.BackportBatchExpired), \
+                 mock.patch.object(sm, "AzureAI") as ai, mock.patch.object(sm, "locked_build") as build:
+                sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(state.load()["backport_remaining"], [fix])
+            self.assertEqual(state.load()["backport_cursor"], 0)
+            self.assertFalse(state.load().get("backports_deferred"))
+            self.assertFalse(state.load().get("backport_outcomes"))
+            ai.assert_not_called(); build.assert_not_called()
+
+    def test_batch_deadline_bounds_container_and_still_disposes_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            cache = root / "cargo"; (cache / "registry").mkdir(parents=True)
+            clock = [0.0]
+            calls = []
+            def run(argv, **kwargs):
+                calls.append((argv, kwargs))
+                if "run" in argv:
+                    self.assertEqual(kwargs["timeout"], 3)
+                    clock[0] = 4
+                    raise sm.CommandCaptureError("timeout", "timeout", sm.CommandResult(-9, "", ""))
+                return sm.CommandResult(0, "", "")
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cache), "MAINTENANCE_BUILD_IMAGE": "test"}), \
+                 mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                 mock.patch.object(sm, "BACKPORT_BATCH_DEADLINE", 3), \
+                 mock.patch.object(sm.time, "monotonic", side_effect=lambda: clock[0]), \
+                 mock.patch.object(runner, "run", side_effect=run):
+                with self.assertRaises(sm.BackportBatchExpired):
+                    sm.contained_repo_command(runner, ["cargo", "fmt", "--all"], network=False,
+                                              source_rw=True, cache_rw=False)
+            self.assertEqual(calls[-1][0][1:3], ["rm", "-f"])
+            self.assertEqual(calls[-1][1]["timeout"], 60)
+
+    def test_checkpointed_publication_rejects_unvalidated_or_changed_tree(self):
+        runner = mock.Mock()
+        runner.git.return_value = sm.CommandResult(0, "a" * 40 + "\n", "")
+        state = mock.Mock()
+        for head in (None, "b" * 40):
+            state.load.return_value = {"checkpointed": True, "validated_head": head}
+            with self.assertRaisesRegex(sm.MaintenanceError, "exact clean HEAD"), \
+                 mock.patch.object(sm, "secure_github_push") as push:
+                sm.phase_publish(mock.Mock(), state, runner)
+            push.assert_not_called()
+
+    def test_fresh_final_validation_binds_approval_to_exact_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            state = sm.State(Path(tmp) / "state")
+            state.save({"checkpointed": True, "gate_results": ["old-tree"], "validated_head": "b" * 40})
+            with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "locked_vet_gaps", return_value=[]):
+                sm.phase_validate(mock.Mock(), state, runner)
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            self.assertEqual(state.load()["validated_head"], head)
+            self.assertNotIn("old-tree", state.load()["gate_results"])
+            (runner.root / "late.rs").write_text("unvalidated change\n")
+            for committed in (False, True):
+                if committed: self.commit(runner, "Later unvalidated change")
+                with self.subTest(committed=committed), self.assertRaisesRegex(sm.MaintenanceError, "exact clean HEAD"), \
+                     mock.patch.object(sm, "secure_github_push") as push:
+                    sm.phase_publish(mock.Mock(), state, runner)
+                push.assert_not_called()
+
+
+class ManualFinalAuditTests(unittest.TestCase):
+    repository = MaintenanceHistoryTests.repository
+    commit = MaintenanceHistoryTests.commit
+
+    def test_documented_revalidation_check_requires_complete_exact_head_approval(self):
+        """Run the documented state check against approved and incomplete results."""
+        guide = (SCRIPT.parent.parent / "stable-maintenance.md").read_text()
+        check = guide.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+        head = "a" * 40
+        for extra, approved in (({}, True), ({"validated_head": "b" * 40}, False),
+                                ({"validated_head": None}, False),
+                                ({"manual_audit_work": [{"gate": "cargo-audit", "reason": "check-failed"}]}, False),
+                                ({"manual_audit_head": head}, False), ({"failed_phase": "validate"}, False),
+                                ({"skip": True}, False)):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as tmp:
+                state = Path(tmp) / "state.json"
+                state.write_text(json.dumps({"validated_head": head, **extra}))
+                result = subprocess.run([sys.executable, "-c", check, str(state), head],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, approved, result.stderr)
+                if approved:
+                    self.assertIn(head, result.stdout)
+
+    def test_open_draft_blocks_new_maintenance_but_allows_standalone_revalidation(self):
+        """Validate the repaired HEAD separately without bypassing duplicate protection."""
+        for audit_failed in (True, False):
+            with self.subTest(audit_failed=audit_failed), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "source")
+                branch = sm.AUTOMATION_PREFIX + "manual-audit-test"
+                runner.git(["checkout", "-b", branch])
+                (runner.root / "manual-fix.rs").write_text("maintainer remediation\n")
+                head = self.commit(runner, "Remediate audit findings")
+                draft = {"number": 99, "state": "open", "draft": True,
+                         "head": {"ref": branch, "sha": head, "repo": {"full_name": "o/r"}},
+                         "user": {"login": "maintenance-app[bot]"},
+                         "labels": [{"name": sm.AUTOMATION_LABEL}]}
+                scheduled = sm.State(Path(tmp) / "scheduled")
+                with mock.patch.object(sm, "github_repository", return_value="o/r"), \
+                     mock.patch.object(sm, "github_headers", return_value={}), \
+                     mock.patch.object(sm, "http_json", return_value=[draft]), \
+                     mock.patch.object(sm, "github_search_items", return_value=[]), \
+                     mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    sm.phase_guard(mock.Mock(branch="stable-4.x"), scheduled, runner)
+                self.assertTrue(scheduled.load()["skip"])
+                self.assertEqual(scheduled.load()["blocking_pull_requests"], [99])
+
+                fresh = sm.State(Path(tmp) / "fresh-validation")
+                def contained(_runner, command, **kwargs):
+                    return sm.CommandResult(int(audit_failed and command[:2] == ["cargo", "audit"]), "", "")
+                with mock.patch.dict(os.environ, {"MAINTENANCE_TOOLING_SHA256": hashlib.sha256(SCRIPT.read_bytes()).hexdigest()}), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained) as commands, \
+                     mock.patch.object(sm, "locked_vet_gaps", return_value=[]) as vet, \
+                     mock.patch.object(sm, "http_json") as http, \
+                     mock.patch.object(sm, "secure_github_push") as push, \
+                     mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    self.assertEqual(sm.main(["--repo-dir", str(runner.root), "--state-dir", str(scheduled.directory),
+                                              "validate", "--branch", "stable-4.x"]), 0)
+                    commands.assert_not_called()
+                    vet.assert_not_called()
+                    for phase in ("prepare", "validate", "report"):
+                        self.assertEqual(sm.main(["--repo-dir", str(runner.root), "--state-dir", str(fresh.directory),
+                                                  phase, "--branch", "stable-4.x"]), 0)
+                self.assertEqual(commands.call_args_list[0].args[1], ["cargo", "fetch", "--locked"])
+                vet.assert_called_once()
+                http.assert_not_called()
+                push.assert_not_called()
+                value = fresh.load()
+                self.assertFalse(value.get("skip"))
+                self.assertEqual(value.get("validated_head"), None if audit_failed else head)
+                self.assertEqual(bool(value.get("manual_audit_work")), audit_failed)
+                self.assertEqual(value.get("manual_audit_head"), head if audit_failed else None)
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), head)
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertTrue(scheduled.load()["skip"])
+
+    def test_failed_audits_publish_only_an_exact_clean_draft_and_can_be_revalidated(self):
+        for failure in ("findings", "error", "timeout", "output-limit"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                state = sm.State(Path(tmp) / "state")
+                state.save({"checkpointed": True, "branch": "stable-4.x", "original_head": head,
+                            "main_head": head, "version": "4.0.6", "validated_head": head,
+                            "automation_branch": sm.AUTOMATION_PREFIX + "manual-audit-test"})
+                calls = []
+                def contained(_runner, command, **kwargs):
+                    calls.append(command)
+                    if command[:2] == ["cargo", "audit"]:
+                        self.assertEqual(kwargs, dict(network=True, source_rw=False, cache_rw=True, timeout=900, check=False))
+                        if failure == "error":
+                            raise sm.MaintenanceError("secret ::error:: unsafe")
+                        if failure in ("timeout", "output-limit"):
+                            raise sm.CommandCaptureError("secret", failure, sm.CommandResult(-9, "secret", "secret"))
+                        return sm.CommandResult(1, "secret", "secret")
+                    return sm.CommandResult(0, "", "")
+                with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     mock.patch.object(sm, "locked_vet_gaps", side_effect=sm.MaintenanceError("secret") if failure == "error" else None,
+                                       return_value=[sm.VetItem("example", "1.0.0", "1.1.0")]) as vet:
+                    sm.phase_validate(mock.Mock(), state, runner)
+                vet.assert_called_once()
+                self.assertIn(["cargo", "metadata", "--locked", "--format-version", "1"], calls)
+                value = state.load()
+                self.assertEqual(value["manual_audit_head"], head)
+                self.assertNotIn("validated_head", value)
+                self.assertEqual([row["gate"] for row in value["manual_audit_work"]], ["cargo-audit", "cargo-vet"])
+                self.assertIn("repository-clean: passed", value["gate_results"])
+                with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "test", "GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "123"}), \
+                     mock.patch.object(sm, "secure_github_push") as push, \
+                     mock.patch.object(sm, "mark_maintenance_pr_ready") as ready, \
+                     mock.patch.object(sm, "http_json", side_effect=[{"number": 99, "node_id": "PR_test"}, {}]) as http:
+                    sm.phase_publish(mock.Mock(), state, runner)
+                push.assert_called_once()
+                ready.assert_not_called()
+                self.assertEqual(http.call_count, 2)  # Create draft, then label; no ready mutation.
+                payload = http.call_args_list[0].kwargs["body"]
+                self.assertTrue(payload["draft"])
+                self.assertIn("Manual audit work required", payload["title"])
+                body = payload["body"]
+                self.assertLessEqual(len(body.encode()), 2400)
+                self.assertIn("cargo-audit:", body)
+                self.assertIn("cargo-vet:", body)
+                self.assertNotIn("all publication gates passed", body)
+                self.assertNotIn("Validated stable maintenance release", body)
+                with mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    sm.phase_report(mock.Mock(), state, runner)
+                report = (state.directory / "report.md").read_text()
+                self.assertIn("Final audits require manual work", report)
+                self.assertIn("Draft only; release validation incomplete.", report)
+                for text in (body, report, (state.directory / "report.json").read_text()):
+                    self.assertNotIn("secret", text)
+                    self.assertNotIn("::error::", text)
+                # Dirty trees, later commits and a moved stable ref still block.
+                (runner.root / "late.rs").write_text("changed source\n")
+                for committed in (False, True):
+                    if committed:
+                        self.commit(runner, "Unvalidated later commit")
+                    with self.assertRaisesRegex(sm.MaintenanceError, "exact clean HEAD"), \
+                         mock.patch.object(sm, "secure_github_push") as push:
+                        sm.phase_publish(mock.Mock(), state, runner)
+                    push.assert_not_called()
+                # A fresh successful validation removes old manual status.
+                with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "locked_vet_gaps", return_value=[]):
+                    sm.phase_validate(mock.Mock(), state, runner)
+                self.assertNotIn("manual_audit_head", state.load())
+                self.assertNotIn("manual_audit_work", state.load())
+                self.assertEqual(state.load()["validated_head"], runner.git(["rev-parse", "HEAD"]).stdout.strip())
+                with mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    sm.phase_report(mock.Mock(), state, runner)
+                self.assertNotIn("Draft only", (state.directory / "report.md").read_text())
+                with self.assertRaisesRegex(sm.MaintenanceError, "stable branch advanced"), \
+                     mock.patch.object(sm, "secure_github_push") as push:
+                    runner.git(["branch", "-f", "stable-4.x", "HEAD"])
+                    sm.phase_publish(mock.Mock(), state, runner)
+                push.assert_not_called()
+
+    def test_non_audit_failures_remain_fatal_without_draft_approval(self):
+        for gate in ("build", "tests", "fmt", "packaging", "metadata", "nix", "dirty"):
+            with self.subTest(gate=gate), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                if gate == "packaging":
+                    (runner.root / "scripts").mkdir()
+                    (runner.root / "scripts/test_gen_dockerfiles.py").write_text("raise RuntimeError()\n")
+                    self.commit(runner, "Packaging fixture")
+                if gate == "nix":
+                    (runner.root / "Cargo.nix").write_text("original\n")
+                    self.commit(runner, "Nix fixture")
+                state = sm.State(Path(tmp) / "state")
+                state.save({"manual_audit_head": "a" * 40, "validated_head": "b" * 40})
+                def contained(_runner, command, **kwargs):
+                    if gate == "nix" and command == sm.crate2nix_command():
+                        (runner.root / "Cargo.nix").write_text("unexpected rewrite\n")
+                    if ((gate == "fmt" and command[:2] == ["cargo", "fmt"])
+                            or (gate == "metadata" and command[:2] == ["cargo", "metadata"])
+                            or (gate == "packaging" and command[0] == "python3")):
+                        raise sm.MaintenanceError("failed non-audit gate")
+                    return sm.CommandResult(1 if command[:2] == ["cargo", "audit"] else 0, "", "")
+                if gate == "dirty":
+                    (runner.root / "dirty.rs").write_text("dirty\n")
+                with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(int(gate == "build"), "", "")), \
+                     mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(int(gate == "tests"), "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     mock.patch.object(sm, "locked_vet_gaps", side_effect=sm.MaintenanceError("vet failed")), \
+                     self.assertRaises(sm.MaintenanceError) as failure:
+                    sm.phase_validate(mock.Mock(), state, runner)
+                self.assertNotIn("manual_audit_head", state.load())
+                self.assertNotIn("validated_head", state.load())
+                value = state.load()
+                value.update(failed_phase="validate", failure=str(failure.exception))
+                state.save(value)
+                with mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                    sm.phase_report(mock.Mock(), state, runner)
+                report = (state.directory / "report.md").read_text()
+                self.assertIn("Failed phase: `validate`", report)
+                self.assertIn(str(failure.exception), report)
+                self.assertNotIn("Draft only", report)
+                if gate in ("metadata", "nix", "dirty"):
+                    self.assertEqual(len(value["manual_audit_work"]), 2)
+                    for text in (report, (state.directory / "report.json").read_text()):
+                        self.assertIn("Manual Audit Work", text)
+                        self.assertIn("cargo-audit", text)
+                        self.assertIn("cargo-vet", text)
+
+    def test_manual_status_rejects_malformed_or_unbound_publication(self):
+        for work in (None, {}, ["cargo-audit"], [{"gate": [], "reason": "findings"}],
+                     [{"gate": "cargo-audit", "reason": "secret"}],
+                     [{"gate": "cargo-audit", "reason": "findings"}] * 2):
+            with self.subTest(work=work), self.assertRaises(sm.MaintenanceError):
+                sm.manual_audit_work({"manual_audit_work": work})
+        runner, state = mock.Mock(), mock.Mock()
+        runner.git.return_value = sm.CommandResult(0, "a" * 40, "")
+        state.load.return_value = {"manual_audit_work": [{"gate": "cargo-audit", "reason": "findings"}],
+                                  "validated_head": "a" * 40}
+        with self.assertRaisesRegex(sm.MaintenanceError, "exact clean HEAD"), \
+             mock.patch.object(sm, "secure_github_push") as push:
+            sm.phase_publish(mock.Mock(), state, runner)
+        push.assert_not_called()
+
+
 class SequentialMaintenanceTests(unittest.TestCase):
     repository = MaintenanceHistoryTests.repository
     commit = MaintenanceHistoryTests.commit
+
+    def test_packaging_backport_gate_rolls_back_and_continues_after_locked_build(self):
+        for failure in ("key-error", "timeout", "output-limit", "command-error", "cyclic-symlink", "success"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                scripts = runner.root / "scripts"
+                scripts.mkdir()
+                generator = scripts / "gen_dockerfiles.py"
+                generator.write_text("DISTS = {'fedora43': 'fedora:43'}\n")
+                test = scripts / "test_gen_dockerfiles.py"
+                baseline = self.commit(runner, "Stable generator targets Fedora 43")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                (runner.root / "earlier.txt").write_text("accepted earlier fix\n")
+                earlier = self.commit(runner, "Fix earlier independent source")
+                target = "fedora43" if failure == "success" else "fedora44"
+                if failure == "cyclic-symlink":
+                    test.symlink_to(test.name)
+                else:
+                    test.write_text(f"from gen_dockerfiles import DISTS\nassert DISTS[{target!r}]\n")
+                candidate = self.commit(runner, "Fix ARM64 packaging with a new regression")
+                (runner.root / "later.txt").write_text("accepted later fix\n")
+                later = self.commit(runner, "Fix later independent source")
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": later})
+                builds, checks = [], []
+                def build(current):
+                    builds.append(current.git(["rev-parse", "HEAD"]).stdout.strip())
+                    return sm.CommandResult(0, "", "")
+                def contained(current, command, **kwargs):
+                    self.assertEqual(command, ["python3", "scripts/test_gen_dockerfiles.py"])
+                    self.assertEqual(kwargs, dict(network=False, source_rw=False, cache_rw=False, check=False))
+                    self.assertEqual(builds[-1], current.git(["rev-parse", "HEAD"]).stdout.strip())
+                    checks.append(builds[-1])
+                    if failure in ("timeout", "output-limit"):
+                        raise sm.CommandCaptureError("secret", failure, sm.CommandResult(-9, "secret", "secret"))
+                    if failure == "command-error":
+                        raise sm.MaintenanceError("secret")
+                    # Execute the same missing-target failure as the hosted
+                    # adaptation, without substituting success for the test.
+                    return current.run([sys.executable, "-B", str(test)], check=False)
+                ai = mock.Mock(); ai.call.return_value = {"decision": True, "reason": "bug-fix"}
+                output = io.StringIO()
+                with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                     mock.patch.object(sm, "locked_build", side_effect=build), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     mock.patch.object(sm, "format_backport"), mock.patch.object(sm.sys, "stderr", output):
+                    sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                value = state.load()
+                accepted = [earlier, candidate, later] if failure == "success" else [earlier, later]
+                self.assertEqual(value["backports_applied"], accepted)
+                self.assertEqual(len(builds), 4)  # Baseline and EVERY candidate.
+                self.assertEqual(len(checks), int(failure != "cyclic-symlink"))
+                self.assertEqual(test.exists(), failure == "success")
+                self.assertFalse(test.is_symlink())
+                self.assertTrue((runner.root / "earlier.txt").is_file())
+                self.assertTrue((runner.root / "later.txt").is_file())
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                self.assertEqual(value["backports_build_failed"], [])
+                if failure != "success":
+                    self.assertEqual(value["backports_deferred"], [candidate])
+                    self.assertEqual(value["backports_repair_failed"][0]["reason"], "packaging-test-failed")
+                    self.assertEqual(value["backport_outcomes"][1]["outcome"], "pending")
+                    self.assertEqual(sm.maintenance_main_through(value), baseline)
+                self.assertNotIn("secret", output.getvalue())
+
+    def test_packaging_backport_gate_handles_generator_edits_and_removed_or_unsafe_tests(self):
+        for kind in ("generator", "no-test", "removed-test", "symlink-test", "cyclic-test"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                scripts = runner.root / "scripts"; scripts.mkdir()
+                generator = scripts / "gen_dockerfiles.py"
+                generator.write_text("old\n")
+                test = scripts / "test_gen_dockerfiles.py"
+                if kind != "no-test":
+                    test.write_text("pass\n")
+                baseline = self.commit(runner, "Existing packaging source")
+                generator.write_text("fixed\n")
+                if kind in ("removed-test", "symlink-test", "cyclic-test"):
+                    test.unlink()
+                    if kind == "symlink-test":
+                        test.symlink_to("gen_dockerfiles.py")
+                    elif kind == "cyclic-test":
+                        test.symlink_to(test.name)
+                self.commit(runner, "Adapted packaging fix")
+                with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")) as command:
+                    if kind in ("removed-test", "symlink-test", "cyclic-test"):
+                        with self.assertRaises(sm.MaintenanceError):
+                            sm.check_backport_packaging(runner, baseline)
+                        command.assert_not_called()
+                    else:
+                        sm.check_backport_packaging(runner, baseline)
+                        self.assertEqual(command.call_count, int(kind == "generator"))
 
     def test_backport_patch_treats_inventory_paths_literally(self):
         for name in (":(exclude)**", "Cargo.*", "ordinary.rs"):
@@ -3759,7 +5809,7 @@ class SequentialMaintenanceTests(unittest.TestCase):
         with mock.patch.object(sm, "http_json", side_effect=[error, {"output_text": '{"decision":true}'}]), \
              mock.patch.object(sm.time, "sleep") as sleep, mock.patch.object(sm.secrets, "randbelow", return_value=0):
             ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
-        sleep.assert_called_once_with(60)
+        sleep.assert_called_once_with(120)
 
     def test_sequential_build_failure_keeps_earlier_work_and_continues(self):
         with tempfile.TemporaryDirectory() as tmp:

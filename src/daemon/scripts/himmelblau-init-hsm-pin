@@ -5,9 +5,18 @@
 
 set -e
 
-LEGACY=/var/lib/private/himmelblaud/hsm-pin
-LEGACY1=/var/lib/private/himmelblaud/hsm-pin.enc
-CRED=/var/lib/private/himmelblaud/hsm-pin-nopcr.enc
+# For manual runs, as systemd defines and manages these for the services
+if [ -z "${STATE_DIRECTORY:-}" ]; then
+    STATE_DIRECTORY=/var/lib/private/himmelblaud
+fi
+if [ ! -d "$STATE_DIRECTORY" ]; then
+    mkdir -p "$STATE_DIRECTORY"
+    chmod 700 "$STATE_DIRECTORY"
+fi
+
+LEGACY="$STATE_DIRECTORY/hsm-pin"
+LEGACY1="$STATE_DIRECTORY/hsm-pin.enc"
+CRED="$STATE_DIRECTORY/hsm-pin-nopcr.enc"
 PIN_RUNTIME=/run/himmelblau-hsm-pin
 SRK_HANDLE=0x81000001
 
@@ -105,10 +114,6 @@ provision_srk() {
     trap - EXIT
     return 0
 }
-
-# Ensure the directory exists
-mkdir -p /var/lib/private/himmelblaud
-chmod 700 /var/lib/private/himmelblaud
 
 # Check if systemd-creds is available
 if ! command -v systemd-creds >/dev/null 2>&1; then

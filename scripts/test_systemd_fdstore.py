@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check generated units and optionally exercise their FD-store lifecycle.
 
+Generator checks cover systemd 239 and newer, and rejection below that baseline.
 Run the live tests with HIMMELBLAU_SYSTEMD_TESTS=1 python3
 scripts/test_systemd_fdstore.py -v. They use disposable user units, a dummy
 daemon and a synthetic token; no root, Entra account or installed daemon is used.
@@ -46,11 +47,11 @@ def read_unit(path):
 
 class GeneratorTests(unittest.TestCase):
     def test_fd_store_version_gating(self):
-        for version in (229, 234, 249, 252, 253, 254, 255, 256, 257, 260):
+        for version in (239, 249, 252, 253, 254, 255, 256, 257, 260):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
                 unit = read_unit(generate(Path(tmp), version) / "himmelblaud.service")
                 service = unit["Service"]
-                self.assertEqual(service.get("FileDescriptorStoreMax"), "1" if version >= 234 else None)
+                self.assertEqual(service.get("FileDescriptorStoreMax"), "1")
                 expected_preserve = "yes" if version >= 257 else "restart" if version >= 254 else None
                 self.assertEqual(service.get("FileDescriptorStorePreserve"), expected_preserve)
 
