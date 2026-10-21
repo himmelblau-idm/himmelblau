@@ -358,6 +358,9 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
         "unrestricted",
         "userinfo_failure",
         "guarded_userinfo_failure",
+        "identity_subject_mismatch",
+        "identity_account_mismatch",
+        "identity_mapping_failure",
     ] {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -365,6 +368,22 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
         let (id_token, jwk) = signed_id_token(&issuer);
         let userinfo = json!({"sub":"broker-test-subject", "preferred_username":ACCOUNT,
             "email":ACCOUNT, "name":"Broker Test"});
+        let mut refreshed_userinfo = userinfo.clone();
+        match case {
+            "identity_subject_mismatch" => refreshed_userinfo["sub"] = json!("replacement-subject"),
+            "identity_account_mismatch" => {
+                refreshed_userinfo["preferred_username"] = json!("other@example.com");
+                refreshed_userinfo["email"] = json!("other@example.com");
+            }
+            "identity_mapping_failure" => {
+                refreshed_userinfo
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("preferred_username");
+                refreshed_userinfo.as_object_mut().unwrap().remove("email");
+            }
+            _ => {}
+        }
         let responses = [
             (
                 "POST /oauth2/default/v1/token ",
@@ -379,7 +398,7 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
                 "issuer":issuer, "jwks_uri":format!("{issuer}/v1/keys")}),
             ),
             ("GET /oauth2/default/v1/keys ", json!({"keys":[jwk]})),
-            ("GET /oauth2/default/v1/userinfo ", userinfo.clone()),
+            ("GET /oauth2/default/v1/userinfo ", refreshed_userinfo),
         ];
         let (finished_tx, mut finished_rx) = tokio::sync::oneshot::channel::<()>();
         let server = tokio::spawn(async move {
@@ -493,10 +512,13 @@ async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
         if case == "guarded_userinfo_failure" {
             assert!(matches!(result, UserTokenState::UseCached));
         }
-        if case.starts_with("uuid") || case.starts_with("tenant") {
+        if case.starts_with("uuid") || case.starts_with("tenant") || case.starts_with("identity_") {
             assert!(matches!(result, UserTokenState::Rejected), "{case}");
         }
-        let expected_secret = if case.starts_with("uuid") || case.starts_with("tenant") {
+        let expected_secret = if case.starts_with("uuid")
+            || case.starts_with("tenant")
+            || case.starts_with("identity_")
+        {
             "fixture-refresh"
         } else {
             "fixture-rotated"

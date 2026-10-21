@@ -1235,6 +1235,9 @@ impl IdProvider for OktaProvider {
                         self.cache_refresh(account, &token).await;
                         Ok(UserTokenState::UseCached)
                     }
+                    // Unlike a transport outage, these failures can include
+                    // contradictory userinfo subject/account evidence. Do not
+                    // publish credentials from a rejected identity validation.
                     Err(_) if expected_identity.is_some() => Ok(UserTokenState::Rejected),
                     Err(_) => Ok(UserTokenState::NotFound),
                 },
