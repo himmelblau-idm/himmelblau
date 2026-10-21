@@ -110,7 +110,9 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
         if [ "$skip_start" -eq 1 ]; then
             echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
         else
-            deb-systemd-invoke try-restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
+            # Preserve policy-rc.d handling without holding dpkg's output pipes
+            # open while a notify-based daemon waits to become ready.
+            (deb-systemd-invoke try-restart himmelblaud.service himmelblaud-tasks.service || true) </dev/null >/dev/null 2>&1 &
         fi
     fi
 
@@ -124,6 +126,24 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
         deb-systemd-helper --user update-state himmelblau-compliance-check.timer >/dev/null || true
     fi
 elif command -v systemctl >/dev/null 2>&1; then
+    # Old RPM versions stop the services in %preun, after this new %post.
+    # Remember only services active before the upgrade so %posttrans can recover
+    # them, even when an earlier queued restart finishes before old %preun.
+    case "${1:-}" in
+        ''|*[!0-9]*) ;;
+        *)
+            if [ "$1" -gt 1 ] && [ -d /run/systemd/system ] && ! is_live_system; then
+                state_dir=/run/himmelblau-package-restart
+                for unit in himmelblaud.service himmelblaud-tasks.service; do
+                    if systemctl is-active --quiet "$unit"; then
+                        install -d -m 0700 "$state_dir"
+                        (umask 077; touch "$state_dir/$unit")
+                    fi
+                done
+            fi
+            ;;
+    esac
+
     # Reload systemd to pick up the new service files from /usr/lib/systemd/system/
     systemctl daemon-reload || true
 

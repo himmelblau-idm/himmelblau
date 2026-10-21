@@ -6,7 +6,8 @@ if [ -d /run/systemd/system ]; then
         if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ]; then
             deb-systemd-invoke stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
         fi
-    elif command -v systemctl >/dev/null 2>&1; then
+    elif [ "$1" = 0 ] && command -v systemctl >/dev/null 2>&1; then
+        # RPM passes 1 during upgrades; only stop on the final erase.
         systemctl stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
     fi
 fi

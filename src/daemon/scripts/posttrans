@@ -14,6 +14,26 @@ if [ -f "$saved_config" ] && [ ! -e "$config_file" ] && [ ! -L "$config_file" ];
     fi
 
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl try-restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        systemctl --no-block try-restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+    fi
+fi
+
+# Restore pre-upgrade running services after the old package's %preun stop.
+# If SELinux is active, its package's later %posttrans must load/relabel the
+# policy first and consume the same markers there instead.
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/himmelblau-package-restart ]; then
+    if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled &&
+       [ -d /usr/share/selinux/packages/himmelblaud ]; then
+        echo "Deferring upgrade service recovery until SELinux policy installation"
+    else
+        state_dir=/run/himmelblau-package-restart
+        for unit in himmelblaud.service himmelblaud-tasks.service; do
+            if [ -f "$state_dir/$unit" ]; then
+                if systemctl --no-block start "$unit"; then
+                    rm -f "$state_dir/$unit"
+                fi
+            fi
+        done
+        rmdir "$state_dir" 2>/dev/null || true
     fi
 fi

@@ -67,6 +67,18 @@ if selinux_configured; then
         if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ] && ! is_live_system; then
           systemctl daemon-reload >/dev/null 2>&1 || :
           systemctl --no-block try-restart himmelblaud.service himmelblaud-tasks.service >/dev/null 2>&1 || :
+          # Old RPM %preun may have stopped previously running daemons after
+          # the new daemon %post. Recover them only after policy is installed.
+          state_dir=/run/himmelblau-package-restart
+          for unit in himmelblaud.service himmelblaud-tasks.service; do
+              if [ -f "$state_dir/$unit" ]; then
+                  if systemctl --no-block start "$unit"; then
+                      rm -f "$state_dir/$unit"
+                  fi
+              fi
+          done
+          rmdir "$state_dir" 2>/dev/null || true
+
         fi
 
         echo "SELinux policy module installed successfully"
