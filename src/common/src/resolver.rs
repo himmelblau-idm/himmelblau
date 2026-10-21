@@ -2381,7 +2381,7 @@ mod tests {
                 oidc.gidnumber = 3000;
                 oidc.real_gidnumber = Some(generic.gidnumber);
                 oidc.groups = vec![generic.clone()];
-                let alias = format!("himmelblau-directory-group-{}", generic.uuid);
+                let alias = format!("{}-synthetic", synthetic.name);
                 for _ in 0..2 {
                     if via_user {
                         resolver
@@ -2392,25 +2392,27 @@ mod tests {
                         resolver.set_cache_grouptoken(&generic).await.unwrap();
                     }
                     let nss = resolver.get_nssgroup_gid(2400).await.unwrap().unwrap();
-                    assert_eq!(nss.name, synthetic.name);
+                    assert_eq!(nss.name, alias);
                     assert_eq!(nss.members, vec![entra.name.clone()]);
-                    let by_name = resolver
-                        .get_nssgroup_name(&synthetic.name)
-                        .await
-                        .unwrap()
-                        .unwrap();
+                    let by_name = resolver.get_nssgroup_name(&alias).await.unwrap().unwrap();
                     assert_eq!(by_name.gid, 2400);
+                    for name in [&generic.name, &generic.spn] {
+                        assert_eq!(
+                            resolver.get_nssgroup_name(name).await.unwrap().unwrap().gid,
+                            2500
+                        );
+                    }
                     assert!(resolver
                         .get_nssgroups()
                         .await
                         .unwrap()
                         .iter()
-                        .any(|g| g.gid == 2400 && g.name == synthetic.name));
+                        .any(|g| g.gid == 2400 && g.name == alias));
                     let mut txn = resolver.db.write().await;
                     let cached = txn.get_group(&Id::Gid(2500)).unwrap().unwrap().0;
                     assert_eq!(cached.uuid, generic.uuid);
-                    assert_eq!(cached.name, alias);
-                    assert_eq!(cached.spn, alias);
+                    assert_eq!(cached.name, generic.name);
+                    assert_eq!(cached.spn, generic.spn);
                     let members = txn.get_group_members(generic.uuid).unwrap();
                     assert_eq!(members.len(), usize::from(via_user));
                     assert!(!members.iter().any(|member| member.uuid == entra.uuid));
@@ -2420,6 +2422,116 @@ mod tests {
                         .await
                         .unwrap();
                 }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_claim_preserves_synthetic_alias_lookup_in_both_arrival_orders() {
+        use crate::idprovider::himmelblau::{is_synthetic_primary_group, synthetic_primary_group};
+        for provider_first in [false, true] {
+            let resolver = setup_resolver().await;
+            let synthetic = synthetic_primary_group(2400);
+            let canonical_owner = GroupToken {
+                uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                name: synthetic.name.clone(),
+                spn: synthetic.spn.clone(),
+                gidnumber: 2500,
+            };
+            resolver
+                .set_cache_grouptoken(&canonical_owner)
+                .await
+                .unwrap();
+            let alias_claim = GroupToken {
+                uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                name: format!("{}-synthetic", synthetic.name),
+                spn: format!("{}-synthetic", synthetic.name),
+                gidnumber: 2600,
+            };
+            let mut entra = test_token();
+            entra.real_gidnumber = Some(2400);
+            entra.groups = vec![synthetic.clone()];
+            let mut oidc = test_token();
+            oidc.uuid = uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc");
+            oidc.name = "oidc-user".into();
+            oidc.spn = "oidc-user@example.com".into();
+            oidc.gidnumber = 3000;
+            oidc.real_gidnumber = Some(2600);
+            oidc.groups = vec![alias_claim.clone()];
+            if provider_first {
+                resolver
+                    .set_cache_usertoken(&mut oidc, false)
+                    .await
+                    .unwrap();
+            }
+            resolver
+                .set_cache_usertoken(&mut entra, false)
+                .await
+                .unwrap();
+            resolver
+                .set_cache_usertoken(&mut oidc, false)
+                .await
+                .unwrap();
+            for _ in 0..3 {
+                resolver
+                    .set_cache_usertoken(&mut entra, false)
+                    .await
+                    .unwrap();
+                resolver
+                    .set_cache_usertoken(&mut oidc, false)
+                    .await
+                    .unwrap();
+                let nss = resolver
+                    .get_nssgroup_name(&alias_claim.name)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(nss.gid, 2600);
+                assert_eq!(nss.name, alias_claim.name);
+                assert_eq!(nss.members, vec![oidc.name.clone()]);
+                let primary = resolver.get_nssgroup_gid(2400).await.unwrap().unwrap();
+                assert_eq!(primary.name, format!("{}-1", alias_claim.name));
+                assert_eq!(primary.members, vec![entra.name.clone()]);
+                assert_eq!(
+                    resolver
+                        .get_nssgroup_name(&primary.name)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .gid,
+                    2400
+                );
+                assert_eq!(
+                    resolver
+                        .get_nssgroup_name(&canonical_owner.name)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .gid,
+                    2500
+                );
+                assert_eq!(
+                    resolver.get_initgroups(&entra.spn).await.unwrap(),
+                    Some(vec![2400])
+                );
+                assert_eq!(
+                    resolver.get_initgroups(&oidc.spn).await.unwrap(),
+                    Some(vec![2600])
+                );
+                let mut txn = resolver.db.write().await;
+                let cached = txn.get_group(&Id::Gid(2400)).unwrap().unwrap().0;
+                assert_eq!(cached.uuid, synthetic.uuid);
+                assert!(is_synthetic_primary_group(&cached));
+                assert_eq!(
+                    txn.get_account(&Id::Name(oidc.spn.clone()))
+                        .unwrap()
+                        .unwrap()
+                        .0
+                        .groups[0]
+                        .name,
+                    alias_claim.name
+                );
+                txn.commit().unwrap();
             }
         }
     }

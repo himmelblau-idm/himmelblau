@@ -297,6 +297,48 @@ impl<'a> DbTxn<'a> {
             .map_err(|e| self.sqlite_error("legacy primary group lookup", &e))
     }
 
+    fn available_synthetic_alias(
+        &self,
+        group: &GroupToken,
+        incoming_labels: &[&str],
+    ) -> Result<String, CacheError> {
+        let base = format!("himmelblau-primary-group-{}-synthetic", group.gidnumber);
+        let mut alias = base.clone();
+        let mut suffix = 0u64;
+        loop {
+            let occupied = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM group_t WHERE uuid != ?1 AND (name = ?2 OR spn = ?2))",
+                rusqlite::params![group.uuid.to_string(), alias],
+                |row| row.get::<_, bool>(0),
+            ).map_err(|e| self.sqlite_error("synthetic group alias lookup", &e))?;
+            if !occupied && !incoming_labels.contains(&alias.as_str()) {
+                return Ok(alias);
+            }
+            suffix += 1;
+            alias = format!("{base}-{suffix}");
+        }
+    }
+
+    fn relocate_synthetic_labels(
+        &mut self,
+        group: &GroupToken,
+        incoming: &GroupToken,
+    ) -> Result<(), CacheError> {
+        let mut relocated = group.clone();
+        relocated.name = self.available_synthetic_alias(group, &[&incoming.name, &incoming.spn])?;
+        relocated.spn = relocated.name.clone();
+        let data = serde_json::to_vec(&relocated).map_err(|_| CacheError::SerdeJson)?;
+        // Change only display labels. UUID, GID, expiry and membership edges
+        // remain intact, as do canonical claims in cached account tokens.
+        self.conn
+            .execute(
+                "UPDATE group_t SET name = ?1, spn = ?1, token = ?2 WHERE uuid = ?3",
+                rusqlite::params![relocated.name, data, group.uuid.to_string()],
+            )
+            .map_err(|e| self.sqlite_error("relocate synthetic labels", &e))?;
+        Ok(())
+    }
+
     fn cached_group_by_uuid(&self, uuid: Uuid) -> Result<Option<GroupToken>, CacheError> {
         let data = self
             .conn
@@ -1412,12 +1454,14 @@ impl<'a> CacheTxn for DbTxn<'a> {
     ) -> Result<(), CacheError> {
         let synthetic = is_synthetic_primary_group(grp);
         let mut stored = grp.clone();
+        let mut relocate_labels = Vec::new();
         if !synthetic {
             // Generic OIDC claims may legitimately use the textual namespace
             // reserved by the Entra synthetic-group implementation. A label
             // collision must not remove an active primary group at a
-            // different GID. Isolate the incoming labels when the cached row
-            // is referenced; only unreferenced synthetic rows are stale.
+            // different GID. Move referenced synthetic labels out of the way
+            // so provider claim names remain resolvable; only unreferenced
+            // synthetic rows are stale.
             let mut stmt = self
                 .conn
                 .prepare("SELECT token FROM group_t WHERE uuid != :uuid AND (name = :name OR name = :spn OR spn = :name OR spn = :spn)")
@@ -1456,13 +1500,20 @@ impl<'a> CacheTxn for DbTxn<'a> {
                         // isolate the incoming cache identity under a stable
                         // UUID-derived alias. Keep established replacement
                         // behavior only for unreferenced ordinary duplicates.
-                        isolate_labels = true;
+                        if is_synthetic_primary_group(&cached) {
+                            relocate_labels.push(cached);
+                        } else {
+                            isolate_labels = true;
+                        }
                     } else if is_synthetic_primary_group(&cached) {
                         self.delete_group(cached.uuid)?;
                     }
                 }
             }
             if isolate_labels {
+                // Another real provider already owns a label, so the incoming
+                // identity still needs isolation; no synthetic label is reused.
+                relocate_labels.clear();
                 let base = format!("himmelblau-directory-group-{}", grp.uuid);
                 let mut alias = base.clone();
                 let mut suffix = 0u64;
@@ -1531,6 +1582,13 @@ impl<'a> CacheTxn for DbTxn<'a> {
         if let Some(previous) = discarded_primary {
             self.delete_group(previous.uuid)?;
         }
+        // Only move labels once numeric-GID ownership checks accepted the
+        // incoming identity. A rejected claim must not rename unrelated rows.
+        for cached in relocate_labels {
+            if cached.gidnumber != grp.gidnumber {
+                self.relocate_synthetic_labels(&cached, grp)?;
+            }
+        }
         if synthetic {
             let occupied = self
                 .conn
@@ -1544,21 +1602,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 // Generic OIDC claims may legitimately own the canonical text.
                 // Keep that identity unchanged and give the deterministic Entra
                 // row a stable cache/NSS alias instead.
-                let base = format!("{}-synthetic", grp.name);
-                let mut alias = base.clone();
-                let mut suffix = 0u64;
-                while self
-                    .conn
-                    .query_row(
-                        "SELECT EXISTS(SELECT 1 FROM group_t WHERE uuid != ?1 AND (name = ?2 OR spn = ?2))",
-                        rusqlite::params![grp.uuid.to_string(), alias],
-                        |row| row.get::<_, bool>(0),
-                    )
-                    .map_err(|e| self.sqlite_error("synthetic group alias lookup", &e))?
-                {
-                    suffix += 1;
-                    alias = format!("{base}-{suffix}");
-                }
+                let alias = self.available_synthetic_alias(grp, &[])?;
                 stored.name = alias.clone();
                 stored.spn = alias;
             }
