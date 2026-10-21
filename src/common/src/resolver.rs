@@ -1998,6 +1998,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn local_user_mapping_refresh_removes_obsolete_primary_membership() {
+        use crate::idprovider::himmelblau::{
+            local_user_ids_and_groups_from_passwd, synthetic_primary_group,
+        };
+        for mode in [InitgroupsMode::Full, InitgroupsMode::Named] {
+            let resolver = setup_resolver_with(0, mode, Vec::new()).await;
+            let mut user = test_token();
+            user.real_gidnumber = Some(2400);
+            user.groups.push(synthetic_primary_group(2400));
+            resolver
+                .set_cache_usertoken(&mut user, false)
+                .await
+                .unwrap();
+            assert_eq!(
+                resolver.get_initgroups(&user.spn).await.unwrap(),
+                Some(vec![2100, 2400])
+            );
+            // This production helper runs after cached Graph fallback and before
+            // publishing a user_map identity resolved from the local passwd file.
+            let (uid, gid) = local_user_ids_and_groups_from_passwd(
+                b"local:x:1000:1001:Local:/home/local:/bin/sh\n",
+                "local",
+                user.uuid,
+                &mut user.groups,
+            )
+            .unwrap();
+            user.gidnumber = uid;
+            user.real_gidnumber = Some(gid);
+            for _ in 0..2 {
+                resolver
+                    .set_cache_usertoken(&mut user, false)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    resolver.get_initgroups(&user.spn).await.unwrap(),
+                    Some(vec![2100])
+                );
+                assert!(resolver.get_nssgroup_gid(2400).await.unwrap().is_none());
+                assert!(resolver.get_nssgroup_gid(1001).await.unwrap().is_none());
+                let cached = resolver
+                    .get_usertoken(Id::Name(user.spn.clone()))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(cached.gidnumber, 1000);
+                assert_eq!(cached.real_gidnumber, Some(1001));
+                assert_eq!(cached.groups.len(), 1);
+                assert_eq!(cached.groups[0].gidnumber, 2100);
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn obsolete_synthetic_rows_are_removed_after_last_member_moves() {
         use crate::idprovider::himmelblau::synthetic_primary_group;
         let resolver = setup_resolver().await;

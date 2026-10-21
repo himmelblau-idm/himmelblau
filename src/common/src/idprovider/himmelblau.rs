@@ -95,6 +95,21 @@ fn local_user_ids_from_passwd(contents: &[u8], username: &str) -> Option<(u32, u
         .map(|user| (user.uid, user.gid))
 }
 
+// Local user mappings use the local NSS primary group, not a cloud fallback.
+// Resolve the passwd identity first so failed mappings do not alter claims.
+pub(crate) fn local_user_ids_and_groups_from_passwd(
+    contents: &[u8],
+    username: &str,
+    user_uuid: Uuid,
+    groups: &mut Vec<GroupToken>,
+) -> Option<(u32, u32)> {
+    let ids = local_user_ids_from_passwd(contents, username)?;
+    groups.retain(|group| {
+        !(is_synthetic_primary_group(group) || group.uuid == user_uuid && group.name == group.spn)
+    });
+    Some(ids)
+}
+
 // AADSTS65002: Consent between first party application and resource is required.
 // This occurs when a tenant has not granted consent for an application to access
 // the Graph API. When this happens, we should gracefully fallback and continue
@@ -5263,10 +5278,12 @@ impl HimmelblauProvider {
                     error!("Failed reading /etc/passwd for mapped user {}: {}", user, e);
                     IdpError::BadRequest
                 })?;
-                local_user_ids_from_passwd(&passwd, &user).ok_or(IdpError::NotFound {
-                    what: user,
-                    where_: "local user map".to_string(),
-                })?
+                local_user_ids_and_groups_from_passwd(&passwd, &user, uuid, &mut groups).ok_or(
+                    IdpError::NotFound {
+                        what: user,
+                        where_: "local user map".to_string(),
+                    },
+                )?
             }
             None => {
                 let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
@@ -6105,6 +6122,68 @@ mod tests {
         assert_eq!(old.groups.len(), 4);
         assert_eq!(old.real_gidnumber, Some(1000));
         assert!(cached_entra_groups(None).is_empty());
+    }
+
+    #[test]
+    fn local_user_mapping_discards_cached_primary_fallbacks_only() {
+        let user_uuid = Uuid::new_v4();
+        let mut alias = synthetic_primary_group(2401);
+        alias.name.push_str("-synthetic-1");
+        alias.spn = alias.name.clone();
+        let legacy = GroupToken {
+            name: "old-upn@example.com".into(),
+            spn: "old-upn@example.com".into(),
+            uuid: user_uuid,
+            gidnumber: 2402,
+        };
+        // Name/SPN equality alone is not enough to identify a fallback.
+        let mut ordinary = legacy.clone();
+        ordinary.uuid = Uuid::new_v4();
+        ordinary.gidnumber = 2500;
+        let old = super::UserToken {
+            name: "mapped".into(),
+            spn: "mapped@example.com".into(),
+            uuid: user_uuid,
+            gidnumber: 2000,
+            real_gidnumber: Some(2400),
+            displayname: "Mapped".into(),
+            shell: None,
+            tenant_id: None,
+            valid: true,
+            groups: vec![
+                synthetic_primary_group(2400),
+                alias,
+                legacy,
+                ordinary.clone(),
+            ],
+        };
+        // Both Graph-error and missing-access-token refreshes use this helper.
+        let mut groups = cached_entra_groups(Some(&old));
+        let passwd = b"local:x:1000:1001:Local:/home/local:/bin/sh\n";
+        let map_path = std::env::temp_dir().join(format!("himmelblau-local-map-{user_uuid}"));
+        std::fs::write(&map_path, "local:mapped@example.com\n").unwrap();
+        let user_map = crate::user_map::UserMap::new(map_path.to_str().unwrap());
+        std::fs::remove_file(map_path).unwrap();
+        let local = user_map.get_local_from_upn(&old.spn).unwrap();
+        assert_eq!(
+            super::local_user_ids_and_groups_from_passwd(passwd, "missing", user_uuid, &mut groups),
+            None
+        );
+        assert_eq!(groups.len(), 4);
+        assert_eq!(
+            super::local_user_ids_and_groups_from_passwd(passwd, &local, user_uuid, &mut groups),
+            Some((1000, 1001))
+        );
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].uuid, ordinary.uuid);
+        assert_eq!(groups[0].gidnumber, 2500);
+        assert_eq!(old.groups.len(), 4);
+        // Repeated refreshes remain stable and never create a synthetic local group.
+        assert_eq!(
+            super::local_user_ids_and_groups_from_passwd(passwd, &local, user_uuid, &mut groups),
+            Some((1000, 1001))
+        );
+        assert_eq!(groups.len(), 1);
     }
 
     #[test]
