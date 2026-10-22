@@ -99,12 +99,20 @@ class OrchestratorConfigTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("make"), "make is not installed")
     def test_make_passes_opt_in_flag_once(self):
-        for value, expected in (("0", 0), ("1", 1)):
-            with self.subTest(value=value):
+        local_library = str(ROOT / "fixture-local-libhimmelblau")
+        cases = (("0", 0, None), ("1", 1, None),
+                 ("0", 0, local_library), ("1", 1, local_library))
+        for value, expected, library in cases:
+            with self.subTest(value=value, local_library=library):
+                environment = dict(os.environ)
+                if library is None:
+                    environment.pop("LIBHIMMELBLAU_LOCAL", None)
+                else:
+                    environment["LIBHIMMELBLAU_LOCAL"] = library
                 result = subprocess.run(
                     ["make", "--no-print-directory", "-n", "conf-examples",
                      f"WITH_ORCHESTRATOR={value}"],
-                    cwd=ROOT, check=True, capture_output=True, text=True,
+                    cwd=ROOT, env=environment, check=True, capture_output=True, text=True,
                 )
                 self.assertEqual(result.stdout.count("--with-orchestrator"), expected)
                 self.assertIn("--gen-conf-example", result.stdout)
@@ -113,9 +121,10 @@ class OrchestratorConfigTests(unittest.TestCase):
                     ["make", "--no-print-directory", "--eval="
                      '__orchestrator_env_probe: ; @printf "%s" "$$WITH_ORCHESTRATOR"',
                      "__orchestrator_env_probe", f"WITH_ORCHESTRATOR={value}"],
-                    cwd=ROOT, check=True, capture_output=True, text=True,
+                    cwd=ROOT, env=environment, check=True, capture_output=True, text=True,
                 )
-                self.assertEqual(exported.stdout, value)
+                # Makefile informational messages may precede the probe value.
+                self.assertEqual(exported.stdout.splitlines()[-1], value)
 
 
 if __name__ == "__main__":
