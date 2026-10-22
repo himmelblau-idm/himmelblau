@@ -71,7 +71,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	$(MAKE) $$TARGET; \
 	echo "Packages written to ./packaging/"
 
-test: test-hsm-pin-init dockerfiles ## Run shell regressions and cargo tests in a container
+test: test-hsm-pin-init test-cargo-vet-review dockerfiles ## Run shell regressions and cargo tests in a container
 	mkdir -p target/test
 	$(DOCKER) build -t himmelblau-test-build -f images/Dockerfile.test .
 	$(DOCKER) run --rm --security-opt label=disable -it \
@@ -82,6 +82,10 @@ test: test-hsm-pin-init dockerfiles ## Run shell regressions and cargo tests in 
 .PHONY: test-hsm-pin-init
 test-hsm-pin-init: ## Run isolated HSM PIN initializer regressions
 	python3 scripts/test_hsm_pin_init.py
+
+.PHONY: test-cargo-vet-review
+test-cargo-vet-review: ## Run offline cargo-vet review assistant regressions
+	python3 scripts/test_cargo_vet_review.py
 
 test-selinux: ## Test the SELinux policy to ensure it builds
 	./scripts/test_selinux_policy.py --fix -v --distros rocky8,rocky9,rocky10,fedora43,fedora44,tumbleweed,sle16
@@ -236,8 +240,8 @@ check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny --all-features check licenses
 
 vet: ## Interactive dependency review with AI analysis
-	/usr/bin/cargo vet -V >/dev/null || (echo "cargo-vet required" && cargo install cargo-vet)
-	/usr/bin/cargo vet regenerate imports
+	cargo vet -V >/dev/null || (echo "cargo-vet required" && cargo install cargo-vet)
+	cargo vet regenerate imports
 	@python3 scripts/cargo_vet_review.py
 
 sbom: .packaging ## Generate a Software Bill of Materials

@@ -52,3 +52,6 @@ platform/arch/src/
 platform/arch/*.pkg.tar.*
 
 .claude/
+
+# Private AI review inputs may survive forced process termination.
+/.cargo-vet-review-*.diff

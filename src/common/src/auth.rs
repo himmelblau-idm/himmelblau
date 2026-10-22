@@ -355,67 +355,72 @@ enum BluetoothState {
 }
 
 fn check_bluetooth() -> BluetoothState {
-    let conn = match zbus::blocking::Connection::system() {
-        Ok(c) => c,
-        Err(e) => {
-            debug!("D-Bus system connection failed: {:?}", e);
-            return BluetoothState::NoAdapter;
-        }
-    };
+    zbus::block_on(async {
+        let conn = match zbus::Connection::system().await {
+            Ok(c) => c,
+            Err(e) => {
+                debug!("D-Bus system connection failed: {:?}", e);
+                return BluetoothState::NoAdapter;
+            }
+        };
 
-    let proxy = match zbus::blocking::fdo::ObjectManagerProxy::builder(&conn)
-        .destination("org.bluez")
-        .and_then(|b| b.path("/"))
-        .and_then(|b| b.build())
-    {
-        Ok(p) => p,
-        Err(e) => {
-            debug!("BlueZ not available on D-Bus: {:?}", e);
-            return BluetoothState::NoAdapter;
-        }
-    };
+        let proxy = match zbus::fdo::ObjectManagerProxy::builder(&conn)
+            .destination("org.bluez")
+            .path("/")
+            .build()
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                debug!("BlueZ not available on D-Bus: {:?}", e);
+                return BluetoothState::NoAdapter;
+            }
+        };
 
-    // Do not let the call D-Bus-activate bluetooth.service: without an adapter
-    // systemd skips the unit, and dbus-daemon then holds the call until its
-    // service_start_timeout (25 s by default) expires, delaying every FIDO login.
-    let objects = match proxy
-        .inner()
-        .call_with_flags::<_, _, zbus::fdo::ManagedObjects>(
-            "GetManagedObjects",
-            zbus::proxy::MethodFlags::NoAutoStart.into(),
-            &(),
-        ) {
-        Ok(Some(o)) => o,
-        Ok(None) => {
-            debug!("BlueZ GetManagedObjects returned no reply");
-            return BluetoothState::NoAdapter;
-        }
-        Err(e) => {
-            debug!("BlueZ GetManagedObjects failed: {:?}", e);
-            return BluetoothState::NoAdapter;
-        }
-    };
+        // Do not let the call D-Bus-activate bluetooth.service: without an adapter
+        // systemd skips the unit, and dbus-daemon then holds the call until its
+        // service_start_timeout (25 s by default) expires, delaying every FIDO login.
+        let objects = match proxy
+            .inner()
+            .call_with_flags::<_, _, zbus::fdo::ManagedObjects>(
+                "GetManagedObjects",
+                zbus::proxy::MethodFlags::NO_AUTO_START,
+                &(),
+            )
+            .await
+        {
+            Ok(Some(o)) => o,
+            Ok(None) => {
+                debug!("BlueZ GetManagedObjects returned no reply");
+                return BluetoothState::NoAdapter;
+            }
+            Err(e) => {
+                debug!("BlueZ GetManagedObjects failed: {:?}", e);
+                return BluetoothState::NoAdapter;
+            }
+        };
 
-    let mut has_adapter = false;
-    for (path, interfaces) in &objects {
-        if let Some(props) = interfaces.get("org.bluez.Adapter1") {
-            has_adapter = true;
-            if let Some(powered) = props.get("Powered") {
-                if bool::try_from(powered) == Ok(true) {
-                    debug!("Bluetooth adapter {} is powered on", path);
-                    return BluetoothState::PoweredOn;
+        let mut has_adapter = false;
+        for (path, interfaces) in &objects {
+            if let Some(props) = interfaces.get("org.bluez.Adapter1") {
+                has_adapter = true;
+                if let Some(powered) = props.get("Powered") {
+                    if bool::try_from(powered) == Ok(true) {
+                        debug!("Bluetooth adapter {} is powered on", path);
+                        return BluetoothState::PoweredOn;
+                    }
                 }
             }
         }
-    }
 
-    if has_adapter {
-        debug!("All Bluetooth adapters are powered off");
-        BluetoothState::PoweredOff
-    } else {
-        debug!("No Bluetooth adapters found");
-        BluetoothState::NoAdapter
-    }
+        if has_adapter {
+            debug!("All Bluetooth adapters are powered off");
+            BluetoothState::PoweredOff
+        } else {
+            debug!("No Bluetooth adapters found");
+            BluetoothState::NoAdapter
+        }
+    })
 }
 
 /// Caller must verify Bluetooth is powered on before calling this.

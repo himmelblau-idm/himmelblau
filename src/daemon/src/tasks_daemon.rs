@@ -55,8 +55,7 @@ use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
 use walkdir::WalkDir;
-use zbus::zvariant::OwnedObjectPath;
-use zbus::{proxy, Connection};
+use zbus::{proxy, Connection, OwnedObjectPath};
 
 #[cfg(all(target_family = "unix", feature = "selinux"))]
 use himmelblau_unix_common::selinux_util;
@@ -476,7 +475,7 @@ async fn set_accountsservice_icon(account_id: &str, icon_path: &Path) -> zbus::R
         }
     };
     let user = AccountsServiceUserProxy::builder(&connection)
-        .path(user_path)?
+        .path(user_path)
         .build()
         .await?;
 
