@@ -71,7 +71,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	$(MAKE) $$TARGET; \
 	echo "Packages written to ./packaging/"
 
-test: test-hsm-pin-init test-cargo-vet-review dockerfiles ## Run shell regressions and cargo tests in a container
+test: test-hsm-pin-init test-cargo-vet-review test-build-options dockerfiles ## Run shell regressions and cargo tests in a container
 	mkdir -p target/test
 	$(DOCKER) build -t himmelblau-test-build -f images/Dockerfile.test .
 	$(DOCKER) run --rm --security-opt label=disable -it \
@@ -86,6 +86,10 @@ test-hsm-pin-init: ## Run isolated HSM PIN initializer regressions
 .PHONY: test-cargo-vet-review
 test-cargo-vet-review: ## Run offline cargo-vet review assistant regressions
 	python3 scripts/test_cargo_vet_review.py
+
+.PHONY: test-build-options
+test-build-options: ## Run isolated package and configuration generator regressions
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_gen_dockerfiles.py scripts/test_gen_dockerfiles_orchestrator.py scripts/test_orchestrator_config_options.py
 
 test-selinux: ## Test the SELinux policy to ensure it builds
 	./scripts/test_selinux_policy.py --fix -v --distros rocky8,rocky9,rocky10,fedora43,fedora44,tumbleweed,sle16
@@ -109,7 +113,7 @@ DOCKER := $(shell command -v podman || command -v docker)
 NIX := $(shell command -v nix)
 ORCHESTRATOR_CONTAINER_IMAGE ?= localhost/himmelblau/playwright-orchestrator:latest
 ORCHESTRATOR_CONTAINER_DIRECTORY ?= src/orchestrator/container
-WITH_ORCHESTRATOR ?= 0
+export WITH_ORCHESTRATOR ?= 0
 ORCHESTRATOR_FLAG := $(if $(filter 1,$(WITH_ORCHESTRATOR)),--with-orchestrator,)
 
 # Optional: Mount local libhimmelblau for development testing
@@ -275,7 +279,6 @@ man: ## Generate the himmelblau.conf man page
 conf-examples: ## Generate himmelblau.conf example files
 	python3 src/common/scripts/gen_param_code.py \
 		--gen-conf-example --conf-example-output target/config/himmelblau.conf.example \
-		$(ORCHESTRATOR_FLAG) \
 		--gen-debian-conf-example --debian-conf-example-output target/debian/himmelblau.conf.example \
 		$(ORCHESTRATOR_FLAG)
 

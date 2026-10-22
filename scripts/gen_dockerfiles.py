@@ -143,8 +143,6 @@ FAMILIES = {
 
 # ---- Final command builders --------------------------------------------------
 
-WITH_ORCHESTRATOR = False
-
 PACKAGES = [
     # (crate name, crate source, needs_tpm_feature)
     # Only himmelblaud (src/daemon) and src/common define a tpm feature.
@@ -180,14 +178,26 @@ CMD_SEP = f" && \\ \n{CMD_TAB}"
 GEN_MANPAGE = "python3 src/common/scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5"
 
 
+def selected_packages(with_orchestrator: bool) -> list:
+    packages = list(PACKAGES)
+    if with_orchestrator:
+        packages.append(("himmelblau-orchestrator", "src/orchestrator", False))
+    return packages
+
+
+def build_manpage_cmd(with_orchestrator: bool) -> str:
+    return GEN_MANPAGE + (" --with-orchestrator" if with_orchestrator else "")
+
+
 def build_deb_final_cmd(
     features: list,
     distro_slug: str,
     cross_target: str = "",
+    with_orchestrator: bool = False,
 ) -> str:
     target_arg = f" --target={cross_target}" if cross_target else ""
     parts = []
-    for pkg, _, needs_tpm in PACKAGES:
+    for pkg, _, needs_tpm in selected_packages(with_orchestrator):
         if pkg == "selinux":  # Debian doesn't use selinux
             continue
         # Copy the feature list per-package so that stripping "tpm" for a
@@ -207,19 +217,21 @@ def build_deb_final_cmd(
             cmd += f" && python3 scripts/patch_apparmor_deb_relationships.py --distro={distro_slug} --package-dir={package_dir}"
         parts.append(cmd)
     gen_servicefiles = "make deb-servicefiles"
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {CMD_SEP.join(parts)} "]'
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{build_manpage_cmd(with_orchestrator)} && {gen_servicefiles} && {CMD_SEP.join(parts)} "]'
 
 
-def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
+def build_rpm_final_cmd(
+    features: list, selinux: bool, apparmor: bool, with_orchestrator: bool = False,
+) -> str:
     feat_str = f" --features {','.join(features)}" if features else ""
-    workspace_args = "--workspace" if WITH_ORCHESTRATOR else "--workspace --exclude himmelblau-orchestrator"
+    workspace_args = "--workspace" if with_orchestrator else "--workspace --exclude himmelblau-orchestrator"
     build = f"cargo build ${{CARGO_PATCH_ARG}} --release {workspace_args}{feat_str} && \\ \n{CMD_TAB}"
     strip_targets = ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker"]
-    if WITH_ORCHESTRATOR:
+    if with_orchestrator:
         strip_targets.append("himmelblaud-orchestrator")
     strip = CMD_SEP.join(["strip -s target/release/%s" % s for s in strip_targets])
     pkgs = []
-    for pkg in PACKAGES:
+    for pkg in selected_packages(with_orchestrator):
         if pkg[0] == "selinux" and not selinux:
             continue
         if pkg[0] == "apparmor" and not apparmor:
@@ -254,12 +266,14 @@ def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
     else:
         gen_servicefiles = "make rpm-servicefiles"
     gen_authselect = "(authselect select minimal --force || authselect select local --force) && make authselect"
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {build}{strip} && {gen_authselect} && \\\n{CMD_TAB}{rpms}"]'
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{build_manpage_cmd(with_orchestrator)} && {gen_servicefiles} && {build}{strip} && {gen_authselect} && \\\n{CMD_TAB}{rpms}"]'
 
 
-def build_gentoo_final_cmd(features: list, repo_root: Path) -> str:
+def build_gentoo_final_cmd(
+    features: list, repo_root: Path, with_orchestrator: bool = False,
+) -> str:
     """Build command for Gentoo - generates an ebuild file."""
-    return f'CMD ["/bin/sh", "-c", "{GEN_MANPAGE} && python3 scripts/gen_ebuild.py --out ./packaging/"]'
+    return f'CMD ["/bin/sh", "-c", "{build_manpage_cmd(with_orchestrator)} && python3 scripts/gen_ebuild.py --out ./packaging/"]'
 
 
 def build_arch_final_cmd() -> str:
@@ -705,6 +719,7 @@ def render(
     dist_cfg,
     patch_libhimmelblau,
     arch="amd64",
+    with_orchestrator=False,
 ):
     fam = FAMILIES[dist_cfg["family"]]
     selinux = bool(dist_cfg.get("selinux", False))
@@ -715,6 +730,10 @@ def render(
     else:
         bootstrap = fam["bootstrap"].rstrip()
     env = fam["env"] or ""
+    if dist_cfg["family"] != "ebuild":
+        # Cargo build scripts must preserve the same config/example selection
+        # when they regenerate files during package builds.
+        env = "\n".join(filter(None, [env, f"ENV WITH_ORCHESTRATOR={int(with_orchestrator)}"]))
 
     # Features
     tpm = bool(dist_cfg.get("tpm", False))
@@ -732,17 +751,23 @@ def render(
             features,
             dist_name,
             cross_target=cross_target,
+            with_orchestrator=with_orchestrator,
         )
     elif dist_name == "test":
         final_cmd = "CMD python3 scripts/test_hsm_pin_init.py && cargo test"
+        if with_orchestrator:
+            # Include the opt-in crate without dropping the default members.
+            final_cmd += " --workspace"
     elif dist_cfg["family"] == "ebuild":
         # Ebuild generation - lightweight, just runs gen_ebuild.py
         repo_root = Path(__file__).parent.parent.resolve()
-        final_cmd = build_gentoo_final_cmd(features, repo_root)
+        final_cmd = build_gentoo_final_cmd(features, repo_root, with_orchestrator)
     elif dist_cfg["family"] == "arch":
         final_cmd = build_arch_final_cmd()
     else:
-        final_cmd = build_rpm_final_cmd(features, selinux, bool(dist_cfg.get("apparmor", False)))
+        final_cmd = build_rpm_final_cmd(
+            features, selinux, bool(dist_cfg.get("apparmor", False)), with_orchestrator,
+        )
 
     blocks = []
     if dist_cfg.get("extra_prep"):
@@ -840,12 +865,6 @@ def main():
     ap.set_defaults(patch_libhimmelblau=False)
     args = ap.parse_args()
 
-    global WITH_ORCHESTRATOR, GEN_MANPAGE
-    WITH_ORCHESTRATOR = args.with_orchestrator
-    if WITH_ORCHESTRATOR:
-        PACKAGES.append(("himmelblau-orchestrator", "src/orchestrator", False))
-        GEN_MANPAGE += " --with-orchestrator"
-
     if args.only:
         want = {x.strip() for x in args.only.split(",") if x.strip()}
     else:
@@ -871,6 +890,7 @@ def main():
             DISTS[name],
             args.patch_libhimmelblau,
             arch=args.arch,
+            with_orchestrator=args.with_orchestrator,
         )
         path = os.path.join(args.out, f"Dockerfile.{name}{arch_suffix}")
         with open(path, "w", encoding="utf-8") as f:

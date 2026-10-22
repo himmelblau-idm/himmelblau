@@ -1275,14 +1275,15 @@ def main():
     print(f'Loading parameters from {xml_dir}...', file=sys.stderr)
     params, sections = load_all_parameters(str(xml_dir))
     if not args.with_orchestrator:
+        excluded_names = {
+            'experimental_orchestrator_enabled',
+            'orchestrator_socket',
+            'orchestrator_provider',
+            'orchestrator_timeout_secs',
+            'orchestrator_poll_secs',
+        }
         for param in params:
-            if param.name in {
-                'experimental_orchestrator_enabled',
-                'orchestrator_socket',
-                'orchestrator_provider',
-                'orchestrator_timeout_secs',
-                'orchestrator_poll_secs',
-            }:
+            if param.name in excluded_names:
                 param.documented = False
     print(f'Loaded {len(params)} parameters', file=sys.stderr)
 
