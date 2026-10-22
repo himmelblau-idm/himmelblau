@@ -514,16 +514,26 @@ fn initgroups_member_matches(
     cfg: &HimmelblauConfig,
     user_map: &UserMap,
 ) -> bool {
+    let matches_account = |upn: &str| {
+        // Entra stores UPNs using Unicode lowercase. OIDC can select native
+        // Okta at runtime, whose identity comparison is only ASCII-insensitive.
+        // Do not broaden that policy, or normalize unmapped local names.
+        if cfg.get_oidc_issuer_url().is_none() && upn.contains('@') {
+            upn.to_lowercase() == account_id.to_lowercase()
+        } else {
+            upn.eq_ignore_ascii_case(account_id)
+        }
+    };
     // UPNs name identities, not display aliases. Never reduce a different UPN
     // to a CN that can collide with an explicitly mapped local account.
     if member.contains('@') {
-        return member.eq_ignore_ascii_case(account_id);
+        return matches_account(member);
     }
     // Resolve local aliases in the same precedence order as the NSS entrypoint.
     user_map
         .get_upn_from_local(member)
         .or_else(|| cfg.map_name_to_upn(member))
-        .is_some_and(|upn| upn.eq_ignore_ascii_case(account_id))
+        .is_some_and(|upn| matches_account(&upn))
 }
 
 fn fallback_initgroups_gids(
@@ -1209,6 +1219,82 @@ mod tests {
             &cfg,
             &user_map
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn initgroups_member_matching_normalizes_entra_upns() -> Result<(), String> {
+        let mut cfg = test_config()?;
+        let path = create_temp_config("JorgLocal:JÖRG@CONTOSO.COM\n")?;
+        let user_map = UserMap::new(&path);
+        fs::remove_file(path).ok();
+
+        for (member, account_id, expected) in [
+            ("JÖRG@CONTOSO.COM", "jörg@contoso.com", true),
+            ("jörg@contoso.com", "JÖRG@CONTOSO.COM", true),
+            ("JorgLocal", "JÖRG@contoso.com", true),
+            ("JÖRG", "jörg@contoso.com", true),
+            ("JÖRG@fabrikam.com", "jörg@contoso.com", false),
+            ("JÖRG@contoso.com", "alice@contoso.com", false),
+            ("straße@contoso.com", "strasse@contoso.com", false),
+        ] {
+            assert_eq!(
+                initgroups_member_matches(member, account_id, &cfg, &user_map),
+                expected,
+                "member {member}, account {account_id}"
+            );
+        }
+
+        cfg.set("global", "cn_name_mapping", "false");
+        assert!(!initgroups_member_matches("JÖRG", "jörg", &cfg, &user_map));
+        Ok(())
+    }
+
+    #[test]
+    fn initgroups_member_matching_preserves_local_alias_case() -> Result<(), String> {
+        let cfg = test_config()?;
+        let path = create_temp_config("JÖRG:alice@contoso.com\njörg:bob@contoso.com\n")?;
+        let user_map = UserMap::new(&path);
+        fs::remove_file(path).ok();
+
+        for (member, account_id, expected) in [
+            ("JÖRG", "alice@contoso.com", true),
+            ("jörg", "bob@contoso.com", true),
+            ("JÖRG", "bob@contoso.com", false),
+            ("jörg", "alice@contoso.com", false),
+            ("JÖRG@contoso.com", "alice@contoso.com", false),
+            ("jörg@contoso.com", "bob@contoso.com", false),
+        ] {
+            assert_eq!(
+                initgroups_member_matches(member, account_id, &cfg, &user_map),
+                expected,
+                "member {member}, account {account_id}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn initgroups_member_matching_does_not_broaden_oidc_identity() -> Result<(), String> {
+        let mut cfg = test_config()?;
+        cfg.set("global", "oidc_issuer_url", "https://example.okta.com");
+        let path = create_temp_config("JorgLocal:JÖRG@contoso.com\n")?;
+        let user_map = UserMap::new(&path);
+        fs::remove_file(path).ok();
+
+        for (member, account_id, expected) in [
+            ("JÖRG@contoso.com", "jörg@contoso.com", false),
+            ("JorgLocal", "JÖRG@contoso.com", false),
+            ("JorgLocal", "jörg@contoso.com", true),
+            ("JÖRG@CONTOSO.COM", "JÖRG@contoso.com", true),
+            ("ALICE@contoso.com", "alice@contoso.com", true),
+        ] {
+            assert_eq!(
+                initgroups_member_matches(member, account_id, &cfg, &user_map),
+                expected,
+                "member {member}, account {account_id}"
+            );
+        }
         Ok(())
     }
 
