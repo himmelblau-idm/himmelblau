@@ -1240,8 +1240,7 @@ mod tests {
         ] {
             assert_eq!(
                 initgroups_member_matches(member, account_id, &cfg, &user_map),
-                expected,
-                "member {member}, account {account_id}"
+                expected
             );
         }
 
@@ -1267,8 +1266,7 @@ mod tests {
         ] {
             assert_eq!(
                 initgroups_member_matches(member, account_id, &cfg, &user_map),
-                expected,
-                "member {member}, account {account_id}"
+                expected
             );
         }
         Ok(())
@@ -1291,8 +1289,7 @@ mod tests {
         ] {
             assert_eq!(
                 initgroups_member_matches(member, account_id, &cfg, &user_map),
-                expected,
-                "member {member}, account {account_id}"
+                expected
             );
         }
         Ok(())
