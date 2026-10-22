@@ -250,7 +250,8 @@ jobs:
         if: steps.guard.outputs.proceed == 'true'
         run: |
           MAINTENANCE_CONTAINER_TESTS=1 python3 tooling/.github/scripts/test_stable_maintenance.py \
-            BranchAndCliTests.test_generated_assets_build_in_read_only_container
+            BranchAndCliTests.test_generated_assets_build_in_read_only_container \
+            BranchAndCliTests.test_backport_cache_reuses_artifacts_and_assets_then_final_build_is_clean
 
 
       - name: Prepare exact locked dependencies in the fresh private Cargo cache
@@ -304,6 +305,7 @@ jobs:
       - name: Backports — classify, adapt, build and format each commit in order
         if: steps.guard.outputs.proceed == 'true' && startsWith(inputs.stage, 'backports-')
         env:
+          MAINTENANCE_BACKPORT_CACHE: '1'
           AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
           AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
           AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
