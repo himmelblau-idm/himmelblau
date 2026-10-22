@@ -1183,6 +1183,14 @@ fn fido_auth_qr_bluetooth_only(
     ))
 }
 
+fn current_fido_authority_host(cfg: &HimmelblauConfig, account_id: &str) -> Result<String, String> {
+    // PAM initialization can discover and persist an alias after cfg was loaded.
+    let current = HimmelblauConfig::new(Some(&cfg.get_config_file()))?;
+    current
+        .get_authority_host_for_account(account_id)
+        .ok_or_else(|| "Cannot resolve authority host for FIDO account".to_string())
+}
+
 fn handle_pam_auth_response_fido(
     state: &AuthenticateState,
     fido_challenge: String,
@@ -1190,9 +1198,12 @@ fn handle_pam_auth_response_fido(
     has_physical_security_key: bool,
     has_cross_device: bool,
 ) -> PamWhatNext {
-    let Some(authority_host) = state.cfg.get_authority_host_for_account(&state.account_id) else {
-        error!("Cannot resolve authority host for FIDO account");
-        return PamWhatNext::Finish(PamResultCode::PAM_AUTH_ERR);
+    let authority_host = match current_fido_authority_host(&state.cfg, &state.account_id) {
+        Ok(host) => host,
+        Err(err) => {
+            error!("Failed to reload FIDO authority configuration: {}", err);
+            return PamWhatNext::Finish(PamResultCode::PAM_AUTH_ERR);
+        }
     };
     let timeout_ms = state.cfg.get_fido_timeout().saturating_mul(1000);
     let fido_prompt = state.cfg.get_fido_prompt();
@@ -1733,6 +1744,33 @@ mod tests {
     fn test_config(contents: &str) -> HimmelblauConfig {
         let temp_file = create_temp_config(contents);
         HimmelblauConfig::new(Some(&temp_file)).unwrap()
+    }
+
+    #[test]
+    fn fido_authority_sees_aliases_persisted_after_initial_config_load() {
+        let initial = "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\n";
+        let path = create_temp_config(initial);
+        let cfg = HimmelblauConfig::new(Some(&path)).unwrap();
+        let account = "alice@alias.example.com";
+        assert_eq!(
+            cfg.get_authority_host_for_account(account),
+            Some("login.microsoftonline.com".to_string())
+        );
+        fs::write(&path, format!("{initial}domain_aliases = alias.example.com\n")).unwrap();
+        assert_eq!(
+            current_fido_authority_host(&cfg, account),
+            Ok("login.microsoftonline.us".to_string())
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn fido_authority_rejects_config_reload_errors() {
+        let path = create_temp_config("");
+        let cfg = HimmelblauConfig::new(Some(&path)).unwrap();
+        fs::write(&path, "[unterminated section").unwrap();
+        assert!(current_fido_authority_host(&cfg, "alice@example.com").is_err());
+        fs::remove_file(path).unwrap();
     }
 
     fn test_options(mfa_poll_prompt: bool) -> Options {
