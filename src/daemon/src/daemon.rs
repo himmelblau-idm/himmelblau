@@ -707,11 +707,22 @@ async fn handle_client(
                                                                 ))
                                                                 .await
                                                         {
+                                                            let authority_host = match HimmelblauConfig::new(Some(&cfg.get_config_file())) {
+                                                                Ok(current) => current.get_authority_host_for_account(&account_id),
+                                                                Err(err) => {
+                                                                    error!("Failed to reload authority configuration: {}", err);
+                                                                    None
+                                                                }
+                                                            };
                                                             let (tx, rx) = oneshot::channel();
                                                             match task_channel_tx
                                                                 .send_timeout(
                                                                     (
-                                                                        TaskRequest::KerberosConfig(top_level_names, tenant_id),
+                                                                        TaskRequest::KerberosConfig(
+                                                                            top_level_names,
+                                                                            tenant_id,
+                                                                            authority_host,
+                                                                        ),
                                                                         tx,
                                                                     ),
                                                                     Duration::from_millis(100),
@@ -2334,7 +2345,7 @@ async fn main() -> ExitCode {
             let dbus_cachelayer = cachelayer.clone();
             let e_broadcast_rx = broadcast_tx.subscribe();
             let task_d = match himmelblau_broker_serve_with_listener::<Broker>(
-                Broker { cachelayer: dbus_cachelayer },
+                Broker { cachelayer: dbus_cachelayer, config_path: cfg.get_config_file() },
                 if broker_listener.is_some() { None } else { Some(broker_socket_path.as_str()) },
                 e_broadcast_rx,
                 broker_listener,

@@ -555,6 +555,17 @@ impl HimmelblauConfig {
         }
     }
 
+    /// Resolve a user's configured domain (including a known alias) before
+    /// selecting its authority. The server-generated config is already merged
+    /// into this configuration by `new`.
+    pub fn get_authority_host_for_account(&self, account_id: &str) -> Option<String> {
+        let (_, domain) = split_username(account_id)?;
+        let domain = self
+            .get_primary_domain_from_alias_simple(domain)
+            .unwrap_or_else(|| domain.to_string());
+        Some(self.get_authority_host(&domain))
+    }
+
     pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
         self.config.get(domain, "tenant_id")
     }
@@ -1799,6 +1810,19 @@ mod tests {
             config_empty.get_authority_host("example.com"),
             DEFAULT_AUTHORITY_HOST
         );
+    }
+
+    #[test]
+    fn test_get_authority_host_for_account_resolves_aliases() {
+        let temp_file = create_temp_config(
+            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\ndomain_aliases = alias.example.com\n",
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_authority_host_for_account("alice@alias.example.com"),
+            Some("login.microsoftonline.us".to_string())
+        );
+        assert_eq!(config.get_authority_host_for_account("alice"), None);
     }
 
     #[test]
