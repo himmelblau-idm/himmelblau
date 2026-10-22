@@ -1756,7 +1756,11 @@ mod tests {
             cfg.get_authority_host_for_account(account),
             Some("login.microsoftonline.com".to_string())
         );
-        fs::write(&path, format!("{initial}domain_aliases = alias.example.com\n")).unwrap();
+        fs::write(
+            &path,
+            format!("{initial}domain_aliases = alias.example.com\n"),
+        )
+        .unwrap();
         assert_eq!(
             current_fido_authority_host(&cfg, account),
             Ok("login.microsoftonline.us".to_string())

@@ -571,6 +571,17 @@ impl HimmelblauConfig {
         Some(self.get_authority_host(&domain))
     }
 
+    /// Broker environments are endpoint authorities, so preserve an OIDC issuer's
+    /// nondefault port. FIDO RP IDs continue to use the hostname-only accessor.
+    pub fn get_broker_environment_for_account(&self, account_id: &str) -> Option<String> {
+        if let Some(issuer) = self.get_oidc_issuer_url() {
+            let issuer = url::Url::parse(&issuer).ok()?;
+            issuer.host_str()?;
+            return Some(issuer[url::Position::BeforeHost..url::Position::AfterPort].to_string());
+        }
+        self.get_authority_host_for_account(account_id)
+    }
+
     pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
         self.config.get(domain, "tenant_id")
     }
@@ -1839,6 +1850,50 @@ mod tests {
                 Some("id.example.org".to_string())
             );
         }
+    }
+
+    #[test]
+    fn test_broker_environment_preserves_oidc_ports() {
+        for (issuer, environment, host) in [
+            (
+                "https://id.example.org:8443/realm",
+                "id.example.org:8443",
+                "id.example.org",
+            ),
+            (
+                "https://id.example.org/realm",
+                "id.example.org",
+                "id.example.org",
+            ),
+            ("https://[::1]:8443/realm", "[::1]:8443", "[::1]"),
+        ] {
+            let contents = format!("[global]\noidc_issuer_url = {issuer}\n");
+            let temp_file = create_temp_config(&contents);
+            let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+            for account in ["alice", "alice@other.example"] {
+                assert_eq!(
+                    config.get_broker_environment_for_account(account),
+                    Some(environment.to_string())
+                );
+                assert_eq!(
+                    config.get_authority_host_for_account(account),
+                    Some(host.to_string())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_broker_environment_preserves_entra_alias_authority() {
+        let temp_file = create_temp_config(
+            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\ndomain_aliases = alias.example.com\n",
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_broker_environment_for_account("alice@alias.example.com"),
+            Some("login.microsoftonline.us".to_string())
+        );
+        assert_eq!(config.get_broker_environment_for_account("alice"), None);
     }
 
     #[test]

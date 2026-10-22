@@ -115,11 +115,11 @@ pub(crate) struct Broker {
 }
 
 impl Broker {
-    fn authority_host_for_account(&self, account_id: &str) -> Result<String, Box<dyn Error>> {
+    fn environment_for_account(&self, account_id: &str) -> Result<String, Box<dyn Error>> {
         // Domain discovery can update the server-generated config after startup.
         let config = HimmelblauConfig::new(Some(&self.config_path))?;
         config
-            .get_authority_host_for_account(account_id)
+            .get_broker_environment_for_account(account_id)
             .ok_or_else(|| "Unable to resolve account authority".into())
     }
 }
@@ -223,7 +223,7 @@ impl HimmelblauBroker for Broker {
             .await
             .map_err(|_| "Unable to load account")?
             .ok_or("Unable to find account")?;
-        let authority_host = self.authority_host_for_account(&user.spn)?;
+        let authority_host = self.environment_for_account(&user.spn)?;
         let res = json!({
             "accounts": [
                 {
@@ -265,7 +265,7 @@ impl HimmelblauBroker for Broker {
             .await
             .map_err(|_| "Unable to load account")?
             .ok_or("Unable to find account")?;
-        let authority_host = self.authority_host_for_account(&user.spn)?;
+        let authority_host = self.environment_for_account(&user.spn)?;
         let request: SsoCookieReq =
             serde_json::from_str(&request_json).map_err(|e| format!("{:?}", e))?;
         let account = request
