@@ -6,7 +6,7 @@
 
 # SYNOPSIS
 
-**pam_himmelblau.so** [debug] [use_first_pass] [ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin] [no_info_prompt] [try_unseal]
+**pam_himmelblau.so** [debug] [use_first_pass] [ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin] [no_info_prompt] [try_unseal] [max_tries=N]
 
 # DESCRIPTION
 
@@ -31,6 +31,9 @@
 
 - **no_info_prompt**  
   Folds any informational text (the configured Entra password prompt and any MFA message) into the password prompt itself, so the PAM conversation carries a single `PAM_PROMPT_ECHO_OFF` instead of sending a separate `PAM_TEXT_INFO` message first. Required for PAM consumers that cannot carry a standalone info message during authentication, such as MariaDB's `auth_pam` dialog relay.
+
+- **max_tries=N**  
+  Ends authentication with `PAM_MAXTRIES` after N denied attempts, so the rest of the stack (for example `pam_faillock`) sees the failure. The default, 0, asks again after every denial. Set `max_tries=1` for display managers such as SDDM that answer prompts without the user and would otherwise resubmit the same password indefinitely. Network transport failures switch to the configured offline authentication method without counting as a denial. Invalid limits are ignored. If repeated options conflict, the smallest positive limit wins; zero does not override a positive limit.
 
 - **try_unseal**  
   Silently attempt to unseal the Hello secret using the password from a previous PAM module (similar to how `pam_gnome_keyring.so` unlocks the GNOME keyring at login). When Hello TOTP is disabled, the dedicated try_unseal path validates the PIN locally on every invocation and restores valid cached SSO material. If a cached Entra PRT has expired and the provider is online, the daemon uses the validated Hello key to request and cache a replacement PRT; an offline invocation remains local and fails only the unseal attempt. Authenticated user information is refreshed only when `cache_timeout` has elapsed and the provider supports a non-interactive refresh. Implies `use_first_pass` and `ignore_unknown_user`. Will never fail the PAM authentication stack and never wait for an answer, as it simply sends a request via IPC to himmelblaud. Intended for use with `user_map_file` setups where a local user logs in via `pam_unix` or another local auth flow, so that the Hello secret will be unsealed automatically, without requiring a manual `aad-tool` invocation. Requires the local user password to be identical to the himmelblau PIN. This option is incompatible with `enable_hello_totp = true`: the daemon logs an error and refuses the unseal before loading cached SSO material because this non-interactive hook cannot collect the required TOTP. Use the normal interactive Himmelblau authentication flow when Hello TOTP is required.
