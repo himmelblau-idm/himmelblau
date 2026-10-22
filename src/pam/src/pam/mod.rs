@@ -84,7 +84,7 @@ use crate::pam_hooks;
 use constants::PamResultCode;
 
 use tracing::instrument;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
@@ -320,14 +320,14 @@ fn canonical_user_name(
     let (canonical, uid) = match lookup(login_name) {
         Ok(Some(entry)) => entry,
         Ok(None) => {
-            warn!(
+            debug!(
                 %login_name,
                 "No name service entry for the authenticated user, PAM_USER left unchanged"
             );
             return None;
         }
         Err(err) => {
-            warn!(
+            error!(
                 ?err,
                 %login_name,
                 "Failed to look up the authenticated user, PAM_USER left unchanged"
@@ -344,7 +344,7 @@ fn canonical_user_name(
             Some(canonical)
         }
         Ok(resolved) => {
-            warn!(
+            error!(
                 %login_name,
                 %canonical,
                 ?resolved,
@@ -353,7 +353,7 @@ fn canonical_user_name(
             None
         }
         Err(err) => {
-            warn!(
+            error!(
                 ?err,
                 %login_name,
                 %canonical,
@@ -364,11 +364,52 @@ fn canonical_user_name(
     }
 }
 
+/// Return the canonical account name for `login_name`, as `canonical_user_name`
+/// does, but only when mapping it to a UPN selects `authenticated_account_id`.
+/// NSS proves that both names have the same UID, not that the later PAM
+/// phases, which map PAM_USER again, select the account that authenticated.
+/// The local name keeps its spelling; only the mapped UPNs are compared.
+fn canonical_user_name_for_account(
+    login_name: &str,
+    authenticated_account_id: &str,
+    lookup: impl Fn(&str) -> io::Result<Option<(String, libc::uid_t)>>,
+    map_name: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let canonical = canonical_user_name(login_name, lookup)?;
+    match map_name(&canonical) {
+        // ASCII case equivalence is accepted by Entra, generic OIDC and native
+        // Okta. Do not fold Unix names or assume Unicode equivalence for Okta.
+        Some(account_id) if account_id.eq_ignore_ascii_case(authenticated_account_id) => {
+            Some(canonical)
+        }
+        _ => {
+            error!(
+                %login_name,
+                %canonical,
+                "Canonical account name does not map to the authenticated account, PAM_USER left unchanged"
+            );
+            None
+        }
+    }
+}
+
 /// Replace PAM_USER with the canonical account name, so that applications that
 /// read it back after authentication, such as GDM, see the account name rather
 /// than the alias entered at the login prompt.
-fn canonicalize_pam_user(pamh: &PamHandle, login_name: &str) {
-    if let Some(canonical) = canonical_user_name(login_name, nss_user_by_name) {
+fn canonicalize_pam_user(
+    pamh: &PamHandle,
+    login_name: &str,
+    account_id: &str,
+    cfg: &HimmelblauConfig,
+    user_map: &UserMap,
+) {
+    if let Some(canonical) =
+        canonical_user_name_for_account(login_name, account_id, nss_user_by_name, |name| {
+            user_map
+                .get_upn_from_local(name)
+                .or_else(|| cfg.map_name_to_upn(name))
+        })
+    {
         match pamh.set_item_str::<PamUser>(&canonical) {
             Ok(()) => debug!(%login_name, %canonical, "Set PAM_USER to the canonical account name"),
             Err(err) => error!(?err, %login_name, %canonical, "Failed to set PAM_USER"),
@@ -609,6 +650,9 @@ impl PamHooks for PamKanidm {
             base_printer
         };
 
+        // Authentication consumes cfg. Preserve the same mapping configuration for
+        // the optional post-success identity check, not a freshly reloaded config.
+        let canonicalize_cfg = canonicalize_user.then(|| cfg.clone());
         let result = authenticate_with_client(
             daemon_client,
             authtok,
@@ -631,8 +675,10 @@ impl PamHooks for PamKanidm {
             }
         }
 
-        if canonicalize_user && result == PamResultCode::PAM_SUCCESS {
-            canonicalize_pam_user(pamh, &login_name);
+        if result == PamResultCode::PAM_SUCCESS {
+            if let Some(cfg) = canonicalize_cfg {
+                canonicalize_pam_user(pamh, &login_name, &account_id, &cfg, &user_map);
+            }
         }
 
         result
@@ -1426,5 +1472,107 @@ mod tests {
             ("alice", "alice@example.com", 1000),
         ]);
         assert_eq!(canonical_user_name("alice@example.com", &nss), None);
+    }
+
+    #[test]
+    fn test_canonical_user_name_rejects_same_uid_different_pam_account() {
+        // Another NSS provider can consider these aliases of one Unix user,
+        // while PAM's case-sensitive user_map selects two different accounts.
+        let nss = fake_nss(&[("Alice", "alice", 1000), ("alice", "alice", 1000)]);
+        assert_eq!(
+            canonical_user_name("Alice", &nss),
+            Some("alice".to_string())
+        );
+        let map_name = |name: &str| match name {
+            "Alice" => Some("alice@example.com".to_string()),
+            "alice" => Some("bob@example.com".to_string()),
+            _ => None,
+        };
+        let authenticated = map_name("Alice").unwrap();
+        assert_eq!(
+            canonical_user_name_for_account("Alice", &authenticated, &nss, map_name),
+            None
+        );
+    }
+
+    #[test]
+    fn test_canonical_user_name_requires_pam_mapping() {
+        let nss = fake_nss(&[
+            ("alice@example.com", "alice", 1000),
+            ("alice", "alice", 1000),
+        ]);
+        assert_eq!(
+            canonical_user_name_for_account("alice@example.com", "alice@example.com", nss, |_| {
+                None
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn test_canonical_user_name_preserves_local_name_case() {
+        let nss = fake_nss(&[
+            ("alice@example.com", "Alice", 1000),
+            ("Alice", "Alice", 1000),
+        ]);
+        let map_name = |name: &str| match name {
+            "Alice" => Some("alice@example.com".to_string()),
+            "alice" => Some("bob@example.com".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            canonical_user_name_for_account(
+                "alice@example.com",
+                "alice@example.com",
+                nss,
+                map_name,
+            ),
+            Some("Alice".to_string())
+        );
+    }
+
+    #[test]
+    fn test_canonical_user_name_checks_nss_before_mapping() {
+        let nss = fake_nss(&[
+            ("alice@example.com", "alice", 1000),
+            ("alice", "alice", 2000),
+        ]);
+        assert_eq!(
+            canonical_user_name_for_account("alice@example.com", "alice@example.com", nss, |_| {
+                panic!("A failed NSS guard must not run a name-mapping script");
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn test_canonical_user_name_accepts_case_only_upn_alias() {
+        let nss = fake_nss(&[
+            ("ALICE@example.com", "alice", 1000),
+            ("alice", "alice", 1000),
+        ]);
+        assert_eq!(
+            canonical_user_name_for_account("ALICE@example.com", "ALICE@example.com", nss, |_| {
+                Some("alice@example.com".to_string())
+            }),
+            Some("alice".to_string())
+        );
+    }
+
+    #[test]
+    fn test_canonical_user_name_does_not_assume_unicode_case_equivalence() {
+        let nss = fake_nss(&[
+            ("Älice@example.com", "alice", 1000),
+            ("alice", "alice", 1000),
+        ]);
+        assert_eq!(
+            canonical_user_name_for_account(
+                "Älice@example.com",
+                "Älice@example.com",
+                nss,
+                |_| Some("älice@example.com".to_string()),
+            ),
+            None
+        );
     }
 }
