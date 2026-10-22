@@ -6,6 +6,15 @@ const source = fs.readFileSync(`${__dirname}/extension.js`, 'utf8');
 const parser = source.match(/function extractUserCode\(message\) \{[\s\S]*?\n\}/)[0];
 const context = vm.createContext({});
 vm.runInContext(parser, context);
+// Match the complete-URI device prompt from po/de.po without a user_code query.
+const localizedPrompt = [
+    'Scannen Sie den QR-Code, um sich anzumelden, oder öffnen Sie diesen Link auf einem anderen Gerät:',
+    'https://idp.example/activate?session=opaque',
+    'Falls Sie ihn nicht scannen können, besuchen Sie:',
+    'https://idp.example/x',
+    'Und geben Sie den Code ein:',
+    'ABCDEFGHJ',
+].join('\n');
 for (const [message, expected] of [
     ['And enter the code:\nABCD-EFGH', 'ABCD-EFGH'],
     ['And enter the code:\nABCDEFGHJ', 'ABCDEFGHJ'],
@@ -18,6 +27,27 @@ for (const [message, expected] of [
     ['https://idp.example/x\nABCDEFGHJ', 'ABCDEFGHJ'],
     ['Öffnen Sie https://idp.example/x\nGeben Sie diesen Code ein:\nABCDEFGHJ', 'ABCDEFGHJ'],
     ['Continuer sur https://idp.example/x\r\n\t ABCDEFGHJ \t\r\n', 'ABCDEFGHJ'],
+    ['CONTINUE\nABCDEFGHJ\nhttps://idp.example/x', null],
+    ['CONTINUE\nhttps://idp.example/x\nABCDEFGHJ', null],
+    ['CONTINUE\r\n\t ABCDEFGHJ \t\r\nhttps://idp.example/x', null],
+    [localizedPrompt, 'ABCDEFGHJ'],
+    [`CONTINUE\n${localizedPrompt}`, null],
+    [`${localizedPrompt}\nCONTINUE`, null],
+    ['CONTINUE\nE9Y6JX8J7\nhttps://idp.example/x', null],
+    ['ABCDEFGHJ\nZYXWVUTSR', null],
+    ['ABCDEFGHJ\r\n\t ABCDEFGHJ \t\r\nhttps://idp.example/x', 'ABCDEFGHJ'],
+    ['ABCDEFGHJ\nABCDEFGHJ\nCONTINUE\nhttps://idp.example/x', null],
+    // Opaque codes may spell words; ambiguity checks must not blacklist them.
+    ['CONTINUE', 'CONTINUE'],
+    ['CONTINUE\nhttps://idp.example/x', 'CONTINUE'],
+    ['ABCDEFGHJ\nCONTINUE\nhttps://idp.example/x', null],
+    ['CONTINUE\nhttps://idp.example/x?user_code=ZYXWVUTSR\nABCDEFGHJ', 'ZYXWVUTSR'],
+    ['Enter the code: ZYXWVUTSR\nCONTINUE\nABCDEFGHJ\nhttps://idp.example/x', 'ZYXWVUTSR'],
+    ['CONTINUE\nABCD-EFGH\nABCDEFGHJ\nhttps://idp.example/x', 'ABCD-EFGH'],
+    ['ABCDEFGHJ\nhttps://idp.example/x\nContinue', 'ABCDEFGHJ'],
+    ['ABCDEFGHJ\nhttps://idp.example/x\nPRESS ENTER TO CONTINUE', 'ABCDEFGHJ'],
+    ['Enter the code: ABCDEFGHJ\nhttps://idp.example/x\nCONTINUE', 'ABCDEFGHJ'],
+    ['https://idp.example/x?user_code=ABCDEFGHJ\nCONTINUE', 'ABCDEFGHJ'],
     ['Continue authentication at https://example.com', null],
     ['Continue\nAuthentication\nhttps://example.com', null],
     ['CONTINUE AUTHENTICATION AT https://example.com', null],
@@ -27,4 +57,4 @@ for (const [message, expected] of [
     ['https://microsoft.com/devicelogin', null],
     ['', null],
 ]) assert.equal(context.extractUserCode(message), expected, message);
-console.log('19 device-code parsing regressions passed');
+console.log('39 device-code parsing regressions passed');
