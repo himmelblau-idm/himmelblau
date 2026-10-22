@@ -70,6 +70,14 @@ function extractUserCode(message) {
     // Match hyphenated code pattern (e.g. "ABCD-EFGH") - other providers
     const hyphenMatch = message.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/i);
     if (hyphenMatch) return hyphenMatch[1].toUpperCase();
+    // Recognize an explicit "Code: XXXXXXXXX" line without matching labels
+    // inside URLs or prose. Conflicting labeled values are ambiguous too.
+    const labeledLines = message.match(/^[ \t]*Code:[ \t]*[A-Z0-9]{8,9}[ \t]*\r?$/gmi);
+    if (labeledLines) {
+        const codes = Array.from(new Set(labeledLines.map(line =>
+            line.substring(line.indexOf(':') + 1).trim().toUpperCase())));
+        return codes.length === 1 ? codes[0] : null;
+    }
     // Localized prompts put codes on their own line. Without an explicit
     // marker, only use a unique uppercase value rather than guessing
     // between a code and a heading or footer. Opaque codes may spell words.
