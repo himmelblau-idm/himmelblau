@@ -3975,11 +3975,16 @@ impl IdProvider for HimmelblauProvider {
                         Err(e) => {
                             error!("Failed to change user password: {:?}", e);
                             *cred_handler = AuthCredHandler::ChangePassword { old_cred: old_cred.to_string() };
+                            // The provider's own reason (the tenant's password policy, for one), not the generic refusal.
+                            let reason = match &e {
+                                MsalError::GeneralFailure(msg) => msg.to_string(),
+                                _ => msal_error_to_user_message(&e),
+                            };
                             return Ok((
                                 AuthResult::Next(
                                     AuthRequest::ChangePassword { msg: tr_fmt(
                                         "Failed to change user password: {msg}",
-                                        &[("msg", msal_error_to_user_message(&e))],
+                                        &[("msg", reason)],
                                     )}
                                 ),
                                 AuthCacheAction::None,
