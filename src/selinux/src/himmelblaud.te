@@ -945,7 +945,7 @@ require {
 	class file { create getattr lock map open read setattr unlink write };
 	class lnk_file read;
 	class sock_file write;
-	class unix_stream_socket { connectto create bind listen setopt getopt getattr read write ioctl shutdown };
+	class unix_stream_socket { connectto create bind listen accept setopt getopt getattr read write ioctl shutdown };
 }
 
 allow init_t himmelblau_etc_t:dir { getattr open read search };

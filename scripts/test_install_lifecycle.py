@@ -29,6 +29,34 @@ class SocketPolicyTests(unittest.TestCase):
         )
 
 
+    def test_pid1_listener_permissions_are_unconditionally_required(self):
+        # An optional block's require does not declare permissions for this
+        # unconditional rule. Check the init_t block, not any occurrence in
+        # the policy. This is static coverage, not a substitute for checkmodule.
+        policy = (ROOT / 'src/selinux/src/himmelblaud.te').read_text()
+        init_policy = policy.split(
+            '# Rules for init_t (core system type - exists on all distros)', 1,
+        )[1]
+        init_policy = re.sub(r'#.*', '', init_policy)
+        required_block = re.match(r'\s*require\s*\{(.*?)^\}', init_policy, re.S | re.M)
+        self.assertIsNotNone(required_block)
+        required = re.search(
+            r'class\s+unix_stream_socket\s+\{([^}]+)\}\s*;',
+            required_block.group(1),
+        )
+        self.assertIsNotNone(required)
+        grants = re.findall(
+            r'allow\s+init_t\s+himmelblaud_t:unix_stream_socket\s+'
+            r'\{([^}]+)\}\s*;', init_policy,
+        )
+        granted = set(' '.join(grants).split())
+        self.assertTrue(granted)
+        self.assertFalse(
+            granted - set(required.group(1).split()),
+            'Every listener permission must be declared in the unconditional require',
+        )
+
+
 class Sandbox:
     def __init__(self, root, active=False, selinux=False, debian=False, container=False):
         self.root = root
