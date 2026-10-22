@@ -2535,7 +2535,7 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::HimmelblauUnixParser;
-    use super::{insert_module_line, preserve_numeric_account_success};
+    use super::{auth_abort_control, insert_module_line, preserve_numeric_account_success};
     use clap::CommandFactory;
     use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
     use himmelblau_unix_common::tpm::resolve_hsm_type;
@@ -2829,6 +2829,44 @@ mod tests {
         assert_eq!(
             content,
             "auth required pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n"
+        );
+        remove_temp_file(&path)
+    }
+
+    #[test]
+    fn auth_abort_control_preserves_existing_actions() {
+        assert_eq!(
+            auth_abort_control("auth [success=2 default=ignore] pam_himmelblau.so").unwrap(),
+            "auth [success=2 default=ignore abort=die] pam_himmelblau.so"
+        );
+        for control in ["required", "requisite", "sufficient", "optional"] {
+            let line = format!("auth {} pam_himmelblau.so", control);
+            let updated = auth_abort_control(&line).unwrap();
+            assert!(updated.contains("abort=die"));
+            assert_eq!(auth_abort_control(&updated).unwrap(), updated);
+        }
+        assert!(auth_abort_control("account sufficient pam_himmelblau.so").is_none());
+    }
+
+    #[test]
+    fn auth_abort_upgrade_rewrites_existing_rule_once() -> anyhow::Result<()> {
+        let path = temp_pam_file(
+            "upgrade-auth",
+            "auth [success=2 default=ignore] pam_himmelblau.so ignore_unknown_user set_authtok\\nauth required pam_unix.so\\n",
+        )?;
+        for _ in 0..2 {
+            insert_module_line(
+                path.to_str().unwrap_or_default(),
+                "auth [success=done new_authtok_reqd=done abort=die default=ignore] pam_himmelblau.so ignore_unknown_user set_authtok",
+                None,
+                None,
+                true,
+                false,
+            )?;
+        }
+        assert_eq!(
+            read_to_string(&path)?,
+            "auth [success=2 default=ignore abort=die] pam_himmelblau.so ignore_unknown_user set_authtok\\nauth required pam_unix.so\\n"
         );
         remove_temp_file(&path)
     }
