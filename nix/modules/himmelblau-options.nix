@@ -936,70 +936,10 @@ in
       example = "ipv4-only";
     };
 
-    experimental_orchestrator_enabled = mkOption {
-      type = types.nullOr (types.bool);
-      default = false;
-      description = ''
-        Enable the experimental optional himmelblaud-orchestrator backend for browser-driven
-        OIDC authentication flows.
-        
-        When enabled, OIDC interactive authentication can be delegated to the
-        orchestrator over a Unix socket. If the orchestrator is unavailable or returns
-        an error, Himmelblau falls back to the built-in device authorization grant
-        (DAG) flow.
-      '';
-      example = true;
-    };
 
-    orchestrator_socket = mkOption {
-      type = types.nullOr (types.str);
-      default = "/var/run/himmelblaud/orchestrator.sock";
-      description = ''
-        Unix socket path used by himmelblaud to communicate with
-        himmelblaud-orchestrator.
-        
-        This path must match the orchestrator service configuration.
-      '';
-      example = "/run/himmelblaud/orchestrator.sock";
-    };
 
-    orchestrator_provider = mkOption {
-      type = types.nullOr (types.str);
-      default = null;
-      description = ''
-        Optional explicit provider key passed to himmelblaud-orchestrator when starting
-        an OIDC browser flow.
-        
-        If unset, the orchestrator auto-detects the provider from issuer URL, domain,
-        or embedded provider match rules.
-      '';
-      example = "keycloak";
-    };
 
-    orchestrator_timeout_secs = mkOption {
-      type = types.nullOr (types.ints.unsigned);
-      default = 30;
-      description = ''
-        Timeout in seconds for a single request/response exchange with
-        himmelblaud-orchestrator.
-        
-        This timeout applies to connect, send, and receive operations on the
-        orchestrator Unix socket.
-      '';
-      example = 10;
-    };
 
-    orchestrator_poll_secs = mkOption {
-      type = types.nullOr (types.ints.unsigned);
-      default = 2;
-      description = ''
-        Polling interval in seconds used for orchestrator-driven MFA wait prompts.
-        
-        This value controls how frequently PAM should poll the orchestrator for
-        progress while waiting for external approvals (for example push MFA).
-      '';
-      example = 3;
-    };
 
     enable_kerberos_cache = mkOption {
       type = types.nullOr (types.bool);

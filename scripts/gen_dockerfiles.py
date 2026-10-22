@@ -143,6 +143,8 @@ FAMILIES = {
 
 # ---- Final command builders --------------------------------------------------
 
+WITH_ORCHESTRATOR = False
+
 PACKAGES = [
     # (crate name, crate source, needs_tpm_feature)
     # Only himmelblaud (src/daemon) and src/common define a tpm feature.
@@ -160,7 +162,6 @@ PACKAGES = [
     ("apparmor", "src/apparmor", False),
     ("o365", "src/o365", False),
     ("himmelblau-collabora", "src/collabora", False),
-    ("himmelblau-orchestrator", "src/orchestrator", False),
 ]
 
 RPM_INTERNAL_REQUIRES = {
@@ -211,10 +212,12 @@ def build_deb_final_cmd(
 
 def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
     feat_str = f" --features {','.join(features)}" if features else ""
-    build = f"cargo build ${{CARGO_PATCH_ARG}} --release{feat_str} && \\ \n{CMD_TAB}"
-    strip = CMD_SEP.join(
-        ["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker", "himmelblaud-orchestrator"]]
-    )
+    workspace_args = "--workspace" if WITH_ORCHESTRATOR else "--workspace --exclude himmelblau-orchestrator"
+    build = f"cargo build ${{CARGO_PATCH_ARG}} --release {workspace_args}{feat_str} && \\ \n{CMD_TAB}"
+    strip_targets = ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker"]
+    if WITH_ORCHESTRATOR:
+        strip_targets.append("himmelblaud-orchestrator")
+    strip = CMD_SEP.join(["strip -s target/release/%s" % s for s in strip_targets])
     pkgs = []
     for pkg in PACKAGES:
         if pkg[0] == "selinux" and not selinux:
@@ -814,6 +817,10 @@ def main():
     ap.add_argument("--out", default="./dockerfiles", help="Output directory")
     ap.add_argument("--only", default="", help="Comma-separated list of dists to render")
     ap.add_argument(
+        "--with-orchestrator", action="store_true",
+        help="Build the experimental himmelblau-orchestrator package and include its config options",
+    )
+    ap.add_argument(
         "--arch", default="amd64",
         choices=sorted(ARCH_MAP.keys()),
         help="Target architecture (default: amd64)",
@@ -832,6 +839,12 @@ def main():
     )
     ap.set_defaults(patch_libhimmelblau=False)
     args = ap.parse_args()
+
+    global WITH_ORCHESTRATOR, GEN_MANPAGE
+    WITH_ORCHESTRATOR = args.with_orchestrator
+    if WITH_ORCHESTRATOR:
+        PACKAGES.append(("himmelblau-orchestrator", "src/orchestrator", False))
+        GEN_MANPAGE += " --with-orchestrator"
 
     if args.only:
         want = {x.strip() for x in args.only.split(",") if x.strip()}

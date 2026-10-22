@@ -109,6 +109,8 @@ DOCKER := $(shell command -v podman || command -v docker)
 NIX := $(shell command -v nix)
 ORCHESTRATOR_CONTAINER_IMAGE ?= localhost/himmelblau/playwright-orchestrator:latest
 ORCHESTRATOR_CONTAINER_DIRECTORY ?= src/orchestrator/container
+WITH_ORCHESTRATOR ?= 0
+ORCHESTRATOR_FLAG := $(if $(filter 1,$(WITH_ORCHESTRATOR)),--with-orchestrator,)
 
 # Optional: Mount local libhimmelblau for development testing
 # Usage: LIBHIMMELBLAU_LOCAL=/path/to/libhimmelblau make ubuntu24.04
@@ -216,10 +218,10 @@ uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper/p
 	echo "Uninstall complete."
 
 dockerfiles:
-	python3 scripts/gen_dockerfiles.py --out ./images/ $(PATCH_LIBHIMMELBLAU)
+	python3 scripts/gen_dockerfiles.py --out ./images/ $(PATCH_LIBHIMMELBLAU) $(ORCHESTRATOR_FLAG)
 
 dockerfiles-arm64:
-	python3 scripts/gen_dockerfiles.py --out ./images/ --arch arm64 $(PATCH_LIBHIMMELBLAU)
+	python3 scripts/gen_dockerfiles.py --out ./images/ --arch arm64 $(PATCH_LIBHIMMELBLAU) $(ORCHESTRATOR_FLAG)
 
 orchestrator-container: ## Build the local orchestrator Playwright container image
 	pushd $(ORCHESTRATOR_CONTAINER_DIRECTORY) && $(DOCKER) build -t $(ORCHESTRATOR_CONTAINER_IMAGE) .
@@ -268,12 +270,14 @@ package: deb rpm sbom ## Build packages for all supported distros (DEB+RPM)
 	ls ./packaging/
 
 man: ## Generate the himmelblau.conf man page
-	python3 src/common/scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5
+	python3 src/common/scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5 $(ORCHESTRATOR_FLAG)
 
 conf-examples: ## Generate himmelblau.conf example files
 	python3 src/common/scripts/gen_param_code.py \
 		--gen-conf-example --conf-example-output target/config/himmelblau.conf.example \
-		--gen-debian-conf-example --debian-conf-example-output target/debian/himmelblau.conf.example
+		$(ORCHESTRATOR_FLAG) \
+		--gen-debian-conf-example --debian-conf-example-output target/debian/himmelblau.conf.example \
+		$(ORCHESTRATOR_FLAG)
 
 # ---- failure tracking (used by deb/rpm/package) ----
 FAIL_DIR := $(CURDIR)/target/fail
