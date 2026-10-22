@@ -222,9 +222,11 @@ fn fido_relying_party(authority_host: &str) -> FidoRelyingParty {
     } else {
         authority_host
     };
+    // RP IDs are hashed as bytes, unlike case-insensitive DNS hostnames.
+    let id = id.to_ascii_lowercase();
     FidoRelyingParty {
-        id: id.to_string(),
         origin: format!("https://{id}"),
+        id,
     }
 }
 
@@ -1729,6 +1731,18 @@ mod tests {
                 id: "login.example.net".to_string(),
                 origin: "https://login.example.net".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn fido_relying_party_normalizes_authority_host_case() {
+        assert_eq!(
+            fido_relying_party("LOGIN.MicrosoftOnline.US"),
+            fido_relying_party("login.microsoftonline.us")
+        );
+        assert_eq!(
+            fido_relying_party("LOGIN.MicrosoftOnline.COM"),
+            fido_relying_party("login.microsoftonline.com")
         );
     }
 
