@@ -164,9 +164,36 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+      - name: Install dependencies
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y \
+            libpam0g-dev \
+            libudev-dev \
+            libssl-dev \
+            pkg-config \
+            tpm-udev \
+            libtss2-dev \
+            libcap-dev \
+            libdhash-dev \
+            libkrb5-dev \
+            libpcre2-dev \
+            libclang-dev \
+            autoconf \
+            gettext \
+            libdbus-1-dev \
+            libunistring-dev \
+            libgirepository1.0-dev \
+            libcairo2-dev \
+            libgdk-pixbuf2.0-dev \
+            libsoup-3.0-dev \
+            libpango1.0-dev \
+            libatk1.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev
       - name: "Run clippy"
         run: cargo clippy --all-features
-        continue-on-error: true
+        continue-on-error: false
 
   test:
     name: Test
