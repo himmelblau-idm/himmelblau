@@ -983,7 +983,9 @@ allow init_t himmelblaud_orchestrator_t:file { getattr open read ioctl };
 # systemd labels activated sockets with the service's process context before
 # passing them to the daemon. Permit PID 1 to create and manage those listeners;
 # keep their himmelblaud_t label so existing PAM/NSS connectto rules still apply.
-allow init_t himmelblaud_t:unix_stream_socket { create bind listen setopt getopt getattr read write ioctl shutdown };
+# Even with Accept=no, systemd accepts and closes queued connections while a
+# socket stop is pending (flush_ports/flush_accept). Permit that teardown too.
+allow init_t himmelblaud_t:unix_stream_socket { create bind listen accept setopt getopt getattr read write ioctl shutdown };
 allow init_t himmelblaud_t:unix_stream_socket connectto;
 allow init_t himmelblaud_orchestrator_t:unix_stream_socket connectto;
 allow init_t himmelblaud_t:fd use;

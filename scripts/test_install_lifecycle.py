@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise package scripts without touching host configuration or services."""
+"""Check packaging policy and scripts without touching host configuration or services."""
 import os
 from pathlib import Path
 import re
@@ -9,6 +9,24 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class SocketPolicyTests(unittest.TestCase):
+    def test_pid1_can_create_and_drain_activated_listeners(self):
+        # Static regression only, not an enforcing SELinux integration test.
+        # systemd flush_ports()/flush_accept() accepts and closes queued clients
+        # while a socket stop is pending, including sockets with Accept=no.
+        policy = (ROOT / 'src/selinux/src/himmelblaud.te').read_text()
+        policy = re.sub(r'#.*', '', policy)
+        grants = re.findall(
+            r'allow\s+init_t\s+himmelblaud_t:unix_stream_socket\s+'
+            r'\{([^}]+)\}\s*;', policy,
+        )
+        permissions = set(' '.join(grants).split())
+        self.assertTrue(
+            {'create', 'bind', 'listen', 'setopt', 'getopt', 'accept'} <= permissions,
+            'PID 1 must create listeners and drain queued connections at teardown',
+        )
 
 
 class Sandbox:
