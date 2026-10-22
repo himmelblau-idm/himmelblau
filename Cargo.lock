@@ -6135,6 +6135,7 @@ dependencies = [
  "num-derive",
  "num-traits",
  "paste",
+ "serde_json",
  "pkcs8",
  "regex",
  "semver",

@@ -96,18 +96,6 @@ class AnalysisCache:
                 return {}
         return {}
 
-    @staticmethod
-    def _legacy_analysis_is_safe(analysis: dict) -> bool:
-        """Return True when legacy unscoped analysis can be reused safely.
-
-        Legacy cache entries predate target-aware scoping. A cached SKIP/MAYBE
-        from a prior run (for a different target set) can incorrectly suppress
-        valid backports. Reuse only positive BACKPORT decisions from legacy
-        cache; force re-analysis for SKIP/MAYBE.
-        """
-        verdict = str(analysis.get("verdict", "")).upper()
-        return verdict == "BACKPORT"
-
     def get(self, commit_sha: str, analysis_scope: Optional[str] = None) -> Optional[dict]:
         """Get cached analysis for a commit and optional target scope."""
         if not self.enabled:
@@ -120,11 +108,7 @@ class AnalysisCache:
                 if isinstance(analysis, dict):
                     return analysis
 
-            # Backward compatibility: reuse legacy unscoped cache only when
-            # safe (BACKPORT). Never reuse legacy SKIP/MAYBE.
-            legacy = data.get("analysis")
-            if isinstance(legacy, dict) and self._legacy_analysis_is_safe(legacy):
-                return legacy
+            # Unscoped decisions cannot establish applicability to this target set.
             return None
         analysis = data.get("analysis")
         return analysis if isinstance(analysis, dict) else None
@@ -1063,7 +1047,11 @@ class BackportManager:
             return False
 
     def run_make_vet(self) -> tuple[bool, str]:
-        """Run make vet and return success status and output."""
+        """Run interactive make vet, returning success and a failure summary.
+
+        Inherit stdin/stdout/stderr so prompts, pagers, and diagnostics remain
+        visible live. Capturing output here would hide interactive prompts.
+        """
         print_color("\nRunning `make vet`...", "blue")
         try:
             result = subprocess.run(
@@ -1076,7 +1064,7 @@ class BackportManager:
                 return True, ""
             else:
                 print_color("  make vet failed", "red")
-                return False, ""
+                return False, f"make vet exited with status {result.returncode}; see output above"
         except subprocess.TimeoutExpired:
             return False, "make vet timed out"
         except Exception as e:
@@ -1432,6 +1420,26 @@ def print_commit_analysis(commit: Commit, analysis: Optional[dict]):
     print("  REASON: {reason}".format(reason=reason))
 
 
+def select_backport_candidates(commits, versions, git):
+    """Return candidates, per-target presence, and only the all-target skip count."""
+    commits = [c for c in commits if not c.is_merge and not c.is_dependabot and not c.is_ci_only]
+    already_present_by_commit = {}
+    candidates = []
+    already_in_all_targets = 0
+    for commit in commits:
+        present_targets = {
+            version.branch for version in versions
+            if git.is_commit_in_branch(commit.sha, f"origin/{version.branch}", commit.subject)
+        }
+        if present_targets:
+            already_present_by_commit[commit.sha] = present_targets
+        if len(present_targets) < len(versions):
+            candidates.append(commit)
+        else:
+            already_in_all_targets += 1
+    return candidates, already_present_by_commit, already_in_all_targets
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="AI-powered backport assistant for Himmelblau",
@@ -1632,31 +1640,12 @@ Examples:
     git.fetch()
     commits = git.get_commits_since(since_ref)
 
-    # Filter out merge commits, dependabot, and CI-only commits
     original_count = len(commits)
-    commits = [c for c in commits if not c.is_merge and not c.is_dependabot and not c.is_ci_only]
-
-    # Check whether each commit already exists per target branch.
-    # Keep commits that are missing from at least one target branch.
-    already_present_by_commit: dict[str, set[str]] = {}
-    commits_needing_analysis: list[Commit] = []
-    for commit in commits:
-        present_targets = {
-            version.branch
-            for version in versions
-            if git.is_commit_in_branch(commit.sha, f"origin/{version.branch}", commit.subject)
-        }
-        if present_targets:
-            already_present_by_commit[commit.sha] = present_targets
-        if len(present_targets) < len(versions):
-            commits_needing_analysis.append(commit)
-
-    commits = commits_needing_analysis
+    commits, already_present_by_commit, commits_already_in_all_targets = select_backport_candidates(commits, versions, git)
 
     # Reverse to apply oldest commits first (git log returns newest first)
     commits = list(reversed(commits))
 
-    commits_already_in_all_targets = original_count - len(commits)
     print(f"  Found {original_count} commits, {len(commits)} after filtering")
     print(f"  (Filtered out merge commits, dependabot updates, and CI-only changes)")
     if commits_already_in_all_targets > 0:
@@ -1925,7 +1914,7 @@ Examples:
         # Run make vet
         vet_success, vet_output = manager.run_make_vet()
         if not vet_success:
-            print_color(f"\nmake vet failed for {version_str}", "yellow")
+            print_color(f"\nmake vet failed for {version_str}: {vet_output}", "yellow")
             print("  You may need to address vet issues manually")
             # Continue anyway - vet issues shouldn't block the PR creation
 

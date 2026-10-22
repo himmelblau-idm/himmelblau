@@ -107,6 +107,28 @@ struct Token {
     response: BrokerTokenResponse,
 }
 
+// Preserve existing PAM actions when upgrading authentication rules to stop on PAM_ABORT.
+fn auth_abort_control(existing_line: &str) -> Option<String> {
+    if existing_line.split_whitespace().next()? != "auth" { return None; }
+    let control = existing_line.split_whitespace().nth(1)?;
+    if control.starts_with('[') {
+        let start = existing_line.find('[')?;
+        let end = existing_line[start..].find(']')? + start;
+        let mut actions: Vec<&str> = existing_line[start + 1..end].split_whitespace()
+            .filter(|action| !action.starts_with("abort=")).collect();
+        actions.push("abort=die");
+        return Some(format!("{}[{}]{}", &existing_line[..start], actions.join(" "), &existing_line[end + 1..]));
+    }
+    let expanded = match control {
+        "required" => "success=ok new_authtok_reqd=ok ignore=ignore default=bad",
+        "requisite" => "success=ok new_authtok_reqd=ok ignore=ignore default=die",
+        "sufficient" => "success=done new_authtok_reqd=done default=ignore",
+        "optional" => "success=ok new_authtok_reqd=ok default=ignore",
+        _ => return None,
+    };
+    Some(existing_line.replacen(control, &format!("[{} abort=die]", expanded), 1))
+}
+
 fn preserve_numeric_account_success(existing_line: &str) -> Option<String> {
     let control_start = existing_line.find('[')?;
     let control_end = existing_line[control_start..].find(']')? + control_start;
@@ -182,7 +204,8 @@ fn insert_module_line(
             return Ok(());
         }
 
-        let updated_line = preserve_numeric_account_success(&lines[existing_index])
+        let updated_line = auth_abort_control(&lines[existing_index])
+            .or_else(|| preserve_numeric_account_success(&lines[existing_index]))
             .unwrap_or_else(|| module_line.to_string());
         if updated_line == lines[existing_index] {
             debug!("{} already contains pam_himmelblau; skipping", pam_file);
@@ -345,11 +368,11 @@ fn configure_pam(
                 auth_file,
                 // Set PAM_AUTHTOK from Hello PIN so downstream modules (e.g. gnome-keyring)
                 // can unlock using use_authtok.
-                "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
+                "auth\t[success=done new_authtok_reqd=done abort=die default=ignore]\tpam_himmelblau.so ignore_unknown_user set_authtok",
                 None,
                 // pam_himmelblau should always come first on the auth stack
                 Some(&|_: &str| true),
-                false,
+                true,
                 dry_run,
             )?;
         }
