@@ -12059,6 +12059,12 @@ rec {
             features = [ "v4" "v5" ];
           }
         ];
+        devDependencies = [
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+        ];
 
       };
       "nu-ansi-term" = rec {

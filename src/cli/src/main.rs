@@ -109,15 +109,24 @@ struct Token {
 
 // Preserve existing PAM actions when upgrading authentication rules to stop on PAM_ABORT.
 fn auth_abort_control(existing_line: &str) -> Option<String> {
-    if existing_line.split_whitespace().next()? != "auth" { return None; }
+    if existing_line.split_whitespace().next()? != "auth" {
+        return None;
+    }
     let control = existing_line.split_whitespace().nth(1)?;
     if control.starts_with('[') {
         let start = existing_line.find('[')?;
         let end = existing_line[start..].find(']')? + start;
-        let mut actions: Vec<&str> = existing_line[start + 1..end].split_whitespace()
-            .filter(|action| !action.starts_with("abort=")).collect();
+        let mut actions: Vec<&str> = existing_line[start + 1..end]
+            .split_whitespace()
+            .filter(|action| !action.starts_with("abort="))
+            .collect();
         actions.push("abort=die");
-        return Some(format!("{}[{}]{}", &existing_line[..start], actions.join(" "), &existing_line[end + 1..]));
+        return Some(format!(
+            "{}[{}]{}",
+            &existing_line[..start],
+            actions.join(" "),
+            &existing_line[end + 1..]
+        ));
     }
     let expanded = match control {
         "required" => "success=ok new_authtok_reqd=ok ignore=ignore default=bad",
@@ -2852,7 +2861,7 @@ mod tests {
     fn auth_abort_upgrade_rewrites_existing_rule_once() -> anyhow::Result<()> {
         let path = temp_pam_file(
             "upgrade-auth",
-            "auth [success=2 default=ignore] pam_himmelblau.so ignore_unknown_user set_authtok\\nauth required pam_unix.so\\n",
+            "auth [success=2 default=ignore] pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n",
         )?;
         for _ in 0..2 {
             insert_module_line(
@@ -2866,7 +2875,7 @@ mod tests {
         }
         assert_eq!(
             read_to_string(&path)?,
-            "auth [success=2 default=ignore abort=die] pam_himmelblau.so ignore_unknown_user set_authtok\\nauth required pam_unix.so\\n"
+            "auth [success=2 default=ignore abort=die] pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n"
         );
         remove_temp_file(&path)
     }

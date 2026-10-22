@@ -70,6 +70,10 @@ function extractUserCode(message) {
     // Match hyphenated code pattern (e.g. "ABCD-EFGH") - other providers
     const hyphenMatch = message.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/i);
     if (hyphenMatch) return hyphenMatch[1].toUpperCase();
+    // Localized prompts put codes on their own line. Allow all-letter codes
+    // there, but require uppercase to avoid instruction words like "Continue".
+    const lineMatch = message.match(/^[ \t]*([A-Z0-9]{8,9})[ \t]*\r?$/m);
+    if (lineMatch) return lineMatch[1];
     // Fallback: bare 8-9 char alphanumeric code containing a digit.
     // userCode only contains [A-Z0-9-] so it is safe to embed directly in SVG
     // text nodes (no XML special characters can appear from this regex)

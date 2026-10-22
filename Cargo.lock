@@ -3682,6 +3682,7 @@ dependencies = [
  "himmelblau_unix_common",
  "libc",
  "libnss",
+ "serde_json",
  "uuid",
 ]
 
@@ -6135,7 +6136,6 @@ dependencies = [
  "num-derive",
  "num-traits",
  "paste",
- "serde_json",
  "pkcs8",
  "regex",
  "semver",
