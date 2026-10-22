@@ -8,8 +8,11 @@ if [ -f "$CONF" ]; then
     sed -i 's/^KbdInteractiveAuthentication[[:space:]]\+no/#KbdInteractiveAuthentication no/' "$CONF"
 fi
 
-# Restart an existing SSH server without making package installation wait on
-# service ordering (himmelblaud may not be configured until after installation).
+# SSH is the deliberate non-blocking exception: himmelblaud is ordered before
+# sshd, and its configuration may not be written until after this transaction.
+# Waiting on an SSH restart here can therefore hold that configuration step.
+# Submit the job in this scriptlet (no detached shell); systemd retains its unit
+# ordering, but package completion does not imply the SSH restart has finished.
 # Do not start an SSH server that the administrator left inactive.
 if command -v systemctl >/dev/null 2>&1; then
     echo "Queuing restart of an active SSH service..."

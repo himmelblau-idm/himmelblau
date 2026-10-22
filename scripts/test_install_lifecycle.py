@@ -6,21 +6,23 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class Sandbox:
-    def __init__(self, root, active=False, selinux=False, debian=False, policy_updated=True,
-                 container=False):
+    def __init__(self, root, active=False, selinux=False, debian=False, container=False):
         self.root = root
         bindir = root / 'bin'
         bindir.mkdir(parents=True)
         self.log = root / 'commands'
         self.states = root / 'services'
         self.states.mkdir()
+        self.limits = root / 'start-limits'
+        self.limits.mkdir()
+        self.masks = root / 'masked-services'
+        self.masks.mkdir()
         for command in ('sh', 'grep', 'awk', 'md5sum', 'rm', 'rmdir', 'sed',
                         'install', 'touch', 'mv', 'sleep'):
             (bindir / command).symlink_to(shutil.which(command))
@@ -47,28 +49,43 @@ case "$operation" in
         for arg in $units; do
             test -f "$TEST_STATES/$arg" || exit 3
         done;;
+    reset-failed)
+        for arg in $units; do
+            rm -f "$TEST_LIMITS/$arg"
+        done;;
     restart) echo unexpected-unconditional-restart >> "$COMMAND_LOG"; exit 99;;
     try-restart|start)
-        if [ "$operation" = try-restart ]; then
-            case " $* " in *" --no-block "*) :;; *) exit 98;; esac
-        fi
         for arg in $units; do
-                if [ "$operation" = start ]; then
-                    # --no-block accepts the job before its result is known.
-                    # Blocking starts wait, then report the simulated result.
-                    case " $* " in *" --no-block "*)
-                        if [ "${TEST_START_FAIL:-0}" != 0 ] || [ "${TEST_START_DELAY:-0}" != 0 ]; then
-                            exit 0
-                        fi;;
-                    esac
-                    sleep "${TEST_START_DELAY:-0}"
-                    [ "${TEST_START_FAIL:-0}" = 0 ] || exit 1
-                fi
-                if [ "$operation" = start ] || [ -f "$TEST_STATES/$arg" ]; then
-                    touch "$TEST_STATES/$arg"
-                    echo "started $arg" >> "$COMMAND_LOG"
-                fi
-        done;;
+            if [ "$operation" = try-restart ] && [ ! -f "$TEST_STATES/$arg" ]; then
+                continue
+            fi
+            # Queuing a job does not establish its completion or success.
+            case " $* " in *" --no-block "*)
+                if [ "${TEST_START_FAIL:-0}" != 0 ] || [ "${TEST_START_DELAY:-0}" != 0 ]; then
+                    exit 0
+                fi;;
+            esac
+            if [ -f "$TEST_MASKS/$arg" ] || [ -f "$TEST_LIMITS/$arg" ]; then
+                echo "masked or start-limited $arg" >> "$COMMAND_LOG"
+                exit 1
+            fi
+            sleep "${TEST_START_DELAY:-0}"
+            if [ "${TEST_START_FAIL:-0}" != 0 ] || [ "${TEST_FAIL_UNIT:-}" = "$arg" ]; then
+                echo "failed $arg" >> "$COMMAND_LOG"
+                exit 1
+            fi
+            if [ "${TEST_REQUIRE_POLICY:-0}" != 0 ] && [ ! -f "$TEST_POLICY_READY" ]; then
+                echo "policy not ready $arg" >> "$COMMAND_LOG"
+                exit 1
+            fi
+            if [ "${TEST_REQUIRE_CONFIG:-0}" != 0 ] && [ ! -f "$TEST_CONFIG" ]; then
+                echo "config not ready $arg" >> "$COMMAND_LOG"
+                exit 1
+            fi
+            touch "$TEST_STATES/$arg"
+            echo "started $arg" >> "$COMMAND_LOG"
+        done
+        echo "completed $operation" >> "$COMMAND_LOG";;
     stop)
         for arg in $units; do
             rm -f "$TEST_STATES/$arg"
@@ -79,25 +96,26 @@ esac
                              ('selinuxenabled', 0 if selinux else 1),
                              ('make', 0), ('semodule', 0), ('restorecon', 0)]:
             (bindir / name).write_text('#!/bin/sh\nexit %d\n' % status)
-        for name in ('make', 'semodule'):
-            variable = 'TEST_' + name.upper() + '_STATUS'
-            (bindir / name).write_text('#!/bin/sh\nexit "${%s:-0}"\n' % variable)
-        (bindir / 'rpm').write_text('''#!/bin/sh
-[ "${TEST_RPM_QUERY_FAIL:-0}" = 0 ] || exit 1
-case "$*" in
-    *himmelblau-selinux) printf '%s' "$TEST_POLICY_TID";;
-    *himmelblau) printf '%s' 200;;
-    *) exit 1;;
+        (bindir / 'make').write_text('#!/bin/sh\nexit "${TEST_MAKE_STATUS:-0}"\n')
+        (bindir / 'semodule').write_text('''#!/bin/sh
+[ "${TEST_SEMODULE_STATUS:-0}" = 0 ] || exit 1
+case " $* " in
+    *" -l "*) [ ! -f "$TEST_POLICY_READY" ] || echo himmelblaud;;
+    *" -i "*) touch "$TEST_POLICY_READY";;
 esac
 ''')
         if debian:
             (bindir / 'deb-systemd-helper').write_text('#!/bin/sh\nexit 0\n')
-            # Model an invocation held until readiness is reported. Use the
-            # interpreter directly so the private PATH remains self-contained.
-            (bindir / 'deb-systemd-invoke').write_text(
-                '#!/bin/sh\nprintf "deb-systemd-invoke %%s\\n" "$*" >> "$COMMAND_LOG"\n'
-                'case "$1" in restart|try-restart) ;; *) exit 0;; esac\n'
-                'exec "%s" -c "import time; time.sleep(2)"\n' % shutil.which('python3'))
+            # Model a policy-aware helper that must finish before dpkg proceeds.
+            (bindir / 'deb-systemd-invoke').write_text('''#!/bin/sh
+printf 'deb-systemd-invoke %s\\n' "$*" >> "$COMMAND_LOG"
+case "$1" in restart|try-restart) ;; *) exit 0;; esac
+sleep "${TEST_DEB_DELAY:-0.1}"
+if [ "${TEST_POLICY_DENY:-0}" = 0 ]; then
+    systemctl "$@"
+fi
+echo completed-deb-systemd-invoke >> "$COMMAND_LOG"
+''')
         for path in bindir.iterdir():
             if not path.is_symlink():
                 path.chmod(0o755)
@@ -108,12 +126,19 @@ esac
             for directory in ('usr/share/selinux/packages/himmelblaud', 'usr/share/selinux/devel'):
                 (root / directory).mkdir(parents=True, exist_ok=True)
             (root / 'usr/share/selinux/devel/Makefile').touch()
+        self.policy_ready = root / 'policy-ready'
+        if selinux:
+            self.policy_ready.touch()
+        self.config = root / 'etc/himmelblau/himmelblau.conf'
+        self.config.parent.mkdir(parents=True)
         if active:
+            self.config.write_text('[global]\ndomain = example.test\n')
             for unit in ('himmelblaud.service', 'himmelblaud-tasks.service'):
                 (self.states / unit).touch()
         self.env = dict(os.environ, PATH=str(bindir), COMMAND_LOG=str(self.log),
                         TEST_STATES=str(self.states), DPKG_ROOT='',
-                        TEST_POLICY_TID='200' if policy_updated else '100')
+                        TEST_POLICY_READY=str(self.policy_ready), TEST_CONFIG=str(self.config),
+                        TEST_LIMITS=str(self.limits), TEST_MASKS=str(self.masks))
 
     def source(self, source, arg='1', timeout=10):
         # One pass: inserted roots may themselves contain /var/ or /run/.
@@ -127,25 +152,10 @@ esac
             raise AssertionError(result.stderr)
         return self.log.read_text() if self.log.exists() else ''
 
-    def run(self, relative, arg='1', timeout=10, wait_workers=True):
-        source = (ROOT / relative).read_text()
-        if wait_workers and relative in ('src/daemon/scripts/posttrans', 'src/selinux/scripts/postinst'):
-            # Production detaches recovery to keep the package process free.
-            # Tests normally join those workers to observe their final result.
-            source = source.rstrip()
-            if source.endswith('exit 0'):
-                source = source[:-len('exit 0')]
-            source = source.replace('trap recover_upgrade_services 0',
-                                    "trap 'recover_upgrade_services; wait' 0")
-            source += '\nwait\n'
-        return self.source(source, arg, timeout)
-
-    def wait_until(self, predicate, timeout=5):
-        deadline = time.monotonic() + timeout
-        while not predicate():
-            if time.monotonic() >= deadline:
-                raise AssertionError('Timed out waiting for background recovery')
-            time.sleep(0.01)
+    def run(self, relative, arg='1', timeout=10):
+        # Execute the shipped script unchanged. In particular, do not insert
+        # waits that would hide detached package-script workers.
+        return self.source((ROOT / relative).read_text(), arg, timeout)
 
 
 class InstallLifecycleTests(unittest.TestCase):
@@ -179,13 +189,12 @@ class InstallLifecycleTests(unittest.TestCase):
                 with self.subTest(policy=policy, previously_active=active):
                     box = Sandbox(self.root / policy / str(active), active=active,
                                   selinux=policy != 'absent',
-                                  policy_updated=policy == 'updated', container=True)
+                                  container=True)
                     commands = box.run('src/daemon/scripts/postinst', '2')
                     self.assertNotIn('try-restart', commands)
                     box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
                     box.run('src/daemon/scripts/posttrans')
                     if policy == 'updated':
-                        self.assertFalse(list(box.states.iterdir()))
                         box.run('src/selinux/scripts/postinst')
                     self.assertEqual(len(list(box.states.iterdir())), 2 if active else 0)
                     self.assertFalse((box.root / 'run/himmelblau-package-restart').exists())
@@ -267,18 +276,47 @@ class InstallLifecycleTests(unittest.TestCase):
                     self.assertTrue((markers / 'himmelblaud.service').is_file())
                     self.assertNotIn('try-restart', commands)
 
-    def test_upgrade_waits_for_selinux_posttrans(self):
-        box = Sandbox(self.root, active=True, selinux=True)
-        box.run('src/daemon/scripts/postinst', '2')
-        box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
-        box.run('src/daemon/scripts/posttrans')
-        self.assertFalse(list(box.states.iterdir()))
-        self.assertTrue((self.root / 'run/himmelblau-package-restart').exists())
-        box.run('src/selinux/scripts/postinst')
-        self.assertEqual(len(list(box.states.iterdir())), 2)
-        self.assertFalse((self.root / 'run/himmelblau-package-restart').exists())
+    def test_upgrade_retries_after_selinux_policy_install(self):
+        for container in (False, True):
+            with self.subTest(container=container):
+                box = Sandbox(self.root / str(container), active=True, selinux=True,
+                              container=container)
+                box.run('src/daemon/scripts/postinst', '2')
+                box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+                box.policy_ready.unlink()
+                box.env['TEST_REQUIRE_POLICY'] = '1'
+                commands = box.run('src/daemon/scripts/posttrans')
+                self.assertIn('policy not ready himmelblaud.service', commands)
+                self.assertFalse(list(box.states.iterdir()))
+                self.assertEqual(len(list((box.root / 'run/himmelblau-package-restart').iterdir())), 2)
+                box.run('src/selinux/scripts/postinst')
+                self.assertEqual(len(list(box.states.iterdir())), 2)
+                self.assertFalse((box.root / 'run/himmelblau-package-restart').exists())
 
-    def test_selinux_failure_and_skip_paths_recover_deferred_services(self):
+    def test_policy_first_upgrade_retries_after_config_restore(self):
+        for container in (False, True):
+            with self.subTest(container=container):
+                box = Sandbox(self.root / str(container), active=True, selinux=True,
+                              container=container)
+                box.run('src/daemon/scripts/postinst', '2')
+                box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+                # Old RPM removal moves the owned config after new %post.
+                saved_config = box.config.with_suffix('.conf.rpmsave')
+                original = box.config.read_text()
+                box.config.rename(saved_config)
+                box.env['TEST_REQUIRE_CONFIG'] = '1'
+                commands = box.run('src/selinux/scripts/postinst')
+                self.assertNotIn('start himmelblaud.service', commands.splitlines())
+                self.assertNotIn('start himmelblaud-tasks.service', commands.splitlines())
+                self.assertFalse(list(box.states.iterdir()))
+                self.assertEqual(len(list((box.root / 'run/himmelblau-package-restart').iterdir())), 2)
+                box.run('src/daemon/scripts/posttrans')
+                self.assertEqual(box.config.read_text(), original)
+                self.assertFalse(saved_config.exists())
+                self.assertEqual(len(list(box.states.iterdir())), 2)
+                self.assertFalse((box.root / 'run/himmelblau-package-restart').exists())
+
+    def test_selinux_failure_and_skip_paths_recover_services(self):
         cases = ('missing_makefile', 'missing_sources', 'compile_failure',
                  'install_failure', 'policy_type_mismatch', 'disabled_config')
         for case in cases:
@@ -287,7 +325,6 @@ class InstallLifecycleTests(unittest.TestCase):
                     box = Sandbox(self.root / case / str(active), active=active, selinux=True)
                     box.run('src/daemon/scripts/postinst', '2' if active else '1')
                     box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
-                    box.run('src/daemon/scripts/posttrans')
                     self.assertFalse(list(box.states.iterdir()))
                     if case == 'missing_makefile':
                         (box.root / 'usr/share/selinux/devel/Makefile').unlink()
@@ -310,8 +347,8 @@ class InstallLifecycleTests(unittest.TestCase):
         box = Sandbox(self.root, active=True, selinux=True)
         box.run('src/daemon/scripts/postinst', '2')
         box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
-        box.run('src/daemon/scripts/posttrans')
         box.env.update(TEST_SEMODULE_STATUS='1', TEST_START_FAIL='1')
+        box.run('src/daemon/scripts/posttrans')
         box.run('src/selinux/scripts/postinst')
         self.assertFalse(list(box.states.iterdir()))
         self.assertEqual(len(list((box.root / 'run/himmelblau-package-restart').iterdir())), 2)
@@ -323,7 +360,7 @@ class InstallLifecycleTests(unittest.TestCase):
         self.assertFalse(list(box.states.iterdir()))
 
     def test_daemon_only_upgrade_recovers_with_existing_selinux_package(self):
-        box = Sandbox(self.root, active=True, selinux=True, policy_updated=False)
+        box = Sandbox(self.root, active=True, selinux=True)
         box.run('src/daemon/scripts/postinst', '2')
         box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
         # No SELinux posttrans runs in this transaction.
@@ -331,13 +368,20 @@ class InstallLifecycleTests(unittest.TestCase):
         self.assertEqual(len(list(box.states.iterdir())), 2)
         self.assertFalse((self.root / 'run/himmelblau-package-restart').exists())
 
-    def test_failed_transaction_query_does_not_defer_recovery(self):
-        box = Sandbox(self.root, active=True, selinux=True)
-        box.env['TEST_RPM_QUERY_FAIL'] = '1'
-        box.run('src/daemon/scripts/postinst', '2')
-        box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
-        box.run('src/daemon/scripts/posttrans')
-        self.assertEqual(len(list(box.states.iterdir())), 2)
+    def test_recovery_does_not_need_transaction_queries(self):
+        for rpm_available in (False, True):
+            with self.subTest(rpm_available=rpm_available):
+                box = Sandbox(self.root / str(rpm_available), active=True, selinux=True)
+                if rpm_available:
+                    # Equal INSTALLTIDs must not imply a later policy handler.
+                    rpm = box.root / 'bin/rpm'
+                    rpm.write_text('#!/bin/sh\necho rpm-query >> "$COMMAND_LOG"\nprintf 200\n')
+                    rpm.chmod(0o755)
+                box.run('src/daemon/scripts/postinst', '2')
+                box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+                commands = box.run('src/daemon/scripts/posttrans')
+                self.assertEqual(len(list(box.states.iterdir())), 2)
+                self.assertNotIn('rpm-query', commands)
 
     def test_failed_recovery_preserves_markers_and_can_retry(self):
         for selinux in (False, True):
@@ -358,20 +402,68 @@ class InstallLifecycleTests(unittest.TestCase):
                 self.assertEqual(len(list(box.states.iterdir())), 2)
                 self.assertFalse(markers.exists())
 
-    def test_recovery_does_not_hold_package_pipes_while_waiting(self):
-        for selinux in (False, True):
-            with self.subTest(selinux=selinux):
-                box = Sandbox(self.root / str(selinux), active=True, selinux=selinux)
+    def test_recovery_completes_before_package_script_returns(self):
+        for handler in ('src/daemon/scripts/posttrans', 'src/selinux/scripts/postinst'):
+            with self.subTest(handler=handler):
+                box = Sandbox(self.root / handler.replace('/', '_'), active=True, selinux=True)
                 box.run('src/daemon/scripts/postinst', '2')
                 box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
-                box.env['TEST_START_DELAY'] = '2'
-                box.run('src/daemon/scripts/posttrans', timeout=1, wait_workers=False)
-                if selinux:
-                    box.run('src/selinux/scripts/postinst', timeout=1, wait_workers=False)
-                markers = box.root / 'run/himmelblau-package-restart'
-                self.assertEqual(len(list(markers.iterdir())), 2)
-                box.wait_until(lambda: not markers.exists())
+                box.env['TEST_START_DELAY'] = '0.1'
+                box.run(handler)
                 self.assertEqual(len(list(box.states.iterdir())), 2)
+                self.assertFalse((box.root / 'run/himmelblau-package-restart').exists())
+
+    def test_partial_recovery_retains_only_failed_marker_and_retries(self):
+        for handler in ('src/daemon/scripts/posttrans', 'src/selinux/scripts/postinst'):
+            with self.subTest(handler=handler):
+                box = Sandbox(self.root / handler.replace('/', '_'), active=True, selinux=True)
+                box.run('src/daemon/scripts/postinst', '2')
+                box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+                box.env['TEST_FAIL_UNIT'] = 'himmelblaud-tasks.service'
+                box.run(handler)
+                markers = box.root / 'run/himmelblau-package-restart'
+                self.assertEqual([p.name for p in markers.iterdir()], ['himmelblaud-tasks.service'])
+                self.assertEqual([p.name for p in box.states.iterdir()], ['himmelblaud.service'])
+                box.env.pop('TEST_FAIL_UNIT')
+                box.run(handler)
+                self.assertEqual(len(list(box.states.iterdir())), 2)
+                self.assertFalse(markers.exists())
+
+    def test_recovery_retries_start_limited_marked_units_only(self):
+        for handler in ('src/daemon/scripts/posttrans', 'src/selinux/scripts/postinst'):
+            with self.subTest(handler=handler):
+                box = Sandbox(self.root / handler.replace('/', '_'), active=True, selinux=True)
+                box.run('src/daemon/scripts/postinst', '2')
+                box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+                box.env['TEST_START_FAIL'] = '1'
+                box.run('src/daemon/scripts/posttrans')
+                self.assertFalse(list(box.states.iterdir()))
+                # Model Restart=on-failure reaching the limit while policy is
+                # compiled or another transaction-end handler is pending.
+                for unit in ('himmelblaud.service', 'himmelblaud-tasks.service', 'unrelated.service'):
+                    (box.limits / unit).touch()
+                box.env['TEST_START_FAIL'] = '0'
+                commands = box.run(handler)
+                self.assertEqual(len(list(box.states.iterdir())), 2)
+                self.assertEqual([p.name for p in box.limits.iterdir()], ['unrelated.service'])
+                self.assertNotIn('reset-failed unrelated.service', commands)
+                self.assertNotIn('reset-failed', commands.splitlines())
+                self.assertFalse((box.root / 'run/himmelblau-package-restart').exists())
+
+    def test_recovery_does_not_unmask_services(self):
+        for handler in ('src/daemon/scripts/posttrans', 'src/selinux/scripts/postinst'):
+            with self.subTest(handler=handler):
+                box = Sandbox(self.root / handler.replace('/', '_'), active=True, selinux=True)
+                box.run('src/daemon/scripts/postinst', '2')
+                box.source('systemctl stop himmelblaud.service himmelblaud-tasks.service')
+                for unit in ('himmelblaud.service', 'himmelblaud-tasks.service'):
+                    (box.masks / unit).touch()
+                    (box.limits / unit).touch()
+                commands = box.run(handler)
+                self.assertFalse(list(box.states.iterdir()))
+                self.assertEqual(len(list(box.masks.iterdir())), 2)
+                self.assertEqual(len(list((box.root / 'run/himmelblau-package-restart').iterdir())), 2)
+                self.assertNotIn('unmask', commands)
 
     def test_new_prerm_does_not_stop_upgrade(self):
         box = Sandbox(self.root, active=True)
@@ -380,14 +472,30 @@ class InstallLifecycleTests(unittest.TestCase):
         box.run('src/daemon/scripts/prerm', '0')
         self.assertFalse(list(box.states.iterdir()))
 
-    def test_debian_restart_releases_package_pipes(self):
+    def test_debian_restart_completes_before_package_script_returns(self):
         box = Sandbox(self.root, active=True, debian=True)
-        # A foreground helper or a background helper inheriting the package's
-        # captured pipes would keep communicate() waiting and hit this timeout.
-        box.run('src/daemon/scripts/postinst', 'configure', timeout=1)
-        box.wait_until(lambda: 'deb-systemd-invoke try-restart' in box.log.read_text())
+        commands = box.run('src/daemon/scripts/postinst', 'configure')
         self.assertIn('deb-systemd-invoke try-restart himmelblaud.service himmelblaud-tasks.service',
-                      box.log.read_text())
+                      commands)
+        self.assertIn('completed-deb-systemd-invoke', commands)
+        self.assertIn('completed try-restart', commands)
+
+    def test_debian_restart_respects_policy_helper(self):
+        box = Sandbox(self.root, active=True, debian=True)
+        box.env['TEST_POLICY_DENY'] = '1'
+        commands = box.run('src/daemon/scripts/postinst', 'configure')
+        self.assertIn('completed-deb-systemd-invoke', commands)
+        self.assertNotIn('started ', commands)
+
+    def test_daemon_and_policy_restarts_complete_before_return(self):
+        for script in ('src/daemon/scripts/postinst', 'src/selinux/scripts/postinst'):
+            with self.subTest(script=script):
+                box = Sandbox(self.root / script.replace('/', '_'), active=True,
+                              selinux=script.startswith('src/selinux/'))
+                box.env['TEST_START_DELAY'] = '0.1'
+                commands = box.run(script, '2')
+                self.assertIn('completed try-restart', commands)
+                self.assertNotIn('--no-block', commands)
 
     def test_policy_install_does_not_start_unconfigured_daemon(self):
         box = Sandbox(self.root, selinux=True)

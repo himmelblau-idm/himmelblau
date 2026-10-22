@@ -115,9 +115,9 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
         if [ "$skip_start" -eq 1 ]; then
             echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
         else
-            # Preserve policy-rc.d handling without holding dpkg's output pipes
-            # open while a notify-based daemon waits to become ready.
-            (deb-systemd-invoke try-restart himmelblaud.service himmelblaud-tasks.service || true) </dev/null >/dev/null 2>&1 &
+            # Keep policy-rc.d handling and wait for the restart before dpkg
+            # configures dependent packages. Inactive installations stay stopped.
+            deb-systemd-invoke try-restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
         fi
     fi
 
@@ -132,8 +132,8 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
     fi
 elif command -v systemctl >/dev/null 2>&1; then
     # Old RPM versions stop the services in %preun, after this new %post.
-    # Remember only services active before the upgrade so %posttrans can recover
-    # them, even when an earlier queued restart finishes before old %preun.
+    # Snapshot only pre-upgrade active services for this legacy transition.
+    # try-restart in %posttrans cannot recover a unit that old %preun stopped.
     case "${1:-}" in
         ''|*[!0-9]*) ;;
         *)
@@ -171,7 +171,7 @@ elif command -v systemctl >/dev/null 2>&1; then
         if [ "$skip_start" -eq 1 ]; then
             echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
         else
-            systemctl --no-block try-restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+            systemctl try-restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         fi
     fi
 

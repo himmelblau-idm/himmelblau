@@ -18,7 +18,7 @@ is_live_system() {
   return 1
 }
 
-# Always consume deferred upgrade markers, including policy skip/failure paths.
+# Recover old-RPM upgrade stops, including policy skip/failure paths.
 # Existing policy may still allow startup; a failed start keeps its marker.
 recover_upgrade_services() {
   [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ] || return 0
@@ -27,17 +27,22 @@ recover_upgrade_services() {
   is_live_image && return 0
   state_dir=/run/himmelblau-package-restart
   [ -d "$state_dir" ] || return 0
+  # The daemon's transaction-end handler restores an old RPM's saved config.
+  # If this handler runs first, do not start a known-unconfigured daemon.
+  if [ -f /etc/himmelblau/himmelblau.conf.rpmsave ] &&
+     [ ! -e /etc/himmelblau/himmelblau.conf ] && [ ! -L /etc/himmelblau/himmelblau.conf ]; then
+    return 0
+  fi
   systemctl daemon-reload >/dev/null 2>&1 || :
   for unit in himmelblaud.service himmelblaud-tasks.service; do
     if [ -f "$state_dir/$unit" ]; then
-      # Wait for readiness outside the package process. Retain retry state
-      # when the start fails, including if the policy could not be installed.
-      (
-        if systemctl start "$unit"; then
-          rm -f "$state_dir/$unit"
-          rmdir "$state_dir" 2>/dev/null || true
-        fi
-      ) </dev/null >/dev/null 2>&1 &
+      # A prior attempt may have hit the start limit before policy was ready.
+      # Reset only this marker-qualified unit; this does not unmask services.
+      systemctl reset-failed "$unit" >/dev/null 2>&1 || :
+      # Finish synchronously and retain the marker if startup fails.
+      if systemctl start "$unit"; then
+        rm -f "$state_dir/$unit"
+      fi
     fi
   done
   rmdir "$state_dir" 2>/dev/null || true
@@ -99,7 +104,7 @@ if selinux_configured; then
         # be configured before the installer explicitly starts them.
         if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ] && ! is_live_system; then
           systemctl daemon-reload >/dev/null 2>&1 || :
-          systemctl --no-block try-restart himmelblaud.service himmelblaud-tasks.service >/dev/null 2>&1 || :
+          systemctl try-restart himmelblaud.service himmelblaud-tasks.service >/dev/null 2>&1 || :
 
         fi
 
