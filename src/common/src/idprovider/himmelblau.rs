@@ -3934,7 +3934,7 @@ impl IdProvider for HimmelblauProvider {
                 // MFA is required and the PRT sign-in frequency check fails, we'll
                 // need ForceMFA. If ROPC was skipped (device not enrolled), the
                 // enrollment flow may be MFA or password-only per MS policy.
-                let mfa_confirmed_required = ropc_result.is_some();
+                let mut mfa_confirmed_required = ropc_result.is_some();
 
                 match ropc_result {
                     Some(Ok(token)) => {
@@ -3988,6 +3988,19 @@ impl IdProvider for HimmelblauProvider {
                     }
                     Some(Err(MsalError::ChangePassword)) => {
                         return Ok(password_change_required(cred_handler, cred));
+                    }
+                    Some(Err(MsalError::AADSTSError(ref aadsts_err)))
+                        if [50058, 50133].contains(&aadsts_err.code) =>
+                    {
+                        // Entra won't sign in silently with this password, as when it must be changed:
+                        // AADSTS50058 (it issued the PRT, then wants an interactive sign-in) or AADSTS50133 (the
+                        // session ended with a password reset or expiry). The interactive flow below shows what it
+                        // wants (the change page, or MFA if policy asks), and checks the password again.
+                        debug!(
+                            "ROPC: interactive sign-in required (AADSTS{}), trying the interactive flow",
+                            aadsts_err.code
+                        );
+                        mfa_confirmed_required = false;
                     }
                     Some(Err(e)) => {
                         // ROPC failed - this could be a bad password or other error
