@@ -227,6 +227,7 @@ jobs:
           python3 scripts/test_collabora_packaging.py
           python3 scripts/test_collabora_distribution_packaging.py
           python3 scripts/test_sso_policies_scripts.py
+          python3 scripts/test_install_lifecycle.py
           cargo test
         continue-on-error: false
       - name: "Test aad-tool without donation messages"
