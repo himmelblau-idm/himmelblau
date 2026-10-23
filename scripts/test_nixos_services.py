@@ -14,9 +14,11 @@ integration tests.
 The required nix/tests/services.nix fixture supplies the module evaluation and
 test package placeholders; it is not a runtime or VM test.
 
-Runtime paths, directory defaults, and the tasks service's umask/address-family
-defaults follow the generated units. The HSM initializer runs even when an
-encrypted PIN already exists so the helper can validate and migrate it.
+Runtime paths, managed state/configuration directories, and the tasks service's
+umask/address-family defaults follow the generated units. The HSM initializer's
+state permissions and systemd bind mounts also follow the generated unit.
+The HSM initializer runs even when an encrypted PIN already exists so the helper
+can validate and migrate it.
 It remains inactive after success so later daemon starts can retry TPM binding.
 The policy cache tmpfiles rule is written literally in the NixOS module and
 checked for exact equivalence with src/daemon/src/himmelblau-policies.tmpfiles.conf,
@@ -681,6 +683,11 @@ class NixosServiceTests(unittest.TestCase):
                     self.assertEqual(name in daemon["Unit"][key].split(), enabled)
                 if enabled:
                     initializer = parse_unit(evaluated["units"][name])
+                    for key in ["StateDirectory", "StateDirectoryMode", "BindPaths"]:
+                        self.assertEqual(
+                            initializer["Service"][key],
+                            self.generated[name]["Service"][key],
+                        )
                     for key in ["After", "Wants"]:
                         self.assertIn(
                             "tpm2-udev-trigger.service", initializer["Unit"][key].split()

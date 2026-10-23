@@ -362,6 +362,7 @@ in
             User = "himmelblaud";
             CacheDirectory = "himmelblaud"; # /var/cache/himmelblaud
             StateDirectory = "himmelblaud"; # /var/lib/himmelblaud
+            ConfigurationDirectory = "himmelblau";
             # Expose host devices only when a TPM-backed HSM mode may need them.
             PrivateDevices = !tpmAccessRequired;
             DeviceAllow = lib.optional tpmAccessRequired "char-tpm rw";
@@ -400,6 +401,9 @@ in
           };
           serviceConfig = {
             Type = "oneshot";
+            StateDirectory = "himmelblaud";
+            StateDirectoryMode = "0700";
+            BindPaths = "/run/systemd /var/lib/systemd";
             ExecStart = "${cfg.daemonPackage}/libexec/himmelblau-init-hsm-pin";
             RuntimeDirectory = "himmelblau-hsm-pin";
             RuntimeDirectoryMode = "0700";
@@ -431,6 +435,7 @@ in
             WatchdogSec = "120s";
             User = "root";
             CacheDirectory = "nss-himmelblau";
+            ConfigurationDirectory = "himmelblau";
             CapabilityBoundingSet = [
               "CAP_CHOWN"
               "CAP_FOWNER"
