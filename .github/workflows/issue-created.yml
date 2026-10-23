@@ -16,7 +16,7 @@ jobs:
           egress-policy: audit
 
       - name: Append footer
-        uses: julien-deramond/update-issue-body@04d5de9497fa264075b0d91ba018a73ca5ae5654 # v1
+        uses: julien-deramond/update-issue-body@8299eaea55b96a9bbd4c2504428f754ed15aab40 # v1
         with:
           issue-number: ${{ github.event.issue.number }}
           edit-mode: append
