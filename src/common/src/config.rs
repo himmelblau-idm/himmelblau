@@ -720,13 +720,11 @@ impl HimmelblauConfig {
     }
 
     pub fn get_configured_entra_domain(&self) -> Option<String> {
-        // The array returned by get_configured_domains() might include "oidc" section
+        // The array returned by get_configured_domains() might include the
+        // "oidc" section, or an empty entry from a blank `domain =` option.
         self.get_configured_domains()
             .into_iter()
-            .filter(|x| x != "oidc")
-            .collect::<Vec<String>>()
-            .first()
-            .cloned()
+            .find(|x| !x.is_empty() && x != "oidc")
     }
 
     pub fn get_config_file(&self) -> String {
@@ -1717,6 +1715,55 @@ mod tests {
                 "test2.com"
             ]
         );
+    }
+
+    #[test]
+    fn test_get_configured_entra_domain() {
+        // The first entry of `domains` is used
+        let temp_file = create_temp_config(
+            r#"
+        [global]
+        domains = example.com,test.com
+
+        [test.com]
+        [example.com]
+        "#,
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_configured_entra_domain(),
+            Some("example.com".to_string())
+        );
+
+        // The oidc section is never an Entra domain
+        let temp_file = create_temp_config(
+            r#"
+        [global]
+        oidc_issuer_url = https://issuer.example.com
+
+        [oidc]
+        "#,
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_configured_entra_domain(), None);
+
+        // A blank domain option is not a domain
+        let temp_file = create_temp_config(
+            r#"
+        [global]
+        domain =
+        oidc_issuer_url = https://issuer.example.com
+
+        [oidc]
+        "#,
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_configured_entra_domain(), None);
+
+        // No configuration at all
+        let temp_file = create_temp_config("[global]\n");
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_configured_entra_domain(), None);
     }
 
     #[test]

@@ -75,10 +75,14 @@ impl IdProviderProxy {
             (None, None) => {
                 return Err(anyhow!("No provider was configured!"));
             }
-            (Some(_), Some(_)) => {
-                return Err(anyhow!("Both OIDC and EntraID configured!"));
-            }
-            (Some(_), _) => {
+            (Some(_), domain) => {
+                if let Some(domain) = domain {
+                    warn!(
+                        "Both OIDC and Entra ID domain '{}' are configured, \
+                         the domain is ignored",
+                        domain
+                    );
+                }
                 let provider = OidcRouter::new(&config, "oidc", &idmap)
                     .await
                     .map_err(|e| {
