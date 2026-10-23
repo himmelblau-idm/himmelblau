@@ -629,8 +629,8 @@ impl IdProvider for IdProviderProxy {
             None => self.provider.clone(),
         };
         match provider.as_ref() {
-            Providers::Oidc(provider) => return provider.get_cachestate(account_id).await,
-            Providers::Himmelblau(provider) => return provider.get_cachestate(account_id).await,
+            Providers::Oidc(provider) => provider.get_cachestate(account_id).await,
+            Providers::Himmelblau(provider) => provider.get_cachestate(account_id).await,
         }
     }
 
