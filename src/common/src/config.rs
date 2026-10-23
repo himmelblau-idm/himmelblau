@@ -866,11 +866,16 @@ impl HimmelblauConfig {
     /// (empty, or a known local-only name). Callers treat `None` as user-unknown
     /// and must not look it up against Entra. See himmelblau-idm/himmelblau#1392.
     pub fn map_name_to_upn(&self, account_id: &str) -> Option<String> {
-        self.map_name_to_upn_impl(account_id, "/etc/passwd")
+        self.map_name_to_upn_impl(account_id, "/etc/passwd", MAPPED_NAME_CACHE)
     }
 
-    /// Inner impl with an injectable passwd path for hermetic unit tests.
-    fn map_name_to_upn_impl(&self, account_id: &str, passwd_path: &str) -> Option<String> {
+    /// Inner impl with injectable passwd and mapping cache paths for hermetic unit tests.
+    fn map_name_to_upn_impl(
+        &self,
+        account_id: &str,
+        passwd_path: &str,
+        cache_path: &str,
+    ) -> Option<String> {
         let name_mapping_script = self.get_name_mapping_script();
         let cn_name_mapping = self.get_cn_name_mapping();
         let domains = self.get_configured_domains();
@@ -906,7 +911,7 @@ impl HimmelblauConfig {
         // Empty script output signals "not a directory user" -> None.
         if !account_id.contains('@') {
             if let Some(name_mapping_script) = &name_mapping_script {
-                let name_cache = MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite).ok();
+                let name_cache = MappedNameCache::new(cache_path, &Mode::ReadWrite).ok();
 
                 let output = Command::new(name_mapping_script).arg(account_id).output();
 
@@ -2212,9 +2217,10 @@ mod tests {
         "#,
         )))
         .unwrap();
+        let (_cache_dir, cache) = temp_mapping_cache_path();
         let passwd = create_temp_passwd(PASSWD_MINIMAL);
         assert_eq!(
-            config.map_name_to_upn_impl("user", &passwd),
+            config.map_name_to_upn_impl("user", &passwd, &cache),
             Some("user".to_string())
         );
     }
@@ -2228,12 +2234,13 @@ mod tests {
         "#,
         )))
         .unwrap();
+        let (_cache_dir, cache) = temp_mapping_cache_path();
         let passwd = create_temp_passwd(&format!(
             "{}localuser:x:1000:1000::/home/localuser:/bin/bash\n",
             PASSWD_MINIMAL
         ));
         assert_eq!(
-            config.map_name_to_upn_impl("localuser", &passwd),
+            config.map_name_to_upn_impl("localuser", &passwd, &cache),
             Some("localuser".to_string())
         );
     }
@@ -2247,12 +2254,13 @@ mod tests {
         "#,
         )))
         .unwrap();
+        let (_cache_dir, cache) = temp_mapping_cache_path();
         let passwd = create_temp_passwd(&format!(
             "{}systemd-coredump:x:999:999::/run/systemd:/usr/sbin/nologin\n",
             PASSWD_MINIMAL
         ));
         assert_eq!(
-            config.map_name_to_upn_impl("systemd-coredump", &passwd),
+            config.map_name_to_upn_impl("systemd-coredump", &passwd, &cache),
             Some("systemd-coredump".to_string())
         );
     }
@@ -2267,9 +2275,10 @@ mod tests {
         "#,
         )))
         .unwrap();
+        let (_cache_dir, cache) = temp_mapping_cache_path();
         let passwd = create_temp_passwd(PASSWD_MINIMAL);
         assert_eq!(
-            config.map_name_to_upn_impl("user", &passwd),
+            config.map_name_to_upn_impl("user", &passwd, &cache),
             Some("user@example.com".to_string())
         );
     }
@@ -2283,9 +2292,10 @@ mod tests {
         "#,
         )))
         .unwrap();
+        let (_cache_dir, cache) = temp_mapping_cache_path();
         let passwd = create_temp_passwd(PASSWD_MINIMAL);
-        assert_eq!(config.map_name_to_upn_impl("", &passwd), None);
-        assert_eq!(config.map_name_to_upn_impl("   ", &passwd), None);
+        assert_eq!(config.map_name_to_upn_impl("", &passwd, &cache), None);
+        assert_eq!(config.map_name_to_upn_impl("   ", &passwd, &cache), None);
     }
 
     #[test]
@@ -2297,6 +2307,7 @@ mod tests {
         "#,
         )))
         .unwrap();
+        let (_cache_dir, cache) = temp_mapping_cache_path();
         let passwd = create_temp_passwd(PASSWD_MINIMAL);
         for name in [
             "gdm",
@@ -2310,7 +2321,7 @@ mod tests {
             "pam_unix_non_existent:",
         ] {
             assert_eq!(
-                config.map_name_to_upn_impl(name, &passwd),
+                config.map_name_to_upn_impl(name, &passwd, &cache),
                 None,
                 "{name} should be None"
             );
@@ -2327,9 +2338,10 @@ mod tests {
         "#,
         )))
         .unwrap();
+        let (_cache_dir, cache) = temp_mapping_cache_path();
         let passwd = create_temp_passwd(PASSWD_MINIMAL);
         assert_eq!(
-            config.map_name_to_upn_impl("gdmitrij.popov", &passwd),
+            config.map_name_to_upn_impl("gdmitrij.popov", &passwd, &cache),
             Some("gdmitrij.popov@example.com".to_string())
         );
     }
@@ -2342,9 +2354,10 @@ mod tests {
         "#,
         )))
         .unwrap();
+        let (_cache_dir, cache) = temp_mapping_cache_path();
         let passwd = create_temp_passwd(PASSWD_MINIMAL);
         assert_eq!(
-            config.map_name_to_upn_impl("user", &passwd),
+            config.map_name_to_upn_impl("user", &passwd, &cache),
             Some("user".to_string())
         );
     }
@@ -2447,7 +2460,7 @@ mod tests {
             let name = config.map_upn_to_name_impl(upn, &cache);
             assert_eq!(name, "First.Last");
             assert_eq!(
-                config.map_name_to_upn_impl(&name, &create_temp_passwd(PASSWD_MINIMAL)),
+                config.map_name_to_upn_impl(&name, &create_temp_passwd(PASSWD_MINIMAL), &cache),
                 Some("First.Last@example.com".to_string())
             );
         }
@@ -2471,7 +2484,7 @@ mod tests {
         let name = config.map_upn_to_name_impl("john.doe@example.com", &cache);
         assert_eq!(name, "john.doe@example.com");
         assert_eq!(
-            config.map_name_to_upn_impl(&name, &create_temp_passwd(PASSWD_MINIMAL)),
+            config.map_name_to_upn_impl(&name, &create_temp_passwd(PASSWD_MINIMAL), &cache),
             Some("john.doe@example.com".to_string())
         );
     }
@@ -2483,7 +2496,7 @@ mod tests {
         let name = config.map_upn_to_name_impl("first.last@example.com", &cache);
         assert_eq!(name, "first.last");
         assert_eq!(
-            config.map_name_to_upn_impl(&name, &create_temp_passwd(PASSWD_MINIMAL)),
+            config.map_name_to_upn_impl(&name, &create_temp_passwd(PASSWD_MINIMAL), &cache),
             Some("first.last@example.com".to_string())
         );
     }

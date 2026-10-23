@@ -137,7 +137,8 @@ impl MappedNameCache {
         .ok()
         .or_else(|| {
             conn.query_row(
-                "SELECT mapped_name FROM mapping WHERE lower(upn) = lower(?1) LIMIT 1",
+                "SELECT mapped_name FROM mapping WHERE lower(upn) = lower(?1) \
+                 ORDER BY upn LIMIT 1",
                 params![upn],
                 |row| row.get(0),
             )
@@ -243,7 +244,7 @@ mod tests {
             MappedNameCache::new_impl(path.to_str().unwrap(), &Mode::ReadWrite, true).unwrap();
         let conn = cache.conn.as_ref().unwrap();
         let plan: String = conn.query_row(
-            "EXPLAIN QUERY PLAN SELECT mapped_name FROM mapping WHERE lower(upn) = lower(?1) LIMIT 1",
+            "EXPLAIN QUERY PLAN SELECT mapped_name FROM mapping WHERE lower(upn) = lower(?1) ORDER BY upn LIMIT 1",
             ["FIRST.LAST@EXAMPLE.COM"], |row| row.get(3)).unwrap();
         assert!(
             plan.contains("SEARCH") && plan.contains("mapping_upn_lower"),
