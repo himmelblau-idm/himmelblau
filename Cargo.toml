@@ -20,6 +20,26 @@ members = [
 	"fuzz",
 	"src/orchestrator",
 ]
+default-members = [
+	"src/daemon",
+	"src/cli",
+	"src/common",
+	"src/pam",
+	"src/nss",
+	"src/policies",
+	"src/idmap",
+	"src/broker",
+	"src/sshd-config",
+	"src/sso",
+	"src/sso-policies",
+	"src/qr-greeter",
+	"src/broker-client",
+	"src/selinux",
+	"src/apparmor",
+	"src/o365",
+	"src/collabora",
+	"fuzz",
+]
 resolver = "2"
 
 [patch.crates-io]
