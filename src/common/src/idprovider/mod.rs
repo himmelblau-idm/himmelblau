@@ -175,31 +175,30 @@ impl IdProviderProxy {
 
         Ok(proxy)
     }
-    async fn find_provider(&self, domain: Option<&str>) -> Result<Arc<Providers>, IdpError> {
-        match (domain, self.provider.as_ref()) {
-            (_, Providers::Oidc(_)) => Some(self.provider.clone()),
+    async fn find_provider(&self, domain: Option<&str>) -> Result<&Providers, IdpError> {
+        let provider = self.provider.as_ref();
+        let found = match (domain, provider) {
+            (_, Providers::Oidc(_)) => true,
             (Some(d), Providers::Himmelblau(h)) => {
-                if d == h.domain() {
-                    Some(self.provider.clone())
-                } else if self
-                    .config
-                    .lock()
-                    .await
-                    .get_primary_domain_from_alias(d)
-                    .await
-                    .is_some_and(|p| p.as_str() == h.domain())
-                {
-                    Some(self.provider.clone())
-                } else {
-                    None
-                }
+                d == h.domain()
+                    || self
+                        .config
+                        .lock()
+                        .await
+                        .get_primary_domain_from_alias(d)
+                        .await
+                        .is_some_and(|p| p.as_str() == h.domain())
             }
-            (None, Providers::Himmelblau(_)) => None,
+            (None, Providers::Himmelblau(_)) => false,
+        };
+        if found {
+            Ok(provider)
+        } else {
+            Err(IdpError::NotFound {
+                what: format!("domain: {}", domain.unwrap_or("<empty>")),
+                where_: "providers".to_string(),
+            })
         }
-        .ok_or(IdpError::NotFound {
-            what: format!("domain: {}", domain.unwrap_or("<empty>")),
-            where_: "providers".to_string(),
-        })
     }
 }
 
@@ -250,11 +249,11 @@ impl IdProvider for IdProviderProxy {
                 let Ok(provider) = self.find_provider(domain).await else {
                     return false;
                 };
-                provider.clone()
+                provider
             }
-            None => self.provider.clone(),
+            None => self.provider.as_ref(),
         };
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => provider.probe_online(account_id, now).await,
             Providers::Himmelblau(provider) => provider.probe_online(account_id, now).await,
         }
@@ -274,7 +273,7 @@ impl IdProvider for IdProviderProxy {
     ) -> Result<UnixUserToken, IdpError> {
         let domain = account_domain(id, old_token);
         let provider = self.find_provider(domain).await?;
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_access(
@@ -325,7 +324,7 @@ impl IdProvider for IdProviderProxy {
         let Ok(provider) = self.find_provider(domain).await else {
             return (None, None, None, None);
         };
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_tgts(id, old_token, keystore, tpm, machine_key)
@@ -350,7 +349,7 @@ impl IdProvider for IdProviderProxy {
     ) -> Result<String, IdpError> {
         let domain = account_domain(id, old_token);
         let provider = self.find_provider(domain).await?;
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_prt_cookie(id, old_token, sso_nonce, keystore, tpm, machine_key)
@@ -375,7 +374,7 @@ impl IdProvider for IdProviderProxy {
     ) -> Result<bool, IdpError> {
         let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
@@ -400,7 +399,7 @@ impl IdProvider for IdProviderProxy {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
         let domain = account_domain(id, old_token);
         let provider = self.find_provider(domain).await?;
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_get(id, old_token, keystore, tpm, machine_key)
@@ -428,7 +427,7 @@ impl IdProvider for IdProviderProxy {
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_online_auth_init(
@@ -477,7 +476,7 @@ impl IdProvider for IdProviderProxy {
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_online_auth_step(
@@ -523,7 +522,7 @@ impl IdProvider for IdProviderProxy {
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_offline_auth_init(account_id, token, service, no_hello_pin, keystore)
@@ -550,7 +549,7 @@ impl IdProvider for IdProviderProxy {
     ) -> Result<AuthResult, IdpError> {
         let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_offline_auth_step(
@@ -593,7 +592,7 @@ impl IdProvider for IdProviderProxy {
     ) -> Result<bool, IdpError> {
         let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_try_unseal(account_id, cred, keystore, tpm, machine_key, online)
@@ -624,11 +623,11 @@ impl IdProvider for IdProviderProxy {
                 let Ok(provider) = self.find_provider(domain).await else {
                     return CacheState::Offline;
                 };
-                provider.clone()
+                provider
             }
-            None => self.provider.clone(),
+            None => self.provider.as_ref(),
         };
-        match provider.as_ref() {
+        match provider {
             Providers::Oidc(provider) => provider.get_cachestate(account_id).await,
             Providers::Himmelblau(provider) => provider.get_cachestate(account_id).await,
         }
