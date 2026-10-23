@@ -555,6 +555,33 @@ impl HimmelblauConfig {
         }
     }
 
+    /// Resolve a user's configured domain (including a known alias) before
+    /// selecting its authority. OIDC accounts use the configured issuer host,
+    /// regardless of whether their account-name claim contains a domain.
+    /// The server-generated config is already merged into this configuration by `new`.
+    pub fn get_authority_host_for_account(&self, account_id: &str) -> Option<String> {
+        if let Some(issuer) = self.get_oidc_issuer_url() {
+            let issuer = url::Url::parse(&issuer).ok()?;
+            return issuer.host_str().map(str::to_string);
+        }
+        let (_, domain) = split_username(account_id)?;
+        let domain = self
+            .get_primary_domain_from_alias_simple(domain)
+            .unwrap_or_else(|| domain.to_string());
+        Some(self.get_authority_host(&domain))
+    }
+
+    /// Broker environments are endpoint authorities, so preserve an OIDC issuer's
+    /// nondefault port. FIDO RP IDs continue to use the hostname-only accessor.
+    pub fn get_broker_environment_for_account(&self, account_id: &str) -> Option<String> {
+        if let Some(issuer) = self.get_oidc_issuer_url() {
+            let issuer = url::Url::parse(&issuer).ok()?;
+            issuer.host_str()?;
+            return Some(issuer[url::Position::BeforeHost..url::Position::AfterPort].to_string());
+        }
+        self.get_authority_host_for_account(account_id)
+    }
+
     pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
         self.config.get(domain, "tenant_id")
     }
@@ -760,7 +787,7 @@ impl HimmelblauConfig {
             let domain_aliases = match self.config.get(domain, "domain_aliases") {
                 Some(aliases) => aliases
                     .split(",")
-                    .map(|s| s.to_string().to_lowercase())
+                    .map(|s| s.trim().to_lowercase())
                     .collect(),
                 None => vec![],
             };
@@ -1784,21 +1811,89 @@ mod tests {
     fn test_get_authority_host() {
         let config_data = r#"
         [example.com]
-        authority_host = https://login.suse.com
+        authority_host = login.suse.com
         "#;
 
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(
-            config.get_authority_host("example.com"),
-            "https://login.suse.com"
-        );
+        assert_eq!(config.get_authority_host("example.com"), "login.suse.com");
         let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_authority_host("example.com"),
             DEFAULT_AUTHORITY_HOST
         );
+    }
+
+    #[test]
+    fn test_get_authority_host_for_account_resolves_aliases() {
+        let temp_file = create_temp_config(
+            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\ndomain_aliases = first.example.com, ALIAS.example.com  , third.example.com\n",
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_authority_host_for_account("alice@alias.example.com"),
+            Some("login.microsoftonline.us".to_string())
+        );
+        assert_eq!(config.get_authority_host_for_account("alice"), None);
+    }
+
+    #[test]
+    fn test_get_authority_host_for_oidc_accounts_uses_issuer() {
+        let temp_file = create_temp_config(
+            "[global]\noidc_issuer_url = https://id.example.org/realms/example/.well-known/openid-configuration\n",
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        for account in ["alice", "alice@unrelated.example.com"] {
+            assert_eq!(
+                config.get_authority_host_for_account(account),
+                Some("id.example.org".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn test_broker_environment_preserves_oidc_ports() {
+        for (issuer, environment, host) in [
+            (
+                "https://id.example.org:8443/realm",
+                "id.example.org:8443",
+                "id.example.org",
+            ),
+            (
+                "https://id.example.org/realm",
+                "id.example.org",
+                "id.example.org",
+            ),
+            ("https://[::1]:8443/realm", "[::1]:8443", "[::1]"),
+        ] {
+            let contents = format!("[global]\noidc_issuer_url = {issuer}\n");
+            let temp_file = create_temp_config(&contents);
+            let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+            for account in ["alice", "alice@other.example"] {
+                assert_eq!(
+                    config.get_broker_environment_for_account(account),
+                    Some(environment.to_string())
+                );
+                assert_eq!(
+                    config.get_authority_host_for_account(account),
+                    Some(host.to_string())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_broker_environment_preserves_entra_alias_authority() {
+        let temp_file = create_temp_config(
+            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\ndomain_aliases = alias.example.com\n",
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_broker_environment_for_account("alice@alias.example.com"),
+            Some("login.microsoftonline.us".to_string())
+        );
+        assert_eq!(config.get_broker_environment_for_account("alice"), None);
     }
 
     #[test]

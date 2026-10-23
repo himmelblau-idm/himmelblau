@@ -1016,7 +1016,8 @@ async fn main() -> ExitCode {
                                     if let Ok(Account { username, .. }) = serde_json::from_value::<Account>(account.clone()) {
                                         if $account_id.is_none() || $account_id.clone().map(|s| s.to_lowercase()).as_ref().unwrap_or(&"".to_string()) == &username.to_lowercase() {
                                             if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                                                let (graph, _, authority) = init!(cfg, Some(username), None);
+                                                let (graph, domain, authority) = init!(cfg, Some(username), None);
+                                                let sso_url = format!("https://{}/", cfg.get_authority_host(&domain));
                                                 if let Ok(token_val) = broker.acquire_token_silently(
                                                     "0.0", &session_id,
                                                     &json!({
@@ -1029,7 +1030,7 @@ async fn main() -> ExitCode {
                                                             "clientId": client_id,
                                                             "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
                                                             "requestedScopes": $scopes,
-                                                            "ssoUrl": "https://login.microsoftonline.com/"
+                                                            "ssoUrl": sso_url
                                                         }
                                                     })
                                                 ).await {
