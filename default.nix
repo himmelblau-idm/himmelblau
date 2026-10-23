@@ -16,7 +16,7 @@ let
       pkgs.libunistring
     ];
   };
-  cargo_nix = pkgs.callPackage ./Cargo.nix {
+  cargoArgs = {
     rootFeatures = [
       "default"
       "himmelblau_unix_common/tpm"
@@ -220,6 +220,41 @@ let
         };
       };
   };
+  cargo_nix = pkgs.callPackage ./Cargo.nix cargoArgs;
+  packageIds = {
+    daemon = "himmelblaud";
+    aad-tool = "aad-tool";
+    sso = "sso";
+    broker = "broker";
+    o365 = "o365";
+    collabora = "himmelblau-collabora";
+    pam = "pam_himmelblau";
+    nss = "nss_himmelblau";
+  };
+
+  # Resolve features once across the exported packages, not once per binary.
+  # Without this we would rebuild many packages ~4 times, with slightly different
+  # features enabled. Note that this synthetic root is only used to align features
+  # and is never actually built. We pick out of this joint derivation the packages
+  # we want to export below.
+  joinlyDerivedCrates = cargo_nix.internal.builtRustCratesWithFeatures {
+    packageId = "himmelblau-temp-root";
+    features = [ ];
+    runTests = false;
+    buildRustCrateForPkgsFunc = cargoArgs.buildRustCrateForPkgs;
+    crateConfigs = cargo_nix.internal.crates // {
+      himmelblau-temp-root = {
+        crateName = "himmelblau-temp-root";
+        dependencies = map (
+          packageId: {
+            name = packageId;
+            inherit packageId;
+            features = cargoArgs.rootFeatures;
+          }
+        ) (builtins.attrValues packageIds);
+      };
+    };
+  };
 in
 rec {
 
@@ -234,16 +269,7 @@ rec {
     };
   };
 
-  packages = {
-    daemon = cargo_nix.workspaceMembers."himmelblaud".build;
-    aad-tool = cargo_nix.workspaceMembers."aad-tool".build;
-    sso = cargo_nix.workspaceMembers."sso".build;
-    broker = cargo_nix.workspaceMembers."broker".build;
-    o365 = cargo_nix.workspaceMembers."o365".build;
-    collabora = cargo_nix.workspaceMembers."himmelblau-collabora".build;
-    pam = cargo_nix.workspaceMembers."pam_himmelblau".build;
-    nss = cargo_nix.workspaceMembers."nss_himmelblau".build;
-  };
+  packages = lib.mapAttrs (_: packageId: joinlyDerivedCrates.crates.${packageId}) packageIds;
 
   passthru = { inherit pkgs; };
 }
