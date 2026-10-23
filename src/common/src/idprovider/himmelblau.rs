@@ -109,6 +109,31 @@ const THROTTLING_ERROR: u32 = 90055;
 // AADSTS90006: ExternalServerRetryableError - The service is temporarily unavailable.
 const RETRYABLE_ERROR: u32 = 90006;
 
+// Keep the provider's credential ordering in one place so it can be exercised
+// with deterministic token/Graph responses rather than a live Entra tenant.
+// None requests an app-only directory lookup; Some requests user refresh.
+// A macro keeps the lending async callback concrete, allowing its mutable TPM
+// borrow to remain Send in the async-trait provider implementation.
+macro_rules! lookup_with_credentials {
+    ($cached_user:expr, $refresh:expr, $lookup:expr $(,)?) => {{
+        async {
+            let cached_user = $cached_user;
+            let refresh: Option<RefreshCacheEntry> = $refresh;
+            let mut lookup = $lookup;
+            if cached_user && refresh.is_some() {
+                return lookup(refresh).await;
+            }
+            if let Some(token) = lookup(None).await? {
+                return Ok(Some(token));
+            }
+            match refresh {
+                Some(refresh) => lookup(Some(refresh)).await,
+                None => Ok(None),
+            }
+        }
+    }};
+}
+
 fn unexpired_prt_entry(prt: SealedData, prt_expired: bool) -> Option<RefreshCacheEntry> {
     (!prt_expired).then_some(RefreshCacheEntry::Prt(prt))
 }
@@ -1510,7 +1535,7 @@ impl IdProvider for HimmelblauProvider {
                                         // App credentials authenticate the directory lookup,
                                         // not this user on the host. Only user authentication
                                         // or a refresh-token-backed result may populate the cache.
-                                        return Ok(UserTokenState::LookupOnly(token));
+                                        return Ok(Some(UserTokenState::LookupOnly(token)));
                                     }
                                     Err(e) => {
                                         error!(?e, "Failed to obtain token from user object using confidential client");
@@ -1529,18 +1554,6 @@ impl IdProvider for HimmelblauProvider {
             }};
         }
 
-        // If we have ConfidentialClient creds, use those
-        if let Ok(Some((client_id, creds))) =
-            confidential_client_creds(tpm, keystore, machine_key, &self.domain)
-        {
-            fetch_user_confidential_client!(&client_id, creds)
-        }
-
-        let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
-            error!("Failed reading from the idmap cache: {:?}", e);
-            IdpError::BadRequest
-        })?;
-
         macro_rules! fake_user {
             () => {
                 match old_token {
@@ -1549,6 +1562,10 @@ impl IdProvider for HimmelblauProvider {
                     Some(_) => return Ok(UserTokenState::UseCached),
                     // Otherwise, see if we should fake it
                     None => {
+                        let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
+                            error!("Failed reading from the idmap cache: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
                         let apply_policy = self.config.lock().await.get_apply_policy();
                         let mut auth_options = vec![];
                         if apply_policy {
@@ -1656,233 +1673,249 @@ impl IdProvider for HimmelblauProvider {
                 }
             };
         }
-        let refresh_cache_entry = match self.refresh_cache.refresh_token(&account_id).await {
-            Ok(refresh_cache_entry) => refresh_cache_entry,
-            Err(_) => fake_user!(),
-        };
-        // If an app_id is defined in the config, the app should have the
-        // GroupMember.Read.All API permission.
-        let (client_id, scopes) = if self.config.lock().await.get_app_id(&self.domain).is_some() {
-            (None, vec!["GroupMember.Read.All"])
-        } else {
-            (
-                Some(EDGE_BROWSER_CLIENT_ID),
-                vec!["https://graph.microsoft.com/.default"],
-            )
-        };
-        let token = match refresh_cache_entry {
-            RefreshCacheEntry::Prt(prt) => {
-                let mtoken = self
-                    .client
-                    .lock()
-                    .await
-                    .exchange_prt_for_access_token(
-                        &prt,
-                        scopes.clone(),
-                        None,
-                        client_id,
-                        tpm,
-                        machine_key,
-                        None,
-                        None,
+        let refresh = self.refresh_cache.refresh_token(&account_id).await.ok();
+        let result = lookup_with_credentials!(old_token.is_some(), refresh, async |credential: Option<RefreshCacheEntry>| {
+            let Some(refresh_cache_entry) = credential else {
+                if let Ok(Some((client_id, creds))) =
+                    confidential_client_creds(tpm, keystore, machine_key, &self.domain)
+                {
+                    fetch_user_confidential_client!(&client_id, creds)
+                }
+                return Ok(None);
+            };
+            // Retain the established refresh-error behavior: failed user
+            // authentication must not delete or extend a cached account.
+            let refreshed = async {
+                // If an app_id is defined in the config, the app should have the
+                // GroupMember.Read.All API permission.
+                let (client_id, scopes) = if self.config.lock().await.get_app_id(&self.domain).is_some() {
+                    (None, vec!["GroupMember.Read.All"])
+                } else {
+                    (
+                        Some(EDGE_BROWSER_CLIENT_ID),
+                        vec!["https://graph.microsoft.com/.default"],
                     )
-                    .await;
-                match mtoken {
-                    Ok(val) => val,
-                    Err(MsalError::RequestFailed(_)) => {
-                        // Retry on network failure, as these can be rather common
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        net_down_check!(
-                            self.client
-                                .lock()
-                                .await
-                                .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key, None, None)
-                                .await,
-                            Err(e) => {
-                                error!("{:?}", e);
-                                // Never return IdpError::NotFound. This deletes the existing
-                                // user from the cache.
-                                fake_user!()
-                            }
-                        )
-                    }
-                    Err(MsalError::AcquireTokenFailed(err_resp))
-                        if err_resp.error_codes.contains(&CONSENT_REQUIRED) =>
-                    {
-                        /* Consent has not been granted for the application
-                         * to access the Graph API. Retry without Graph API
-                         * scopes - authentication can still proceed but group
-                         * names will not be resolved. */
-                        warn!(
-                            "Consent not granted for Graph API access. \
-                               Retrying token exchange without Graph API scopes."
-                        );
-                        match self
-                            .client
-                            .lock()
-                            .await
-                            .exchange_prt_for_access_token(
-                                &prt,
-                                vec![],
-                                None,
-                                None,
-                                tpm,
-                                machine_key,
-                                None,
-                                None,
-                            )
-                            .await
-                        {
-                            Ok(val) => val,
-                            Err(e) => {
-                                error!("{:?}", e);
-                                // Never return IdpError::NotFound. This deletes the existing
-                                // user from the cache.
-                                fake_user!()
-                            }
-                        }
-                    }
-                    Err(MsalError::AcquireTokenFailed(err_resp))
-                        if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
-                    {
-                        /* Authentication failed with Edge Browser client ID.
-                         * Fall back to default app ID - group names may not
-                         * be resolved but authentication can proceed. */
-                        info!(
-                            "Token acquisition failed with Edge Browser app ({}). \
-                             Retrying with default app ID.",
-                            err_resp.error_description
-                        );
-                        match self
-                            .client
-                            .lock()
-                            .await
-                            .exchange_prt_for_access_token(
-                                &prt,
-                                scopes,
-                                None,
-                                Some(DEFAULT_APP_ID),
-                                tpm,
-                                machine_key,
-                                None,
-                                None,
-                            )
-                            .await
-                        {
-                            Ok(val) => val,
-                            Err(e) => {
-                                error!("{:?}", e);
-                                // Never return IdpError::NotFound. This deletes the existing
-                                // user from the cache.
-                                fake_user!()
-                            }
-                        }
-                    }
-                    Err(MsalError::AADSTSError(_)) if client_id == Some(EDGE_BROWSER_CLIENT_ID) => {
-                        /* AADSTS error with Edge Browser client ID (e.g. CA
-                         * policy requiring device compliance). Fall back to
-                         * default app ID. */
-                        info!(
-                            "AADSTS error with Edge Browser app. \
-                             Retrying with default app ID."
-                        );
-                        match self
-                            .client
-                            .lock()
-                            .await
-                            .exchange_prt_for_access_token(
-                                &prt,
-                                scopes,
-                                None,
-                                Some(DEFAULT_APP_ID),
-                                tpm,
-                                machine_key,
-                                None,
-                                None,
-                            )
-                            .await
-                        {
-                            Ok(val) => val,
-                            Err(e) => {
-                                error!("{:?}", e);
-                                // Never return IdpError::NotFound. This deletes the existing
-                                // user from the cache.
-                                fake_user!()
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("{:?}", e);
-                        // Never return IdpError::NotFound. This deletes the existing
-                        // user from the cache.
-                        fake_user!()
-                    }
-                }
-            }
-            RefreshCacheEntry::RefreshToken(refresh_token) => {
-                let (ip_versions, request_timeout) = {
-                    let cfg = self.config.lock().await;
-                    (cfg.get_ip_versions(), cfg.get_request_timeout())
                 };
-                let client = PublicClientApplication::new(
-                    BROKER_APP_ID,
-                    None,
-                    Duration::from_secs(request_timeout),
-                    &ip_versions,
-                )
-                .map_err(|e| {
-                    error!("Failed to create public client application: {:?}", e);
-                    IdpError::BadRequest
-                })?;
-                let mtoken = client
-                    .acquire_token_by_refresh_token(&refresh_token, vec![])
-                    .await;
-                match mtoken {
-                    Ok(val) => val,
-                    Err(MsalError::RequestFailed(_)) => {
-                        // Retry on network failure, as these can be rather common
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        net_down_check!(
-                            client
-                                .acquire_token_by_refresh_token(
-                                    &refresh_token,
-                                    vec![],
+                let token = match refresh_cache_entry {
+                    RefreshCacheEntry::Prt(prt) => {
+                        let mtoken = self
+                            .client
+                            .lock()
+                            .await
+                            .exchange_prt_for_access_token(
+                                &prt,
+                                scopes.clone(),
+                                None,
+                                client_id,
+                                tpm,
+                                machine_key,
+                                None,
+                                None,
+                            )
+                            .await;
+                        match mtoken {
+                            Ok(val) => val,
+                            Err(MsalError::RequestFailed(_)) => {
+                                // Retry on network failure, as these can be rather common
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                net_down_check!(
+                                    self.client
+                                        .lock()
+                                        .await
+                                        .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key, None, None)
+                                        .await,
+                                    Err(e) => {
+                                        error!("{:?}", e);
+                                        // Never return IdpError::NotFound. This deletes the existing
+                                        // user from the cache.
+                                        fake_user!()
+                                    }
                                 )
-                                .await,
+                            }
+                            Err(MsalError::AcquireTokenFailed(err_resp))
+                                if err_resp.error_codes.contains(&CONSENT_REQUIRED) =>
+                            {
+                                /* Consent has not been granted for the application
+                                 * to access the Graph API. Retry without Graph API
+                                 * scopes - authentication can still proceed but group
+                                 * names will not be resolved. */
+                                warn!(
+                                    "Consent not granted for Graph API access. \
+                                       Retrying token exchange without Graph API scopes."
+                                );
+                                match self
+                                    .client
+                                    .lock()
+                                    .await
+                                    .exchange_prt_for_access_token(
+                                        &prt,
+                                        vec![],
+                                        None,
+                                        None,
+                                        tpm,
+                                        machine_key,
+                                        None,
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(val) => val,
+                                    Err(e) => {
+                                        error!("{:?}", e);
+                                        // Never return IdpError::NotFound. This deletes the existing
+                                        // user from the cache.
+                                        fake_user!()
+                                    }
+                                }
+                            }
+                            Err(MsalError::AcquireTokenFailed(err_resp))
+                                if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
+                            {
+                                /* Authentication failed with Edge Browser client ID.
+                                 * Fall back to default app ID - group names may not
+                                 * be resolved but authentication can proceed. */
+                                info!(
+                                    "Token acquisition failed with Edge Browser app ({}). \
+                                     Retrying with default app ID.",
+                                    err_resp.error_description
+                                );
+                                match self
+                                    .client
+                                    .lock()
+                                    .await
+                                    .exchange_prt_for_access_token(
+                                        &prt,
+                                        scopes,
+                                        None,
+                                        Some(DEFAULT_APP_ID),
+                                        tpm,
+                                        machine_key,
+                                        None,
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(val) => val,
+                                    Err(e) => {
+                                        error!("{:?}", e);
+                                        // Never return IdpError::NotFound. This deletes the existing
+                                        // user from the cache.
+                                        fake_user!()
+                                    }
+                                }
+                            }
+                            Err(MsalError::AADSTSError(_)) if client_id == Some(EDGE_BROWSER_CLIENT_ID) => {
+                                /* AADSTS error with Edge Browser client ID (e.g. CA
+                                 * policy requiring device compliance). Fall back to
+                                 * default app ID. */
+                                info!(
+                                    "AADSTS error with Edge Browser app. \
+                                     Retrying with default app ID."
+                                );
+                                match self
+                                    .client
+                                    .lock()
+                                    .await
+                                    .exchange_prt_for_access_token(
+                                        &prt,
+                                        scopes,
+                                        None,
+                                        Some(DEFAULT_APP_ID),
+                                        tpm,
+                                        machine_key,
+                                        None,
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(val) => val,
+                                    Err(e) => {
+                                        error!("{:?}", e);
+                                        // Never return IdpError::NotFound. This deletes the existing
+                                        // user from the cache.
+                                        fake_user!()
+                                    }
+                                }
+                            }
                             Err(e) => {
                                 error!("{:?}", e);
                                 // Never return IdpError::NotFound. This deletes the existing
                                 // user from the cache.
                                 fake_user!()
                             }
+                        }
+                    }
+                    RefreshCacheEntry::RefreshToken(refresh_token) => {
+                        let (ip_versions, request_timeout) = {
+                            let cfg = self.config.lock().await;
+                            (cfg.get_ip_versions(), cfg.get_request_timeout())
+                        };
+                        let client = PublicClientApplication::new(
+                            BROKER_APP_ID,
+                            None,
+                            Duration::from_secs(request_timeout),
+                            &ip_versions,
                         )
+                        .map_err(|e| {
+                            error!("Failed to create public client application: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                        let mtoken = client
+                            .acquire_token_by_refresh_token(&refresh_token, vec![])
+                            .await;
+                        match mtoken {
+                            Ok(val) => val,
+                            Err(MsalError::RequestFailed(_)) => {
+                                // Retry on network failure, as these can be rather common
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                net_down_check!(
+                                    client
+                                        .acquire_token_by_refresh_token(
+                                            &refresh_token,
+                                            vec![],
+                                        )
+                                        .await,
+                                    Err(e) => {
+                                        error!("{:?}", e);
+                                        // Never return IdpError::NotFound. This deletes the existing
+                                        // user from the cache.
+                                        fake_user!()
+                                    }
+                                )
+                            }
+                            Err(e) => {
+                                error!("{:?}", e);
+                                // Never return IdpError::NotFound. This deletes the existing
+                                // user from the cache.
+                                fake_user!()
+                            }
+                        }
                     }
-                    Err(e) => {
-                        error!("{:?}", e);
-                        // Never return IdpError::NotFound. This deletes the existing
-                        // user from the cache.
-                        fake_user!()
+                };
+                match self
+                    .token_validate(&account_id, &token, old_token, PrtCacheUpdate::Fresh)
+                    .await
+                {
+                    Ok(AuthResult::Success { mut token }) => {
+                        /* Set the GECOS from the old_token, since MS doesn't
+                         * provide this during a silent acquire
+                         */
+                        if let Some(old_token) = old_token {
+                            token.displayname.clone_from(&old_token.displayname)
+                        }
+                        Ok(UserTokenState::Update(token))
                     }
+                    // Never return IdpError::NotFound. This deletes the existing
+                    // user from the cache.
+                    Ok(AuthResult::Denied(_)) | Ok(AuthResult::Next(_)) => fake_user!(),
+                    Err(_) => fake_user!(),
                 }
-            }
-        };
-        match self
-            .token_validate(&account_id, &token, old_token, PrtCacheUpdate::Fresh)
-            .await
-        {
-            Ok(AuthResult::Success { mut token }) => {
-                /* Set the GECOS from the old_token, since MS doesn't
-                 * provide this during a silent acquire
-                 */
-                if let Some(old_token) = old_token {
-                    token.displayname.clone_from(&old_token.displayname)
-                }
-                Ok(UserTokenState::Update(token))
-            }
-            // Never return IdpError::NotFound. This deletes the existing
-            // user from the cache.
-            Ok(AuthResult::Denied(_)) | Ok(AuthResult::Next(_)) => fake_user!(),
-            Err(_) => fake_user!(),
+            }.await;
+            refreshed.map(Some)
+        }).await?;
+        match result {
+            Some(token) => Ok(token),
+            None => fake_user!(),
         }
     }
 
@@ -5908,8 +5941,214 @@ mod tests {
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
     use himmelblau::{MFAAuthContinue, MfaMethodInfo};
-    use kanidm_hsm_crypto::structures::SealedData;
+    use kanidm_hsm_crypto::{
+        provider::{BoxedDynTpm, SoftTpm, Tpm},
+        structures::SealedData,
+        AuthValue,
+    };
+    use std::collections::HashMap;
     use zeroize::Zeroizing;
+
+    fn lookup_test_user(group_name: &str) -> super::UserToken {
+        use crate::idprovider::interface::GroupToken;
+        use uuid::Uuid;
+        super::UserToken {
+            name: "user@example.com".into(),
+            spn: "user@example.com".into(),
+            uuid: Uuid::nil(),
+            real_gidnumber: None,
+            gidnumber: 1234,
+            displayname: "User".into(),
+            shell: None,
+            groups: vec![GroupToken {
+                name: group_name.into(),
+                spn: group_name.into(),
+                uuid: Uuid::nil(),
+                gidnumber: 1234,
+            }],
+            tenant_id: None,
+            valid: true,
+        }
+    }
+
+    #[allow(clippy::unwrap_used)]
+    fn lookup_test_prt() -> SealedData {
+        let mut tpm = BoxedDynTpm::new(SoftTpm::new());
+        let auth = AuthValue::ephemeral().unwrap();
+        let loadable = tpm.root_storage_key_create(&auth).unwrap();
+        let key = tpm.root_storage_key_load(&auth, &loadable).unwrap();
+        tpm.seal_data(&key, Zeroizing::new(b"prt".to_vec()))
+            .unwrap()
+    }
+
+    // Exercise the same dispatcher unix_user_get uses with deterministic credential
+    // backends. The refresh cache, ordering and token-state propagation are real;
+    // MSAL/Graph token validation itself still requires tenant-backed coverage.
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
+    async fn cached_user_refresh_wins_over_configured_app_lookup() {
+        use super::{RefreshCache, UserTokenState};
+        let prt = lookup_test_prt();
+        for entry in [
+            RefreshCacheEntry::Prt(prt),
+            RefreshCacheEntry::RefreshToken("refresh-token".into()),
+        ] {
+            let cache = RefreshCache::new();
+            cache.add("user@example.com", &entry).await;
+            let old_user = lookup_test_user("revoked-sudo-group");
+            let mut calls = Vec::new();
+            let result = lookup_with_credentials!(
+                true,
+                cache.refresh_token(&old_user.spn).await.ok(),
+                async |credential: Option<RefreshCacheEntry>| {
+                    calls.push(credential.is_some());
+                    Ok::<_, super::IdpError>(Some(match credential {
+                        Some(_) => UserTokenState::Update(lookup_test_user("current-group")),
+                        None => UserTokenState::LookupOnly(lookup_test_user("app-group")),
+                    }))
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                calls,
+                vec![true],
+                "app lookup must not preempt user refresh"
+            );
+            let Some(UserTokenState::Update(user)) = result else {
+                panic!("user-backed refresh must remain cacheable");
+            };
+            assert_eq!(user.groups[0].name, "current-group");
+            assert_ne!(user.groups[0].name, old_user.groups[0].name);
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
+    async fn missing_user_refresh_retains_app_lookup_for_cached_and_new_users() {
+        use super::{RefreshCache, UserTokenState};
+        for cached_user in [true, false] {
+            let cache = RefreshCache::new();
+            let mut calls = Vec::new();
+            let result = lookup_with_credentials!(
+                cached_user,
+                cache.refresh_token("user@example.com").await.ok(),
+                async |credential: Option<RefreshCacheEntry>| {
+                    calls.push(credential.is_some());
+                    Ok::<_, super::IdpError>(Some(UserTokenState::LookupOnly(lookup_test_user(
+                        "current-group",
+                    ))))
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(calls, vec![false]);
+            let Some(UserTokenState::LookupOnly(user)) = result else {
+                panic!("app-only claims must remain lookup-only even for cached users");
+            };
+            assert_eq!(user.groups[0].name, "current-group");
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
+    async fn purged_user_refresh_retains_confidential_fallback() {
+        use super::{RefreshCache, UserTokenState};
+        let cache = RefreshCache::new();
+        // Simulate a PRT restored across daemon restart with its original,
+        // expired insertion timestamp. refresh_token must purge it first.
+        let persisted = HashMap::from([("user@example.com", (lookup_test_prt(), 0_u64))]);
+        cache
+            .import_broker_prts(&serde_json::to_vec(&persisted).unwrap())
+            .await
+            .unwrap();
+        let mut calls = Vec::new();
+        let result = lookup_with_credentials!(
+            true,
+            cache.refresh_token("user@example.com").await.ok(),
+            async |credential: Option<RefreshCacheEntry>| {
+                calls.push(credential.is_some());
+                Ok::<_, super::IdpError>(Some(UserTokenState::LookupOnly(lookup_test_user(
+                    "current-group",
+                ))))
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls, vec![false]);
+        assert!(matches!(result, Some(UserTokenState::LookupOnly(_))));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
+    async fn uncached_user_tries_app_before_available_refresh() {
+        use super::UserTokenState;
+        for app_succeeds in [true, false] {
+            let mut calls = Vec::new();
+            let result = lookup_with_credentials!(
+                false,
+                Some(RefreshCacheEntry::RefreshToken("refresh-token".into())),
+                async |credential: Option<RefreshCacheEntry>| {
+                    calls.push(credential.is_some());
+                    Ok::<_, super::IdpError>(match credential {
+                        None if app_succeeds => {
+                            Some(UserTokenState::LookupOnly(lookup_test_user("app-group")))
+                        }
+                        None => None,
+                        Some(_) => Some(UserTokenState::Update(lookup_test_user("current-group"))),
+                    })
+                },
+            )
+            .await
+            .unwrap();
+            if app_succeeds {
+                assert_eq!(calls, vec![false]);
+                assert!(matches!(result, Some(UserTokenState::LookupOnly(_))));
+            } else {
+                assert_eq!(calls, vec![false, true]);
+                assert!(matches!(result, Some(UserTokenState::Update(_))));
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
+    async fn absent_app_and_user_credentials_leave_existing_fallback_in_charge() {
+        for cached_user in [true, false] {
+            let mut calls = 0;
+            let result = lookup_with_credentials!(cached_user, None, async |credential: Option<
+                RefreshCacheEntry,
+            >| {
+                assert!(credential.is_none());
+                calls += 1;
+                Ok::<_, super::IdpError>(None::<super::UserTokenState>)
+            })
+            .await
+            .unwrap();
+            assert_eq!(calls, 1);
+            assert!(result.is_none());
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
+    async fn failed_user_refresh_does_not_silently_switch_to_app_claims() {
+        use super::UserTokenState;
+        let mut calls = 0;
+        let result = lookup_with_credentials!(
+            true,
+            Some(RefreshCacheEntry::RefreshToken("expired-token".into())),
+            async |credential: Option<RefreshCacheEntry>| {
+                assert!(credential.is_some());
+                calls += 1;
+                Ok::<_, super::IdpError>(Some(UserTokenState::UseCached))
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert!(matches!(result, Some(UserTokenState::UseCached)));
+    }
 
     #[tokio::test]
     async fn entra_authority_response_marks_online_without_following_redirects() {
