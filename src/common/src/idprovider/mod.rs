@@ -203,6 +203,18 @@ impl IdProviderProxy {
     }
 }
 
+fn upn_domain(account_id: &str) -> Option<&str> {
+    split_username(account_id).map(|(_, domain)| domain)
+}
+
+fn account_domain<'a>(id: &'a Id, old_token: Option<&'a UserToken>) -> Option<&'a str> {
+    match (old_token, id) {
+        (Some(token), _) => upn_domain(token.spn.as_str()),
+        (None, Id::Name(name)) => upn_domain(name),
+        (None, Id::Gid(_)) => None,
+    }
+}
+
 #[async_trait]
 impl IdProvider for IdProviderProxy {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
@@ -234,7 +246,7 @@ impl IdProvider for IdProviderProxy {
     async fn probe_online(&self, account_id: Option<&str>, now: SystemTime) -> bool {
         let provider = match account_id {
             Some(id) => {
-                let domain = split_username(id).map(|parts| parts.1);
+                let domain = upn_domain(id);
                 let Ok(provider) = self.find_provider(domain).await else {
                     return false;
                 };
@@ -260,10 +272,7 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
-        let domain = match old_token {
-            Some(token) => split_username(token.spn.as_str()).map(|parts| parts.1),
-            None => id.split_domain(),
-        };
+        let domain = account_domain(id, old_token);
         let provider = self.find_provider(domain).await?;
         match provider.as_ref() {
             Providers::Oidc(provider) => {
@@ -312,10 +321,7 @@ impl IdProvider for IdProviderProxy {
         Option<String>,
         Option<String>,
     ) {
-        let domain = match old_token {
-            Some(token) => split_username(token.spn.as_str()).map(|parts| parts.1),
-            None => id.split_domain(),
-        };
+        let domain = account_domain(id, old_token);
         let Ok(provider) = self.find_provider(domain).await else {
             return (None, None, None, None);
         };
@@ -342,10 +348,7 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
-        let domain = match old_token {
-            Some(token) => split_username(token.spn.as_str()).map(|parts| parts.1),
-            None => id.split_domain(),
-        };
+        let domain = account_domain(id, old_token);
         let provider = self.find_provider(domain).await?;
         match provider.as_ref() {
             Providers::Oidc(provider) => {
@@ -370,7 +373,7 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
-        let domain = split_username(account_id).map(|parts| parts.1);
+        let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
         match provider.as_ref() {
             Providers::Oidc(provider) => {
@@ -395,10 +398,7 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
-        let domain = match old_token {
-            Some(token) => split_username(token.spn.as_str()).map(|parts| parts.1),
-            None => id.split_domain(),
-        };
+        let domain = account_domain(id, old_token);
         let provider = self.find_provider(domain).await?;
         match provider.as_ref() {
             Providers::Oidc(provider) => {
@@ -426,7 +426,7 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = split_username(account_id).map(|parts| parts.1);
+        let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
         match provider.as_ref() {
             Providers::Oidc(provider) => {
@@ -475,7 +475,7 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
-        let domain = split_username(account_id).map(|parts| parts.1);
+        let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
         match provider.as_ref() {
             Providers::Oidc(provider) => {
@@ -521,7 +521,7 @@ impl IdProvider for IdProviderProxy {
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = split_username(account_id).map(|parts| parts.1);
+        let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
         match provider.as_ref() {
             Providers::Oidc(provider) => {
@@ -548,7 +548,7 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
-        let domain = split_username(account_id).map(|parts| parts.1);
+        let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
         match provider.as_ref() {
             Providers::Oidc(provider) => {
@@ -591,7 +591,7 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         online: bool,
     ) -> Result<bool, IdpError> {
-        let domain = split_username(account_id).map(|parts| parts.1);
+        let domain = upn_domain(account_id);
         let provider = self.find_provider(domain).await?;
         match provider.as_ref() {
             Providers::Oidc(provider) => {
@@ -620,7 +620,7 @@ impl IdProvider for IdProviderProxy {
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
         let provider = match account_id {
             Some(id) => {
-                let domain = split_username(id).map(|parts| parts.1);
+                let domain = upn_domain(id);
                 let Ok(provider) = self.find_provider(domain).await else {
                     return CacheState::Offline;
                 };
@@ -655,5 +655,26 @@ impl IdProvider for IdProviderProxy {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upn_domain_requires_a_single_at() {
+        assert_eq!(upn_domain("alice@example.com"), Some("example.com"));
+        assert_eq!(upn_domain("alice"), None);
+        assert_eq!(upn_domain("alice@example.com@evil.com"), None);
+    }
+
+    #[test]
+    fn account_domain_from_id() {
+        let id = Id::Name("alice@example.com".to_string());
+        assert_eq!(account_domain(&id, None), Some("example.com"));
+        let id = Id::Name("alice".to_string());
+        assert_eq!(account_domain(&id, None), None);
+        assert_eq!(account_domain(&Id::Gid(1000), None), None);
     }
 }
