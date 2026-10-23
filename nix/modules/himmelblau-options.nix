@@ -363,6 +363,70 @@ in
       example = [ "ssh" "cockpit" ];
     };
 
+    canonicalize_user_services = mkOption {
+      type = types.nullOr (types.listOf types.str);
+      default = null;
+      description = ''
+        A comma-separated list of PAM service names for which the PAM module replaces
+        **PAM_USER**
+        with the canonical account name after a successful authentication. The
+        canonical account name is the name the system name service returns for the
+        authenticated account, which is also the name reported by
+        **id -un**
+        for that user.
+        
+        Users can log in with several aliases of the same account, such as the UPN,
+        the short name, or a different letter case. Some applications, such as GDM,
+        copy
+        **PAM_USER**
+        into the
+        **USER**
+        and
+        **LOGNAME**
+        environment variables of the session, which then contain the alias entered at
+        the login prompt instead of the account name.
+        
+        The PAM service name is the name passed by the application when calling
+        **pam_start()**
+        (e.g., "gdm-password", "login").
+        
+        Entries are matched as substrings, so "gdm" will match "gdm-password",
+        "gdm-autologin", etc.
+        
+        **PAM_USER**
+        is only replaced when the canonical account name resolves to the same account
+        as the name entered at the login prompt.
+        
+        Do not list services that require
+        **PAM_USER**
+        to remain unchanged during authentication. sshd aborts the connection when it
+        re-initializes PAM and
+        **PAM_USER**
+        has changed, and already sets
+        **USER**
+        and
+        **LOGNAME**
+        from the account name. polkit, whose PAM service is "polkit-1", rejects the
+        authentication when
+        **PAM_USER**
+        has changed, even to the name of the same account.
+        
+        pam_faillock records failures under the value of
+        **PAM_USER**
+        at the time it runs. When pam_faillock runs before pam_himmelblau in the
+        authentication stack, a successful login resets the failures recorded under
+        the canonical account name, not those recorded under the name entered at the
+        login prompt. When pam_himmelblau runs first, as configured by the authselect
+        profile and by aad-tool configure-pam, pam_faillock does not act on successful
+        Himmelblau logins, and this option does not change its behavior.
+        
+        By default, no service is listed and
+        **PAM_USER**
+        is never modified.
+      '';
+      example = [ "gdm-password" ];
+    };
+
     mfa_method = mkOption {
       type = types.nullOr (types.str);
       default = null;
