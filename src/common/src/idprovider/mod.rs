@@ -93,6 +93,21 @@ impl IdProviderProxy {
             }
             (_, Some(domain)) => {
                 info!("Adding provider for domain {}", domain);
+                let ignored: Vec<String> = config
+                    .lock()
+                    .await
+                    .get_configured_entra_domains()
+                    .into_iter()
+                    .filter(|d| d != &domain)
+                    .collect();
+                if !ignored.is_empty() {
+                    warn!(
+                        "Multiple domains are not supported, using '{}' and \
+                         ignoring: {}",
+                        domain,
+                        ignored.join(", ")
+                    );
+                }
                 let (authority_host, tenant_id, graph_url, odc_provider, app_id, ip_versions) = {
                     let cfg = config.lock().await;
                     (

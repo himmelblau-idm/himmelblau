@@ -719,12 +719,19 @@ impl HimmelblauConfig {
         domains
     }
 
-    pub fn get_configured_entra_domain(&self) -> Option<String> {
+    pub fn get_configured_entra_domains(&self) -> Vec<String> {
         // The array returned by get_configured_domains() might include the
         // "oidc" section, or an empty entry from a blank `domain =` option.
         self.get_configured_domains()
             .into_iter()
-            .find(|x| !x.is_empty() && x != "oidc")
+            .filter(|x| !x.is_empty() && x != "oidc")
+            .collect()
+    }
+
+    /// Himmelblau supports a single Entra ID domain. If several are
+    /// configured the first one is used.
+    pub fn get_configured_entra_domain(&self) -> Option<String> {
+        self.get_configured_entra_domains().into_iter().next()
     }
 
     pub fn get_config_file(&self) -> String {
@@ -1759,6 +1766,19 @@ mod tests {
         );
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(config.get_configured_entra_domain(), None);
+
+        // Additional domains are listed, but only the first is used
+        let temp_file = create_temp_config(
+            r#"
+        [global]
+        domains = example.com,test.com
+        "#,
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_configured_entra_domains(),
+            vec!["example.com", "test.com"]
+        );
 
         // No configuration at all
         let temp_file = create_temp_config("[global]\n");
