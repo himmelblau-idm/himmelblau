@@ -16,6 +16,7 @@ let
         services.himmelblau = {
           enable = true;
           daemonPackage = pkgs.emptyDirectory;
+          aadToolPackage = pkgs.writeShellScriptBin "aad-tool" "";
           ssoPackage = pkgs.emptyDirectory;
           brokerPackage = pkgs.emptyDirectory;
           pamPackage = pkgs.emptyDirectory // { lib = pkgs.emptyDirectory; };
@@ -44,6 +45,7 @@ in
   # Independent paths for projecting packaged commands and NixOS's environment.
   paths = {
     daemon = toString cfg.services.himmelblau.daemonPackage;
+    aadTool = toString cfg.services.himmelblau.aadToolPackage;
     broker = toString cfg.services.himmelblau.brokerPackage;
     config = toString cfg.environment.etc."himmelblau/himmelblau.conf".source;
     localeArchive = "${cfg.i18n.glibcLocales}/lib/locale/locale-archive";
