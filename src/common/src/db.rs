@@ -635,6 +635,10 @@ impl<'a> CacheTxn for DbTxn<'a> {
             .map_err(|e| self.sqlite_error("delete group_t", &e))?;
 
         self.conn
+            .execute("DELETE FROM hsm_data_t WHERE key LIKE '%/hello_fingerprint' OR key LIKE '%/fingerprint_failures' OR key LIKE '%/fingerprint_reservation'", [])
+            .map_err(|e| self.sqlite_error("delete fingerprint enrollment", &e))?;
+
+        self.conn
             .execute("DELETE FROM account_t", [])
             .map_err(|e| self.sqlite_error("delete group_t", &e))?;
 
@@ -649,7 +653,9 @@ impl<'a> CacheTxn for DbTxn<'a> {
                     OR key LIKE '%/hello_decoupled'
                     OR key LIKE '%/hello_prt'
                     OR key LIKE '%/hello_refresh_token'
-                    OR key LIKE '%/hello_totp'",
+                    OR key LIKE '%/hello_totp'
+                    OR key LIKE '%/hello_fingerprint'
+                    OR key LIKE '%/fingerprint_failures' OR key LIKE '%/fingerprint_reservation'",
                 [],
             )
             .map_err(|e| self.sqlite_error("delete hello keys", &e))?;
@@ -853,6 +859,18 @@ impl<'a> CacheTxn for DbTxn<'a> {
         // to manually manage the update or insert :( :(
         let account_uuid = account.uuid.as_hyphenated().to_string();
 
+        // Remove fingerprint capabilities before an account name is reassigned.
+        for suffix in [
+            "/hello_fingerprint",
+            "/fingerprint_failures",
+            "/fingerprint_reservation",
+        ] {
+            self.conn.execute(
+                "DELETE FROM hsm_data_t WHERE EXISTS (SELECT 1 FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber) AND (key = lower(name) || :suffix OR key = lower(spn) || :suffix))",
+                named_params!{":uuid":&account_uuid,":name":&account.name,":spn":&account.spn,":gidnumber":&account.gidnumber,":suffix":suffix},
+            ).map_err(|e|self.sqlite_error("delete reassigned account fingerprints",&e))?;
+        }
+
         // Find anything conflicting and purge it.
         self.conn.execute("DELETE FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)",
             named_params!{
@@ -936,6 +954,10 @@ impl<'a> CacheTxn for DbTxn<'a> {
 
     fn delete_account(&mut self, a_uuid: Uuid) -> Result<(), CacheError> {
         let account_uuid = a_uuid.as_hyphenated().to_string();
+        self.conn.execute(
+            "DELETE FROM hsm_data_t WHERE key IN (SELECT lower(name) || '/hello_fingerprint' FROM account_t WHERE uuid = :uuid UNION SELECT lower(spn) || '/hello_fingerprint' FROM account_t WHERE uuid = :uuid UNION SELECT lower(name) || '/fingerprint_failures' FROM account_t WHERE uuid = :uuid UNION SELECT lower(spn) || '/fingerprint_failures' FROM account_t WHERE uuid = :uuid UNION SELECT lower(name) || '/fingerprint_reservation' FROM account_t WHERE uuid = :uuid UNION SELECT lower(spn) || '/fingerprint_reservation' FROM account_t WHERE uuid = :uuid)",
+            named_params! {":uuid": &account_uuid},
+        ).map_err(|e|self.sqlite_error("delete account fingerprints",&e))?;
 
         self.conn
             .execute(

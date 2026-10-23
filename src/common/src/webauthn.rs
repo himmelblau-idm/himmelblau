@@ -130,6 +130,7 @@ pub(crate) fn perform(
                 extensions: AuthenticationExtensionsClientInputs::default(),
                 pin: None,
                 use_ctap1_fallback: false,
+                internal_uv_only: false,
             };
             let (tx, rx) = channel();
             service
@@ -218,6 +219,7 @@ pub(crate) fn perform(
                 extensions: AuthenticationExtensionsClientInputs::default(),
                 pin: None,
                 use_ctap1_fallback: false,
+                internal_uv_only: false,
             };
             let (tx, rx) = channel();
             service

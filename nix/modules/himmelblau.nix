@@ -6,6 +6,8 @@
 }:
 let
   cfg = config.services.himmelblau;
+  fingerprintEnabled = cfg.settings.enable_hello_fingerprint != false;
+  fingerprintGroup = if config.security.tpm2.tssGroup != null then config.security.tpm2.tssGroup else "tss";
   mayUseLocalTpmDevice = (
       cfg.settings.tpm_tcti_name == null
       || cfg.settings.tpm_tcti_name == "device"
@@ -190,6 +192,11 @@ in
     environment.etc."opt/chrome/native-messaging-hosts/linux_entra_sso.json".source =
       "${cfg.ssoPackage}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
     services.dbus.packages = [ cfg.brokerPackage ];
+    users.groups = lib.mkIf fingerprintEnabled { ${fingerprintGroup} = {}; };
+    services.udev.extraRules = lib.mkIf fingerprintEnabled (
+      builtins.replaceStrings [ "GROUP=\"tss\"" ] [ "GROUP=\"${fingerprintGroup}\"" ]
+        (builtins.readFile ../../platform/udev/71-himmelblau-fido.rules)
+    );
 
     # Add himmelblau to the list of name services to lookup users/groups
     system.nssModules = [ cfg.nssPackage ];
@@ -318,11 +325,14 @@ in
             StateDirectory = "himmelblaud"; # /var/lib/himmelblaud
             PrivateTmp = true;
             # Expose host devices only when a TPM-backed HSM mode may need them.
-            PrivateDevices = !tpmAccessRequired;
-            DeviceAllow = lib.optional tpmAccessRequired "char-tpm rw";
+            PrivateDevices = !(tpmAccessRequired || fingerprintEnabled);
+            DeviceAllow = lib.optional tpmAccessRequired "char-tpm rw"
+              ++ lib.optional fingerprintEnabled "char-hidraw rw";
+            LimitMEMLOCK = "16M";
+            LimitCORE = 0;
             SupplementaryGroups = lib.optional (
               tpmAccessRequired && config.security.tpm2.tssGroup != null
-            ) config.security.tpm2.tssGroup;
+            ) config.security.tpm2.tssGroup ++ lib.optional fingerprintEnabled fingerprintGroup;
           } // lib.optionalAttrs config.security.tpm2.enable {
             LoadCredentialEncrypted = "hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc";
             Environment = "HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin";

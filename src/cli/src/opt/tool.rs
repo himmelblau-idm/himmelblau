@@ -16,8 +16,42 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use clap::Subcommand;
-use libc::uid_t;
 use libc::gid_t;
+use libc::uid_t;
+
+#[derive(Debug, Subcommand)]
+pub enum FingerprintOpt {
+    /// Show enrollment and PIN fallback status.
+    Status {
+        #[clap(short = 'D', long = "name")]
+        account_id: String,
+    },
+    /// Enroll a biometric FIDO2 authenticator after fresh Hello PIN authentication.
+    Enroll {
+        #[clap(short = 'D', long = "name")]
+        account_id: String,
+    },
+    /// Add a fingerprint to the configured authenticator.
+    Add {
+        #[clap(short = 'D', long = "name")]
+        account_id: String,
+    },
+    /// Replace enrollment after validating the new authenticator.
+    Replace {
+        #[clap(short = 'D', long = "name")]
+        account_id: String,
+    },
+    /// Recover a blocked authenticator after verifying its current token PIN.
+    Recover {
+        #[clap(short = 'D', long = "name")]
+        account_id: String,
+    },
+    /// Remove Himmelblau enrollment without resetting the authenticator.
+    Remove {
+        #[clap(short = 'D', long = "name")]
+        account_id: String,
+    },
+}
 
 #[derive(Debug, Subcommand)]
 pub enum IdmapOpt {
@@ -48,7 +82,7 @@ pub enum IdmapOpt {
     Clear {
         #[clap(short, long)]
         debug: bool,
-    }
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -179,7 +213,7 @@ pub enum ApplicationOpt {
         client_id: String,
         #[clap(long = "schema-app-object-id")]
         schema_app_object_id: String,
-    }
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -372,6 +406,9 @@ pub enum CredOpt {
 #[derive(Debug, Subcommand)]
 #[clap(about = "Himmelblau Management Utility")]
 pub enum HimmelblauUnixOpt {
+    /// Manage personal biometric FIDO2 Linux Hello enrollment.
+    #[clap(subcommand)]
+    Fingerprint(FingerprintOpt),
     /// Manage Entra ID application registrations, including creation, listing, and extension
     /// schema configuration.
     #[clap(subcommand)]
@@ -560,14 +597,16 @@ pub enum HimmelblauUnixOpt {
     Version {
         #[clap(short, long)]
         debug: bool,
-    }
+    },
 }
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "Himmelblau Management Utility")]
 #[cfg_attr(
     feature = "donation-messages",
-    clap(after_help = "Support Himmelblau: Financial support helps keep cloud identity for Linux open.\nLearn more: https://himmelblau-idm.org/donations/")
+    clap(
+        after_help = "Support Himmelblau: Financial support helps keep cloud identity for Linux open.\nLearn more: https://himmelblau-idm.org/donations/"
+    )
 )]
 pub struct HimmelblauUnixParser {
     #[clap(subcommand)]

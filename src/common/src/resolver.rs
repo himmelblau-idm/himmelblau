@@ -55,6 +55,8 @@ use tokio::sync::broadcast;
 
 use himmelblau::auth::UserToken as UnixUserToken;
 
+mod fingerprint;
+
 const NXCACHE_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 const UNREACHABLE_RETRY: Duration = Duration::from_secs(15);
 
@@ -85,6 +87,14 @@ enum CacheUpdateResult {
 
 #[allow(clippy::large_enum_variant)]
 pub enum AuthSession {
+    LocalHello(Box<fingerprint::LocalHelloSession>),
+    HelloSuccess {
+        account_id: String,
+        pin: crate::secret_memory::SecretBuffer,
+        typed: bool,
+        created: std::time::Instant,
+        generation: Option<String>,
+    },
     InProgress {
         account_id: String,
         service: String,
@@ -140,6 +150,8 @@ where
     hsm: Mutex<BoxedDynTpm>,
     machine_key: MachineKey,
     hmac_key: HmacKey,
+    fingerprint_enabled: std::sync::atomic::AtomicBool,
+    fingerprint_remote_services: std::sync::RwLock<Vec<String>>,
     client: I,
     pam_allow_groups: BTreeSet<String>,
     oidc_auth: bool,
@@ -210,7 +222,7 @@ mod tests {
     use std::time::{Duration, SystemTime};
     use tokio::sync::{broadcast, Notify};
 
-    struct OfflineFallbackProvider {
+    pub(super) struct OfflineFallbackProvider {
         cache_state: RwLock<CacheState>,
         check_online_result: AtomicBool,
         probe_online_result: AtomicBool,
@@ -638,7 +650,7 @@ mod tests {
             .root_storage_key_load(&auth_value, &loadable_machine_key)
             .expect("failed to load machine key");
 
-        Resolver::new(
+        let resolver = Resolver::new(
             db,
             OfflineFallbackProvider::new(),
             hsm,
@@ -656,10 +668,12 @@ mod tests {
             Vec::new(),
         )
         .await
-        .expect("failed to create resolver")
+        .expect("failed to create resolver");
+        resolver.set_enable_hello_fingerprint(false);
+        resolver
     }
 
-    async fn setup_resolver() -> Resolver<OfflineFallbackProvider> {
+    pub(super) async fn setup_resolver() -> Resolver<OfflineFallbackProvider> {
         setup_resolver_with_expiry(0).await
     }
 
@@ -2800,6 +2814,8 @@ where
             hsm,
             machine_key,
             hmac_key,
+            fingerprint_enabled: std::sync::atomic::AtomicBool::new(true),
+            fingerprint_remote_services: std::sync::RwLock::new(Vec::new()),
             client,
             timeout_seconds,
             pam_allow_groups: pam_allow_groups.into_iter().collect(),
@@ -4126,7 +4142,7 @@ where
         }
     }
 
-    pub async fn pam_account_authenticate_init(
+    async fn pam_account_authenticate_init_inner(
         &self,
         account_id: &str,
         service: &str,
@@ -4273,7 +4289,7 @@ where
         }
     }
 
-    pub async fn pam_account_authenticate_step(
+    async fn pam_account_authenticate_step_inner(
         &self,
         auth_session: &mut AuthSession,
         pam_next_req: PamAuthRequest,
@@ -4535,6 +4551,9 @@ where
                     (AuthCredHandler::None, PamAuthRequest::FidoUnavailable) => {
                         return Err(ResolverError);
                     }
+                    (_, PamAuthRequest::Fingerprint | PamAuthRequest::FingerprintCancel) => {
+                        return Err(ResolverError);
+                    }
                     (_, PamAuthRequest::WebAuthn { .. } | PamAuthRequest::WebAuthnUnavailable) => {
                         return Err(ResolverError);
                     }
@@ -4560,9 +4579,10 @@ where
                     where_: "AuthSession".to_string(),
                 })
             }
-            (&mut AuthSession::Success(_), _) | (&mut AuthSession::Denied, _) => {
-                Err(IdpError::BadRequest)
-            }
+            (&mut AuthSession::Success(_), _)
+            | (&mut AuthSession::Denied, _)
+            | (&mut AuthSession::LocalHello(_), _)
+            | (&mut AuthSession::HelloSuccess { .. }, _) => Err(IdpError::BadRequest),
         };
 
         match maybe_err {

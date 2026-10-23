@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="enable_hello_fingerprint"
+           section="global" type="bool" rust_type="bool"
+           documented="true" domain_specific="false" order="705">
+<description>
+Enables biometric FIDO2 enrollment and fingerprint authentication for Linux Hello.
+An eligible personal authenticator must support biometric user verification and
+hmac-secret. Ordinary fprintd fingerprint readers are not supported.
+After Hello PIN enrollment, eligible authenticators are offered for fingerprint
+enrollment. Once enrolled, fingerprint authentication is preferred with Hello PIN
+fallback when verification fails or the authenticator is unavailable.
+Disabling this option retains Hello PIN authentication.
+</description>
+<conf_description>Enable biometric FIDO2 Linux Hello enrollment and authentication.</conf_description>
+<default>true</default>
+<default_const>DEFAULT_HELLO_FINGERPRINT_ENABLED</default_const>
+<example>enable_hello_fingerprint = false</example>
+</parameter>

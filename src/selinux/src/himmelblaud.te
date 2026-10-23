@@ -528,6 +528,15 @@ optional {
 	allow himmelblaud_t tpm_device_t:chr_file { open read write };
 }
 
+# FIDO HID devices are additionally restricted by the FIDO-only udev rule.
+optional {
+	require {
+		type hidraw_device_t;
+		class chr_file { getattr open read write ioctl };
+	}
+	allow himmelblaud_t hidraw_device_t:chr_file { getattr open read write ioctl };
+}
+
 # himmelblaud_tasks_t (tasks daemon) permissions
 allow himmelblaud_tasks_t himmelblau_etc_t:dir { getattr open read search };
 allow himmelblaud_tasks_t himmelblau_etc_t:file { getattr open read };

@@ -1,4 +1,10 @@
 #!/bin/sh
+
+# Apply FIDO-only device permissions to subsequent device additions. Readers
+# already connected should be unplugged and reconnected after upgrading.
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules >/dev/null 2>&1 || true
+fi
 set -e
 
 # Detect if running on a Live system where service start should be skipped
