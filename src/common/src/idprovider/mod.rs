@@ -180,6 +180,9 @@ impl IdProviderProxy {
         let found = match (domain, provider) {
             (_, Providers::Oidc(_)) => true,
             (Some(d), Providers::Himmelblau(h)) => {
+                /* NEVER introduce a new tenant here: Advisory GHSA-q746-m2wv-qh4v.
+                 * An alias is only accepted when it resolves to the domain of
+                 * the provider we already configured. */
                 d == h.domain()
                     || self
                         .config
