@@ -227,6 +227,7 @@ if [ -f "$CRED" ]; then
 
     # Only a validated encrypted credential makes the legacy plaintext stale.
     rm -f "$LEGACY"
+    rm -f "$LEGACY1"
     echo "HSM PIN credential already exists and is valid, skipping initialization"
     exit 0
 fi
@@ -275,8 +276,8 @@ fi
 if systemd-creds encrypt --name=hsm-pin $KEY_ARG \
         --tpm2-device=auto "$HSM_PIN_FILE" "$CRED"; then
     echo "HSM PIN credential created successfully"
-    rm -f "$LEGACY" 2>/dev/null || true
-    rm -f "$LEGACY1" 2>/dev/null || true
+    rm -f "$LEGACY"
+    rm -f "$LEGACY1"
     exit 0
 else
     echo "ERROR: Failed to create HSM PIN credential"
