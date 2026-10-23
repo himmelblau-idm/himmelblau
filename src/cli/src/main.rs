@@ -107,6 +107,37 @@ struct Token {
     response: BrokerTokenResponse,
 }
 
+// Preserve existing PAM actions when upgrading authentication rules to stop on PAM_ABORT.
+fn auth_abort_control(existing_line: &str) -> Option<String> {
+    if existing_line.split_whitespace().next()? != "auth" {
+        return None;
+    }
+    let control = existing_line.split_whitespace().nth(1)?;
+    if control.starts_with('[') {
+        let start = existing_line.find('[')?;
+        let end = existing_line[start..].find(']')? + start;
+        let mut actions: Vec<&str> = existing_line[start + 1..end]
+            .split_whitespace()
+            .filter(|action| !action.starts_with("abort="))
+            .collect();
+        actions.push("abort=die");
+        return Some(format!(
+            "{}[{}]{}",
+            &existing_line[..start],
+            actions.join(" "),
+            &existing_line[end + 1..]
+        ));
+    }
+    let expanded = match control {
+        "required" => "success=ok new_authtok_reqd=ok ignore=ignore default=bad",
+        "requisite" => "success=ok new_authtok_reqd=ok ignore=ignore default=die",
+        "sufficient" => "success=done new_authtok_reqd=done default=ignore",
+        "optional" => "success=ok new_authtok_reqd=ok default=ignore",
+        _ => return None,
+    };
+    Some(existing_line.replacen(control, &format!("[{} abort=die]", expanded), 1))
+}
+
 fn preserve_numeric_account_success(existing_line: &str) -> Option<String> {
     let control_start = existing_line.find('[')?;
     let control_end = existing_line[control_start..].find(']')? + control_start;
@@ -182,7 +213,8 @@ fn insert_module_line(
             return Ok(());
         }
 
-        let updated_line = preserve_numeric_account_success(&lines[existing_index])
+        let updated_line = auth_abort_control(&lines[existing_index])
+            .or_else(|| preserve_numeric_account_success(&lines[existing_index]))
             .unwrap_or_else(|| module_line.to_string());
         if updated_line == lines[existing_index] {
             debug!("{} already contains pam_himmelblau; skipping", pam_file);
@@ -345,11 +377,11 @@ fn configure_pam(
                 auth_file,
                 // Set PAM_AUTHTOK from Hello PIN so downstream modules (e.g. gnome-keyring)
                 // can unlock using use_authtok.
-                "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
+                "auth\t[success=done new_authtok_reqd=done abort=die default=ignore]\tpam_himmelblau.so ignore_unknown_user set_authtok",
                 None,
                 // pam_himmelblau should always come first on the auth stack
                 Some(&|_: &str| true),
-                false,
+                true,
                 dry_run,
             )?;
         }
@@ -2513,7 +2545,7 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::HimmelblauUnixParser;
-    use super::{insert_module_line, preserve_numeric_account_success};
+    use super::{auth_abort_control, insert_module_line, preserve_numeric_account_success};
     use clap::CommandFactory;
     use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
     use himmelblau_unix_common::tpm::resolve_hsm_type;
@@ -2807,6 +2839,44 @@ mod tests {
         assert_eq!(
             content,
             "auth required pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n"
+        );
+        remove_temp_file(&path)
+    }
+
+    #[test]
+    fn auth_abort_control_preserves_existing_actions() {
+        assert_eq!(
+            auth_abort_control("auth [success=2 default=ignore] pam_himmelblau.so").unwrap(),
+            "auth [success=2 default=ignore abort=die] pam_himmelblau.so"
+        );
+        for control in ["required", "requisite", "sufficient", "optional"] {
+            let line = format!("auth {} pam_himmelblau.so", control);
+            let updated = auth_abort_control(&line).unwrap();
+            assert!(updated.contains("abort=die"));
+            assert_eq!(auth_abort_control(&updated).unwrap(), updated);
+        }
+        assert!(auth_abort_control("account sufficient pam_himmelblau.so").is_none());
+    }
+
+    #[test]
+    fn auth_abort_upgrade_rewrites_existing_rule_once() -> anyhow::Result<()> {
+        let path = temp_pam_file(
+            "upgrade-auth",
+            "auth [success=2 default=ignore] pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n",
+        )?;
+        for _ in 0..2 {
+            insert_module_line(
+                path.to_str().unwrap_or_default(),
+                "auth [success=done new_authtok_reqd=done abort=die default=ignore] pam_himmelblau.so ignore_unknown_user set_authtok",
+                None,
+                None,
+                true,
+                false,
+            )?;
+        }
+        assert_eq!(
+            read_to_string(&path)?,
+            "auth [success=2 default=ignore abort=die] pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n"
         );
         remove_temp_file(&path)
     }
