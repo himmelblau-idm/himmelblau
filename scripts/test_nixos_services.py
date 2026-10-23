@@ -138,6 +138,10 @@ NIXOS_EXEC_START_PATHS = {
         "/usr/sbin/himmelblau_broker",
         "{broker}/bin/himmelblau_broker",
     ),
+    "himmelblau-compliance-check.service": (
+        "/usr/bin/aad-tool",
+        "{aadTool}/bin/aad-tool",
+    ),
 }
 # NixOS-provided environment paths and service-specific tool packages.
 NIXOS_ENVIRONMENT_PATHS = (
@@ -150,17 +154,12 @@ NIXOS_ENVIRONMENT_TOOLS = {
     "himmelblaud-tasks.service": "tasksTools",
     "himmelblau-hsm-pin-init.service": "initializerTools",
     "himmelblau-broker.service": None,
+    "himmelblau-compliance-check.service": None,
 }
 
 GENERATED_ONLY = {
     "system/himmelblaud-orchestrator.service": (
         "NixOS does not yet define the experimental browser orchestrator service."
-    ),
-    "user/himmelblau-compliance-check.service": (
-        "NixOS does not yet define the user compliance-check service."
-    ),
-    "user/himmelblau-compliance-check.timer": (
-        "NixOS does not yet define the user compliance-check timer."
     ),
 }
 USER_UNITS = {

@@ -227,6 +227,7 @@ rec {
     imports = [ ./nix/modules/himmelblau.nix ];
     services.himmelblau = {
       daemonPackage = pkgs.lib.mkDefault packages.daemon;
+      aadToolPackage = pkgs.lib.mkDefault packages.aad-tool;
       ssoPackage = pkgs.lib.mkDefault packages.sso;
       brokerPackage = pkgs.lib.mkDefault packages.broker;
       pamPackage = pkgs.lib.mkDefault packages.pam;

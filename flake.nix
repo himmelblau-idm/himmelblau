@@ -43,6 +43,7 @@
             in
             {
               daemonPackage = pkgs.lib.mkDefault self.packages.${system}.daemon;
+              aadToolPackage = pkgs.lib.mkDefault self.packages.${system}.aad-tool;
               ssoPackage = pkgs.lib.mkDefault self.packages.${system}.sso;
               brokerPackage = pkgs.lib.mkDefault self.packages.${system}.broker;
               pamPackage = pkgs.lib.mkDefault self.packages.${system}.pam;

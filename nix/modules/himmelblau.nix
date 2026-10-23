@@ -76,6 +76,11 @@ in
         description = "Package of the himmelblau daemon";
       };
 
+      aadToolPackage = lib.mkOption {
+        type = lib.types.path;
+        description = "Package of aad-tool, used for user compliance checks";
+      };
+
       ssoPackage = lib.mkOption {
         type = lib.types.path;
         description = "Package of the linux-entra-sso native messaging host";
@@ -283,6 +288,27 @@ in
         TimeoutStopSec = 5;
         Restart = "on-failure";
         WatchdogSec = "120s";
+      };
+    };
+
+    systemd.user.services.himmelblau-compliance-check = {
+      description = "Himmelblau Compliance Check";
+      documentation = [ "man:aad-tool(1)" ];
+      wantedBy = [ "default.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${cfg.aadToolPackage}/bin/aad-tool compliance-check";
+      };
+    };
+
+    systemd.user.timers.himmelblau-compliance-check = {
+      description = "Himmelblau Compliance Check Timer";
+      documentation = [ "man:aad-tool(1)" ];
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "10min";
+        OnUnitActiveSec = "8h";
+        Persistent = true;
       };
     };
 
