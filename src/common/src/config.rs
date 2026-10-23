@@ -915,7 +915,7 @@ impl HimmelblauConfig {
     fn map_name_to_upn_impl(&self, account_id: &str, passwd_path: &str) -> Option<String> {
         let name_mapping_script = self.get_name_mapping_script();
         let cn_name_mapping = self.get_cn_name_mapping();
-        let domains = self.get_configured_domains();
+        let domain = self.get_configured_entra_domain();
 
         if account_id.trim().is_empty() {
             return None;
@@ -989,8 +989,10 @@ impl HimmelblauConfig {
                 }
             }
         }
-        if cn_name_mapping && !account_id.contains('@') && !domains.is_empty() {
-            return Some(format!("{}@{}", account_id, domains[0]));
+        if cn_name_mapping && !account_id.contains('@') {
+            if let Some(domain) = domain {
+                return Some(format!("{}@{}", account_id, domain));
+            }
         }
         Some(account_id.to_string())
     }
@@ -1003,10 +1005,8 @@ impl HimmelblauConfig {
     pub fn map_upn_to_name(&self, upn: &str) -> String {
         if let Some((name, domain)) = split_username(upn) {
             let primary = self
-                .get_configured_domains()
-                .first()
-                .map(|e| e.as_str())
-                .unwrap_or("")
+                .get_configured_entra_domain()
+                .unwrap_or_default()
                 .to_lowercase();
             let res;
             if self.get_name_mapping_script().is_some() {

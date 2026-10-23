@@ -610,10 +610,13 @@ async fn confidential_client_access_token(
         }
     } else if let Some(domain) = domain {
         domain
-    } else {
+    } else if let Some(domain) = cfg.get_configured_entra_domain() {
         // Attempt using the default domain
         debug!(?domain, "Using default domain");
-        cfg.get_configured_domains()[0].clone()
+        domain
+    } else {
+        error!("No domain is configured");
+        return None;
     };
 
     let db = match Db::new(&cfg.get_db_path()) {
