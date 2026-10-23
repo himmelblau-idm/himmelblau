@@ -67,6 +67,13 @@ impl UserMap {
     pub fn get_id_overrides(&self) -> Vec<String> {
         self.forward.keys().cloned().collect()
     }
+
+    pub fn is_mapped_to_another_upn(&self, local_name: &str, upn: &str) -> bool {
+        self.forward
+            .iter()
+            .filter(|(local, _)| local.eq_ignore_ascii_case(local_name))
+            .any(|(_, owner)| !owner.eq_ignore_ascii_case(upn))
+    }
 }
 
 #[cfg(test)]
