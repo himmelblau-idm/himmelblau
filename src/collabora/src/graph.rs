@@ -236,6 +236,10 @@ impl Graph {
             .and_then(Value::as_array)
             .and_then(|a| a.first())
             .ok_or_else(|| anyhow!("No signed-in Himmelblau account"))?;
+        let environment = account
+            .get("environment")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("Himmelblau account has no authority environment"))?;
         let response = tokio::time::timeout(
             Duration::from_secs(30),
             broker.acquire_token_silently(
@@ -245,7 +249,7 @@ impl Graph {
                     "account": account,
                     "authParameters": {
                         "account": account,
-                        "authority": "https://login.microsoftonline.com/common",
+                        "authority": format!("https://{environment}/common"),
                         "authorizationType": 8,
                         "clientId": OFFICE_CLIENT_ID,
                         "redirectUri": NATIVE_REDIRECT,

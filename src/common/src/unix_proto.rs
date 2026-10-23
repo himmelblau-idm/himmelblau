@@ -319,7 +319,7 @@ pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
     LocalGroups(String, bool),
     LogonScript(String, String),
-    KerberosConfig(Option<String>, Option<String>),
+    KerberosConfig(Option<String>, Option<String>, Option<String>),
     KerberosTGTs(
         uid_t,
         uid_t,
