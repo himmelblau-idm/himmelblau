@@ -236,28 +236,16 @@ fn account_domain<'a>(id: &'a Id, old_token: Option<&'a UserToken>) -> Option<&'
 impl IdProvider for IdProviderProxy {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
         match self.provider.as_ref() {
-            Providers::Oidc(provider) => provider.offline_break_glass(ttl).await?,
-            Providers::Himmelblau(provider) => {
-                provider.offline_break_glass(ttl).await?;
-            }
+            Providers::Oidc(provider) => provider.offline_break_glass(ttl).await,
+            Providers::Himmelblau(provider) => provider.offline_break_glass(ttl).await,
         }
-        Ok(())
     }
 
     async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
         match self.provider.as_ref() {
-            Providers::Oidc(provider) => {
-                if !provider.check_online(tpm, now).await {
-                    return false;
-                }
-            }
-            Providers::Himmelblau(provider) => {
-                if !provider.check_online(tpm, now).await {
-                    return false;
-                }
-            }
+            Providers::Oidc(provider) => provider.check_online(tpm, now).await,
+            Providers::Himmelblau(provider) => provider.check_online(tpm, now).await,
         }
-        true
     }
 
     async fn probe_online(&self, account_id: Option<&str>, now: SystemTime) -> bool {
