@@ -13,14 +13,18 @@ use himmelblau::intune::NoncompliantRule;
 use libc::uid_t;
 use libkrimes::proto::KerberosCredentials;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 fn default_true() -> bool {
     true
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NssUser {
     pub name: String,
+    /// Stable lookup identity, independent of the configured display name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_name: Option<String>,
     pub uid: u32,
     pub gid: u32,
     pub gecos: String,
@@ -298,6 +302,8 @@ pub enum ClientResponse {
     NotAuthenticated,
     /// Non-compliant verdict with rule details passed through from Intune.
     NonCompliant(Vec<NoncompliantRule>),
+    /// Refused because it collides with a local account; clients must drop cached copies.
+    NssAccountExcluded(NssUser),
 }
 
 impl From<PamAuthResponse> for ClientResponse {
@@ -314,10 +320,25 @@ pub struct HomeDirectoryInfo {
     pub aliases: Vec<String>,
 }
 
+/// Immutable directory identity owning local task state, plus its current UPN for legacy migration.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct LocalTaskOwner {
+    pub object_id: Uuid,
+    pub tenant_id: Option<Uuid>,
+    pub upn: String,
+}
+
+impl LocalTaskOwner {
+    pub fn key(&self) -> String {
+        format!("{}-{}", self.tenant_id.unwrap_or_default(), self.object_id)
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
-    LocalGroups(String, bool),
+    /// Parameters: (account, is_sudoer, directory identity of the account's owner)
+    LocalGroups(String, bool, LocalTaskOwner),
     LogonScript(String, String),
     KerberosConfig(Option<String>, Option<String>, Option<String>),
     KerberosTGTs(
@@ -338,7 +359,7 @@ impl TaskRequest {
     pub fn as_safe_string(&self) -> String {
         match self {
             TaskRequest::HomeDirectory(_) => "HomeDirectory(...)".to_string(),
-            TaskRequest::LocalGroups(_, _) => "LocalGroups(...)".to_string(),
+            TaskRequest::LocalGroups(..) => "LocalGroups(...)".to_string(),
             TaskRequest::LogonScript(_, _) => "LogonScript(...)".to_string(),
             TaskRequest::KerberosConfig(..) => "KerberosConfig(...)".to_string(),
             TaskRequest::KerberosTGTs(uid, gid, _, _) => {
@@ -500,4 +521,30 @@ fn enrollment_round_trip_and_translation_preserve_redacted_material() {
         presentation.qr.as_deref(),
         Some("data:image/png;base64,fixture")
     );
+}
+
+#[test]
+fn legacy_nss_user_defaults_canonical_name() {
+    let legacy = r#"{"name":"alice@contoso.com","uid":1000,"gid":1000,"gecos":"Alice","homedir":"/home/alice","shell":"/bin/bash"}"#;
+    let user: NssUser = serde_json::from_str(legacy).unwrap();
+    assert!(user.canonical_name.is_none());
+    let serialized = serde_json::to_value(&user).unwrap();
+    assert!(serialized.get("canonical_name").is_none());
+}
+
+#[test]
+fn nss_user_canonical_name_round_trips_separately_from_display_name() {
+    let user = NssUser {
+        name: "alice@contoso.com".to_string(),
+        canonical_name: Some("alice.long@contoso.com".to_string()),
+        uid: 1000,
+        gid: 1000,
+        gecos: "Alice".to_string(),
+        homedir: "/home/alice".to_string(),
+        shell: "/bin/bash".to_string(),
+        cacheable: true,
+    };
+    let decoded: NssUser = serde_json::from_value(serde_json::to_value(&user).unwrap()).unwrap();
+    assert_eq!(decoded.name, user.name);
+    assert_eq!(decoded.canonical_name, user.canonical_name);
 }

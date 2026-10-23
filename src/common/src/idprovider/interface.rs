@@ -288,6 +288,14 @@ pub enum AuthCacheAction {
     PasswordHashUpdate { cred: String },
 }
 
+/// Whether a name is a real UPN, as far as the provider can tell without credentials.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpnVerdict {
+    Exists,
+    Absent,
+    Unknown,
+}
+
 #[async_trait]
 pub trait IdProvider {
     async fn configure_hsm_keys<D: KeyStoreTxn + Send>(
@@ -305,6 +313,16 @@ pub trait IdProvider {
     /// can be stale after resume. Providers without a probe report true.
     async fn probe_online(&self, _account_id: Option<&str>, _now: SystemTime) -> bool {
         true
+    }
+
+    /// Unlike `unix_user_get`, which may return a placeholder, a non-`Unknown` verdict is evidence.
+    async fn unix_user_verify_upn(
+        &self,
+        _account_id: &str,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
+    ) -> UpnVerdict {
+        UpnVerdict::Unknown
     }
 
     async fn unix_user_get<D: KeyStoreTxn + Send>(

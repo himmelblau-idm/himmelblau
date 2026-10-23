@@ -20,7 +20,7 @@ use crate::db::KeyStoreTxn;
 use crate::idprovider::himmelblau::HimmelblauProvider;
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
-    IdProvider, IdpError, UserToken, UserTokenState,
+    IdProvider, IdpError, UpnVerdict, UserToken, UserTokenState,
 };
 use crate::idprovider::oidc_router::OidcRouter;
 use crate::unix_proto::PamAuthRequest;
@@ -391,6 +391,22 @@ impl IdProvider for IdProviderProxy {
                     .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
                     .await
             }
+        }
+    }
+
+    async fn unix_user_verify_upn(
+        &self,
+        account_id: &str,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> UpnVerdict {
+        match self.find_provider(upn_domain(account_id)).await {
+            Ok(Providers::Himmelblau(provider)) => {
+                provider
+                    .unix_user_verify_upn(account_id, tpm, machine_key)
+                    .await
+            }
+            _ => UpnVerdict::Unknown,
         }
     }
 
