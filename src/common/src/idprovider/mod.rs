@@ -92,7 +92,7 @@ impl IdProviderProxy {
                 Providers::Oidc(provider)
             }
             (_, Some(domain)) => {
-                info!("Adding provider for domain {}", domain);
+                debug!("Adding provider for domain {}", domain);
                 let ignored: Vec<String> = config
                     .lock()
                     .await
