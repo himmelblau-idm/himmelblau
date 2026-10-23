@@ -342,3 +342,191 @@ async fn helper_requests_refresh_okta_tokens_with_filtered_scopes_and_rotation()
         assert_eq!(requests[1]["refresh_token"], "fixture-rotated");
     }
 }
+
+#[tokio::test]
+async fn reconciliation_refresh_validates_before_rotating_okta_credentials() {
+    use tpm::{provider::SoftTpm, provider::Tpm, AuthValue};
+
+    for case in [
+        "uuid",
+        "tenant",
+        "uuid_userinfo_failure",
+        "uuid_jwks_failure",
+        "uuid_discovery_failure",
+        "tenant_userinfo_failure",
+        "matching",
+        "unrestricted",
+        "userinfo_failure",
+        "guarded_userinfo_failure",
+        "identity_subject_mismatch",
+        "identity_account_mismatch",
+        "identity_mapping_failure",
+    ] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let issuer = format!("{origin}/oauth2/default");
+        let (id_token, jwk) = signed_id_token(&issuer);
+        let userinfo = json!({"sub":"broker-test-subject", "preferred_username":ACCOUNT,
+            "email":ACCOUNT, "name":"Broker Test"});
+        let mut refreshed_userinfo = userinfo.clone();
+        match case {
+            "identity_subject_mismatch" => refreshed_userinfo["sub"] = json!("replacement-subject"),
+            "identity_account_mismatch" => {
+                refreshed_userinfo["preferred_username"] = json!("other@example.com");
+                refreshed_userinfo["email"] = json!("other@example.com");
+            }
+            "identity_mapping_failure" => {
+                refreshed_userinfo
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("preferred_username");
+                refreshed_userinfo.as_object_mut().unwrap().remove("email");
+            }
+            _ => {}
+        }
+        let responses = [
+            (
+                "POST /oauth2/default/v1/token ",
+                json!({
+                "access_token":"fixture-access", "id_token":id_token,
+                "refresh_token":"fixture-rotated", "expires_in":3600,
+                "token_type":"Bearer", "scope":"openid email"}),
+            ),
+            (
+                "GET /oauth2/default/.well-known/openid-configuration ",
+                json!({
+                "issuer":issuer, "jwks_uri":format!("{issuer}/v1/keys")}),
+            ),
+            ("GET /oauth2/default/v1/keys ", json!({"keys":[jwk]})),
+            ("GET /oauth2/default/v1/userinfo ", refreshed_userinfo),
+        ];
+        let (finished_tx, mut finished_rx) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            for (path, body) in responses {
+                if case == "uuid_discovery_failure" && path.contains("keys") {
+                    break;
+                }
+                if path.contains("userinfo")
+                    && (case.starts_with("uuid") || case.starts_with("tenant"))
+                {
+                    break; // A mismatched validated subject must never reach userinfo.
+                }
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_request(&mut stream).await;
+                assert!(request.starts_with(path), "unexpected request: {request}");
+                if request.starts_with("POST ") {
+                    assert!(request.contains("refresh_token=fixture-refresh"));
+                }
+                let status = if (case.ends_with("userinfo_failure") && path.contains("userinfo"))
+                    || (case == "uuid_jwks_failure" && path.contains("keys"))
+                    || (case == "uuid_discovery_failure" && path.contains("openid-configuration"))
+                {
+                    "503 Service Unavailable"
+                } else {
+                    "200 OK"
+                };
+                let body = body.to_string();
+                let response = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+            // Keep the listener alive until the provider returns. An extra
+            // request is a direct test failure, not a timeout or refused port.
+            tokio::select! {
+                biased;
+                connection = listener.accept() => {
+                    let (_stream, _) = connection.unwrap();
+                    panic!("unexpected request after terminal response in {case}");
+                }
+                _ = &mut finished_rx => {}
+            }
+        });
+        let mut provider = provider().await;
+        provider
+            .config
+            .lock()
+            .await
+            .set("global", "oidc_issuer_url", &issuer);
+        provider.issuer = issuer.clone();
+        provider.origin = origin;
+        provider.tenant_id = Uuid::new_v5(&OIDC_NAMESPACE, issuer.as_bytes());
+        let mut options = ClientConfig::new(&issuer, &provider.client_id, &provider.redirect_uri);
+        options.allow_loopback_http = true;
+        provider.client = Arc::new(PublicClientApplication::new(options).unwrap());
+        provider.delayed_init().await.unwrap();
+        let config = provider.config.lock().await;
+        let mut old = oidc_user_token_from_claims(
+            &userinfo,
+            config.get_shell(None),
+            &provider.idmap,
+            &provider.tenant_id,
+            &config.get_oidc_account_id_claims(),
+            config.get_oidc_account_id_strip_at_suffix(),
+        )
+        .await
+        .unwrap();
+        drop(config);
+        match case {
+            value if value.starts_with("uuid") => old.uuid = Uuid::new_v4(),
+            "tenant" | "tenant_userinfo_failure" => old.tenant_id = Some(Uuid::new_v4()),
+            _ => (),
+        }
+        let expected = (!matches!(case, "unrestricted" | "userinfo_failure"))
+            .then_some((old.uuid, old.tenant_id));
+        provider
+            .refresh_cache
+            .add(
+                ACCOUNT,
+                &RefreshCacheEntry::RefreshToken("fixture-refresh".into()),
+            )
+            .await;
+        let db = crate::db::Db::new("").unwrap();
+        let mut txn = db.write().await;
+        let mut tpm = tpm::provider::BoxedDynTpm::new(SoftTpm::new());
+        let auth = AuthValue::ephemeral().unwrap();
+        let loadable = tpm.root_storage_key_create(&auth).unwrap();
+        let key = tpm.root_storage_key_load(&auth, &loadable).unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            provider.unix_user_get(
+                &Id::Name(ACCOUNT.into()),
+                Some(&old),
+                expected,
+                &mut txn,
+                &mut tpm,
+                &key,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let _ = finished_tx.send(());
+        tokio::time::timeout(Duration::from_secs(10), server)
+            .await
+            .unwrap()
+            .expect("fixture received an unexpected provider request");
+        assert_eq!(
+            matches!(result, UserTokenState::Update(_)),
+            matches!(case, "matching" | "unrestricted"),
+            "{case}"
+        );
+        if case == "guarded_userinfo_failure" {
+            assert!(matches!(result, UserTokenState::UseCached));
+        }
+        if case.starts_with("uuid") || case.starts_with("tenant") || case.starts_with("identity_") {
+            assert!(matches!(result, UserTokenState::Rejected), "{case}");
+        }
+        let expected_secret = if case.starts_with("uuid")
+            || case.starts_with("tenant")
+            || case.starts_with("identity_")
+        {
+            "fixture-refresh"
+        } else {
+            "fixture-rotated"
+        };
+        assert!(
+            matches!(provider.refresh_cache.refresh_token(ACCOUNT).await.unwrap(),
+            RefreshCacheEntry::RefreshToken(secret) if secret == expected_secret),
+            "{case}"
+        );
+    }
+}

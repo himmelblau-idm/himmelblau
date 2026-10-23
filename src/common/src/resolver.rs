@@ -228,6 +228,7 @@ mod tests {
         user_get_release: Notify,
         user_get_goes_offline: AtomicBool,
         auth_token: RwLock<UserToken>,
+        expected_refresh_identity: RwLock<Option<(uuid::Uuid, Option<uuid::Uuid>)>>,
     }
 
     impl OfflineFallbackProvider {
@@ -250,6 +251,7 @@ mod tests {
                 user_get_release: Notify::new(),
                 user_get_goes_offline: AtomicBool::new(false),
                 auth_token: RwLock::new(test_token()),
+                expected_refresh_identity: RwLock::new(None),
             }
         }
 
@@ -298,10 +300,12 @@ mod tests {
             &self,
             _id: &Id,
             _token: Option<&UserToken>,
+            _expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
             _keystore: &mut D,
             _tpm: &mut tpm::provider::BoxedDynTpm,
             _machine_key: &tpm::structures::StorageKey,
         ) -> Result<UserTokenState, IdpError> {
+            *self.expected_refresh_identity.write().unwrap() = _expected_identity;
             self.user_get_calls.fetch_add(1, Ordering::AcqRel);
             if self.user_get_stall.load(Ordering::Acquire) {
                 self.user_get_release.notified().await;
@@ -322,6 +326,7 @@ mod tests {
                     Ok(UserTokenState::LookupOnly(test_token()))
                 }
                 6 => Ok(UserTokenState::Update(self.auth_token())),
+                8 => Ok(UserTokenState::Rejected),
                 _ => Ok(UserTokenState::UseCached),
             }
         }
@@ -2245,6 +2250,7 @@ mod tests {
         let other_uuid = uuid::Uuid::new_v4();
         let other_tenant = Some(uuid::Uuid::new_v4());
         for (mode, cached_uuid, cached_tenant) in [
+            (8, token.uuid, token.tenant_id),
             (3, token.uuid, token.tenant_id),
             (3, other_uuid, token.tenant_id),
             (3, token.uuid, other_tenant),
@@ -2270,7 +2276,8 @@ mod tests {
 
             let accounts = resolver.get_unexpired_nssaccounts().await.unwrap();
             assert_eq!(accounts.len(), 1);
-            // Both provider modes return the same name and new group claims.
+            // Explicit rejections return no claims; other modes return the same name
+            // and new group claims.
             // Lookup-only claims remain ineligible even for the same UUID;
             // trusted updates must still match both the UUID and tenant.
             assert!(resolver
@@ -2279,7 +2286,11 @@ mod tests {
                 .unwrap()
                 .is_none());
             assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
-            if mode == 3 {
+            assert_eq!(
+                *resolver.client.expected_refresh_identity.read().unwrap(),
+                Some((cached_uuid, cached_tenant)),
+            );
+            if mode == 3 || mode == 8 {
                 let (expired, cached) = resolver
                     .get_cached_usertoken(&Id::Name(token.name.clone()))
                     .await
@@ -2289,6 +2300,14 @@ mod tests {
                 assert_eq!(cached.uuid, cached_uuid);
                 assert_eq!(cached.tenant_id, cached_tenant);
                 assert!(cached.groups.is_empty());
+            } else {
+                // A trusted response for a different identity must not be
+                // written before reconciliation rejects it.
+                let cached_tokens = resolver.get_cached_usertokens().await.unwrap();
+                assert_eq!(cached_tokens.len(), 1);
+                assert_eq!(cached_tokens[0].uuid, cached_uuid);
+                assert_eq!(cached_tokens[0].tenant_id, cached_tenant);
+                assert!(cached_tokens[0].groups.is_empty());
             }
         }
     }
@@ -2886,7 +2905,7 @@ where
         // Reconciliation may use only the authenticated identity that made
         // this account eligible, never a lookup-only or replacement identity.
         let Some((refreshed, true)) = self
-            .refresh_usertoken_with_cacheability(&id, Some((token, true)))
+            .refresh_usertoken_with_cacheability(&id, Some((token, true)), Some((uuid, tenant_id)))
             .await?
         else {
             return Ok(None);
@@ -3402,15 +3421,20 @@ where
         account_id: &Id,
         token: Option<UserToken>,
     ) -> ResolverResult<Option<UserToken>> {
-        self.refresh_usertoken_with_cacheability(account_id, token.map(|token| (token, false)))
-            .await
-            .map(|result| result.map(|(token, _)| token))
+        self.refresh_usertoken_with_cacheability(
+            account_id,
+            token.map(|token| (token, false)),
+            None,
+        )
+        .await
+        .map(|result| result.map(|(token, _)| token))
     }
 
     async fn refresh_usertoken_with_cacheability(
         &self,
         account_id: &Id,
         token: Option<(UserToken, bool)>,
+        expected_identity: Option<(Uuid, Option<Uuid>)>,
     ) -> ResolverResult<Option<(UserToken, bool)>> {
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
@@ -3420,6 +3444,7 @@ where
             .unix_user_get(
                 account_id,
                 token.as_ref().map(|(token, _)| token),
+                expected_identity,
                 &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
@@ -3433,6 +3458,17 @@ where
 
         match user_get_result {
             Ok(UserTokenState::Update(mut n_tok)) => {
+                if expected_identity.is_some_and(|(uuid, tenant_id)| {
+                    n_tok.uuid != uuid || n_tok.tenant_id != tenant_id
+                }) {
+                    warn!(
+                        ?expected_identity,
+                        returned_uuid = %n_tok.uuid,
+                        returned_tenant = ?n_tok.tenant_id,
+                        "Rejecting mismatched reconciliation provider identity"
+                    );
+                    return Ok(None);
+                }
                 match self
                     .set_cache_usertoken_guarded(&mut n_tok, generation, None)
                     .await?
@@ -3457,6 +3493,7 @@ where
                 self.set_nxcache(account_id).await;
                 Ok(None)
             }
+            Ok(UserTokenState::Rejected) => Ok(None),
             Ok(UserTokenState::UseCached) => Ok(token),
             Err(err @ IdpError::NotFound { .. }) => {
                 // NSS may ask for local or unknown identities outside the provider.
@@ -3786,7 +3823,7 @@ where
                             return Ok(item);
                         }
                         return self
-                            .refresh_usertoken_with_cacheability(&account_id, item)
+                            .refresh_usertoken_with_cacheability(&account_id, item, None)
                             .await;
                     }
                     OnExpiry::RefreshInBackground => {
@@ -3824,7 +3861,7 @@ where
                 // Return it.
                 if SystemTime::now() >= time && self.test_connection().await {
                     // We brought ourselves online, lets go
-                    self.refresh_usertoken_with_cacheability(&account_id, item)
+                    self.refresh_usertoken_with_cacheability(&account_id, item, None)
                         .await
                 } else {
                     // Unable to bring up connection, return cache.
@@ -3835,7 +3872,7 @@ where
                 trace!("online expired, refresh cache");
                 // Attempt to refresh the item
                 // Return it.
-                self.refresh_usertoken_with_cacheability(&account_id, item)
+                self.refresh_usertoken_with_cacheability(&account_id, item, None)
                     .await
             }
         }

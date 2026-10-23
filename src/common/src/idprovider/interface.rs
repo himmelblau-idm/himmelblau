@@ -59,6 +59,8 @@ pub enum UserTokenState {
     UseCached,
     /// The requested entity is not found, or has been removed.
     NotFound,
+    /// Reject this refresh without returning cached claims or changing either cache.
+    Rejected,
 
     /// Update the cache state with the data found in this UserToken.
     Update(UserToken),
@@ -307,10 +309,14 @@ pub trait IdProvider {
         true
     }
 
+    /// When supplied, reject any replacement identity before updating provider
+    /// credentials as well as the resolver's identity cache. Ordinary lookups
+    /// and interactive authentication do not impose this reconciliation guard.
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
         _token: Option<&UserToken>,
+        expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,

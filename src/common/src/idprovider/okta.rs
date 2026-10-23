@@ -516,6 +516,22 @@ impl OktaProvider {
     /// in preference to a more recent in-memory replacement.
     #[instrument(level = "debug", skip_all)]
     async fn refresh(&self, account: &str, scopes: &[String]) -> Result<okta::UserToken, IdpError> {
+        let token = self.refresh_without_caching(account, scopes, false).await?;
+        // Unrestricted callers retain rotated credentials even if a later
+        // user-info request fails. Reconciliation validates first instead.
+        self.cache_refresh(account, &token).await;
+        Ok(token)
+    }
+
+    /// Call with the account refresh lock held. The caller must validate the
+    /// expected identity before publishing any returned replacement credential.
+    #[instrument(level = "debug", skip_all)]
+    async fn refresh_without_caching(
+        &self,
+        account: &str,
+        scopes: &[String],
+        guarded: bool,
+    ) -> Result<okta::UserToken, IdpError> {
         let secret = match self
             .refresh_cache
             .refresh_token(account)
@@ -536,20 +552,22 @@ impl OktaProvider {
             .refresh_tokens_with_scopes(&credential, scopes)
             .await
         {
-            Ok(token) => {
-                // The SDK validates refreshed ID tokens for this client.
-                // Save rotation before a fallible user-info
-                // request; otherwise an outage would lose the replacement.
-                self.cache_refresh(account, &token).await;
-                debug!("Okta token refresh succeeded; refresh cache updated");
-                Ok(token)
-            }
+            Ok(token) => Ok(token),
             Err(error) => {
                 if classify(&error) == FailureAction::RejectRefresh {
                     error::log_failure("refresh", &error);
                     debug!("Okta refresh credential rejected; removing cached credential");
                     self.refresh_cache.remove_refresh_token(account).await;
                     return Err(IdpError::ProviderUnauthorised);
+                }
+                if guarded
+                    && !matches!(&error, OktaError::OperationFailed(failure)
+                    if failure.stage == okta::FailureStage::Refresh)
+                {
+                    // Discovery/JWKS failures occur after receiving tokens but
+                    // before establishing their identity, not before refresh.
+                    error::log_failure("refresh_identity_validation", &error);
+                    return Err(IdpError::BadRequest);
                 }
                 Err(self.failure("refresh", &error).await)
             }
@@ -1158,6 +1176,7 @@ impl IdProvider for OktaProvider {
         &self,
         id: &Id,
         old: Option<&UserToken>,
+        expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
@@ -1174,17 +1193,60 @@ impl IdProvider for OktaProvider {
             if self.refresh_cache.refresh_token(account).await.is_err() {
                 return Ok(UserTokenState::UseCached);
             }
-            return match self.refresh(account, &[]).await {
+            let refreshed = if expected_identity.is_some() {
+                self.refresh_without_caching(account, &[], true).await
+            } else {
+                self.refresh(account, &[]).await
+            };
+            if let (Some(expected), Ok(token)) = (expected_identity, &refreshed) {
+                // The SDK has validated the ID token. Bind its subject before
+                // userinfo/network/account mapping can fail into cached fallback.
+                let matches = token.claims().is_some_and(|claims| {
+                    oidc_issuer_matches(&self.issuer, claims["iss"].as_str())
+                        && claims["sub"]
+                            .as_str()
+                            .filter(|sub| !sub.is_empty())
+                            .is_some_and(|sub| {
+                                (
+                                    Uuid::new_v5(&self.tenant_id, sub.as_bytes()),
+                                    Some(self.tenant_id),
+                                ) == expected
+                            })
+                });
+                if !matches {
+                    return Ok(UserTokenState::Rejected);
+                }
+            }
+            return match refreshed {
                 Ok(token) => match self.identity(account, &token, Some(old)).await {
                     Ok(identity) => {
+                        if expected_identity
+                            .is_some_and(|expected| (identity.uuid, identity.tenant_id) != expected)
+                        {
+                            return Ok(UserTokenState::Rejected);
+                        }
                         self.cache_refresh(account, &token).await;
                         Ok(UserTokenState::Update(identity))
                     }
-                    Err(IdpError::Transport) => Ok(UserTokenState::UseCached),
+                    Err(IdpError::Transport) => {
+                        // The SDK-authenticated issuer/subject above already bound
+                        // this credential to the expected identity. Keep rotation
+                        // even when userinfo is temporarily unavailable.
+                        self.cache_refresh(account, &token).await;
+                        Ok(UserTokenState::UseCached)
+                    }
+                    // Unlike a transport outage, these failures can include
+                    // contradictory userinfo subject/account evidence. Do not
+                    // publish credentials from a rejected identity validation.
+                    Err(_) if expected_identity.is_some() => Ok(UserTokenState::Rejected),
                     Err(_) => Ok(UserTokenState::NotFound),
                 },
-                // Revoked SSO material does not revoke the local PIN or cached
-                // identity. Interactive login will recover the native session.
+                // Transport may reuse claims, but guarded authentication rejection
+                // must not authorize reconciliation. Rejected preserves the local
+                // PIN and identity cache; unrestricted refresh keeps its fallback.
+                // Interactive login can recover a revoked native session.
+                Err(IdpError::Transport) => Ok(UserTokenState::UseCached),
+                Err(_) if expected_identity.is_some() => Ok(UserTokenState::Rejected),
                 Err(IdpError::ProviderUnauthorised) => Ok(UserTokenState::UseCached),
                 Err(_) => Ok(UserTokenState::UseCached),
             };

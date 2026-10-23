@@ -2362,6 +2362,7 @@ impl OidcApplication {
     }
 
     #[instrument(level = "debug", skip_all)]
+    #[allow(clippy::too_many_arguments)]
     async fn user_token_from_oidc(
         &self,
         token: &openidconnect::core::CoreTokenResponse,
@@ -2370,6 +2371,7 @@ impl OidcApplication {
         tenant_id: &Uuid,
         account_id_claims: &[String],
         strip_at_suffix: bool,
+        expected_identity: Option<(Uuid, Option<Uuid>)>,
     ) -> Result<UserToken, IdpError> {
         let access_token = token.access_token();
         let (userinfo, mut group_claims): (OidcUserInfoClaims, Vec<String>) =
@@ -2379,6 +2381,15 @@ impl OidcApplication {
                 error!("OIDC client not initialized");
                 return Err(IdpError::BadRequest);
             };
+        // Bind authenticated userinfo's subject before fallible account/UID mapping.
+        if expected_identity.is_some_and(|expected| {
+            (
+                Uuid::new_v5(tenant_id, userinfo.subject().as_str().as_bytes()),
+                Some(*tenant_id),
+            ) != expected
+        }) {
+            return Err(IdpError::ProviderUnauthorised);
+        }
         group_claims.sort();
         group_claims.dedup();
 
@@ -2717,7 +2728,7 @@ impl OidcProvider {
         validated_password: Option<Zeroizing<String>>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         let has_refresh_token = token.refresh_token().is_some();
-        match self.token_validate(account_id, &token).await {
+        match self.token_validate(account_id, &token, None).await {
             Ok(AuthResult::Success { token: token2 }) => {
                 let hello_enabled = self.config.lock().await.get_enable_hello();
                 let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
@@ -2764,6 +2775,7 @@ impl OidcProvider {
         &self,
         account_id: &str,
         token: &OidcTokenResponse,
+        expected_identity: Option<(Uuid, Option<Uuid>)>,
     ) -> Result<AuthResult, IdpError> {
         let tenant_id = self.tenant_id().await?;
         let (shell, account_id_claims, strip_at_suffix) = {
@@ -2783,6 +2795,7 @@ impl OidcProvider {
                 &tenant_id,
                 &account_id_claims,
                 strip_at_suffix,
+                expected_identity,
             )
             .await?;
         if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
@@ -2792,6 +2805,11 @@ impl OidcProvider {
             );
             error!(msg);
             return Ok(AuthResult::Denied(msg));
+        }
+        if expected_identity.is_some_and(|expected| (token2.uuid, token2.tenant_id) != expected) {
+            return Ok(AuthResult::Denied(
+                "Refreshed identity does not match cached user".into(),
+            ));
         }
         info!("Authentication successful for user '{}'", token2.uuid);
         if let Some(refresh_token) = token.refresh_token() {
@@ -2826,6 +2844,7 @@ impl IdProvider for OidcProvider {
         &self,
         id: &Id,
         token: Option<&UserToken>,
+        expected_identity: Option<(uuid::Uuid, Option<uuid::Uuid>)>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
@@ -2881,6 +2900,19 @@ impl IdProvider for OidcProvider {
                 Ok(refreshed) => refreshed,
                 Err(e) => {
                     let state = oidc_refresh_failure_state(&e);
+                    let state = if expected_identity.is_some()
+                        && matches!(&state, UserTokenState::UseCached)
+                        && !matches!(&e, MsalError::RequestFailed(_))
+                        && !matches!(&e, MsalError::AcquireTokenFailed(response)
+                            if matches!(response.error.as_str(), "temporarily_unavailable" | "server_error"))
+                    {
+                        // Transport and explicit transient OAuth failures return
+                        // no replacement credential. A malformed successful response
+                        // or other protocol failure cannot authorize cached claims.
+                        UserTokenState::Rejected
+                    } else {
+                        state
+                    };
                     if matches!(&state, UserTokenState::UseCached) {
                         match &e {
                             MsalError::RequestFailed(msg) => {
@@ -2903,18 +2935,20 @@ impl IdProvider for OidcProvider {
                         *cache_state =
                             CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                     } else {
-                        error!(
-                            ?e,
-                            "OIDC refresh token was rejected for '{}'; invalidating cached user",
-                            account_id
-                        );
+                        error!(?e, "OIDC refresh was rejected for '{}'", account_id);
                     }
                     return Ok(state);
                 }
             };
 
-            return match self.token_validate(account_id, &refreshed).await {
+            return match self
+                .token_validate(account_id, &refreshed, expected_identity)
+                .await
+            {
                 Ok(AuthResult::Success { token }) => Ok(UserTokenState::Update(token)),
+                Ok(AuthResult::Denied(_)) if expected_identity.is_some() => {
+                    Ok(UserTokenState::Rejected)
+                }
                 Ok(AuthResult::Denied(msg)) => {
                     error!(
                         %msg,
@@ -2929,6 +2963,11 @@ impl IdProvider for OidcProvider {
                         account_id
                     );
                     Ok(UserTokenState::UseCached)
+                }
+                Err(_) if expected_identity.is_some() => {
+                    // A successful refresh whose identity cannot be established
+                    // must not authorize reconciliation with old cached claims.
+                    Ok(UserTokenState::Rejected)
                 }
                 Err(e) => {
                     error!(
@@ -3359,6 +3398,7 @@ impl IdProvider for OidcProvider {
                         &tenant_id,
                         &account_id_claims,
                         strip_at_suffix,
+                        None,
                     )
                     .await?;
                 tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
@@ -3376,7 +3416,7 @@ impl IdProvider for OidcProvider {
                         })
                     })?;
 
-                match self.token_validate(account_id, &token).await {
+                match self.token_validate(account_id, &token, None).await {
                     Ok(AuthResult::Success { token }) => {
                         if $require_hello_totp {
                             if !check_hello_totp_setup!(self, account_id, keystore) {
@@ -4171,3 +4211,7 @@ impl IdProvider for OidcProvider {
         Err(IdpError::BadRequest)
     }
 }
+
+#[cfg(test)]
+#[path = "oidc_reconciliation_tests.rs"]
+mod reconciliation_tests;
