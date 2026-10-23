@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::config::{IdAttr, JoinType};
-use crate::unix_config::HomeAttr;
+use crate::unix_config::{HomeAttr, NameAttr};
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/himmelblau/himmelblau.conf";
 pub const RUNTIME_CONFIG_PATH: &str = "/run/himmelblau/himmelblau.conf";
@@ -31,11 +31,13 @@ pub const MAPPED_NAME_CACHE: &str = "/var/cache/nss-himmelblau/mapping.cache.db"
 pub const NSS_CACHE: &str = "/var/cache/nss-himmelblau/cache.db";
 pub const ID_MAP_CACHE: &str = "/var/cache/nss-himmelblau/idmap.cache.db";
 pub const POLICY_CACHE: &str = "/var/cache/nss-himmelblau/policies.cache.db";
+pub const LOCAL_TASK_NAMES_CACHE: &str = "/var/cache/nss-himmelblau/local-task-names.json";
 pub const SERVER_CONFIG_PATH: &str = "/var/cache/himmelblaud/himmelblau.conf";
 pub const DEFAULT_USER_MAP_FILE: &str = "/etc/himmelblau/user-map";
 pub const DEFAULT_HOME_PREFIX: &str = "/home/";
 pub const DEFAULT_HOME_ATTR: HomeAttr = HomeAttr::Uuid;
 pub const DEFAULT_HOME_ALIAS: Option<HomeAttr> = Some(HomeAttr::Spn);
+pub const DEFAULT_LOCAL_NAME_ATTR: NameAttr = NameAttr::Spn;
 pub const DEFAULT_USE_ETC_SKEL: bool = false;
 pub const DEFAULT_SHELL: &str = "/bin/bash";
 pub const DEFAULT_ODC_PROVIDER: &str = "odc.officeapps.live.com";
