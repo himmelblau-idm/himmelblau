@@ -69,12 +69,8 @@ macro_rules! fetch_cached_user {
         match $cache {
             Some(ref c) => match c.get_user(&$id) {
                 Some(nu) => {
-                    let local_logins = local_login_names();
-                    let mut passwd = passwd_from_nssuser(fallback_nssuser(nu, &local_logins));
-                    // Use local_name override if provided, otherwise use cn_name_mapping
-                    passwd.name = $local_name.unwrap_or_else(|| {
-                        fallback_display_name(&$cfg, &passwd.name, &local_logins)
-                    });
+                    let logins = local_login_names();
+                    let passwd = fallback_passwd_from_nssuser(nu, &$cfg, $local_name, &logins);
                     return Response::Success(passwd);
                 }
                 None => return $ret,
@@ -103,9 +99,7 @@ macro_rules! fetch_all_cached_users {
                         if is_mapped_nss_user(&nu, &$user_map) {
                             return None;
                         }
-                        let mut passwd = passwd_from_nssuser(fallback_nssuser(nu, &local_logins));
-                        passwd.name = fallback_display_name(&$cfg, &passwd.name, &local_logins);
-                        Some(passwd)
+                        Some(fallback_passwd_from_nssuser(nu, &$cfg, None, &local_logins))
                     })
                     .collect()
             }
@@ -494,7 +488,8 @@ fn fallback_nssuser(mut nu: NssUser, local_logins: &[String]) -> NssUser {
     if let Some(canonical) = nu.canonical_name.clone() {
         if let Some((dir, last)) = nu.homedir.rsplit_once('/') {
             let cn_home = canonical.starts_with(&format!("{last}@"));
-            if last == nu.name && (!cn_home || local_logins.iter().any(|login| login == last)) {
+            let collides = local_logins.iter().any(|login| login == last);
+            if (cn_home && collides) || (!cn_home && last == nu.name) {
                 nu.homedir = format!("{dir}/{canonical}");
             }
         }
@@ -523,6 +518,19 @@ fn fallback_display_name(cfg: &HimmelblauConfig, name: &str, local_logins: &[Str
     } else {
         mapped
     }
+}
+
+/// A local_name override wins; otherwise the cached name is shortened by cn_name_mapping.
+fn fallback_passwd_from_nssuser(
+    nu: NssUser,
+    cfg: &HimmelblauConfig,
+    local_name: Option<String>,
+    local_logins: &[String],
+) -> Passwd {
+    let mut passwd = passwd_from_nssuser(fallback_nssuser(nu, local_logins));
+    passwd.name =
+        local_name.unwrap_or_else(|| fallback_display_name(cfg, &passwd.name, local_logins));
+    passwd
 }
 
 fn fallback_shadow_from_nssuser(
@@ -1228,8 +1236,7 @@ mod tests {
             nu
         };
         let shadow = fallback_shadow_from_nssuser(cloud_root(), &cfg, None, &logins);
-        let mut passwd = passwd_from_nssuser(fallback_nssuser(cloud_root(), &logins));
-        passwd.name = fallback_display_name(&cfg, &passwd.name, &logins);
+        let passwd = fallback_passwd_from_nssuser(cloud_root(), &cfg, None, &logins);
         assert_eq!(shadow.name, "root@contoso.com");
         assert_eq!(passwd.name, shadow.name);
 
@@ -1275,22 +1282,28 @@ mod tests {
     }
 
     #[test]
-    fn fallback_rebuilds_a_home_derived_from_the_alias() {
-        let mut nu = test_nss_user("bob");
-        nu.canonical_name = Some("alice@contoso.com".to_string());
-        nu.homedir = "/home/bob".to_string();
-        assert_eq!(fallback_nssuser(nu, &[]).homedir, "/home/alice@contoso.com");
-
-        let mut cn = test_nss_user("bob");
-        cn.canonical_name = Some("bob@contoso.com".to_string());
-        cn.homedir = "/home/bob".to_string();
-        assert_eq!(fallback_nssuser(cn.clone(), &[]).homedir, "/home/bob");
-
-        let logins = ["bob".to_string()];
-        assert_eq!(
-            fallback_nssuser(cn, &logins).homedir,
-            "/home/bob@contoso.com"
-        );
+    fn fallback_rebuilds_a_home_derived_from_the_alias() -> Result<(), String> {
+        let cfg = test_config()?;
+        let (bob, alice) = ("bob@contoso.com", "alice@contoso.com");
+        for (name, canonical, home, login, expected) in [
+            ("bob", alice, "/home/bob", "", "/home/alice@contoso.com"),
+            ("bob", alice, "/home/custom", "custom", "/home/custom"),
+            ("bob", bob, "/home/bob", "", "/home/bob"),
+            (bob, bob, "/home/bob", "", "/home/bob"),
+            ("bob", bob, "/home/bob", "bob", "/home/bob@contoso.com"),
+            (bob, bob, "/home/bob", "bob", "/home/bob@contoso.com"),
+        ] {
+            let mut nu = test_nss_user(name);
+            nu.canonical_name = Some(canonical.to_string());
+            nu.homedir = home.to_string();
+            let logins = [login.to_string()];
+            // Individual lookups may carry a local_name override; enumeration never does.
+            for local_name in [Some("local".to_string()), None] {
+                let passwd = fallback_passwd_from_nssuser(nu.clone(), &cfg, local_name, &logins);
+                assert_eq!(passwd.dir, expected, "{name} {home} {login}");
+            }
+        }
+        Ok(())
     }
 
     #[test]
