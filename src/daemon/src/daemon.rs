@@ -41,8 +41,8 @@ use himmelblau_unix_common::constants::{
     DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, INTUNE_POLICY_TASK_TIMEOUT_SECS,
 };
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
-use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::{Id, IdProvider};
+use himmelblau_unix_common::idprovider::IdProviderProxy;
 use himmelblau_unix_common::resolver::{AuthSession, OnExpiry, Resolver};
 use himmelblau_unix_common::unix_config::UidAttr;
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
@@ -311,7 +311,7 @@ fn peer_may_change_hello_pin(peer_uid: u32, target_uid: Option<u32>) -> bool {
 }
 
 async fn is_account_sudoer(
-    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cachelayer: &Resolver<IdProviderProxy>,
     cfg: &HimmelblauConfig,
     account_id: &str,
 ) -> bool {
@@ -376,7 +376,7 @@ async fn submit_local_groups_task(
 }
 
 async fn reconcile_local_groups_once(
-    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cachelayer: &Resolver<IdProviderProxy>,
     task_channel_tx: &Sender<AsyncTaskRequest>,
     cfg: &HimmelblauConfig,
 ) {
@@ -446,7 +446,7 @@ async fn reconcile_local_groups_once(
 }
 
 async fn reconcile_local_groups_periodically(
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     task_channel_tx: Arc<Sender<AsyncTaskRequest>>,
     cfg: HimmelblauConfig,
     mut shutdown_rx: broadcast::Receiver<bool>,
@@ -476,7 +476,7 @@ async fn reconcile_local_groups_periodically(
 
 async fn handle_client(
     sock: UnixStream,
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     task_channel_tx: &Sender<AsyncTaskRequest>,
     intune_policy_throttle: IntunePolicyThrottle,
     cfg: HimmelblauConfig,
@@ -747,11 +747,22 @@ async fn handle_client(
                                                                 ))
                                                                 .await
                                                         {
+                                                            let authority_host = match HimmelblauConfig::new(Some(&cfg.get_config_file())) {
+                                                                Ok(current) => current.get_authority_host_for_account(&account_id),
+                                                                Err(err) => {
+                                                                    error!("Failed to reload authority configuration: {}", err);
+                                                                    None
+                                                                }
+                                                            };
                                                             let (tx, rx) = oneshot::channel();
                                                             match task_channel_tx
                                                                 .send_timeout(
                                                                     (
-                                                                        TaskRequest::KerberosConfig(top_level_names, tenant_id),
+                                                                        TaskRequest::KerberosConfig(
+                                                                            top_level_names,
+                                                                            tenant_id,
+                                                                            authority_host,
+                                                                        ),
                                                                         tx,
                                                                     ),
                                                                     Duration::from_millis(100),
@@ -1343,7 +1354,7 @@ async fn complete_intune_policy_application(
 }
 
 async fn spawn_intune_policy_application_if_due(
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     cfg: HimmelblauConfig,
     task_channel_tx: Sender<AsyncTaskRequest>,
     intune_policy_throttle: IntunePolicyThrottle,
@@ -1367,7 +1378,7 @@ async fn spawn_intune_policy_application_if_due(
 }
 
 fn spawn_profile_photo_fetch(
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     task_channel_tx: Sender<AsyncTaskRequest>,
     account_id: String,
 ) {
@@ -1420,7 +1431,7 @@ fn spawn_profile_photo_fetch(
 }
 
 fn spawn_intune_policy_application(
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     cfg: HimmelblauConfig,
     task_channel_tx: Sender<AsyncTaskRequest>,
     intune_policy_throttle: IntunePolicyThrottle,
@@ -1463,7 +1474,7 @@ fn spawn_intune_policy_application(
 }
 
 async fn apply_intune_policy_for_account(
-    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cachelayer: &Resolver<IdProviderProxy>,
     cfg: &HimmelblauConfig,
     task_channel_tx: &Sender<AsyncTaskRequest>,
     account_id: &str,
@@ -1848,7 +1859,7 @@ fn notify_noop_reload() -> io::Result<()> {
 }
 
 async fn process_etc_passwd_group(
-    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cachelayer: &Resolver<IdProviderProxy>,
 ) -> Result<(), Box<dyn Error>> {
     let mut file = File::open("/etc/passwd").await?;
     let mut contents = vec![];
@@ -2205,7 +2216,7 @@ async fn main() -> ExitCode {
 
             // Create the identify provider connection
             let mut keystore = db.write().await;
-            let idprovider = match HimmelblauMultiProvider::new(cfg.get_config_file().as_str(), &mut keystore).await {
+            let idprovider = match IdProviderProxy::new(cfg.get_config_file().as_str(), &mut keystore).await {
                 Ok(idprovider) => idprovider,
                 Err(e) => {
                     error!("{}", e);
@@ -2446,7 +2457,7 @@ async fn main() -> ExitCode {
             let dbus_cachelayer = cachelayer.clone();
             let e_broadcast_rx = broadcast_tx.subscribe();
             let task_d = match himmelblau_broker_serve_with_listener::<Broker>(
-                Broker { cachelayer: dbus_cachelayer },
+                Broker { cachelayer: dbus_cachelayer, config_path: cfg.get_config_file() },
                 if broker_listener.is_some() { None } else { Some(broker_socket_path.as_str()) },
                 e_broadcast_rx,
                 broker_listener,

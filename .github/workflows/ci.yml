@@ -223,6 +223,7 @@ jobs:
             libwebkit2gtk-4.1-dev
       - name: "Run tests"
         run: |
+          make test-build-options
           make test-hsm-pin-init
           python3 scripts/test_collabora_packaging.py
           python3 scripts/test_collabora_distribution_packaging.py

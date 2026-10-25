@@ -55,8 +55,7 @@ use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
 use walkdir::WalkDir;
-use zbus::zvariant::OwnedObjectPath;
-use zbus::{proxy, Connection};
+use zbus::{proxy, Connection, OwnedObjectPath};
 
 #[cfg(all(target_family = "unix", feature = "selinux"))]
 use himmelblau_unix_common::selinux_util;
@@ -476,7 +475,7 @@ async fn set_accountsservice_icon(account_id: &str, icon_path: &Path) -> zbus::R
         }
     };
     let user = AccountsServiceUserProxy::builder(&connection)
-        .path(user_path)?
+        .path(user_path)
         .build()
         .await?;
 
@@ -616,10 +615,12 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
 fn write_kerberos_config_snippet(
     top_level_names: Option<String>,
     tenant_id: &str,
+    authority_host: &str,
 ) -> Result<(), String> {
     write_kerberos_config_snippet_to(
         top_level_names,
         tenant_id,
+        authority_host,
         Path::new(DEFAULT_KERBEROS_CONF_DIR),
     )
 }
@@ -627,6 +628,7 @@ fn write_kerberos_config_snippet(
 fn write_kerberos_config_snippet_to(
     top_level_names: Option<String>,
     tenant_id: &str,
+    authority_host: &str,
     krb_conf_dir: &Path,
 ) -> Result<(), String> {
     if tenant_id.is_empty() {
@@ -662,7 +664,7 @@ fn write_kerberos_config_snippet_to(
         .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
 
     let realms = format!(
-        "[realms]\n\tKERBEROS.MICROSOFTONLINE.COM = {{\n\t\tkdc = https://login.microsoftonline.com/{tenant_id}/kerberos\n\t}}\n"
+        "[realms]\n\tKERBEROS.MICROSOFTONLINE.COM = {{\n\t\tkdc = https://{authority_host}/{tenant_id}/kerberos\n\t}}\n"
     );
     file.write_all(realms.as_bytes())
         .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
@@ -766,16 +768,16 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
-            Some(Ok(TaskRequest::KerberosConfig(top_level_names, tenant_id))) => {
+            Some(Ok(TaskRequest::KerberosConfig(top_level_names, tenant_id, authority_host))) => {
                 debug!("Received task -> KerberosConfig(...)");
 
-                let response = match tenant_id {
-                    Some(t) => match write_kerberos_config_snippet(top_level_names, &t) {
+                let response = match (tenant_id, authority_host) {
+                    (Some(t), Some(host)) => match write_kerberos_config_snippet(top_level_names, &t, &host) {
                         Ok(_) => TaskResponse::Success(0),
                         Err(msg) => TaskResponse::Error(msg),
                     },
-                    None => TaskResponse::Error(
-                        "Failed to write Kerberos config snippet, no tenant_id".to_string(),
+                    _ => TaskResponse::Error(
+                        "Failed to write Kerberos config snippet, missing tenant_id or authority_host".to_string(),
                     ),
                 };
 
@@ -1244,6 +1246,7 @@ mod tests {
         write_kerberos_config_snippet_to(
             Some(".example.com, example.com, invalid:realm".to_string()),
             TENANT_ID,
+            "login.microsoftonline.us",
             &krb_conf_dir,
         )
         .expect("expected kerberos config snippet to be written");
@@ -1254,7 +1257,7 @@ mod tests {
             fs::read_to_string(snippet_path).expect("expected kerberos config snippet to exist");
         assert!(contents.contains("[libdefaults]\n\tdns_canonicalize_hostname = false\n"));
         assert!(contents.contains(&format!(
-            "\t\tkdc = https://login.microsoftonline.com/{TENANT_ID}/kerberos"
+            "\t\tkdc = https://login.microsoftonline.us/{TENANT_ID}/kerberos"
         )));
         assert!(contents.contains("\t.example.com = KERBEROS.MICROSOFTONLINE.COM"));
         assert!(contents.contains("\texample.com = KERBEROS.MICROSOFTONLINE.COM"));
@@ -1266,8 +1269,13 @@ mod tests {
         let krb_conf_dir =
             tempfile::NamedTempFile::new().expect("failed to create temp config path");
 
-        let err = write_kerberos_config_snippet_to(None, TENANT_ID, krb_conf_dir.path())
-            .expect_err("expected non-directory config path to be rejected");
+        let err = write_kerberos_config_snippet_to(
+            None,
+            TENANT_ID,
+            "login.microsoftonline.com",
+            krb_conf_dir.path(),
+        )
+        .expect_err("expected non-directory config path to be rejected");
 
         assert!(err.contains("is not a directory"));
     }
@@ -1277,8 +1285,13 @@ mod tests {
         let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
         let krb_conf_dir = tmpdir.path().join("krb5.conf.d");
 
-        let err = write_kerberos_config_snippet_to(None, "not-a-tenant-id", &krb_conf_dir)
-            .expect_err("expected invalid tenant ID to be rejected");
+        let err = write_kerberos_config_snippet_to(
+            None,
+            "not-a-tenant-id",
+            "login.microsoftonline.com",
+            &krb_conf_dir,
+        )
+        .expect_err("expected invalid tenant ID to be rejected");
 
         assert!(err.contains("Failed to validate tenant ID"));
         assert!(!krb_conf_dir.exists());

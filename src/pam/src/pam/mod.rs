@@ -808,6 +808,10 @@ impl PamHooks for PamKanidm {
                     };
 
                     let msg_printer = Arc::new(PamConvMessagePrinter::new(conv));
+                    let authority_host = match cfg.get_authority_host_for_account(&account_id) {
+                        Some(host) => host,
+                        None => return PamResultCode::PAM_AUTH_ERR,
+                    };
                     let fido_timeout_ms = cfg.get_fido_timeout().saturating_mul(1000);
                     let fido_prompt = cfg.get_fido_prompt();
                     let fido_presence_prompt = cfg.get_fido_presence_prompt();
@@ -815,6 +819,7 @@ impl PamHooks for PamKanidm {
                         msg_printer.clone(),
                         fido_challenge,
                         fido_allow_list,
+                        &authority_host,
                         fido_timeout_ms,
                         &fido_prompt,
                         &fido_presence_prompt,

@@ -21,12 +21,14 @@ fn main() {
     let debian_conf_output = target_dir.join("debian/himmelblau.conf.example");
 
     println!("cargo:rerun-if-changed={}", script_path.display());
+    println!("cargo:rerun-if-env-changed=WITH_ORCHESTRATOR");
     println!("cargo:rerun-if-changed={}", xml_dir.display());
     for entry in walkdir(&xml_dir) {
         println!("cargo:rerun-if-changed={}", entry.display());
     }
 
-    let status = Command::new("python3")
+    let mut command = Command::new("python3");
+    command
         .arg(&script_path)
         .arg("--gen-conf-example")
         .arg("--conf-example-output")
@@ -35,8 +37,11 @@ fn main() {
         .arg("--debian-conf-example-output")
         .arg(&debian_conf_output)
         .arg("--xml-dir")
-        .arg(&xml_dir)
-        .status();
+        .arg(&xml_dir);
+    if env::var("WITH_ORCHESTRATOR").as_deref() == Ok("1") {
+        command.arg("--with-orchestrator");
+    }
+    let status = command.status();
 
     match status {
         Ok(s) if s.success() => {}
