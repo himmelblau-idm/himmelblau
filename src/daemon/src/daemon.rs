@@ -859,18 +859,6 @@ async fn handle_client(
                                                         );
                                                     }
 
-                                                    // Apply Intune policies
-                                                    if !is_oidc_auth && cfg.get_apply_policy() {
-                                                        spawn_intune_policy_application_if_due(
-                                                            cachelayer.clone(),
-                                                            cfg.clone(),
-                                                            task_channel_tx.clone(),
-                                                            intune_policy_throttle.clone(),
-                                                            account_id.clone(),
-                                                        )
-                                                        .await;
-                                                    }
-
                                                     if let Some(task) = authenticated_name_mapping_request(
                                                         pam_supplied_name.take().as_deref(),
                                                         &account_id,
@@ -891,6 +879,18 @@ async fn handle_client(
                                                                 _ => warn!("Authenticated name mapping was not confirmed persisted"),
                                                             }
                                                         }
+                                                    }
+
+                                                    // Apply Intune policies
+                                                    if !is_oidc_auth && cfg.get_apply_policy() {
+                                                        spawn_intune_policy_application_if_due(
+                                                            cachelayer.clone(),
+                                                            cfg.clone(),
+                                                            task_channel_tx.clone(),
+                                                            intune_policy_throttle.clone(),
+                                                            account_id.clone(),
+                                                        )
+                                                        .await;
                                                     }
 
                                                     ClientResponse::PamAuthenticateStepResponse(resp)
