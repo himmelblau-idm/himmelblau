@@ -1655,6 +1655,40 @@ sys.exit(int(sys.argv[1]))
             )
             self.assertFalse(any(Path(tmp).iterdir()))
 
+    def test_secure_push_failure_diagnostics_are_bounded_and_do_not_retry(self):
+        canary = "SECRET https://token@example.test/private ::error::injected"
+        for message, hints in (
+            ("fatal: Authentication failed", ["authentication"]),
+            ("remote: Permission denied", ["authorization"]),
+            ("[remote rejected] repository rule violations", ["remote-policy"]),
+            ("fatal: RPC failed; connection reset", ["transport"]),
+            ("unrecognized failure", []),
+        ):
+            for capture in ("complete", "timeout", "output-limit"):
+                with self.subTest(message=message, capture=capture), tempfile.TemporaryDirectory() as tmp:
+                    result = sm.CommandResult(128, canary, message + " " + canary)
+                    failure = sm.CommandCaptureError("capture failed", capture, result)
+                    runner = mock.Mock()
+                    if capture == "complete": runner.run.return_value = result
+                    else: runner.run.side_effect = failure
+                    output = io.StringIO()
+                    with mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError) as raised:
+                        sm.secure_github_push(runner, Path(tmp), "owner/repo", sm.AUTOMATION_PREFIX + "test", canary)
+                    runner.run.assert_called_once()
+                    self.assertFalse(runner.run.call_args.kwargs["check"])
+                    if capture != "complete": self.assertIs(raised.exception, failure)
+                    else: self.assertEqual(str(raised.exception), "command failed (128): git")
+                    record = json.loads(output.getvalue().removeprefix("git-diagnostics: "))
+                    self.assertEqual(record["operation"], "push")
+                    self.assertEqual(record["capture"], capture)
+                    self.assertEqual(record["exit"], 128)
+                    self.assertEqual(record["hints"], hints)
+                    self.assertEqual(record["stderr_bytes"], len(result.stderr.encode()))
+                    self.assertNotIn(canary, output.getvalue())
+                    self.assertNotIn("::error::", output.getvalue())
+                    self.assertLess(len(output.getvalue()), 300)
+                    self.assertFalse(any(Path(tmp).iterdir()))
+
     def test_pr_body_has_global_utf8_budget_and_reserved_marker(self):
         value = {
             "main_head": "a" * 40,
@@ -4947,6 +4981,44 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", stage)
         self.assertIn("ref: ${{ github.sha }}", stage)
         self.assertNotIn("ref: ${{ inputs.checkpoint-ref }}", stage)
+
+    def test_checkpoint_reports_the_failed_local_git_operation_without_publishing(self):
+        operations = {"status": "status", "branch": "branch", "rev-parse": "head",
+                      "merge-base": "ancestry", "mktree": "empty-tree", "commit-tree": "transport-commit"}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            runner.git(["checkout", "stable-4.x"])
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state = sm.State(root / "state")
+            state.save({"branch": "stable-4.x", "main_head": head, "original_head": head,
+                        "last_phase": "import-dependabot"})
+            env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "MAINTENANCE_TOOLING_COMMIT": head}
+            original = runner.git
+            for command, operation in operations.items():
+                for capture in ("complete", "timeout", "output-limit"):
+                    with self.subTest(command=command, capture=capture):
+                        result = sm.CommandResult(128, "SECRET", "fatal: bad object SECRET ::error::injected")
+                        failure = sm.CommandCaptureError("capture failed", capture, result)
+                        def git(argv, **kwargs):
+                            if argv[0] == command:
+                                if capture != "complete": raise failure
+                                return result
+                            return original(argv, **kwargs)
+                        output = io.StringIO()
+                        with mock.patch.dict(os.environ, env), mock.patch.object(runner, "git", side_effect=git), \
+                             mock.patch.object(sm, "secure_github_push") as push, \
+                             mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError) as raised:
+                            sm.phase_checkpoint(mock.Mock(branch="stable-4.x", stage="vet"), state, runner)
+                        if capture != "complete": self.assertIs(raised.exception, failure)
+                        record = json.loads(output.getvalue().removeprefix("git-diagnostics: "))
+                        self.assertEqual(record["operation"], operation)
+                        self.assertEqual(record["capture"], capture)
+                        self.assertEqual(record["hints"], ["object"])
+                        self.assertNotIn("SECRET", output.getvalue())
+                        self.assertNotIn("::error::", output.getvalue())
+                        push.assert_not_called()
+                        self.assertFalse((state.directory / "checkpoint.json").exists())
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), head)
 
     def test_checkpoint_round_trip_exact_commit_and_data_only_state(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}):

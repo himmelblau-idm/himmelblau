@@ -4006,6 +4006,27 @@ def manual_audit_work(value: Mapping[str, Any]) -> list[dict[str, str]]:
     return work
 
 
+def git_failure_diagnostics(operation: str, result: CommandResult, *, capture: str = "complete") -> None:
+    """Emit fixed categories only; Git output can contain credentials or commands."""
+    operation = operation if operation in {"push", "status", "branch", "head", "ancestry", "empty-tree", "transport-commit"} else "unknown"
+    capture = capture if capture in {"complete", "timeout", "output-limit"} else "unknown"
+    text = (result.stdout + "\n" + result.stderr).lower()
+    patterns = {
+        "authentication": ("authentication failed", "could not read username", "could not read password"),
+        "authorization": ("permission denied", "write access to repository not granted", "requested url returned error: 403"),
+        "remote-policy": ("remote rejected", "protected branch", "repository rule violations"),
+        "ref-rejected": ("non-fast-forward", "failed to push some refs", "cannot lock ref"),
+        "transport": ("could not resolve host", "failed to connect", "connection reset", "remote end hung up", "rpc failed"),
+        "tls": ("ssl certificate problem", "certificate verification failed"),
+        "object": ("bad object", "not a valid object", "invalid object", "bad revision"),
+        "disk-space": ("no space left on device",),
+    }
+    record = {"operation": operation, "capture": capture, "exit": result.returncode,
+              "stdout_bytes": len(result.stdout.encode()), "stderr_bytes": len(result.stderr.encode()),
+              "hints": [label for label, phrases in patterns.items() if any(phrase in text for phrase in phrases)]}
+    print("git-diagnostics: " + json.dumps(record, sort_keys=True), file=sys.stderr)
+
+
 def secure_github_push(runner: Runner, state_dir: Path, repo: str, branch: str, token: str, *, source_sha: str = "HEAD") -> None:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise MaintenanceError("invalid GitHub repository for push")
@@ -4028,14 +4049,21 @@ def secure_github_push(runner: Runner, state_dir: Path, repo: str, branch: str, 
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(script)
-        runner.run(
-            [
-                "git", "-c", "core.hooksPath=/dev/null", "push",
-                f"https://github.com/{repo}.git", f"{source_sha}:refs/heads/{branch}",
-            ],
-            timeout=600,
-            private_env={"GIT_ASKPASS": str(askpass), "MAINTENANCE_GITHUB_PUSH_TOKEN": token},
-        )
+        try:
+            result = runner.run(
+                [
+                    "git", "-c", "core.hooksPath=/dev/null", "push",
+                    f"https://github.com/{repo}.git", f"{source_sha}:refs/heads/{branch}",
+                ],
+                timeout=600, check=False,
+                private_env={"GIT_ASKPASS": str(askpass), "MAINTENANCE_GITHUB_PUSH_TOKEN": token},
+            )
+        except CommandCaptureError as exc:
+            git_failure_diagnostics("push", exc.result, capture=exc.reason)
+            raise
+        if result.returncode:
+            git_failure_diagnostics("push", result)
+            raise MaintenanceError(f"command failed ({result.returncode}): git")
     finally:
         shutil.rmtree(askpass_dir, ignore_errors=True)
 
@@ -4341,28 +4369,39 @@ def checkpoint_output(**values: str) -> None:
 
 def phase_checkpoint(args: argparse.Namespace, state: State, runner: Runner) -> None:
     """Publish data-only progress at an immutable per-run/per-stage Git ref."""
+    def git(operation: str, argv: Sequence[str], **kwargs: Any) -> CommandResult:
+        try:
+            result = runner.git(argv, check=False, **kwargs)
+        except CommandCaptureError as exc:
+            git_failure_diagnostics(operation, exc.result, capture=exc.reason)
+            raise
+        if result.returncode:
+            git_failure_diagnostics(operation, result)
+            raise MaintenanceError(f"command failed ({result.returncode}): git")
+        return result
+
     branch = require_branch(args.branch)
     stage = args.stage
     run, attempt = checkpoint_identity(stage)
     value = state.load()
-    if value.get("failed_phase") or value.get("backport_inflight") or runner.git(["status", "--porcelain"]).stdout:
+    if value.get("failed_phase") or value.get("backport_inflight") or git("status", ["status", "--porcelain"]).stdout:
         raise MaintenanceError("cannot checkpoint incomplete or unclean maintenance")
     expected_phase = "update-dependencies" if stage == "dependencies" else "import-dependabot" if stage == "vet" else "backports"
     if value.get("last_phase") != expected_phase:
         raise MaintenanceError("checkpoint phase did not complete")
-    if value.get("branch") != branch or runner.git(["branch", "--show-current"]).stdout.strip() != branch:
+    if value.get("branch") != branch or git("branch", ["branch", "--show-current"]).stdout.strip() != branch:
         raise MaintenanceError("checkpoint branch mismatch")
-    head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
+    head = require_sha(git("head", ["rev-parse", "HEAD"]).stdout.strip())
     tooling = require_sha(os.environ.get("MAINTENANCE_TOOLING_COMMIT", ""))
     if value.get("main_head") != tooling:
         raise MaintenanceError("checkpoint main inventory differs from trusted tooling snapshot")
-    runner.git(["merge-base", "--is-ancestor", require_sha(value["original_head"]), head])
+    git("ancestry", ["merge-base", "--is-ancestor", require_sha(value["original_head"]), head])
     # App-token pushes can trigger Actions. Never expose an unvalidated tree
     # as an executable workflow ref: the transport tip has an empty tree and
     # exactly one parent, the completed source HEAD. Resume verifies both and
     # checks out that parent. Transport commits never enter the release PR.
-    empty_tree = require_sha(runner.git(["mktree"], input_text="").stdout.strip())
-    transport = require_sha(runner.git([
+    empty_tree = require_sha(git("empty-tree", ["mktree"], input_text="").stdout.strip())
+    transport = require_sha(git("transport-commit", [
         "commit-tree", empty_tree, "-p", head, "-m", "Unvalidated maintenance checkpoint; source is the parent commit",
         "-m", "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>",
     ]).stdout.strip())
