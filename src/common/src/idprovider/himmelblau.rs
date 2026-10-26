@@ -1439,45 +1439,73 @@ impl IdProvider for HimmelblauProvider {
                             return Err(IdpError::BadRequest);
                         }
                     );
-                    // Check if Azure provided FIDO credentials (passwordless FIDO)
-                    if let (Some(fido_challenge), Some(fido_allow_list)) =
-                        (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
-                    {
-                        let has_physical_security_key = flow.has_physical_security_key;
-                        let has_cross_device = flow.has_cross_device_passkey;
-                        return Ok((
-                            AuthRequest::Fido {
-                                fido_challenge,
-                                fido_allow_list,
-                                has_physical_security_key,
-                                has_cross_device,
-                            },
-                            AuthCredHandler::MFA {
-                                flow: Box::new(flow),
-                                password: None,
-                                extra_data: None,
-                                reauth_hello_pin: None,
-                            },
-                        ));
-                    }
-                    let msg = flow.msg.clone();
-                    let polling_interval = flow.polling_interval.unwrap_or(5000);
-                    Ok((
-                        AuthRequest::MFAPoll {
-                            enrollment: None,
-                            msg,
-                            // Kanidm pam expects a polling_interval in
-                            // seconds, not milliseconds.
-                            polling_interval: polling_interval / 1000,
-                            show_push_hint: mfa_flow_uses_push_hint(&flow),
+                    auth_handle_mfa_resp!(
+                        flow,
+                        // Check if Azure provided FIDO credentials (passwordless FIDO)
+                        {
+                            let fido_challenge = match flow.fido_challenge.clone() {
+                                Some(fido_challenge) => fido_challenge,
+                                None => return Err(IdpError::BadRequest),
+                            };
+                            let fido_allow_list = match flow.fido_allow_list.clone() {
+                                Some(fido_allow_list) => fido_allow_list,
+                                None => return Err(IdpError::BadRequest),
+                            };
+                            let has_physical_security_key = flow.has_physical_security_key;
+                            let has_cross_device = flow.has_cross_device_passkey;
+                            return Ok((
+                                AuthRequest::Fido {
+                                    fido_challenge,
+                                    fido_allow_list,
+                                    has_physical_security_key,
+                                    has_cross_device,
+                                },
+                                AuthCredHandler::MFA {
+                                    flow: Box::new(flow),
+                                    password: None,
+                                    extra_data: None,
+                                    reauth_hello_pin: None,
+                                },
+                            ));
                         },
-                        AuthCredHandler::MFA {
-                            flow: Box::new(flow),
-                            password: None,
-                            extra_data: None,
-                            reauth_hello_pin: None,
+                        // Prompt, such as AccessPass
+                        {
+                            let msg = flow.msg.clone();
+                            return Ok((
+                                AuthRequest::Input {
+                                    enrollment: None,
+                                    msg,
+                                    echo_on: false,
+                                },
+                                AuthCredHandler::MFA {
+                                    flow: Box::new(flow),
+                                    password: None,
+                                    extra_data: None,
+                                    reauth_hello_pin: None,
+                                },
+                            ));
                         },
-                    ))
+                        {
+                            let msg = flow.msg.clone();
+                            let polling_interval = flow.polling_interval.unwrap_or(5000);
+                            Ok((
+                                AuthRequest::MFAPoll {
+                                    enrollment: None,
+                                    msg,
+                                    // Kanidm pam expects a polling_interval in
+                                    // seconds, not milliseconds.
+                                    polling_interval: polling_interval / 1000,
+                                    show_push_hint: mfa_flow_uses_push_hint(&flow),
+                                },
+                                AuthCredHandler::MFA {
+                                    flow: Box::new(flow),
+                                    password: None,
+                                    extra_data: None,
+                                    reauth_hello_pin: None,
+                                },
+                            ))
+                        }
+                    )
                 }
             } else {
                 let mut auth_options = vec![];
