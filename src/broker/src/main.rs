@@ -387,6 +387,7 @@ impl InteractiveSessionBroker {
             no_info_prompt: false,
             set_authtok: false,
             try_unseal: false,
+            max_tries: 0,
             force_reauth: false,
         };
 

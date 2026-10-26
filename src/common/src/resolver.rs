@@ -228,11 +228,21 @@ mod tests {
         user_get_release: Notify,
         user_get_goes_offline: AtomicBool,
         auth_token: RwLock<UserToken>,
+        init_transport_error: AtomicBool,
+        step_transport_error: AtomicBool,
+        online_init_calls: AtomicUsize,
+        online_step_calls: AtomicUsize,
+        offline_init_calls: AtomicUsize,
     }
 
     impl OfflineFallbackProvider {
         fn new() -> Self {
             Self {
+                init_transport_error: AtomicBool::new(false),
+                step_transport_error: AtomicBool::new(false),
+                online_init_calls: AtomicUsize::new(0),
+                online_step_calls: AtomicUsize::new(0),
+                offline_init_calls: AtomicUsize::new(0),
                 cache_state: RwLock::new(CacheState::Online),
                 check_online_result: AtomicBool::new(true),
                 probe_online_result: AtomicBool::new(true),
@@ -393,6 +403,13 @@ mod tests {
             _machine_key: &tpm::structures::StorageKey,
             _shutdown_rx: &broadcast::Receiver<()>,
         ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+            self.online_init_calls.fetch_add(1, Ordering::AcqRel);
+            if self.init_transport_error.load(Ordering::Acquire) {
+                self.set_cache_state(CacheState::OfflineNextCheck(
+                    SystemTime::now() + Duration::from_secs(60),
+                ));
+                return Err(IdpError::Transport);
+            }
             if matches!(self.user_get_error.load(Ordering::Acquire), 3..=5 | 7) {
                 return Ok((
                     AuthRequest::Password {
@@ -421,6 +438,13 @@ mod tests {
             _machine_key: &tpm::structures::StorageKey,
             _shutdown_rx: &broadcast::Receiver<()>,
         ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
+            self.online_step_calls.fetch_add(1, Ordering::AcqRel);
+            if self.step_transport_error.load(Ordering::Acquire) {
+                self.set_cache_state(CacheState::OfflineNextCheck(
+                    SystemTime::now() + Duration::from_secs(60),
+                ));
+                return Err(IdpError::Transport);
+            }
             if self.user_get_error.load(Ordering::Acquire) == 5 {
                 return Ok((
                     AuthResult::Success {
@@ -521,6 +545,18 @@ mod tests {
             _no_hello_pin: bool,
             _keystore: &mut D,
         ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+            self.offline_init_calls.fetch_add(1, Ordering::AcqRel);
+            if self.init_transport_error.load(Ordering::Acquire)
+                || self.step_transport_error.load(Ordering::Acquire)
+            {
+                return Ok((
+                    AuthRequest::Password {
+                        prompt: None,
+                        long_prompt: None,
+                    },
+                    AuthCredHandler::None,
+                ));
+            }
             Ok((AuthRequest::Pin, AuthCredHandler::None))
         }
 
@@ -2511,6 +2547,301 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transport_fallback_uses_cached_password_without_a_denial_or_online_resubmit() {
+        for fail_init in [true, false] {
+            let resolver = setup_resolver().await;
+            resolver
+                .set_cache_userpassword(test_token().uuid, "cached-password")
+                .await
+                .unwrap();
+            resolver.client.user_get_error.store(3, Ordering::Release);
+            resolver
+                .client
+                .init_transport_error
+                .store(fail_init, Ordering::Release);
+            resolver
+                .client
+                .step_transport_error
+                .store(!fail_init, Ordering::Release);
+            let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+            let (mut session, response) = resolver
+                .pam_account_authenticate_init(
+                    "testuser@example.com",
+                    "gdm-password",
+                    false,
+                    false,
+                    shutdown_rx,
+                )
+                .await
+                .unwrap();
+            assert!(matches!(response, PamAuthResponse::Password { .. }));
+            if !fail_init {
+                let response = resolver
+                    .pam_account_authenticate_step(
+                        &mut session,
+                        PamAuthRequest::Password {
+                            cred: "cached-password".into(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                // This is an offline prompt, not Denied: max_tries=1 must not
+                // terminate before the cached password can be verified.
+                assert!(matches!(response, PamAuthResponse::Password { .. }));
+            }
+            assert!(matches!(
+                session,
+                AuthSession::InProgress {
+                    online_at_init: false,
+                    pending_password: None,
+                    identity_staged: false,
+                    ..
+                }
+            ));
+            // A concurrent reconnect must not send this offline credential
+            // back to Entra: the session, not global connectivity, owns the flow.
+            resolver.client.set_cache_state(CacheState::Online);
+            let response = resolver
+                .pam_account_authenticate_step(
+                    &mut session,
+                    PamAuthRequest::Password {
+                        cred: "cached-password".into(),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(matches!(response, PamAuthResponse::Success));
+            assert_eq!(resolver.client.online_init_calls.load(Ordering::Acquire), 1);
+            assert_eq!(
+                resolver.client.online_step_calls.load(Ordering::Acquire),
+                usize::from(!fail_init)
+            );
+            assert_eq!(
+                resolver.client.offline_init_calls.load(Ordering::Acquire),
+                1
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_fallback_does_not_bypass_force_reauth() {
+        for fail_init in [true, false] {
+            let resolver = setup_resolver().await;
+            resolver
+                .set_cache_userpassword(test_token().uuid, "cached-password")
+                .await
+                .unwrap();
+            resolver.client.user_get_error.store(3, Ordering::Release);
+            resolver
+                .client
+                .init_transport_error
+                .store(fail_init, Ordering::Release);
+            resolver
+                .client
+                .step_transport_error
+                .store(!fail_init, Ordering::Release);
+            let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+            let result = resolver
+                .pam_account_authenticate_init(
+                    "testuser@example.com",
+                    "gdm-password",
+                    false,
+                    true,
+                    shutdown_rx,
+                )
+                .await;
+            if fail_init {
+                assert!(result.is_err());
+            } else {
+                let (mut session, _) = result.unwrap();
+                assert!(resolver
+                    .pam_account_authenticate_step(
+                        &mut session,
+                        PamAuthRequest::Password {
+                            cred: "cached-password".into()
+                        },
+                    )
+                    .await
+                    .is_err());
+                assert!(matches!(session, AuthSession::Denied));
+            }
+            assert_eq!(
+                resolver.client.offline_init_calls.load(Ordering::Acquire),
+                0
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_fallback_preserves_online_only_credential_handlers() {
+        for handler in [
+            AuthCredHandler::ReauthPassword {
+                reauth_hello_pin: "123456".to_string().into(),
+            },
+            AuthCredHandler::OidcPinTotp {
+                pin: "123456".to_string().into(),
+                pending: None,
+                token: Box::new(test_token()),
+            },
+        ] {
+            let resolver = setup_resolver().await;
+            resolver.client.user_get_error.store(3, Ordering::Release);
+            resolver
+                .client
+                .step_transport_error
+                .store(true, Ordering::Release);
+            let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+            let (mut session, _) = resolver
+                .pam_account_authenticate_init(
+                    "testuser@example.com",
+                    "gdm-password",
+                    false,
+                    false,
+                    shutdown_rx,
+                )
+                .await
+                .unwrap();
+            if let AuthSession::InProgress { cred_handler, .. } = &mut session {
+                *cred_handler = handler;
+            } else {
+                panic!("expected in-progress session");
+            }
+            assert!(resolver
+                .pam_account_authenticate_step(
+                    &mut session,
+                    PamAuthRequest::Password {
+                        cred: "cached-password".into()
+                    },
+                )
+                .await
+                .is_err());
+            assert!(matches!(session, AuthSession::Denied));
+            assert_eq!(
+                resolver.client.offline_init_calls.load(Ordering::Acquire),
+                0
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_fallback_cannot_republish_a_replaced_identity() {
+        let resolver = setup_resolver().await;
+        resolver.client.user_get_error.store(3, Ordering::Release);
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let (mut older, _) = resolver
+            .pam_account_authenticate_init(
+                "testuser@example.com",
+                "gdm-password",
+                false,
+                false,
+                shutdown_rx,
+            )
+            .await
+            .unwrap();
+        // Same UUID in a different tenant: its current cached password must
+        // never authenticate the earlier session's stale identity snapshot.
+        let mut replacement = test_token();
+        replacement.tenant_id = Some(uuid::Uuid::new_v4());
+        *resolver.client.auth_token.write().unwrap() = replacement.clone();
+        complete_test_auth(&resolver, true).await;
+        resolver
+            .client
+            .step_transport_error
+            .store(true, Ordering::Release);
+        let response = resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::Password {
+                    cred: "old-secret".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, PamAuthResponse::Password { .. }));
+        let response = resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::Password {
+                    cred: "new-secret".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, PamAuthResponse::Denied(_)));
+        assert!(matches!(older, AuthSession::Denied));
+        let cached = resolver.get_cached_usertokens().await.unwrap();
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].tenant_id, replacement.tenant_id);
+    }
+
+    #[tokio::test]
+    async fn transport_fallback_after_staging_cannot_republish_a_replaced_identity() {
+        let resolver = setup_resolver().await;
+        resolver.client.user_get_error.store(3, Ordering::Release);
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        // Snapshot A.
+        let (mut older, _) = resolver
+            .pam_account_authenticate_init(
+                "testuser@example.com",
+                "gdm-password",
+                false,
+                false,
+                shutdown_rx,
+            )
+            .await
+            .unwrap();
+        // Replacement B (same UUID, different tenant) is cached with its password.
+        let mut replacement = test_token();
+        replacement.tenant_id = Some(uuid::Uuid::new_v4());
+        *resolver.client.auth_token.write().unwrap() = replacement.clone();
+        complete_test_auth(&resolver, true).await;
+        // The older session then reaches SetupPin, which advances its generation.
+        resolver.client.user_get_error.store(4, Ordering::Release);
+        let response = resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::Password {
+                    cred: "old-secret".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, PamAuthResponse::SetupPin { .. }));
+        // Hello provisioning loses transport.
+        resolver
+            .client
+            .step_transport_error
+            .store(true, Ordering::Release);
+        assert!(resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::SetupPin {
+                    pin: "123456".into(),
+                },
+            )
+            .await
+            .is_err());
+        assert!(matches!(older, AuthSession::Denied));
+        assert_eq!(
+            resolver.client.offline_init_calls.load(Ordering::Acquire),
+            0
+        );
+        // B's cached password can't carry the stale snapshot through.
+        assert!(resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::Password {
+                    cred: "new-secret".into(),
+                },
+            )
+            .await
+            .is_err());
+        let cached = resolver.get_cached_usertokens().await.unwrap();
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].tenant_id, replacement.tenant_id);
+    }
+
+    #[tokio::test]
     async fn online_auth_init_offline_fallback_does_not_reenter_db_lock() {
         let resolver = setup_resolver().await;
         let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
@@ -4158,7 +4489,7 @@ where
         };
         let state = self.get_cachestate(Some(account_id)).await;
 
-        let online_at_init = if !matches!(state, CacheState::Online) {
+        let mut online_at_init = if !matches!(state, CacheState::Online) {
             // Attempt a cache online.
             self.test_connection().await
         } else {
@@ -4198,6 +4529,7 @@ where
                         match self.get_cachestate(Some(account_id)).await {
                             CacheState::Offline | CacheState::OfflineNextCheck(_) => {
                                 // Attempt to proceed offline
+                                online_at_init = false;
                                 let mut dbtxn = self.db.write().await;
                                 self.client
                                     .unix_user_offline_auth_init(
@@ -4615,6 +4947,74 @@ where
                 Ok(PamAuthResponse::Denied(msg))
             }
             Ok(AuthResult::Next(req)) => Ok(req.into()),
+            Err(IdpError::Transport) => {
+                // A network failure did not reject a credential. Start the
+                // offline method directly rather than charging PAM's denial
+                // budget or resubmitting credentials to the online provider.
+                if let AuthSession::InProgress {
+                    account_id,
+                    service,
+                    token,
+                    pending_password,
+                    identity_staged,
+                    online_at_init,
+                    cred_handler,
+                    no_hello_pin,
+                    force_reauth: false,
+                    ..
+                } = auth_session
+                {
+                    if !*online_at_init
+                        || *identity_staged
+                        || matches!(
+                            cred_handler,
+                            AuthCredHandler::InteractionCode(..)
+                                | AuthCredHandler::OidcPinTotp { .. }
+                                | AuthCredHandler::ReauthPassword { .. }
+                        )
+                    {
+                        // Preserve the online-only second-factor/reauth guards,
+                        // and never repeatedly restart a failing offline flow.
+                        // Once the online identity is staged for PIN/TOTP setup,
+                        // cache_generation no longer belongs to the token
+                        // snapshot: fail closed rather than pair the two.
+                        *auth_session = AuthSession::Denied;
+                        return Err(ResolverError);
+                    }
+                    let mut dbtxn = self.db.write().await;
+                    let offline = self
+                        .client
+                        .unix_user_offline_auth_init(
+                            account_id,
+                            token.as_deref(),
+                            service,
+                            *no_hello_pin,
+                            &mut dbtxn,
+                        )
+                        .await;
+                    // Discard any partially authenticated online state.
+                    *pending_password = None;
+                    *identity_staged = false;
+                    // Retain the original token snapshot's generation: a
+                    // transport retry must not make a stale identity current.
+                    *online_at_init = false;
+                    match offline {
+                        Ok((request, handler)) => {
+                            *cred_handler = handler;
+                            Ok(request.into())
+                        }
+                        Err(e) => {
+                            error!(?e, "Unable to initialize offline authentication");
+                            *auth_session = AuthSession::Denied;
+                            Err(ResolverError)
+                        }
+                    }
+                } else {
+                    // Explicit online reauthentication must never use cache.
+                    *auth_session = AuthSession::Denied;
+                    Err(ResolverError)
+                }
+            }
             Err(IdpError::NotFound { what, where_ }) => Ok(PamAuthResponse::InitDenied {
                 msg: format!("NotFound: {} in {}", what, where_),
             }),

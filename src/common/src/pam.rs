@@ -76,6 +76,8 @@ pub struct Options {
     pub no_info_prompt: bool,
     pub set_authtok: bool,
     pub try_unseal: bool,
+    /// Denied attempts before giving up with PAM_MAXTRIES; 0 asks again forever.
+    pub max_tries: u32,
     /// Only set by CLI (aad-tool auth-test --force-reauth), not parsed from PAM module arguments.
     pub force_reauth: bool,
 }
@@ -94,6 +96,22 @@ impl TryFrom<&Vec<&CStr>> for Options {
         };
 
         let try_unseal = gopts.contains("try_unseal");
+        // Ignore malformed values and use the strictest nonzero limit when
+        // repeated arguments conflict. A zero or malformed value must not
+        // silently disable an explicitly configured bound.
+        let max_tries = gopts
+            .iter()
+            .filter_map(|o| o.strip_prefix("max_tries="))
+            .filter_map(|v| match v.parse::<u32>() {
+                Ok(0) => None,
+                Ok(value) => Some(value),
+                Err(_) => {
+                    println!("Invalid max_tries={} ignored", v);
+                    None
+                }
+            })
+            .min()
+            .unwrap_or(0);
         Ok(Options {
             debug: gopts.contains("debug"),
             use_first_pass: gopts.contains("use_first_pass") || try_unseal,
@@ -103,7 +121,32 @@ impl TryFrom<&Vec<&CStr>> for Options {
             no_info_prompt: gopts.contains("no_info_prompt"),
             set_authtok: gopts.contains("set_authtok") || gopts.contains("keyring_authtok"),
             try_unseal,
+            max_tries,
             force_reauth: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Options;
+
+    #[test]
+    fn max_tries_ignores_invalid_values_and_uses_strictest_positive_limit() {
+        for (args, expected) in [
+            (vec![], 0),
+            (vec![c"max_tries=0"], 0),
+            (vec![c"max_tries=-1", c"max_tries=1"], 1),
+            (vec![c"max_tries=1", c"max_tries=-1"], 1),
+            (vec![c"max_tries=0", c"max_tries=2"], 2),
+            (vec![c"max_tries=10", c"max_tries=2"], 2),
+            (vec![c"max_tries=2", c"max_tries=10"], 2),
+            (vec![c"max_tries=2", c"max_tries=2"], 2),
+            (vec![c"max_tries=4294967296", c"max_tries=3"], 3),
+            (vec![c"max_tries=", c"max_tries=x", c"max_tries=-1"], 0),
+            (vec![c"max_tries=4294967295"], u32::MAX),
+        ] {
+            assert_eq!(Options::try_from(&args).unwrap().max_tries, expected);
+        }
     }
 }
