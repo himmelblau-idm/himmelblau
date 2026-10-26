@@ -344,6 +344,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.4.0"
 
+[[audits.ctutils]]
+who = "Codex (automated via Azure OpenAI)"
+criteria = "safe-to-deploy"
+delta = "0.4.0 -> 0.4.5"
+
 [[audits.darling]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1249,6 +1254,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.29.1"
 
+[[audits.serde_json]]
+who = "Codex (automated via Azure OpenAI)"
+criteria = "safe-to-deploy"
+delta = "1.0.151 -> 1.0.152"
+
 [[audits.serde_with]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1588,6 +1598,11 @@ delta = "0.5.0 -> 0.6.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.26.2"
+
+[[audits.url]]
+who = "Codex (automated via Azure OpenAI)"
+criteria = "safe-to-deploy"
+delta = "2.5.7 -> 2.5.8"
 
 [[audits.utoipa]]
 who = "David Mulder <dmulder@samba.org>"
