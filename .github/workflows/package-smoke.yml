@@ -1,0 +1,52 @@
+name: Package smoke
+
+on:
+  pull_request:
+    branches: [stable-2.x, stable-3.x, stable-4.x]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Package smoke (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ubuntu26.04, fedora44]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test smoke tooling
+        run: python3 .github/scripts/test_package_smoke.py
+      - name: Build candidate packages
+        run: python3 .github/scripts/package_smoke.py build '${{ matrix.target }}'
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+      - name: Install packages and test service lifecycle
+        run: sudo python3 .github/scripts/package_smoke.py smoke '${{ matrix.target }}'
+      - name: Remove test container
+        if: always()
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          if command -v podman >/dev/null && sudo podman container exists "himmelblau-smoke-$TARGET"; then
+            sudo podman rm --force --time 10 "himmelblau-smoke-$TARGET"
+          fi
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-smoke-${{ matrix.target }}
+          path: smoke-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
