@@ -2236,6 +2236,41 @@ class CargoVetTests(unittest.TestCase):
                 self.assertEqual((root / "supply-chain" / name).read_text(), originals[name])
             self.assertTrue(all(not store.exists() for store in stores))
 
+    def test_existing_audits_reformat_publisher_comments_without_new_certifications(self):
+        for outcome in ("success", "mutation", "failure"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                (root / "supply-chain").mkdir(parents=True)
+                baseline = ('[[trusted.example]]\ncriteria = "safe-to-deploy"\n'
+                            'user-id = 10\nstart = "2019-01-01"\nend = "2026-09-11"\n')
+                for name, text in (("audits.toml", baseline), ("config.toml", "# policy\n"),
+                                   ("imports.lock", "# refreshed publishers\n")):
+                    (root / "supply-chain" / name).write_text(text)
+                def fmt(_runner, command, **kwargs):
+                    self.assertEqual(command, ["cargo", "vet", "fmt"])
+                    self.assertFalse(kwargs["network"])
+                    self.assertFalse(kwargs["source_rw"])
+                    self.assertFalse(kwargs["cache_rw"])
+                    pending = kwargs["vet_store"] / "audits.toml"
+                    text = pending.read_text().replace("user-id = 10", "user-id = 10 # Publisher (login)")
+                    if outcome == "mutation":
+                        text = text.replace("safe-to-deploy", "safe-to-run")
+                    pending.write_text(text)
+                    if outcome == "failure":
+                        raise sm.MaintenanceError("formatter failed")
+                    return sm.CommandResult(0, "", "")
+                with mock.patch.object(sm, "contained_repo_command", side_effect=fmt):
+                    if outcome == "success":
+                        sm.append_reviewed_audits(mock.Mock(root=root), Path(tmp), [], format_existing=True)
+                    else:
+                        with self.assertRaises(sm.MaintenanceError):
+                            sm.append_reviewed_audits(mock.Mock(root=root), Path(tmp), [], format_existing=True)
+                actual = (root / "supply-chain/audits.toml").read_text()
+                self.assertEqual(actual, baseline.replace("user-id = 10", "user-id = 10 # Publisher (login)")
+                                 if outcome == "success" else baseline)
+                self.assertEqual((root / "supply-chain/config.toml").read_text(), "# policy\n")
+                self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# refreshed publishers\n")
+
     def test_audit_formatter_cannot_publish_partial_or_changed_certifications(self):
         for outcome in ("removed", "added", "duplicate", "criteria", "who", "notes", "policy", "malformed", "symlink", "error", "timeout"):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
@@ -2991,10 +3026,45 @@ class MutationBoundaryTests(unittest.TestCase):
                 raise AssertionError(argv)
             runner.git.side_effect = git
             clean_vet = sm.CommandResult(0, VET_SUCCESS, "")
-            with mock.patch.object(sm, "contained_repo_command", return_value=clean_vet), self.assertRaisesRegex(
+            with mock.patch.object(sm, "append_reviewed_audits"), mock.patch.object(sm, "contained_repo_command", return_value=clean_vet), self.assertRaisesRegex(
                 sm.MaintenanceError, "unexpected files changed",
             ):
                 sm.phase_vet_dependencies(mock.Mock(), state, runner)
+
+    def test_refresh_formats_restored_audits_before_locked_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            audits = '[[trusted.example]]\nuser-id = 10\ncriteria = "safe-to-deploy"\n'
+            for name, text in (("audits.toml", audits), ("config.toml", "# policy\n"),
+                               ("imports.lock", "# old publishers\n")):
+                (root / "supply-chain" / name).write_text(text)
+            runner = sm.Runner(root)
+            runner.git(["init"])
+            runner.git(["config", "user.name", "Maintenance test"])
+            runner.git(["config", "user.email", "maintenance-test@example.invalid"])
+            runner.git(["add", "."])
+            runner.git(["commit", "-m", "baseline"])
+            state = sm.State(Path(tmp) / "state")
+            def contained(_runner, command, **kwargs):
+                if command == ["cargo", "vet", "regenerate", "imports"]:
+                    (root / "supply-chain/imports.lock").write_text("# new publishers\n")
+                    (root / "supply-chain/audits.toml").write_text("# pruned\n")
+                elif command == ["cargo", "vet", "fmt"]:
+                    pending = kwargs["vet_store"] / "audits.toml"
+                    self.assertEqual(pending.read_text(), audits)
+                    pending.write_text(audits.replace("user-id = 10", "user-id = 10 # Publisher (login)"))
+                else:
+                    self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
+                    self.assertIn("# Publisher (login)", (kwargs["vet_store"] / "audits.toml").read_text())
+                return sm.CommandResult(0, VET_SUCCESS, "")
+            with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                 mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}):
+                sm.phase_refresh_vet_imports(mock.Mock(), state, runner)
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+            self.assertEqual(set(runner.git(["diff", "--name-only", "HEAD^", "HEAD"]).stdout.splitlines()),
+                             {"supply-chain/imports.lock", "supply-chain/audits.toml"})
+            self.assertEqual((root / "supply-chain/config.toml").read_text(), "# policy\n")
 
     def test_refresh_commits_only_the_import_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -3007,16 +3077,16 @@ class MutationBoundaryTests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["diff", "--name-only"]:
                     return sm.CommandResult(0, "supply-chain/imports.lock\n", "")
-                if argv in (["add", "--", "supply-chain/imports.lock"], ["commit", "-m", "chore: refresh cargo vet metadata"]):
+                if argv in (["add", "--", "supply-chain/imports.lock", "supply-chain/audits.toml"], ["commit", "-m", "chore: refresh cargo vet metadata"]):
                     return sm.CommandResult(0, "", "")
                 if argv == ["restore", "--source=HEAD", "--worktree", "--", "supply-chain/config.toml", "supply-chain/audits.toml"]:
                     return sm.CommandResult(0, "", "")
                 raise AssertionError(argv)
             runner.git.side_effect = git
-            with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
+            with mock.patch.object(sm, "append_reviewed_audits"), mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
                  mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}):
                 sm.phase_refresh_vet_imports(mock.Mock(), state, runner)
-            runner.git.assert_any_call(["add", "--", "supply-chain/imports.lock"])
+            runner.git.assert_any_call(["add", "--", "supply-chain/imports.lock", "supply-chain/audits.toml"])
             runner.git.assert_any_call(["commit", "-m", "chore: refresh cargo vet metadata"])
 
     def test_refresh_rejects_unexpected_output(self):
@@ -3026,7 +3096,7 @@ class MutationBoundaryTests(unittest.TestCase):
             sm.CommandResult(0, "", ""),
             sm.CommandResult(0, "Cargo.toml\n", ""),
         ]
-        with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
+        with mock.patch.object(sm, "append_reviewed_audits"), mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
              self.assertRaisesRegex(sm.MaintenanceError, "unexpected path"):
             sm.phase_refresh_vet_imports(mock.Mock(), mock.Mock(), runner)
 
@@ -3078,7 +3148,7 @@ class MutationBoundaryTests(unittest.TestCase):
                             raise sm.MaintenanceError("command timed out")
                     return sm.CommandResult(0, VET_SUCCESS, "")
 
-                with mock.patch.object(sm, "contained_repo_command", side_effect=contained) as command, \
+                with mock.patch.object(sm, "append_reviewed_audits"), mock.patch.object(sm, "contained_repo_command", side_effect=contained) as command, \
                      mock.patch.object(sm, "cargo_metadata", return_value={"packages": [
                          {"name": name, "version": "1.0.0", "id": name,
                           "source": "registry+https://github.com/rust-lang/crates.io-index"}

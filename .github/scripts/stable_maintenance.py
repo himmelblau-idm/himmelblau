@@ -2345,6 +2345,13 @@ def phase_refresh_vet_imports(args: argparse.Namespace, state: State, runner: Ru
     changed = runner.git(["diff", "--name-only"]).stdout.splitlines()
     if any(path != "supply-chain/imports.lock" for path in changed):
         raise MaintenanceError("cargo-vet import refresh changed an unexpected path")
+    # Refreshed publisher metadata changes cargo-vet's canonical user-id
+    # comments even when every certification is unchanged. Format in a private
+    # offline store and verify semantic identity before publishing only audits.
+    append_reviewed_audits(runner, state.directory, [], format_existing=True)
+    changed = runner.git(["diff", "--name-only"]).stdout.splitlines()
+    if any(path not in ("supply-chain/imports.lock", "supply-chain/audits.toml") for path in changed):
+        raise MaintenanceError("cargo-vet audit formatting changed an unexpected path")
     gaps = locked_vet_gaps(runner, state.directory)
     value = state.load()
     registry = registry_packages(cargo_metadata(runner))
@@ -2358,7 +2365,7 @@ def phase_refresh_vet_imports(args: argparse.Namespace, state: State, runner: Ru
     if gaps:
         raise MaintenanceError("post-import baseline contains pre-existing unvetted dependencies")
     if changed:
-        runner.git(["add", "--", "supply-chain/imports.lock"])
+        runner.git(["add", "--", "supply-chain/imports.lock", "supply-chain/audits.toml"])
         runner.git(["commit", "-m", "chore: refresh cargo vet metadata"])
     state.event(
         "refresh-vet-imports", "cargo-vet imports regenerated",
@@ -2784,9 +2791,11 @@ def decide_vet_gaps(
     return decisions, newly_rejected
 
 
-def append_reviewed_audits(runner: Runner, state_dir: Path, items: Sequence[VetItem]) -> None:
+def append_reviewed_audits(
+    runner: Runner, state_dir: Path, items: Sequence[VetItem], *, format_existing: bool = False,
+) -> None:
     """Publish approved audits only after offline, content-preserving formatting."""
-    if not items:
+    if not items and not format_existing:
         return
 
     def contents(raw: bytes) -> str:
