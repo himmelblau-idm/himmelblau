@@ -61,7 +61,7 @@ use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
 use tokio::fs::File;
-use tokio::io::AsyncReadExt; // for read_to_end()
+use tokio::io::{AsyncReadExt, AsyncWriteExt}; // for read_to_end()
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -107,37 +107,79 @@ enum IntunePolicyThrottleState {
     LastRun(time::Instant),
 }
 
-#[derive(Default)]
-struct ClientCodec;
-
-impl Decoder for ClientCodec {
-    type Error = io::Error;
-    type Item = ClientRequest;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        trace!("Attempting to decode request ...");
-        match serde_json::from_slice::<ClientRequest>(src) {
-            Ok(msg) => {
-                // Clear the buffer for the next message.
-                src.clear();
-                Ok(Some(msg))
-            }
-            _ => Ok(None),
+struct BiometricMemoryProtection {
+    ready: bool,
+}
+impl BiometricMemoryProtection {
+    fn establish(protect: impl FnOnce() -> io::Result<()>) -> Self {
+        Self {
+            ready: protect().is_ok(),
         }
+    }
+    fn enabled(&self, configured: bool) -> bool {
+        self.ready && configured
+    }
+}
+static BIOMETRIC_MEMORY_PROTECTION: std::sync::OnceLock<BiometricMemoryProtection> =
+    std::sync::OnceLock::new();
+
+fn disable_process_dumps() -> io::Result<()> {
+    // RLIMIT_CORE alone does not cover every piped kernel core handler.
+    if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
     }
 }
 
-impl Encoder<ClientResponse> for ClientCodec {
-    type Error = io::Error;
-
-    fn encode(&mut self, msg: ClientResponse, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        trace!("Attempting to send response -> {:?} ...", msg);
-        let data = serde_json::to_vec(&msg).map_err(|e| {
-            error!("socket encoding error -> {:?}", e);
-            io::Error::other("JSON encode error")
-        })?;
-        dst.put(data.as_slice());
-        Ok(())
+/// Authentication transport owns and wipes all wire buffers, including on
+/// cancellation. Framed/BytesMut may retain consumed bytes in spare capacity.
+struct ClientIo {
+    stream: UnixStream,
+    pending: zeroize::Zeroizing<Vec<u8>>,
+    scratch: zeroize::Zeroizing<[u8; 1024]>,
+}
+impl ClientIo {
+    fn new(stream: UnixStream) -> Self {
+        Self {
+            stream,
+            pending: zeroize::Zeroizing::new(Vec::with_capacity(1024)),
+            scratch: zeroize::Zeroizing::new([0; 1024]),
+        }
+    }
+    async fn next(&mut self) -> Option<io::Result<ClientRequest>> {
+        loop {
+            match serde_json::from_slice(&self.pending) {
+                Ok(request) => {
+                    zeroize::Zeroize::zeroize(&mut *self.pending);
+                    return Some(Ok(request));
+                }
+                Err(error) if error.is_eof() => {}
+                Err(_) => return Some(Err(io::Error::other("JSON decode error"))),
+            }
+            match self.stream.read(self.scratch.as_mut()).await {
+                Ok(0) => return None,
+                Ok(count) => {
+                    if self.pending.len().saturating_add(count) > 16 * 1024 * 1024 {
+                        return Some(Err(io::Error::other("request exceeds size limit")));
+                    }
+                    himmelblau_unix_common::secret_memory::extend_secret(
+                        &mut self.pending,
+                        &self.scratch[..count],
+                    );
+                    zeroize::Zeroize::zeroize(&mut *self.scratch);
+                }
+                Err(error) => return Some(Err(error)),
+            }
+        }
+    }
+    async fn send(&mut self, response: ClientResponse) -> io::Result<()> {
+        let bytes = himmelblau_unix_common::secret_memory::encode_json(&response)
+            .map_err(|_| io::Error::other("JSON encode error"))?;
+        self.stream.write_all(&bytes).await
+    }
+    async fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush().await
     }
 }
 
@@ -453,6 +495,21 @@ async fn reconcile_local_groups_periodically(
     info!("Stopped local group reconciler");
 }
 
+fn revoke_denied_authentication(session: &mut Option<AuthSession>, response: &ClientResponse) {
+    if matches!(
+        response,
+        ClientResponse::PamAuthenticateStepResponse(
+            PamAuthResponse::Denied(_) | PamAuthResponse::InitDenied { .. }
+        ) | ClientResponse::Error
+            | ClientResponse::NotAuthenticated
+            | ClientResponse::NonCompliant(_)
+    ) {
+        // Run after all postprocessing: policy/logon-script denial revokes the
+        // management capability and wipes the retained PIN as well as denying PAM.
+        *session = None;
+    }
+}
+
 async fn handle_client(
     sock: UnixStream,
     cachelayer: Arc<Resolver<IdProviderProxy>>,
@@ -468,15 +525,45 @@ async fn handle_client(
         )));
     };
 
-    let mut reqs = Framed::new(sock, ClientCodec);
+    let mut reqs = ClientIo::new(sock);
     let mut pam_auth_session_state = None;
+    cachelayer.set_enable_hello_fingerprint(
+        BIOMETRIC_MEMORY_PROTECTION
+            .get()
+            .is_some_and(|protection| protection.enabled(cfg.get_enable_hello_fingerprint())),
+    );
+    cachelayer.set_fingerprint_remote_services(cfg.get_password_only_remote_services_deny_list());
 
     // Setup a broadcast channel so that if we have an unexpected disconnection, we can
     // tell consumers to stop work.
     let (shutdown_tx, _shutdown_rx) = broadcast::channel(1);
 
     trace!("Waiting for requests ...");
-    while let Some(Ok(req)) = reqs.next().await {
+    while let Some(Ok(req)) = if let Some(remaining) = pam_auth_session_state
+        .as_ref()
+        .and_then(AuthSession::fingerprint_secret_remaining)
+    {
+        // Use the original PIN acquisition time across management prompts,
+        // enrollment and status traffic; no request extends its lifetime.
+        if remaining.is_zero() {
+            if let Some(session) = &mut pam_auth_session_state {
+                session.expire_fingerprint_secrets();
+            }
+            reqs.next().await
+        } else {
+            match time::timeout(remaining, reqs.next()).await {
+                Ok(req) => req,
+                Err(_) => {
+                    if let Some(session) = &mut pam_auth_session_state {
+                        session.expire_fingerprint_secrets();
+                    }
+                    reqs.next().await
+                }
+            }
+        }
+    } else {
+        reqs.next().await
+    } {
         let resp = match req {
             ClientRequest::NssAccounts => {
                 trace!("nssaccounts req");
@@ -557,6 +644,61 @@ async fn handle_client(
                         ClientResponse::Error
                     })
             }
+            ClientRequest::FingerprintStatus(account_id) => {
+                let target_uid = cachelayer
+                    .get_nssaccount_name(&account_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|a| a.uid);
+                if !peer_may_change_hello_pin(ucred.uid(), target_uid) {
+                    ClientResponse::Error
+                } else {
+                    cachelayer
+                        .fingerprint_status(&account_id)
+                        .await
+                        .map(ClientResponse::FingerprintStatus)
+                        .unwrap_or(ClientResponse::Error)
+                }
+            }
+            ClientRequest::FingerprintManage { account_id, action } => {
+                let target_uid = cachelayer
+                    .get_nssaccount_name(&account_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|a| a.uid);
+                if !peer_may_change_hello_pin(ucred.uid(), target_uid) {
+                    ClientResponse::Error
+                } else if let Some(session) = &mut pam_auth_session_state {
+                    cachelayer
+                        .fingerprint_manage(session, &account_id, action)
+                        .await
+                        .map(ClientResponse::from)
+                        .unwrap_or(ClientResponse::Error)
+                } else {
+                    ClientResponse::Error
+                }
+            }
+            ClientRequest::PamAuthenticateInitPin(account_id, service) => {
+                match cachelayer
+                    .pam_account_authenticate_init(
+                        &account_id.to_lowercase(),
+                        &service,
+                        false,
+                        false,
+                        shutdown_tx.subscribe(),
+                    )
+                    .await
+                {
+                    Ok((mut session, response)) => {
+                        let response = cachelayer.fingerprint_force_pin(&mut session, response);
+                        pam_auth_session_state = Some(session);
+                        response.into()
+                    }
+                    Err(_) => ClientResponse::Error,
+                }
+            }
             ClientRequest::PamAuthenticateInit(account_id, service, no_hello_pin, force_reauth) => {
                 let account_id = account_id.to_lowercase();
                 let span = span!(Level::INFO, "pam authenticate init");
@@ -591,6 +733,12 @@ async fn handle_client(
                     trace!("pam authenticate step");
                     match &mut pam_auth_session_state {
                         Some(auth_session) => {
+                            if let Some(account) = auth_session.authentication_account() {
+                                let target_uid = cachelayer.get_nssaccount_name(account).await.ok().flatten().map(|a|a.uid);
+                                if !peer_may_change_hello_pin(ucred.uid(), target_uid) {
+                                    return ClientResponse::Error;
+                                }
+                            }
                             match cachelayer
                                 .pam_account_authenticate_step(auth_session, pam_next_req)
                                 .await
@@ -599,10 +747,10 @@ async fn handle_client(
                             {
                                 ClientResponse::PamAuthenticateStepResponse(mut resp) => {
                                     match auth_session {
-                                        AuthSession::Success(account_id) => {
+                                        AuthSession::Success(account_id) | AuthSession::HelloSuccess { account_id, .. } => {
                                             let account_id = account_id.to_lowercase();
                                             match resp {
-                                                PamAuthResponse::Success => {
+                                                PamAuthResponse::Success | PamAuthResponse::SuccessWithPin { .. } => {
                                                     let is_oidc_auth =
                                                         cfg.get_oidc_issuer_url().is_some();
 
@@ -1197,6 +1345,7 @@ async fn handle_client(
                 .await
             }
         };
+        revoke_denied_authentication(&mut pam_auth_session_state, &resp);
         reqs.send(resp).await?;
         reqs.flush().await?;
         trace!("flushed response!");
@@ -1518,6 +1667,95 @@ mod tests {
     const ACCOUNT_ID: &str = "user@example.com";
 
     #[test]
+    fn memory_protection_failure_disables_only_biometrics() {
+        let failed =
+            BiometricMemoryProtection::establish(|| Err(io::Error::other("injected failure")));
+        assert!(!failed.enabled(true));
+        let protected = BiometricMemoryProtection::establish(|| Ok(()));
+        assert!(protected.enabled(true));
+        assert!(!protected.enabled(false));
+    }
+
+    #[test]
+    fn process_dump_protection_is_verified_in_child() -> Result<(), Box<dyn Error>> {
+        let result = std::process::Command::new(std::env::current_exe()?)
+            .args(["--exact", "tests::probe_process_dump_protection"])
+            .env("HIMMELBLAU_DUMP_PROBE", "1")
+            .output()?;
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn probe_process_dump_protection() -> io::Result<()> {
+        if std::env::var_os("HIMMELBLAU_DUMP_PROBE").is_none() {
+            return Ok(());
+        }
+        disable_process_dumps()?;
+        assert_eq!(unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) }, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn final_policy_denial_revokes_pin_management_capability() -> Result<(), Box<dyn Error>> {
+        for response in [
+            ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied(
+                "logon script denied".to_owned(),
+            )),
+            ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::InitDenied {
+                msg: "policy denied".to_owned(),
+            }),
+            ClientResponse::NotAuthenticated,
+            ClientResponse::Error,
+            ClientResponse::NonCompliant(Vec::new()),
+        ] {
+            let mut session = Some(AuthSession::HelloSuccess {
+                account_id: ACCOUNT_ID.to_owned(),
+                pin: himmelblau_unix_common::secret_memory::SecretBuffer::from_slice(b"123456")?,
+                typed: true,
+                generation: None,
+                created: std::time::Instant::now(),
+            });
+            revoke_denied_authentication(&mut session, &response);
+            assert!(session.is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn secret_authentication_peer_is_root_or_target_account() {
+        assert!(peer_may_change_hello_pin(0, Some(1000)));
+        assert!(peer_may_change_hello_pin(1000, Some(1000)));
+        assert!(!peer_may_change_hello_pin(1001, Some(1000)));
+        assert!(!peer_may_change_hello_pin(1000, None));
+    }
+
+    #[tokio::test]
+    async fn authentication_transport_reuses_connection_and_wipes_request_buffer(
+    ) -> Result<(), Box<dyn Error>> {
+        let (server, mut client) = UnixStream::pair()?;
+        let mut transport = ClientIo::new(server);
+        client
+            .write_all(br#"{"PamAuthenticateStep":{"Pin":{"cred":"sensitive"}}}"#)
+            .await?;
+        assert!(matches!(
+            transport.next().await,
+            Some(Ok(ClientRequest::PamAuthenticateStep(_)))
+        ));
+        assert!(transport.pending.is_empty());
+        assert!(transport.scratch.iter().all(|byte| *byte == 0));
+        transport.send(ClientResponse::Ok).await?;
+        let mut response = [0; 4];
+        client.read_exact(&mut response).await?;
+        assert_eq!(&response, b"\"Ok\"");
+        Ok(())
+    }
+
+    #[test]
     fn default_socket_paths_match_the_systemd_units() {
         assert!(socket_paths_equivalent(
             "/var/run/himmelblaud/socket",
@@ -1773,6 +2011,10 @@ async fn process_etc_passwd_group(
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    // Establish before configuration or credential initialization. Failure only
+    // disables biometric PIN recovery; ordinary Hello PIN login remains usable.
+    let _ = BIOMETRIC_MEMORY_PROTECTION
+        .set(BiometricMemoryProtection::establish(disable_process_dumps));
     let cuid = get_current_uid();
     let ceuid = get_effective_uid();
     let cgid = get_current_gid();
@@ -1859,6 +2101,9 @@ async fn main() -> ExitCode {
             )
         })
         .on(async {
+            if !BIOMETRIC_MEMORY_PROTECTION.get().is_some_and(|protection| protection.ready) {
+                warn!("Unable to disable daemon core dumps; fingerprint authentication is disabled, Hello PIN authentication remains available");
+            }
             if clap_args.get_flag("skip-root-check") {
                 warn!("Skipping root user check, if you're running this for testing, ensure you clean up temporary files.")
                 // TODO: this wording is not great m'kay.

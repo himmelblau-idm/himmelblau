@@ -56,6 +56,7 @@ pub mod items;
 pub mod macros;
 pub mod module;
 
+use himmelblau_unix_common::secret_memory::SecretBuffer;
 use std::convert::TryFrom;
 use std::ffi::CStr;
 
@@ -77,7 +78,6 @@ use std::thread::sleep;
 
 use crate::pam::constants::*;
 use crate::pam::conv::PamConv;
-use crate::pam::items::PamAuthTok;
 use crate::pam::module::{PamHandle, PamHooks};
 use crate::pam_hooks;
 use constants::PamResultCode;
@@ -202,22 +202,13 @@ impl MessagePrinter for PamConvMessagePrinter {
     }
 }
 
-fn should_capture_keyring_secret(prompt: &str) -> bool {
-    let prompt = prompt.trim().to_lowercase();
-    if prompt.contains("confirm") {
-        return false;
-    }
-
-    prompt.contains("pin") || prompt.contains("password")
-}
-
 pub struct KeyringCaptureMessagePrinter {
     inner: Arc<dyn MessagePrinter>,
-    captured: Arc<Mutex<Option<String>>>,
+    captured: Arc<Mutex<Option<SecretBuffer>>>,
 }
 
 impl KeyringCaptureMessagePrinter {
-    pub fn new(inner: Arc<dyn MessagePrinter>, captured: Arc<Mutex<Option<String>>>) -> Self {
+    pub fn new(inner: Arc<dyn MessagePrinter>, captured: Arc<Mutex<Option<SecretBuffer>>>) -> Self {
         Self { inner, captured }
     }
 }
@@ -225,6 +216,9 @@ impl KeyringCaptureMessagePrinter {
 impl MessagePrinter for KeyringCaptureMessagePrinter {
     fn print_text(&self, msg: &str) {
         self.inner.print_text(msg);
+    }
+    fn print_sensitive(&self, msg: &str) {
+        self.inner.print_sensitive(msg);
     }
 
     fn print_error(&self, msg: &str) {
@@ -236,15 +230,19 @@ impl MessagePrinter for KeyringCaptureMessagePrinter {
     }
 
     fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
-        let result = self.inner.prompt_echo_off(prompt);
-        if let Some(ref cred) = result {
-            if should_capture_keyring_secret(prompt) {
-                if let Ok(mut captured) = self.captured.lock() {
-                    *captured = Some(cred.clone());
+        self.inner.prompt_echo_off(prompt)
+    }
+    fn authentication_secret(&self, secret: &str) {
+        if let Ok(mut captured) = self.captured.lock() {
+            // Replacing or dropping the previous allocation wipes it first.
+            *captured = match SecretBuffer::from_slice(secret.as_bytes()) {
+                Ok(secret) => Some(secret),
+                Err(_) => {
+                    error!("Unable to lock keyring credential memory");
+                    None
                 }
-            }
+            };
         }
-        result
     }
 }
 
@@ -456,7 +454,10 @@ impl PamHooks for PamKanidm {
         };
 
         let set_authtok = opts.set_authtok;
-        let keyring_secret = Arc::new(Mutex::new(authtok.clone()));
+        let keyring_secret =
+            Arc::new(Mutex::new(authtok.as_ref().and_then(|value| {
+                SecretBuffer::from_slice(value.as_bytes()).ok()
+            })));
         let base_printer: Arc<dyn MessagePrinter> = Arc::new(PamConvMessagePrinter::new(conv));
         let daemon_client =
             match wait_for_daemon_client(cfg.get_socket_path().as_str(), &base_printer) {
@@ -483,8 +484,12 @@ impl PamHooks for PamKanidm {
         );
 
         if set_authtok && result == PamResultCode::PAM_SUCCESS {
-            if let Ok(Some(secret)) = keyring_secret.lock().map(|s| s.clone()) {
-                if let Err(err) = pamh.set_item_str::<PamAuthTok>(&secret) {
+            if let Ok(Some(secret)) = keyring_secret.lock().map(|mut s| s.take()) {
+                let Ok(secret_text) = std::str::from_utf8(secret.as_slice()) else {
+                    error!("Invalid UTF-8 keyring credential");
+                    return PamResultCode::PAM_AUTH_ERR;
+                };
+                if let Err(err) = pamh.set_auth_token(secret_text) {
                     error!(?err, "Failed to set PAM_AUTHTOK for keyring");
                 } else {
                     debug!("Set PAM_AUTHTOK for keyring unlock");
@@ -1110,16 +1115,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_should_capture_keyring_secret_pin_prompts() {
-        // capture
-        assert!(should_capture_keyring_secret("PIN: "));
-        assert!(should_capture_keyring_secret(" New PIN: "));
-        assert!(should_capture_keyring_secret("Fido PIN: "));
-        assert!(should_capture_keyring_secret("   pIn   "));
-
-        // do not capture confirmations
-        assert!(!should_capture_keyring_secret("Confirm PIN: "));
-        assert!(!should_capture_keyring_secret("confirm new pin: "));
+    fn explicit_keyring_secret_is_locked_and_replaced() -> Result<(), std::io::Error> {
+        let captured = Arc::new(Mutex::new(None));
+        let printer = KeyringCaptureMessagePrinter::new(
+            Arc::new(himmelblau_unix_common::auth::SimpleMessagePrinter::default()),
+            captured.clone(),
+        );
+        printer.print_sensitive("[FIDO_TOUCH] public guidance");
+        assert!(captured
+            .lock()
+            .map_err(|_| std::io::Error::other("poisoned"))?
+            .is_none());
+        printer.authentication_secret("first secret");
+        printer.authentication_secret("replacement secret");
+        let mut slot = captured
+            .lock()
+            .map_err(|_| std::io::Error::other("poisoned"))?;
+        let secret = slot
+            .take()
+            .ok_or_else(|| std::io::Error::other("missing secret"))?;
+        assert_eq!(secret.as_slice(), b"replacement secret");
+        assert!(!format!("{secret:?}").contains("replacement"));
+        assert!(slot.is_none());
+        Ok(())
     }
 
     #[test]

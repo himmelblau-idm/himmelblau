@@ -75,3 +75,10 @@ pub mod unix_proto;
 pub mod user_map;
 #[cfg(target_family = "unix")]
 mod webauthn;
+
+#[cfg(target_family = "unix")]
+pub mod fingerprint;
+#[cfg(target_family = "unix")]
+pub mod fingerprint_device;
+#[cfg(target_family = "unix")]
+pub mod secret_memory;

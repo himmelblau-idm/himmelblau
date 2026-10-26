@@ -38,9 +38,13 @@ use broker_client::BrokerClient;
 use clap::Parser;
 use himmelblau::{error::MsalError, graph::Graph, AuthOption, BrokerClientApplication};
 use himmelblau::{ConfidentialClientApplication, UserToken};
-use himmelblau_unix_common::auth::{authenticate_async, SimpleMessagePrinter};
+use himmelblau_unix_common::auth::{
+    authenticate_async, authenticate_for_fingerprint_management, fingerprint_manage_with_client,
+    SimpleMessagePrinter,
+};
 use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client::call_daemon;
+use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{parse_ttl_to_seconds, split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{
     CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
@@ -57,7 +61,7 @@ use himmelblau_unix_common::reserved_ids::{
 use himmelblau_unix_common::tpm::{confidential_client_creds, open_tpm, resolve_hsm_type};
 use himmelblau_unix_common::tpm_init;
 use himmelblau_unix_common::unix_config::HsmType;
-use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
+use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, FingerprintAction};
 use himmelblau_unix_common::{tpm_loadable_machine_key, tpm_machine_key};
 use kanidm_hsm_crypto::glue::traits::EncodeDer;
 use kanidm_hsm_crypto::glue::{
@@ -685,6 +689,7 @@ async fn main() -> ExitCode {
     let opt = HimmelblauUnixParser::parse();
 
     let debug = match opt.commands {
+        HimmelblauUnixOpt::Fingerprint(_) => false,
         HimmelblauUnixOpt::Cred(CredOpt::Cert {
             debug,
             client_id: _,
@@ -1101,6 +1106,94 @@ async fn main() -> ExitCode {
     }
 
     match opt.commands {
+        HimmelblauUnixOpt::Fingerprint(command) => {
+            let (account_id, action) = match command {
+                FingerprintOpt::Status { account_id } => (account_id, None),
+                FingerprintOpt::Enroll { account_id } => {
+                    (account_id, Some(FingerprintAction::Enroll))
+                }
+                FingerprintOpt::Add { account_id } => (account_id, Some(FingerprintAction::Add)),
+                FingerprintOpt::Recover { account_id } => {
+                    (account_id, Some(FingerprintAction::Recover))
+                }
+                FingerprintOpt::Replace { account_id } => {
+                    (account_id, Some(FingerprintAction::Replace))
+                }
+                FingerprintOpt::Remove { account_id } => {
+                    (account_id, Some(FingerprintAction::Remove))
+                }
+            };
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(cfg) => cfg,
+                Err(_) => {
+                    error!("Failed to parse configuration");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let account_id = match cfg.map_name_to_upn(&account_id) {
+                Some(account) => account,
+                None => {
+                    error!("Invalid directory account");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let mut client = match DaemonClientBlocking::new(&cfg.get_socket_path()) {
+                Ok(client) => client,
+                Err(_) => {
+                    error!("Failed to connect to Himmelblau daemon");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let timeout = cfg.get_unix_sock_timeout();
+            let request = if let Some(action) = action {
+                let (authenticated_client, result) = authenticate_for_fingerprint_management(
+                    client,
+                    cfg.clone(),
+                    &account_id,
+                    Arc::new(SimpleMessagePrinter::default()),
+                );
+                if result != PamResultCode::PAM_SUCCESS {
+                    error!("Hello PIN authentication failed");
+                    return ExitCode::FAILURE;
+                }
+                let result = fingerprint_manage_with_client(
+                    authenticated_client,
+                    cfg,
+                    &account_id,
+                    action,
+                    Arc::new(SimpleMessagePrinter::default()),
+                );
+                return if result == PamResultCode::PAM_SUCCESS {
+                    println!("Fingerprint enrollment updated.");
+                    ExitCode::SUCCESS
+                } else {
+                    error!("Fingerprint management failed");
+                    ExitCode::FAILURE
+                };
+            } else {
+                ClientRequest::FingerprintStatus(account_id)
+            };
+            match client.call_and_wait(&request, timeout.max(120)) {
+                Ok(ClientResponse::FingerprintStatus(status)) => {
+                    println!(
+                        "Enrolled: {}\nPIN fallback failures: {}\nEnrollment pending: {}",
+                        status.enrolled, status.failures, status.pending
+                    );
+                    ExitCode::SUCCESS
+                }
+                Ok(ClientResponse::Ok) => {
+                    println!("Fingerprint enrollment updated.");
+                    ExitCode::SUCCESS
+                }
+                _ => {
+                    error!(
+                        "Fingerprint operation failed; authenticate with your Hello PIN to recover"
+                    );
+                    ExitCode::FAILURE
+                }
+            }
+        }
+
         HimmelblauUnixOpt::Cred(CredOpt::Cert {
             debug: _,
             client_id,
@@ -2812,6 +2905,24 @@ mod tests {
             "auth required pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n"
         );
         remove_temp_file(&path)
+    }
+
+    #[test]
+    fn fingerprint_commands_require_account_and_parse_all_actions() {
+        use clap::Parser;
+        for action in ["status", "enroll", "add", "replace", "recover", "remove"] {
+            assert!(HimmelblauUnixParser::try_parse_from([
+                "aad-tool",
+                "fingerprint",
+                action,
+                "--name",
+                "user@example.com"
+            ])
+            .is_ok());
+            assert!(
+                HimmelblauUnixParser::try_parse_from(["aad-tool", "fingerprint", action]).is_err()
+            );
+        }
     }
 
     const DONATIONS_URL: &str = "https://himmelblau-idm.org/donations/";

@@ -225,6 +225,37 @@ Flake based configurations add this repository to their inputs and enable the se
 
 [![Azure Entra ID MFA Authentication over SSH: Himmelblau](img/ssh.png)](https://www.youtube.com/watch?v=IAqC8FoYLGc "Azure Entra ID MFA Authentication over SSH: Himmelblau")
 
+## Biometric FIDO2 Linux Hello
+
+Fingerprint authentication uses a personal biometric FIDO2 authenticator with
+built-in fingerprint verification and the `hmac-secret` extension. Ordinary
+fprintd readers cannot release the cryptographic secret required for this feature.
+`enable_hello_fingerprint` defaults to `true`; disable it in the administrator
+configuration to retain PIN-only Hello authentication.
+
+After creating a Hello PIN, follow the enrollment prompts when an eligible device
+is present. Fingerprints become the preferred Hello method; missing hardware,
+verification failures, cancellation, or device lockout fall back to the Hello PIN.
+Authenticator firmware may lock earlier or hide individual scan retries.
+
+Use `aad-tool fingerprint status --name user@example.com` to inspect enrollment.
+The `enroll`, `add`, `replace`, `recover`, and `remove` subcommands take the same `--name`
+argument and require fresh Hello PIN authentication. Follow the prompts to manage
+the token PIN and fingerprints. Never reset a token containing unrelated
+credentials to repair a Himmelblau enrollment. Use `recover` for hardware UV
+lockout: select the intended device and supply its current token PIN. Himmelblau
+never automatically sends a Hello PIN to a previously stored hidraw path.
+
+The PIN envelope requires an authenticator-derived secret in addition to the HSM
+backend. Temporary PIN and HMAC buffers are wiped; application key buffers use locked,
+dump-excluded memory. OpenSSL cryptographic contexts clear their internal keys on
+release; those library allocations and serialized IPC buffers are not memory-locked. These measures reduce accidental disclosure and swapping;
+a compromised host can still capture plaintext during legitimate authentication
+or the PAM handoff. GNOME Keyring/KWallet unlock requires `set_authtok` and a wallet
+password matching the Hello PIN. Existing mismatched wallets are not migrated.
+After package upgrades, reconnect the reader so the FIDO-only udev rule applies.
+No authenticator model or firmware is certified until tested on physical hardware.
+
 ## Device Authorization QR Behavior
 
 When a device authorization response includes `verification_uri_complete`, Himmelblau shows that complete URL in the QR code so users can scan and continue sign-in without typing the user code. If the complete URL is not provided, the QR code falls back to `verification_uri` and the user code prompt remains required.

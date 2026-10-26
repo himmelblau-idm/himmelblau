@@ -14,7 +14,9 @@ use std::io::{Error as IoError, ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, SystemTime};
 
+use crate::secret_memory::{encode_json, extend_secret};
 use crate::unix_proto::{ClientRequest, ClientResponse};
+use zeroize::Zeroizing;
 
 /// Check if the current process is being started by systemd as the
 /// himmelblaud daemon or its tasks helper.  During service startup
@@ -297,7 +299,7 @@ impl DaemonClientBlocking {
         // which can take well over 60 seconds.
         let read_poll = Duration::from_secs(1);
 
-        let data = serde_json::to_vec(&req).map_err(|e| {
+        let data = encode_json(req).map_err(|e| {
             error!("socket encoding error -> {:?}", e);
             Box::new(IoError::other("JSON encode error"))
         })?;
@@ -334,10 +336,10 @@ impl DaemonClientBlocking {
 
         // Now wait on the response.
         let start = SystemTime::now();
-        let mut data = Vec::with_capacity(1024);
+        let mut data = Zeroizing::new(Vec::with_capacity(1024));
 
         loop {
-            let mut buffer = [0; 1024];
+            let mut buffer = Zeroizing::new([0; 1024]);
             let durr = SystemTime::now().duration_since(start).map_err(Box::new)?;
             if durr > timeout {
                 error!("Socket timeout waiting for daemon response");
@@ -346,7 +348,7 @@ impl DaemonClientBlocking {
                     "socket timeout",
                 )));
             }
-            match self.stream.read(&mut buffer) {
+            match self.stream.read(buffer.as_mut()) {
                 Ok(0) => {
                     error!("Socket closed before a complete response was received");
                     return Err(Box::new(IoError::new(
@@ -355,7 +357,7 @@ impl DaemonClientBlocking {
                     )));
                 }
                 Ok(count) => {
-                    data.extend_from_slice(&buffer[..count]);
+                    extend_secret(&mut data, &buffer[..count]);
                     match serde_json::from_slice::<ClientResponse>(&data) {
                         Ok(response) => return Ok(response),
                         Err(e) if e.is_eof() => {
@@ -394,7 +396,7 @@ impl DaemonClientBlocking {
     /// This writes the request to the existing socket and returns immediately,
     /// without waiting for a response.
     pub fn call_and_forget(&mut self, req: &ClientRequest) -> Result<(), Box<dyn Error>> {
-        let data = serde_json::to_vec(req).map_err(|e| {
+        let data = encode_json(req).map_err(|e| {
             warn!("socket encoding error -> {:?}", e);
             Box::new(IoError::other("JSON encode error"))
         })?;

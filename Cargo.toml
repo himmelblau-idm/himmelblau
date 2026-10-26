@@ -43,6 +43,7 @@ default-members = [
 resolver = "2"
 
 [patch.crates-io]
+authenticator = { path = "src/overrides/authenticator/0.5.0" }
 adler2-2-0-0 = { package = "adler2", path = "src/overrides/adler2/2.0.0" }
 android_system_properties-0-1-5 = { package = "android_system_properties", path = "src/overrides/android_system_properties/0.1.5" }
 anstyle-wincon-3-0-8 = { package = "anstyle-wincon", path = "src/overrides/anstyle-wincon/3.0.8" }
