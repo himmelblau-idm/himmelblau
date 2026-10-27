@@ -1599,7 +1599,7 @@ sys.exit(int(sys.argv[1]))
 
     @unittest.skipUnless(Path("/usr/bin/dpkg-deb").exists(), "native APT/dpkg unavailable")
     def test_image_package_download_recovery_and_offline_install(self):
-        """Real APT fetches verified .debs and dpkg installs only in a private root."""
+        """Real APT fetches verified .debs; a recorder isolates dpkg execution."""
         block = DOCKERFILE.read_text().split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
         shell = shlex.split(block.replace("\\\n", ""))[-1]
         prefix = shell.split('echo "apt-provision: stage=update"', 1)[0]
@@ -1612,7 +1612,7 @@ sys.exit(int(sys.argv[1]))
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 for path in ("lists/partial", "cache/archives/partial", "bin", "temp", "system/var/lib/dpkg",
-                             "system/var/log", "logs"):
+                             "logs", "apt-state"):
                     (root / path).mkdir(parents=True)
                 status = root / "system/var/lib/dpkg/status"; status.touch()
                 packages = {}
@@ -1656,20 +1656,37 @@ sys.exit(int(sys.argv[1]))
                 sources = root / "sources.list"
                 # Only this synthetic loopback repository is unsigned.
                 sources.write_text(f"deb [trusted=yes] http://127.0.0.1:{server.server_port} stable main\n")
+                # Host dpkg config can contain invoke hooks (e.g. needrestart)
+                # that ignore --root. Record install operations instead of ever
+                # executing those hooks; only version/architecture queries are real.
+                dpkg = root / "bin/dpkg-recorder"
+                dpkg.write_text('#!/bin/sh\ncase "$1" in\n'
+                    '  --version|--print-architecture|--print-foreign-architectures|--assert-*) exec /usr/bin/dpkg "$@";;\n'
+                    'esac\nprintf "%s\\n" "$*" >> "$DPKG_CALL_LOG"\n')
+                dpkg.chmod(0o700)
                 config = root / "apt.conf"
                 config.write_text("\n".join(policy) + "\n" +
-                    f'Dir::Etc::sourcelist "{sources}";\nDir::Etc::sourceparts "-";\nDir::Etc::parts "-";\n'
+                    f'Dir::Etc::sourcelist "{sources}";\nDir::Etc::sourceparts "-";\nDir::Etc::parts "-";\nDir::Etc::main "-";\n'
+                    f'Dir::State "{root / "apt-state"}";\n'
+                    f'Dir::State::extended_states "{root / "apt-state/extended_states"}";\n'
                     f'Dir::State::lists "{root / "lists"}";\nDir::State::status "{status}";\n'
                     f'Dir::Cache "{root / "cache"}";\nDir::Log "{root / "logs"}";\n'
-                    f'DPkg::Options {{ "--force-not-root"; "--root={root / "system"}"; }};\n'
+                    f'Dir::Bin::dpkg "{dpkg}";\n'
                     'Acquire::Languages "none";\nAPT::Sandbox::User "'
                     + __import__("pwd").getpwuid(os.geteuid()).pw_name + '";\n')
                 sleeper = root / "bin/sleep"
                 sleeper.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$SLEEP_LOG"\n'); sleeper.chmod(0o700)
                 try:
+                    # Fail before running APT if a future fixture edit reintroduces
+                    # host state or an actual dpkg install, even in root test runs.
+                    resolved = subprocess.run(["apt-config", "shell", "state", "Dir::State::extended_states/f",
+                        "dpkg", "Dir::Bin::dpkg/f"], check=True, capture_output=True, text=True,
+                        env={**os.environ, "APT_CONFIG": str(config)}).stdout
+                    self.assertEqual(shlex.split(resolved), [f"state={root / 'apt-state/extended_states'}", f"dpkg={dpkg}"])
                     result = subprocess.run(["/bin/bash", "-o", "pipefail", "-ec", probe], capture_output=True, text=True,
                         timeout=65, env={**os.environ, "APT_CONFIG": str(config), "UBUNTU_SNAPSHOT": "20260924T000000Z",
                             "TMPDIR": str(root / "temp"), "SLEEP_LOG": str(root / "sleeps"),
+                            "DPKG_CALL_LOG": str(root / "dpkg-calls"),
                             "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"]})
                 finally:
                     server.shutdown(); server.server_close(); worker.join(timeout=2)
@@ -1681,15 +1698,20 @@ sys.exit(int(sys.argv[1]))
                 waits = (root / "sleeps").read_text().splitlines() if (root / "sleeps").exists() else []
                 self.assertEqual(waits, {"recover": ["60"], "persistent": ["60", "120", "240"]}.get(scenario, []))
                 self.assertEqual(list((root / "temp").iterdir()), [])
-                for name in ("maintenance-ready", "maintenance-later"):
-                    proof = root / "system/usr/share" / name / "proof"
-                    self.assertEqual(proof.exists(), scenario == "recover", output)
+                calls = (root / "dpkg-calls").read_text().splitlines() if (root / "dpkg-calls").exists() else []
+                self.assertEqual(status.read_bytes(), b"")
                 if scenario == "recover":
                     self.assertIn("apt-provision: stage=download retry_wait_seconds=60", output)
                     self.assertEqual(output.count("apt-provision: stage=install"), 1)
+                    self.assertEqual(len(calls), 2, calls)
+                    self.assertEqual(sum("--unpack" in call for call in calls), 1, calls)
+                    self.assertEqual(sum("--configure" in call for call in calls), 1, calls)
+                    for name in ("maintenance-ready", "maintenance-later"):
+                        cached = root / "cache/archives" / (name + "_1.0_all.deb")
+                        self.assertEqual(cached.read_bytes(), packages["/" + name + ".deb"])
                 else:
                     self.assertNotIn("apt-provision: stage=install", output)
-                    self.assertEqual(status.read_bytes(), b"")
+                    self.assertEqual(calls, [])
                 self.assertNotIn("Config-Item:", output)
 
     def test_checkout_regular_file_accepts_regular_file(self):
