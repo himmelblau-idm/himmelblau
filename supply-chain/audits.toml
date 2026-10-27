@@ -434,6 +434,11 @@ who = "Codex (automated via Azure OpenAI)"
 criteria = "safe-to-deploy"
 delta = "1.5.0 -> 1.5.1"
 
+[[audits.libc]]
+who = "Codex (automated via Azure OpenAI)"
+criteria = "safe-to-deploy"
+delta = "0.2.190 -> 0.2.191"
+
 [[audits.libhimmelblau]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
