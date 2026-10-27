@@ -243,7 +243,7 @@ in
 
     password_only_remote_services_deny_list = mkOption {
       type = types.nullOr (types.listOf types.str);
-      default = [ ];
+      default = [ "ssh" "telnet" "ftp" "rsh" "rlogin" "rexec" "vnc" "xrdp" "cockpit" "mosh" ];
       description = ''
         A comma-separated list of PAM service names that should always require MFA,
         regardless of the
