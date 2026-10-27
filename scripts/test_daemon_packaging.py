@@ -124,6 +124,24 @@ class DaemonPackagingTests(unittest.TestCase):
         self.assertFalse(self.marker.exists())
         self.assertNotIn("start", [arg for call in self.calls() for arg in call])
 
+    def test_upgrade_with_restored_config_restarts_enabled_service(self):
+        self.marker.touch()
+        saved = Path(str(self.config) + ".rpmsave")
+        saved.write_text("[global]\n")
+        result = self.run_script("posttrans", "1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self.config.read_text(), "[global]\n")
+        self.assertIn(
+            [
+                "systemctl",
+                "restart",
+                "himmelblaud.service",
+                "himmelblaud-tasks.service",
+            ],
+            self.calls(),
+        )
+
     def test_config_recovery_keeps_existing_try_restart(self):
         saved = Path(str(self.config) + ".rpmsave")
         saved.write_text("[global]\n")

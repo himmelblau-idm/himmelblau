@@ -25,7 +25,11 @@ if [ -f "$upgrade_restart_marker" ]; then
     rm -f -- "$upgrade_restart_marker"
     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 \
         && systemctl is-enabled --quiet himmelblaud.service; then
-        systemctl start himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        if [ "$config_restored" -eq 1 ]; then
+            systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        else
+            systemctl start himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        fi
     fi
 elif [ "$config_restored" -eq 1 ] && command -v systemctl >/dev/null 2>&1; then
     # Preserve the existing configuration-recovery behavior outside upgrades.
