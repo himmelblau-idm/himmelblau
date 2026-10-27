@@ -40,7 +40,7 @@ RUN printf '%s\n' \
 # Worker failures expose the reason before APT retries (ordinary Ign lines do
 # not). Keep only failure messages from worker debug, not its configuration or
 # request dumps. Bash pipefail preserves APT failure through the streaming filter.
-# Retry an exhausted index refresh only for explicit transient HTTP failures.
+# Retry exhausted index/download-only acquisition for transient HTTP failures.
 # Keep the same signed snapshot and the combined provisioning deadline; never
 # retry integrity/configuration failures or replay package installation.
 RUN timeout --kill-after=15s 35m /bin/bash -o pipefail -ec ' \
@@ -49,12 +49,13 @@ RUN timeout --kill-after=15s 35m /bin/bash -o pipefail -ec ' \
             | sed -u -e "/^ -> /d" \
                 -e "/^ <- /{ /:400%20URI%20Failure/!d; s/%20/ /g; s/^/apt-download-debug: /; }"; \
     }; \
-    apt_update() ( \
+    apt_acquire() ( \
+        stage=$1; shift; \
         log=$(mktemp) || exit $?; \
         cleanup() { rm -- "$log"; }; \
         trap cleanup EXIT; \
         for delay in 60 120 240 0; do \
-            if apt_get update --snapshot "$UBUNTU_SNAPSHOT" | tee "$log"; then \
+            if apt_get "$@" | tee "$log"; then \
                 exit 0; \
             else \
                 statuses=("${PIPESTATUS[@]}"); \
@@ -62,17 +63,23 @@ RUN timeout --kill-after=15s 35m /bin/bash -o pipefail -ec ' \
             if [ "${statuses[1]}" -ne 0 ]; then exit "${statuses[1]}"; fi; \
             status=${statuses[0]}; \
             if [ "$status" -ne 100 ] || [ "$delay" -eq 0 ] || ! \
-                awk "/^E: Failed to fetch / { seen++; if (\$0 !~ /^E: Failed to fetch [^[:space:]]+[[:space:]]+(408|429|500|502|503|504)[[:space:]]/) bad=1; next } /^E: Some index files failed to download\\./ { next } /^E:/ { bad=1 } END { exit !(seen && !bad) }" "$log"; then \
+                awk -v stage="$stage" "/^E: Failed to fetch / { seen++; if (\$0 !~ /^E: Failed to fetch [^[:space:]]+[[:space:]]+(408|429|500|502|503|504)[[:space:]]/) bad=1; next } /^E: Some index files failed to download\\./ { next } /^E: Some files failed to download$/ { if (stage != \"download\") bad=1; next } /^E:/ { bad=1 } END { exit !(seen && !bad) }" "$log"; then \
                 exit "$status"; \
             fi; \
-            echo "apt-provision: stage=update retry_wait_seconds=$delay"; \
+            echo "apt-provision: stage=$stage retry_wait_seconds=$delay"; \
             sleep "$delay" || exit $?; \
         done \
     ); \
+    apt_update() ( apt_acquire update update --snapshot "$UBUNTU_SNAPSHOT"; ); \
+    apt_install() { \
+        echo "apt-provision: stage=download"; \
+        apt_acquire download install --download-only "$@" \
+        && echo "apt-provision: stage=install" \
+        && apt_get install --no-download "$@"; \
+    }; \
     echo "apt-provision: stage=update"; \
     apt_update \
-    && echo "apt-provision: stage=install" \
-    && apt_get install --snapshot "$UBUNTU_SNAPSHOT" --yes --no-install-recommends \
+    && apt_install --snapshot "$UBUNTU_SNAPSHOT" --yes --no-install-recommends \
         autoconf \
         build-essential \
         ca-certificates \

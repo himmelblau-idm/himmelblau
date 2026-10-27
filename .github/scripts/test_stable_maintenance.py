@@ -1388,8 +1388,8 @@ sys.exit(int(sys.argv[1]))
         install_block = dockerfile.split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
         self.assertTrue(install_block.startswith("--kill-after=15s 35m /bin/bash -o pipefail -ec "))
         install_shell = shlex.split(install_block.replace("\\\n", ""))[-1]
-        self.assertIn('apt_get update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
-        self.assertIn('apt_get install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        self.assertIn('apt_acquire update update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        self.assertIn('apt_install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
         subprocess.run(["/bin/bash", "-n", "-c", install_shell], check=True)
         # Exercise the exact production function/filter with real APT transport,
         # replacing only installation's entry point with apt-helper download-file.
@@ -1562,6 +1562,157 @@ sys.exit(int(sys.argv[1]))
                 self.assertTrue(calls[0].endswith("update --snapshot 20260924T000000Z"))
                 self.assertEqual((root / "sleeps").exists(), broken == "sleep" or expected == 0)
                 self.assertEqual(list((root / "temp").iterdir()), [])
+
+    def test_image_download_errors_and_install_failure_are_not_replayed(self):
+        block = DOCKERFILE.read_text().split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
+        shell = shlex.split(block.replace("\\\n", ""))[-1]
+        prefix = shell.split('echo "apt-provision: stage=update"', 1)[0]
+        probe = prefix + 'apt_install --snapshot "$UBUNTU_SNAPSHOT" --yes fixture'
+        transient = "E: Failed to fetch https://snapshot.invalid/package.deb  503 Service Unavailable"
+        for failure, broken in (("install", ""), ("hash", ""), ("signature", ""), ("404", ""),
+                                ("unknown", ""), ("transient", "tee"), ("transient", "sleep")):
+            with self.subTest(failure=failure, broken=broken), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); (root / "temp").mkdir()
+                output = {"install": transient, "hash": transient + "\nE: Hash Sum mismatch",
+                          "signature": transient + "\nE: The repository is not signed.",
+                          "404": transient.replace("503", "404"), "unknown": "E: Unknown failure",
+                          "transient": transient + "\nE: Some files failed to download"}[failure]
+                apt = root / "apt-get"
+                apt.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALL_LOG"\n'
+                    + ('case " $* " in *" --download-only "*) exit 0;; esac\n' if failure == "install" else "")
+                    + "printf '%s\\n' " + shlex.quote(output) + "\nexit 100\n")
+                apt.chmod(0o700)
+                for name, body in (("sleep", "exit 7"), ("tee", "cat; exit 9")):
+                    if name == broken:
+                        path = root / name; path.write_text("#!/bin/sh\n" + body + "\n"); path.chmod(0o700)
+                result = subprocess.run(["/bin/bash", "-o", "pipefail", "-ec", probe], capture_output=True, text=True,
+                    timeout=5, env={**os.environ, "UBUNTU_SNAPSHOT": "20260924T000000Z", "TMPDIR": str(root / "temp"),
+                                   "CALL_LOG": str(root / "calls"), "PATH": str(root) + os.pathsep + os.environ["PATH"]})
+                self.assertEqual(result.returncode, {"tee": 9, "sleep": 7}.get(broken, 100), result.stdout + result.stderr)
+                calls = (root / "calls").read_text().splitlines()
+                self.assertEqual(len(calls), 2 if failure == "install" else 1)
+                self.assertIn("install --download-only --snapshot 20260924T000000Z --yes fixture", calls[0])
+                if failure == "install":
+                    self.assertIn("install --no-download --snapshot 20260924T000000Z --yes fixture", calls[1])
+                self.assertNotIn("retry_wait_seconds", result.stdout if broken != "sleep" else "")
+                self.assertEqual(list((root / "temp").iterdir()), [])
+
+    @unittest.skipUnless(Path("/usr/bin/dpkg-deb").exists(), "native APT/dpkg unavailable")
+    def test_image_package_download_recovery_and_offline_install(self):
+        """Real APT fetches verified .debs; a recorder isolates dpkg execution."""
+        block = DOCKERFILE.read_text().split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
+        shell = shlex.split(block.replace("\\\n", ""))[-1]
+        prefix = shell.split('echo "apt-provision: stage=update"', 1)[0]
+        # On the parent, exercise the actual one-pass install that failed hosted.
+        install = ('apt_install' if 'apt_install()' in prefix else 'apt_get install')
+        probe = prefix + 'apt_update && ' + install + ' --yes --no-install-recommends maintenance-ready maintenance-later'
+        policy = shlex.split(DOCKERFILE.read_text().split("RUN printf '%s\\n'", 1)[1]
+                             .split("\n\n", 1)[0].replace("\\\n", ""))[:-2]
+        for scenario in ("recover", "persistent", "hash", "404"):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for path in ("lists/partial", "cache/archives/partial", "bin", "temp", "system/var/lib/dpkg",
+                             "logs", "apt-state"):
+                    (root / path).mkdir(parents=True)
+                status = root / "system/var/lib/dpkg/status"; status.touch()
+                packages = {}
+                index = ""
+                for name in ("maintenance-ready", "maintenance-later"):
+                    package = root / name
+                    (package / "DEBIAN").mkdir(parents=True)
+                    (package / "DEBIAN/control").write_text(
+                        f"Package: {name}\nVersion: 1.0\nArchitecture: all\nMaintainer: Fixture <fixture@example.invalid>\nDescription: fixture\n")
+                    (package / "usr/share" / name).mkdir(parents=True)
+                    (package / "usr/share" / name / "proof").write_text("verified fixture\n")
+                    archive = root / (name + ".deb")
+                    subprocess.run(["dpkg-deb", "--build", str(package), str(archive)], check=True, capture_output=True)
+                    payload = archive.read_bytes(); packages["/" + name + ".deb"] = payload
+                    index += (package.joinpath("DEBIAN/control").read_text()
+                              + f"Filename: {name}.deb\nSize: {len(payload)}\nSHA256: {hashlib.sha256(payload).hexdigest()}\n\n")
+                index = index.encode()
+                release = ("Origin: Fixture\nSuite: stable\nCodename: stable\nArchitectures: amd64\nComponents: main\n"
+                           + "Date: " + email.utils.formatdate(usegmt=True) + "\nSHA256:\n "
+                           + hashlib.sha256(index).hexdigest() + f" {len(index)} main/binary-amd64/Packages\n").encode()
+                class Handler(http.server.BaseHTTPRequestHandler):
+                    counts = {key: 0 for key in packages}
+                    def log_message(self, *args): pass
+                    def do_GET(self):
+                        if self.path == "/dists/stable/Release": payload = release
+                        elif self.path == "/dists/stable/main/binary-amd64/Packages": payload = index
+                        elif self.path in packages:
+                            Handler.counts[self.path] += 1
+                            if self.path == "/maintenance-later.deb":
+                                if scenario == "persistent" or (scenario == "recover" and Handler.counts[self.path] <= 4):
+                                    self.send_error(503); return
+                                if scenario == "404": self.send_error(404); return
+                            payload = packages[self.path]
+                            if scenario == "hash" and self.path == "/maintenance-later.deb":
+                                payload = b"X" + payload[1:]
+                        else: self.send_error(404); return
+                        self.send_response(200); self.send_header("Content-Length", str(len(payload)))
+                        self.end_headers(); self.wfile.write(payload)
+                server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                worker = threading.Thread(target=server.serve_forever, daemon=True); worker.start()
+                sources = root / "sources.list"
+                # Only this synthetic loopback repository is unsigned.
+                sources.write_text(f"deb [trusted=yes] http://127.0.0.1:{server.server_port} stable main\n")
+                # Host dpkg config can contain invoke hooks (e.g. needrestart)
+                # that ignore --root. Record install operations instead of ever
+                # executing those hooks; only version/architecture queries are real.
+                dpkg = root / "bin/dpkg-recorder"
+                dpkg.write_text('#!/bin/sh\ncase "$1" in\n'
+                    '  --version|--print-architecture|--print-foreign-architectures|--assert-*) exec /usr/bin/dpkg "$@";;\n'
+                    'esac\nprintf "%s\\n" "$*" >> "$DPKG_CALL_LOG"\n')
+                dpkg.chmod(0o700)
+                config = root / "apt.conf"
+                config.write_text("\n".join(policy) + "\n" +
+                    f'Dir::Etc::sourcelist "{sources}";\nDir::Etc::sourceparts "-";\nDir::Etc::parts "-";\nDir::Etc::main "-";\n'
+                    f'Dir::State "{root / "apt-state"}";\n'
+                    f'Dir::State::extended_states "{root / "apt-state/extended_states"}";\n'
+                    f'Dir::State::lists "{root / "lists"}";\nDir::State::status "{status}";\n'
+                    f'Dir::Cache "{root / "cache"}";\nDir::Log "{root / "logs"}";\n'
+                    f'Dir::Bin::dpkg "{dpkg}";\n'
+                    'Acquire::Languages "none";\nAPT::Sandbox::User "'
+                    + __import__("pwd").getpwuid(os.geteuid()).pw_name + '";\n')
+                sleeper = root / "bin/sleep"
+                sleeper.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$SLEEP_LOG"\n'); sleeper.chmod(0o700)
+                try:
+                    # Fail before running APT if a future fixture edit reintroduces
+                    # host state or an actual dpkg install, even in root test runs.
+                    resolved = subprocess.run(["apt-config", "shell", "state", "Dir::State::extended_states/f",
+                        "dpkg", "Dir::Bin::dpkg/f"], check=True, capture_output=True, text=True,
+                        env={**os.environ, "APT_CONFIG": str(config)}).stdout
+                    self.assertEqual(shlex.split(resolved), [f"state={root / 'apt-state/extended_states'}", f"dpkg={dpkg}"])
+                    result = subprocess.run(["/bin/bash", "-o", "pipefail", "-ec", probe], capture_output=True, text=True,
+                        timeout=65, env={**os.environ, "APT_CONFIG": str(config), "UBUNTU_SNAPSHOT": "20260924T000000Z",
+                            "TMPDIR": str(root / "temp"), "SLEEP_LOG": str(root / "sleeps"),
+                            "DPKG_CALL_LOG": str(root / "dpkg-calls"),
+                            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"]})
+                finally:
+                    server.shutdown(); server.server_close(); worker.join(timeout=2)
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 0 if scenario == "recover" else 100, output)
+                self.assertEqual(Handler.counts["/maintenance-ready.deb"], 1, output)
+                self.assertEqual(Handler.counts["/maintenance-later.deb"],
+                                 {"recover": 5, "persistent": 16, "hash": 1, "404": 1}[scenario], output)
+                waits = (root / "sleeps").read_text().splitlines() if (root / "sleeps").exists() else []
+                self.assertEqual(waits, {"recover": ["60"], "persistent": ["60", "120", "240"]}.get(scenario, []))
+                self.assertEqual(list((root / "temp").iterdir()), [])
+                calls = (root / "dpkg-calls").read_text().splitlines() if (root / "dpkg-calls").exists() else []
+                self.assertEqual(status.read_bytes(), b"")
+                if scenario == "recover":
+                    self.assertIn("apt-provision: stage=download retry_wait_seconds=60", output)
+                    self.assertEqual(output.count("apt-provision: stage=install"), 1)
+                    self.assertEqual(len(calls), 2, calls)
+                    self.assertEqual(sum("--unpack" in call for call in calls), 1, calls)
+                    self.assertEqual(sum("--configure" in call for call in calls), 1, calls)
+                    for name in ("maintenance-ready", "maintenance-later"):
+                        cached = root / "cache/archives" / (name + "_1.0_all.deb")
+                        self.assertEqual(cached.read_bytes(), packages["/" + name + ".deb"])
+                else:
+                    self.assertNotIn("apt-provision: stage=install", output)
+                    self.assertEqual(calls, [])
+                self.assertNotIn("Config-Item:", output)
 
     def test_checkout_regular_file_accepts_regular_file(self):
         with tempfile.TemporaryDirectory() as tmp:
