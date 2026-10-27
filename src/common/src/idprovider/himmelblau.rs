@@ -129,6 +129,79 @@ fn mfa_flow_uses_push_hint(flow: &MFAAuthContinue) -> bool {
         .unwrap_or(false)
 }
 
+/// Map the initial passwordless response to the next PAM request.
+fn passwordless_mfa_response(
+    flow: MFAAuthContinue,
+) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+    auth_handle_mfa_resp!(
+        flow,
+        // Check if Azure provided FIDO credentials (passwordless FIDO)
+        {
+            let fido_challenge = match flow.fido_challenge.clone() {
+                Some(fido_challenge) => fido_challenge,
+                None => return Err(IdpError::BadRequest),
+            };
+            let fido_allow_list = match flow.fido_allow_list.clone() {
+                Some(fido_allow_list) => fido_allow_list,
+                None => return Err(IdpError::BadRequest),
+            };
+            let has_physical_security_key = flow.has_physical_security_key;
+            let has_cross_device = flow.has_cross_device_passkey;
+            return Ok((
+                AuthRequest::Fido {
+                    fido_challenge,
+                    fido_allow_list,
+                    has_physical_security_key,
+                    has_cross_device,
+                },
+                AuthCredHandler::MFA {
+                    flow: Box::new(flow),
+                    password: None,
+                    extra_data: None,
+                    reauth_hello_pin: None,
+                },
+            ));
+        },
+        // Prompt, such as AccessPass
+        {
+            let msg = flow.msg.clone();
+            return Ok((
+                AuthRequest::Input {
+                    enrollment: None,
+                    msg,
+                    echo_on: false,
+                },
+                AuthCredHandler::MFA {
+                    flow: Box::new(flow),
+                    password: None,
+                    extra_data: None,
+                    reauth_hello_pin: None,
+                },
+            ));
+        },
+        {
+            let msg = flow.msg.clone();
+            let polling_interval = flow.polling_interval.unwrap_or(5000);
+            Ok((
+                AuthRequest::MFAPoll {
+                    enrollment: None,
+                    msg,
+                    // Kanidm pam expects a polling_interval in
+                    // seconds, not milliseconds.
+                    polling_interval: polling_interval / 1000,
+                    show_push_hint: mfa_flow_uses_push_hint(&flow),
+                },
+                AuthCredHandler::MFA {
+                    flow: Box::new(flow),
+                    password: None,
+                    extra_data: None,
+                    reauth_hello_pin: None,
+                },
+            ))
+        }
+    )
+}
+
 fn is_device_removed_error(error_codes: &[u32]) -> bool {
     error_codes.contains(&(135011_u32)) || error_codes.contains(&DEVICE_AUTH_FAIL)
 }
@@ -1439,45 +1512,7 @@ impl IdProvider for HimmelblauProvider {
                             return Err(IdpError::BadRequest);
                         }
                     );
-                    // Check if Azure provided FIDO credentials (passwordless FIDO)
-                    if let (Some(fido_challenge), Some(fido_allow_list)) =
-                        (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
-                    {
-                        let has_physical_security_key = flow.has_physical_security_key;
-                        let has_cross_device = flow.has_cross_device_passkey;
-                        return Ok((
-                            AuthRequest::Fido {
-                                fido_challenge,
-                                fido_allow_list,
-                                has_physical_security_key,
-                                has_cross_device,
-                            },
-                            AuthCredHandler::MFA {
-                                flow: Box::new(flow),
-                                password: None,
-                                extra_data: None,
-                                reauth_hello_pin: None,
-                            },
-                        ));
-                    }
-                    let msg = flow.msg.clone();
-                    let polling_interval = flow.polling_interval.unwrap_or(5000);
-                    Ok((
-                        AuthRequest::MFAPoll {
-                            enrollment: None,
-                            msg,
-                            // Kanidm pam expects a polling_interval in
-                            // seconds, not milliseconds.
-                            polling_interval: polling_interval / 1000,
-                            show_push_hint: mfa_flow_uses_push_hint(&flow),
-                        },
-                        AuthCredHandler::MFA {
-                            flow: Box::new(flow),
-                            password: None,
-                            extra_data: None,
-                            reauth_hello_pin: None,
-                        },
-                    ))
+                    passwordless_mfa_response(flow)
                 }
             } else {
                 let mut auth_options = vec![];
@@ -5344,6 +5379,100 @@ mod tests {
                 is_default: true,
             }],
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn passwordless_mfa_response_dispatches_by_default_method() {
+        for method in ["AccessPass", "FidoKey", "PhoneAppNotification"] {
+            let mut flow = mfa_flow_with_method(method);
+            flow.msg = "Enter Temporary Access Pass".to_string();
+            flow.polling_interval = Some(7000);
+            if method == "FidoKey" {
+                flow.fido_challenge = Some("challenge".to_string());
+                flow.fido_allow_list = Some(vec!["credential".to_string()]);
+                flow.has_physical_security_key = true;
+                flow.has_cross_device_passkey = true;
+            }
+            let (request, handler) = super::passwordless_mfa_response(flow).unwrap();
+            match (method, request) {
+                (
+                    "AccessPass",
+                    AuthRequest::Input {
+                        enrollment,
+                        msg,
+                        echo_on,
+                    },
+                ) => {
+                    assert!(enrollment.is_none());
+                    assert_eq!(msg, "Enter Temporary Access Pass");
+                    assert!(!echo_on);
+                }
+                (
+                    "FidoKey",
+                    AuthRequest::Fido {
+                        fido_challenge,
+                        fido_allow_list,
+                        has_physical_security_key,
+                        has_cross_device,
+                    },
+                ) => {
+                    assert_eq!(fido_challenge, "challenge");
+                    assert_eq!(fido_allow_list, vec!["credential".to_string()]);
+                    assert!(has_physical_security_key);
+                    assert!(has_cross_device);
+                }
+                (
+                    "PhoneAppNotification",
+                    AuthRequest::MFAPoll {
+                        enrollment,
+                        msg,
+                        polling_interval,
+                        show_push_hint,
+                    },
+                ) => {
+                    assert!(enrollment.is_none());
+                    assert_eq!(msg, "Enter Temporary Access Pass");
+                    assert_eq!(polling_interval, 7);
+                    assert!(show_push_hint);
+                }
+                _ => panic!("incorrect passwordless response for {method}"),
+            }
+            match handler {
+                AuthCredHandler::MFA {
+                    flow,
+                    password,
+                    extra_data,
+                    reauth_hello_pin,
+                } => {
+                    assert_eq!(
+                        flow.get_default_mfa_method_details()
+                            .unwrap()
+                            .auth_method_id,
+                        method
+                    );
+                    assert!(password.is_none());
+                    assert!(extra_data.is_none());
+                    assert!(reauth_hello_pin.is_none());
+                }
+                _ => panic!("passwordless response must retain its MFA handler"),
+            }
+        }
+    }
+
+    #[test]
+    fn passwordless_mfa_response_rejects_incomplete_fido() {
+        for missing_challenge in [true, false] {
+            let mut flow = mfa_flow_with_method("FidoKey");
+            if missing_challenge {
+                flow.fido_allow_list = Some(vec!["credential".to_string()]);
+            } else {
+                flow.fido_challenge = Some("challenge".to_string());
+            }
+            assert!(matches!(
+                super::passwordless_mfa_response(flow),
+                Err(super::IdpError::BadRequest)
+            ));
         }
     }
 
