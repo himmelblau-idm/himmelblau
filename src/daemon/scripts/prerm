@@ -7,7 +7,11 @@ if [ -d /run/systemd/system ]; then
             deb-systemd-invoke stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
         fi
     elif command -v systemctl >/dev/null 2>&1; then
-        systemctl stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
+        # RPM passes 1 while removing the old package during an upgrade and 0
+        # for a final erase.  Do not stop the replacement package's services.
+        if [ "$1" = "0" ]; then
+            systemctl stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
+        fi
     fi
 fi
 

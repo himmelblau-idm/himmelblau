@@ -144,6 +144,17 @@ elif command -v systemctl >/dev/null 2>&1; then
         if [ "$skip_start" -eq 1 ]; then
             echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
         else
+            # RPM passes a count greater than one to %post during an upgrade.
+            # The old package's unmodified %preun may stop these services after
+            # this script, so leave a transaction-scoped recovery marker.
+            case "$1" in
+                ''|*[!0-9]*) ;;
+                *)
+                    if [ "$1" -gt 1 ]; then
+                        : > /run/himmelblau-rpm-upgrade-restart
+                    fi
+                    ;;
+            esac
             systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         fi
     fi

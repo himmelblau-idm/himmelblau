@@ -89,7 +89,7 @@ test-cargo-vet-review: ## Run offline cargo-vet review assistant regressions
 
 .PHONY: test-build-options
 test-build-options: ## Run isolated package and configuration generator regressions
-	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_gen_dockerfiles.py scripts/test_gen_dockerfiles_orchestrator.py scripts/test_orchestrator_config_options.py
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_daemon_packaging.py scripts/test_gen_dockerfiles.py scripts/test_gen_dockerfiles_orchestrator.py scripts/test_orchestrator_config_options.py
 
 test-selinux: ## Test the SELinux policy to ensure it builds
 	./scripts/test_selinux_policy.py --fix -v --distros rocky8,rocky9,rocky10,fedora43,fedora44,tumbleweed,sle16
