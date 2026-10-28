@@ -1,8 +1,0 @@
-#!/bin/sh
-set -e
-if [ "$1" -eq 0 ]; then
-  if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
-    semodule -r himmelblaud || :
-  fi
-fi
-exit 0
