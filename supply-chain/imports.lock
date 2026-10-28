@@ -1467,6 +1467,11 @@ who = "Pat Hickey <phickey@fastly.com>"
 criteria = "safe-to-deploy"
 version = "0.3.0"
 
+[[audits.bytecode-alliance.audits.zeroize]]
+who = "Pat Hickey <p.hickey@f5.com>"
+criteria = "safe-to-deploy"
+delta = "1.8.1 -> 1.8.2"
+
 [[audits.embark-studios.audits.array-init]]
 who = "Johan Andersson <opensource@embark-studios.com>"
 criteria = "safe-to-deploy"
@@ -2380,6 +2385,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.6.5 -> 0.6.6"
 
+[[audits.himmelblau.audits.tokio]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.53.1 -> 1.53.3"
+
 [[audits.himmelblau.audits.typenum]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -2959,6 +2969,12 @@ criteria = "safe-to-deploy"
 delta = "1.2.0 -> 1.2.1"
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
 
+[[audits.mozilla.audits.form_urlencoded]]
+who = "edgul <ed.guloien@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "1.2.1 -> 1.2.2"
+aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
 [[audits.mozilla.audits.futures-core]]
 who = "Mike Hommey <mh+mozilla@glandium.org>"
 criteria = "safe-to-deploy"
@@ -3152,6 +3168,12 @@ aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/mai
 who = "Valentin Gosu <valentin.gosu@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "1.0.2 -> 1.0.3"
+aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.idna]]
+who = "edgul <ed.guloien@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "1.0.3 -> 1.1.0"
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.idna_adapter]]
@@ -3352,6 +3374,12 @@ aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/mai
 who = "Valentin Gosu <valentin.gosu@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "2.3.0 -> 2.3.1"
+aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.percent-encoding]]
+who = "edgul <ed.guloien@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "2.3.1 -> 2.3.2"
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.pin-project-lite]]
@@ -3843,6 +3871,12 @@ criteria = "safe-to-deploy"
 delta = "2.5.1 -> 2.5.4"
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
 
+[[audits.mozilla.audits.url]]
+who = "edgul <ed.guloien@gmail.com>"
+criteria = "safe-to-deploy"
+delta = "2.5.4 -> 2.5.7"
+aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
 [[audits.mozilla.audits.utf8parse]]
 who = "Nika Layzell <nika@thelayzells.com>"
 criteria = "safe-to-deploy"
@@ -3858,6 +3892,13 @@ This code DOES contain unsafe code required to internally call volatiles
 for deleting data. This is expected and documented behavior.
 """
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.zeroize]]
+who = "Alex Franchuk <afranchuk@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "1.8.2 -> 1.9.1"
+notes = "Minor stylistic changes to unsafe blocks, many tests added/updated."
+aggregated-from = "https://raw.githubusercontent.com/mozilla/cargo-vet/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.zeroize_derive]]
 who = "Benjamin Beurdouche <beurdouche@mozilla.com>"
@@ -4339,13 +4380,3 @@ who = "Jack Grigg <jack@electriccoin.co>"
 criteria = "safe-to-deploy"
 delta = "6.0.1 -> 6.0.3"
 aggregated-from = "https://raw.githubusercontent.com/zcash/librustzcash/main/supply-chain/audits.toml"
-
-[[audits.zcash.audits.zeroize]]
-who = "Jack Grigg <jack@electriccoin.co>"
-criteria = "safe-to-deploy"
-delta = "1.8.1 -> 1.8.2"
-notes = """
-Changes to `unsafe` code are to alter how `core::mem::size_of` is named; no actual changes
-to the `unsafe` logic.
-"""
-aggregated-from = "https://raw.githubusercontent.com/zcash/wallet/main/supply-chain/audits.toml"
