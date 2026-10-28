@@ -253,7 +253,7 @@ rec {
     crates = {
       "aad-tool" = rec {
         crateName = "aad-tool";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         crateBin = [
           {
@@ -664,7 +664,7 @@ rec {
       };
       "apparmor" = rec {
         crateName = "apparmor";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/apparmor; };
         authors = [
@@ -2421,7 +2421,7 @@ rec {
       };
       "broker" = rec {
         crateName = "broker";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         crateBin = [
           {
@@ -2481,7 +2481,7 @@ rec {
       };
       "broker-client" = rec {
         crateName = "broker-client";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/broker-client; };
         libName = "broker_client";
@@ -4410,9 +4410,9 @@ rec {
       };
       "ctutils" = rec {
         crateName = "ctutils";
-        version = "0.4.0";
+        version = "0.4.6";
         edition = "2024";
-        sha256 = "1r6mpsz1j0mk7f72a139khn9ri1h5fpx5lss8zpj0lbg8kaac18h";
+        sha256 = "0sjgvbrcgk69pz3745la7pi8xy142ii5ngg08vzkjvwyschrsgpy";
         authors = [
           "RustCrypto Developers"
         ];
@@ -6202,9 +6202,9 @@ rec {
       };
       "form_urlencoded" = rec {
         crateName = "form_urlencoded";
-        version = "1.2.1";
+        version = "1.2.2";
         edition = "2018";
-        sha256 = "0milh8x7nl4f450s3ddhg57a3flcv6yq8hlkyk6fyr3mcb128dp1";
+        sha256 = "1kqzb2qn608rxl3dws04zahcklpplkd5r1vpabwga5l50d2v4k6b";
         authors = [
           "The rust-url developers"
         ];
@@ -7364,7 +7364,7 @@ rec {
       };
       "himmelblau-fuzz" = rec {
         crateName = "himmelblau-fuzz";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         crateBin = [
           {
@@ -7413,7 +7413,7 @@ rec {
       };
       "himmelblau-orchestrator" = rec {
         crateName = "himmelblau-orchestrator";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         crateBin = [
           {
@@ -7490,7 +7490,7 @@ rec {
       };
       "himmelblau_policies" = rec {
         crateName = "himmelblau_policies";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/policies; };
         authors = [
@@ -7561,7 +7561,7 @@ rec {
       };
       "himmelblau_unix_common" = rec {
         crateName = "himmelblau_unix_common";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/common; };
         authors = [
@@ -7759,7 +7759,7 @@ rec {
       };
       "himmelblaud" = rec {
         crateName = "himmelblaud";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         crateBin = [
           {
@@ -9025,7 +9025,7 @@ rec {
       };
       "idmap" = rec {
         crateName = "idmap";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/idmap; };
         authors = [
@@ -9050,9 +9050,9 @@ rec {
       };
       "idna" = rec {
         crateName = "idna";
-        version = "1.0.3";
+        version = "1.1.0";
         edition = "2018";
-        sha256 = "0zlajvm2k3wy0ay8plr07w22hxkkmrxkffa6ah57ac6nci984vv8";
+        sha256 = "1pp4n7hppm480zcx411dsv9wfibai00wbpgnjj4qj0xa7kr7a21v";
         authors = [
           "The rust-url developers"
         ];
@@ -11631,7 +11631,7 @@ rec {
       };
       "nss_himmelblau" = rec {
         crateName = "nss_himmelblau";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/nss; };type = [ "cdylib" ];
         authors = [
@@ -11874,7 +11874,7 @@ rec {
       };
       "o365" = rec {
         crateName = "o365";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/o365; };
         authors = [
@@ -13146,7 +13146,7 @@ rec {
       };
       "pam_himmelblau" = rec {
         crateName = "pam_himmelblau";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         links = "pam";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/pam; };type = [ "cdylib" ];
@@ -13480,9 +13480,9 @@ rec {
       };
       "percent-encoding" = rec {
         crateName = "percent-encoding";
-        version = "2.3.1";
+        version = "2.3.2";
         edition = "2018";
-        sha256 = "0gi8wgx0dcy8rnv1kywdv98lwcx67hz0a0zwpib5v2i08r88y573";
+        sha256 = "083jv1ai930azvawz2khv7w73xh8mnylk7i578cifndjn5y64kwv";
         libName = "percent_encoding";
         authors = [
           "The rust-url developers"
@@ -14334,7 +14334,7 @@ rec {
       };
       "qr-greeter" = rec {
         crateName = "qr-greeter";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/qr-greeter; };
         libName = "qr_greeter";
@@ -16364,7 +16364,7 @@ rec {
       };
       "selinux" = rec {
         crateName = "selinux";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/selinux; };
         authors = [
@@ -16715,13 +16715,9 @@ rec {
       };
       "serde_json" = rec {
         crateName = "serde_json";
-        version = "1.0.151";
+        version = "1.0.153";
         edition = "2021";
-        sha256 = "051zww7lvpw147vvwss1ng6w587qyrkzg75fvj08q2dfrmgbahf8";
-        authors = [
-          "Erick Tryzelaar <erick.tryzelaar@gmail.com>"
-          "David Tolnay <dtolnay@gmail.com>"
-        ];
+        sha256 = "0xi1alrj977jw917pdndgdkx7g4bwa4x6f7rnbvyq5i44ffhfqma";
         dependencies = [
           {
             name = "itoa";
@@ -17728,7 +17724,7 @@ rec {
       };
       "sshd-config" = rec {
         crateName = "sshd-config";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/sshd-config; };
         libName = "sshd_config";
@@ -17739,7 +17735,7 @@ rec {
       };
       "sso" = rec {
         crateName = "sso";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         crateBin = [
           {
@@ -17786,7 +17782,7 @@ rec {
       };
       "sso-policies" = rec {
         crateName = "sso-policies";
-        version = "4.0.7";
+        version = "4.0.8";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/sso-policies; };
         libName = "sso_policies";
@@ -18487,9 +18483,9 @@ rec {
       };
       "tokio" = rec {
         crateName = "tokio";
-        version = "1.53.2";
+        version = "1.53.3";
         edition = "2021";
-        sha256 = "0i202ksji8q2asvii0adzgi8m0z93z3j7apn62qfh8d6qzy92pz9";
+        sha256 = "0kny1nnbpy11dllv6ncxy3n804wh0ddn3msq78rxl744f7x3acyf";
         authors = [
           "Tokio Contributors <team@tokio.rs>"
         ];
@@ -20233,9 +20229,9 @@ rec {
       };
       "url" = rec {
         crateName = "url";
-        version = "2.5.4";
+        version = "2.5.8";
         edition = "2018";
-        sha256 = "0q6sgznyy2n4l5lm16zahkisvc9nip9aa5q1pps7656xra3bdy1j";
+        sha256 = "1v8f7nx3hpr1qh76if0a04sj08k86amsq4h8cvpw6wvk76jahrzz";
         authors = [
           "The rust-url developers"
         ];
@@ -20262,20 +20258,29 @@ rec {
             name = "serde";
             packageId = "serde";
             optional = true;
-            features = [ "derive" ];
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "serde_derive";
+            packageId = "serde_derive";
+            optional = true;
+            usesDefaultFeatures = false;
           }
         ];
         devDependencies = [
           {
             name = "serde";
             packageId = "serde";
-            features = [ "derive" ];
+          }
+          {
+            name = "serde_derive";
+            packageId = "serde_derive";
           }
         ];
         features = {
           "default" = [ "std" ];
-          "serde" = [ "dep:serde" ];
-          "std" = [ "idna/std" "percent-encoding/std" "form_urlencoded/std" ];
+          "serde" = [ "dep:serde" "dep:serde_derive" ];
+          "std" = [ "idna/std" "percent-encoding/std" "form_urlencoded/std" "serde?/std" ];
         };
         resolvedDefaultFeatures = [ "default" "serde" "std" ];
       };
@@ -21912,9 +21917,9 @@ rec {
       };
       "zeroize" = rec {
         crateName = "zeroize";
-        version = "1.9.0";
+        version = "1.9.1";
         edition = "2024";
-        sha256 = "0kpnij2v1ig6g2mhc0bnci0lrdfdhiq40afbc0fahajqc9jiag71";
+        sha256 = "0yb8iykihpl3hfw5c4silw2lklpfxajkaa9yj1qw6jsy5hwq8c71";
         authors = [
           "The RustCrypto Project Developers"
         ];
