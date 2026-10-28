@@ -83,15 +83,9 @@ class GeneratorTests(unittest.TestCase):
                     for path in units:
                         self.assertTrue(path.is_file(), path)
                 else:
-                    # systemd 239 cannot set $SYSTEMD_ACTIVATION_UNIT, so
-                    # nss_himmelblau would deadlock against a socket the
-                    # manager holds while starting the daemon (#1930).
                     self.assertIsNone(unit["Unit"].get("Requires"))
                     self.assertIsNone(unit["Service"].get("Sockets"))
                     self.assertNotIn(".socket", unit["Unit"]["After"])
-                    # Nothing else creates /run/himmelblaud for the daemon to
-                    # bind in, and it runs as a DynamicUser that cannot write
-                    # to a root-owned /run.
                     self.assertEqual(
                         unit["Service"].get("RuntimeDirectory"), "himmelblaud"
                     )

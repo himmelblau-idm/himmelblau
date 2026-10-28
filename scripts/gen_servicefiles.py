@@ -34,14 +34,9 @@ MINVER = {
     "ProtectClock": 245,
     "ProtectKernelLogs": 244,
     "LoadCredentialEncrypted": 250,
-    # Socket activation: the .socket units plus the After=/Requires=/Sockets=
-    # wiring that pulls them in. systemd/systemd@90e3b4cb added
-    # $SYSTEMD_ACTIVATION_UNIT in v240, which nss_himmelblau reads to skip the
-    # daemon while the daemon's own unit is starting. Without it the manager
-    # holds the listening socket while it resolves DynamicUser= and
-    # SupplementaryGroups= through NSS, nss_himmelblau connects to that socket,
-    # nobody accepts, and himmelblaud never execs (#1930). himmelblaud binds
-    # its own sockets when none are passed, so omitting them is safe.
+    # $SYSTEMD_ACTIVATION_UNIT (v240, systemd/systemd@d521916d) lets nss_himmelblau
+    # skip the daemon while its own unit starts; without it socket activation
+    # deadlocks (#1930). himmelblaud binds its own sockets when none are passed.
     "SocketActivation": 240,
 }
 
@@ -191,11 +186,8 @@ def main():
         daemon_after_sockets = ""
         daemon_requires_line = ""
         daemon_sockets_line = ""
-        # Without socket activation the daemon binds its own sockets, so it
-        # needs /run/himmelblaud to exist and to be owned by the service user.
-        # The socket units create that directory when they are in play; 4.0.6,
-        # the last release without them, got it from RuntimeDirectory=. Omit
-        # this and himmelblaud exits with "Failed to bind UNIX socket".
+        # Without the socket units nothing else creates /run/himmelblaud for
+        # the daemon to bind in (4.0.6 had this line for the same reason).
         daemon_runtime_dir_line = "RuntimeDirectory=himmelblaud"
 
     fd_store_preserve = ""
@@ -238,9 +230,9 @@ StartLimitBurst=8
 {os.linesep.join(service_user_block)}
 UMask=0027
 CacheDirectory=himmelblaud
-{daemon_runtime_dir_line}
 StateDirectory=himmelblaud
 ConfigurationDirectory=himmelblau
+{daemon_runtime_dir_line}
 
 {type_line}
 {'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc' if supported('LoadCredentialEncrypted') else ''}
