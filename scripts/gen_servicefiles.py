@@ -66,6 +66,16 @@ def bool_env(val: str) -> bool:
     return val.lower() in ("1", "true", "yes", "on")
 
 def main():
+    """Generate the unit files for the detected or assumed systemd version.
+
+    Every directive newer than BASELINE_VERSION is gated on its MINVER entry,
+    so one source tree yields units a 239 manager can still parse as well as
+    units that use everything a current manager offers. The service, timer and
+    HSM PIN units land in --out-dir; the .socket units are written next to this
+    script in platform/systemd, because packaging lists them as static assets
+    rather than build outputs, and are skipped entirely below the
+    SocketActivation minimum.
+    """
     ap = argparse.ArgumentParser(description="Generate Himmelblau systemd unit files.")
     ap.add_argument("--out-dir", default=".", help="Output directory for generated units.")
     ap.add_argument("--assume-version", type=int, default=None,

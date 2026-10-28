@@ -58,6 +58,13 @@ class GeneratorTests(unittest.TestCase):
                 self.assertEqual(service.get("FileDescriptorStorePreserve"), expected_preserve)
 
     def test_socket_activation_version_gating(self):
+        """Socket activation has to be all or nothing for a given version.
+
+        A manager that cannot set $SYSTEMD_ACTIVATION_UNIT (anything before
+        240) deadlocks when the daemon is socket-activated (#1930), so below
+        that version neither the Requires=/Sockets=/After= wiring nor the
+        .socket files may be emitted, and from 240 up all of them must be.
+        """
         sockets = "himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket"
         for version in (239, 240, 253, 257):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
