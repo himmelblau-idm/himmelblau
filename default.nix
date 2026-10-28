@@ -16,9 +16,7 @@ let
       pkgs.libunistring
     ];
   };
-  cargo_nix = pkgs.callPackage ./Cargo.nix {
-    # Each workspace member is built separately, so enable the common crate's
-    # TPM feature explicitly rather than relying on Cargo workspace unification.
+  cargoArgs = {
     rootFeatures = [
       "default"
       "himmelblau_unix_common/tpm"
@@ -207,6 +205,39 @@ let
         };
       };
   };
+  cargo_nix = pkgs.callPackage ./Cargo.nix cargoArgs;
+  packageIds = {
+    daemon = "himmelblaud";
+    aad-tool = "aad-tool";
+    sso = "sso";
+    broker = "broker";
+    o365 = "o365";
+    pam = "pam_himmelblau";
+    nss = "nss_himmelblau";
+  };
+
+  # Resolve features once across the exported packages, not once per binary.
+  # Without this we would rebuild many packages with slightly different features
+  # enabled. This synthetic root is only used to align features and is never
+  # actually built; the exported packages are selected from the joint derivation.
+  jointlyDerivedCrates = cargo_nix.internal.builtRustCratesWithFeatures {
+    packageId = "himmelblau-temp-root";
+    features = [ ];
+    runTests = false;
+    buildRustCrateForPkgsFunc = cargoArgs.buildRustCrateForPkgs;
+    crateConfigs = cargo_nix.internal.crates // {
+      himmelblau-temp-root = {
+        crateName = "himmelblau-temp-root";
+        dependencies = map (
+          packageId: {
+            name = packageId;
+            inherit packageId;
+            features = cargoArgs.rootFeatures;
+          }
+        ) (builtins.attrValues packageIds);
+      };
+    };
+  };
 in
 rec {
 
@@ -221,15 +252,7 @@ rec {
     };
   };
 
-  packages = {
-    daemon = cargo_nix.workspaceMembers."himmelblaud".build;
-    aad-tool = cargo_nix.workspaceMembers."aad-tool".build;
-    sso = cargo_nix.workspaceMembers."sso".build;
-    broker = cargo_nix.workspaceMembers."broker".build;
-    o365 = cargo_nix.workspaceMembers."o365".build;
-    pam = cargo_nix.workspaceMembers."pam_himmelblau".build;
-    nss = cargo_nix.workspaceMembers."nss_himmelblau".build;
-  };
+  packages = lib.mapAttrs (_: packageId: jointlyDerivedCrates.crates.${packageId}) packageIds;
 
   passthru = { inherit pkgs; };
 }
