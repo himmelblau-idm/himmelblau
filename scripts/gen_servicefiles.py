@@ -186,10 +186,17 @@ def main():
         daemon_after_sockets = " " + socket_units
         daemon_requires_line = "Requires=" + socket_units
         daemon_sockets_line = "Sockets=" + socket_units
+        daemon_runtime_dir_line = ""
     else:
         daemon_after_sockets = ""
         daemon_requires_line = ""
         daemon_sockets_line = ""
+        # Without socket activation the daemon binds its own sockets, so it
+        # needs /run/himmelblaud to exist and to be owned by the service user.
+        # The socket units create that directory when they are in play; 4.0.6,
+        # the last release without them, got it from RuntimeDirectory=. Omit
+        # this and himmelblaud exits with "Failed to bind UNIX socket".
+        daemon_runtime_dir_line = "RuntimeDirectory=himmelblaud"
 
     fd_store_preserve = ""
     if supported("FileDescriptorStorePreserve"):
@@ -231,6 +238,7 @@ StartLimitBurst=8
 {os.linesep.join(service_user_block)}
 UMask=0027
 CacheDirectory=himmelblaud
+{daemon_runtime_dir_line}
 StateDirectory=himmelblaud
 ConfigurationDirectory=himmelblau
 

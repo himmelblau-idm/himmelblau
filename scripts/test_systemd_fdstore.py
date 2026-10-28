@@ -64,6 +64,10 @@ class GeneratorTests(unittest.TestCase):
         240) deadlocks when the daemon is socket-activated (#1930), so below
         that version neither the Requires=/Sockets=/After= wiring nor the
         .socket files may be emitted, and from 240 up all of them must be.
+
+        RuntimeDirectory= follows the same switch in reverse: the socket units
+        create /run/himmelblaud when they are in play, so the daemon only needs
+        to be given that directory itself when they are not.
         """
         sockets = "himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket"
         for version in (239, 240, 253, 257):
@@ -75,6 +79,7 @@ class GeneratorTests(unittest.TestCase):
                     self.assertEqual(unit["Unit"].get("Requires"), sockets)
                     self.assertEqual(unit["Service"].get("Sockets"), sockets)
                     self.assertTrue(unit["Unit"]["After"].endswith(" " + sockets))
+                    self.assertIsNone(unit["Service"].get("RuntimeDirectory"))
                     for path in units:
                         self.assertTrue(path.is_file(), path)
                 else:
@@ -84,6 +89,12 @@ class GeneratorTests(unittest.TestCase):
                     self.assertIsNone(unit["Unit"].get("Requires"))
                     self.assertIsNone(unit["Service"].get("Sockets"))
                     self.assertNotIn(".socket", unit["Unit"]["After"])
+                    # Nothing else creates /run/himmelblaud for the daemon to
+                    # bind in, and it runs as a DynamicUser that cannot write
+                    # to a root-owned /run.
+                    self.assertEqual(
+                        unit["Service"].get("RuntimeDirectory"), "himmelblaud"
+                    )
                     for path in units:
                         self.assertFalse(path.exists(), path)
 
