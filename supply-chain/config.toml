@@ -70,6 +70,9 @@ audit-as-crates-io = false
 [policy."crunchy:0.2.4"]
 audit-as-crates-io = false
 
+[policy."crypto-bigint:0.5.5"]
+audit-as-crates-io = false
+
 [policy."devd-rs:0.3.6"]
 audit-as-crates-io = false
 
@@ -435,7 +438,7 @@ version = "0.8.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.crypto-bigint]]
-version = "0.5.5"
+version = "0.7.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.ctr]]
@@ -918,10 +921,6 @@ criteria = "safe-to-deploy"
 version = "0.7.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.sync_wrapper]]
-version = "1.0.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.tendril]]
 version = "0.4.3"
 criteria = "safe-to-deploy"
@@ -936,10 +935,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.totp-rs]]
 version = "5.7.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.tower-layer]]
-version = "0.3.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.tower-service]]
@@ -968,10 +963,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.uninit]]
 version = "0.3.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.untrusted]]
-version = "0.9.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.urlencoding]]
