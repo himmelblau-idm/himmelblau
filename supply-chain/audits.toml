@@ -324,6 +324,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.3.2"
 
+[[audits.cpubits]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.1.1"
+
 [[audits.crypto-common]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
