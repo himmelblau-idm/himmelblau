@@ -148,6 +148,7 @@ elif command -v systemctl >/dev/null 2>&1; then
             # a unit that no longer uses them (#1930).
             if ! grep -q '^Sockets=' /usr/lib/systemd/system/himmelblaud.service 2>/dev/null; then
                 systemctl stop himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket 2>/dev/null || true
+                systemctl reset-failed himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket 2>/dev/null || true
             fi
             systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         fi
