@@ -783,5 +783,10 @@ class NixosServiceTests(unittest.TestCase):
         self.assertEqual(daemon["Service"]["SupplementaryGroups"], "custom-tss")
         self.assertEqual(daemon["Service"]["DeviceAllow"], "char-tpm rw")
 
+    def test_try_unseal_rule_uses_the_pam_module(self):
+        self.assertNotIn("himmelblau-unseal", self.evaluated["pamLoginAuthModules"])
+        modules = evaluate(tryUnseal=True)["pamLoginAuthModules"]
+        self.assertEqual(modules["himmelblau-unseal"], modules["himmelblau"])
+
 if __name__ == "__main__":
     unittest.main()
