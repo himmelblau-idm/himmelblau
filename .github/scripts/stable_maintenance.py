@@ -4116,6 +4116,7 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
     summary = "Refresh supply-chain metadata; no version bump." if value.get("metadata_only") else "Validated stable maintenance release."
     if manual or incomplete:
         summary = "DRAFT: incomplete maintenance stages or audits require manual work."
+
     lines = [
         "## Summary", "", summary + " Human review required; never auto-merged.", "",
         "## What Changed", "",
@@ -4254,7 +4255,7 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
         "body": body, "draft": True,
     }
     if manual or incomplete:
-        payload["title"] = f"Manual audit work required: {value['branch']} maintenance"
+        payload["title"] = f"Manual work required: {value['branch']} maintenance"
     repo = github_repository()
     pr = http_json(f"https://api.github.com/repos/{repo}/pulls", method="POST", headers=github_headers(), body=payload)
     number = pr.get("number") if isinstance(pr, dict) else None
