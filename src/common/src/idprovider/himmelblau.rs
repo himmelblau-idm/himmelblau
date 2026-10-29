@@ -147,7 +147,7 @@ fn passwordless_mfa_response(
             };
             let has_physical_security_key = flow.has_physical_security_key;
             let has_cross_device = flow.has_cross_device_passkey;
-            return Ok((
+            Ok((
                 AuthRequest::Fido {
                     fido_challenge,
                     fido_allow_list,
@@ -160,12 +160,12 @@ fn passwordless_mfa_response(
                     extra_data: None,
                     reauth_hello_pin: None,
                 },
-            ));
+            ))
         },
         // Prompt, such as AccessPass
         {
             let msg = flow.msg.clone();
-            return Ok((
+            Ok((
                 AuthRequest::Input {
                     enrollment: None,
                     msg,
@@ -177,7 +177,7 @@ fn passwordless_mfa_response(
                     extra_data: None,
                     reauth_hello_pin: None,
                 },
-            ));
+            ))
         },
         {
             let msg = flow.msg.clone();
