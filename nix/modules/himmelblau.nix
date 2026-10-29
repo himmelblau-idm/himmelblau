@@ -260,7 +260,7 @@ in
               auth.himmelblau-unseal = lib.mkIf cfg.tryUnsealFlag {
                 order = super.auth.unix.order + 1000;
                 control = "optional";
-                modulePath = "${cfg.package}/lib/libpam_himmelblau.so";
+                modulePath = "${cfg.pamPackage.lib}/lib/libpam_himmelblau.so";
                 settings.try_unseal = true;
                 settings.debug = cfg.debugFlag;
               };
