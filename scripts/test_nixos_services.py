@@ -636,6 +636,14 @@ class NixosServiceTests(unittest.TestCase):
             ]
         )
 
+    def test_firefox_policy_matches_the_packaged_sso_policy(self):
+        packaged = json.loads(
+            (ROOT / "src/sso-policies/src/firefox/policies.json").read_text()
+        )["policies"]
+        policies = self.evaluated["firefoxPolicies"]
+        self.assertIsNone(policies["extensions"])
+        self.assertEqual(policies["extensionSettings"], packaged["ExtensionSettings"])
+
     def test_hsm_initializer_stays_inactive_after_success(self):
         self.assertNotIn(
             "RemainAfterExit", self.units["himmelblau-hsm-pin-init.service"]["Service"]

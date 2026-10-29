@@ -35,6 +35,12 @@ let
 in
 {
   version = cfg.systemd.package.version;
+  firefoxPolicies = {
+    extensions = cfg.programs.firefox.policies.Extensions or null;
+    extensionSettings = pkgs.lib.filterAttrs (
+      id: _: id == "linux-entra-sso@example.com"
+    ) (cfg.programs.firefox.policies.ExtensionSettings or { });
+  };
   nscdEnabled = cfg.services.nscd.enable;
   hsmPinPath = cfg.services.himmelblau.settings.hsm_pin_path;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;

@@ -193,9 +193,10 @@ in
 
     programs.firefox = {
       policies = {
-        Extensions.Install = [
-          "https://github.com/siemens/linux-entra-sso/releases/download/v1.7.1/linux_entra_sso-1.7.1.xpi"
-        ];
+        ExtensionSettings."linux-entra-sso@example.com" = {
+          installation_mode = "force_installed";
+          install_url = "https://github.com/siemens/linux-entra-sso/releases/download/v1.13.0/linux_entra_sso-1.13.0.xpi";
+        };
       };
       nativeMessagingHosts.packages = [ cfg.ssoPackage ];
     };
