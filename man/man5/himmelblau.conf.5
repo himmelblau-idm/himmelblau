@@ -86,6 +86,10 @@ match the domain name that users enter when signing in (for example, the domain 
 
 In most cases, this will be the primary domain of your Azure Entra ID tenant. If your organization uses multiple verified domains or aliases, choose the one that your users actually use to sign in.
 
+Only a single Entra ID domain is supported. If several domains are listed (comma-separated, or through additional domain sections), only the first one is used and the others are ignored. If
+.B oidc_issuer_url
+is set, this option is ignored.
+
 If not specified, the domain is extracted from the UPN of the first user to authenticate and looked up in Entra ID.
 
 .P
@@ -505,6 +509,69 @@ Default: ssh,cockpit
 Example: mfa_poll_prompt_services = ssh,cockpit
 
 .TP
+.B canonicalize_user_services
+.RE
+A comma-separated list of PAM service names for which the PAM module replaces
+.B PAM_USER
+with the canonical account name after a successful authentication. The
+canonical account name is the name the system name service returns for the
+authenticated account, which is also the name reported by
+.B id -un
+for that user.
+
+Users can log in with several aliases of the same account, such as the UPN,
+the short name, or a different letter case. Some applications, such as GDM,
+copy
+.B PAM_USER
+into the
+.B USER
+and
+.B LOGNAME
+environment variables of the session, which then contain the alias entered at
+the login prompt instead of the account name.
+
+The PAM service name is the name passed by the application when calling
+.B pam_start()
+(e.g., "gdm-password", "login").
+
+Entries are matched as substrings, so "gdm" will match "gdm-password",
+"gdm-autologin", etc.
+
+.B PAM_USER
+is only replaced when the canonical account name resolves to the same account
+as the name entered at the login prompt.
+
+Do not list services that require
+.B PAM_USER
+to remain unchanged during authentication. sshd aborts the connection when it
+re-initializes PAM and
+.B PAM_USER
+has changed, and already sets
+.B USER
+and
+.B LOGNAME
+from the account name. polkit, whose PAM service is "polkit-1", rejects the
+authentication when
+.B PAM_USER
+has changed, even to the name of the same account.
+
+pam_faillock records failures under the value of
+.B PAM_USER
+at the time it runs. When pam_faillock runs before pam_himmelblau in the
+authentication stack, a successful login resets the failures recorded under
+the canonical account name, not those recorded under the name entered at the
+login prompt. When pam_himmelblau runs first, as configured by the authselect
+profile and by aad-tool configure-pam, pam_faillock does not act on successful
+Himmelblau logins, and this option does not change its behavior.
+
+By default, no service is listed and
+.B PAM_USER
+is never modified.
+
+.P
+Example: canonicalize_user_services = gdm-password
+
+.TP
 .B mfa_method
 .RE
 Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. For Microsoft Entra ID, Himmelblau requests the named Entra method. For native Okta authentication, this option also accepts Okta remediation or method identifiers, such as challenge-authenticator, push, or otp. An exact Okta identifier takes precedence over the compatibility mappings below.
@@ -823,6 +890,21 @@ Default: false
 
 .P
 Example: apply_policy = false
+
+.TP
+.B intune_auth_resource
+.RE
+A boolean option that makes Entra ID sign-in authenticate against the Microsoft Intune resource instead of the Microsoft Intune Enrollment resource.
+This applies to the user lookup and to interactive sign-in through the password and MFA flow, which also joins the device to Entra ID when it is not joined yet. A device code sign-in started directly is not affected; when the password and MFA flow falls back to a device code, the resulting token also targets the Microsoft Intune resource.
+Use this when Conditional Access policies treat the two resources differently, including on hosts that are not enrolled in Intune.
+This option does not enroll the device in Intune or apply Intune policies; apply_policy controls both.
+When apply_policy is enabled, the Microsoft Intune resource is always used and this option has no effect.
+
+.P
+Default: false
+
+.P
+Example: intune_auth_resource = true
 
 .TP
 .B authority_host
@@ -1186,78 +1268,6 @@ Default: both
 
 .P
 Example: ip_version = ipv4-only
-
-.TP
-.B experimental_orchestrator_enabled
-.RE
-Enable the experimental optional himmelblaud-orchestrator backend for browser-driven
-OIDC authentication flows.
-
-When enabled, OIDC interactive authentication can be delegated to the
-orchestrator over a Unix socket. If the orchestrator is unavailable or returns
-an error, Himmelblau falls back to the built-in device authorization grant
-(DAG) flow.
-
-.P
-Default: false
-
-.P
-Example: experimental_orchestrator_enabled = true
-
-.TP
-.B orchestrator_socket
-.RE
-Unix socket path used by himmelblaud to communicate with
-himmelblaud-orchestrator.
-
-This path must match the orchestrator service configuration.
-
-.P
-Default: /var/run/himmelblaud/orchestrator.sock
-
-.P
-Example: orchestrator_socket = /run/himmelblaud/orchestrator.sock
-
-.TP
-.B orchestrator_provider
-.RE
-Optional explicit provider key passed to himmelblaud-orchestrator when starting
-an OIDC browser flow.
-
-If unset, the orchestrator auto-detects the provider from issuer URL, domain,
-or embedded provider match rules.
-
-.P
-Example: orchestrator_provider = keycloak
-
-.TP
-.B orchestrator_timeout_secs
-.RE
-Timeout in seconds for a single request/response exchange with
-himmelblaud-orchestrator.
-
-This timeout applies to connect, send, and receive operations on the
-orchestrator Unix socket.
-
-.P
-Default: 30
-
-.P
-Example: orchestrator_timeout_secs = 10
-
-.TP
-.B orchestrator_poll_secs
-.RE
-Polling interval in seconds used for orchestrator-driven MFA wait prompts.
-
-This value controls how frequently PAM should poll the orchestrator for
-progress while waiting for external approvals (for example push MFA).
-
-.P
-Default: 2
-
-.P
-Example: orchestrator_poll_secs = 3
 
 .TP
 .B enable_kerberos_cache

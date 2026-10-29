@@ -418,15 +418,15 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
         .as_ref()
         .map(|c| c.get_enable_passwordless())
         .unwrap_or(true);
-    let apply_policy = config
+    let use_intune_auth_resource = config
         .as_ref()
-        .map(|c| c.get_apply_policy())
+        .map(|c| c.get_use_intune_auth_resource())
         .unwrap_or(false);
     let mut auth_options = vec![];
     if enable_passwordless {
         auth_options.push(AuthOption::Passwordless);
     }
-    if apply_policy {
+    if use_intune_auth_resource {
         auth_options.push(AuthOption::IntuneEnable);
     }
     let auth_init = match app.check_user_exists(account_id, &auth_options).await {
@@ -610,10 +610,13 @@ async fn confidential_client_access_token(
         }
     } else if let Some(domain) = domain {
         domain
-    } else {
+    } else if let Some(domain) = cfg.get_configured_entra_domain() {
         // Attempt using the default domain
         debug!(?domain, "Using default domain");
-        cfg.get_configured_domains()[0].clone()
+        domain
+    } else {
+        error!("No domain is configured");
+        return None;
     };
 
     let db = match Db::new(&cfg.get_db_path()) {
@@ -1016,7 +1019,8 @@ async fn main() -> ExitCode {
                                     if let Ok(Account { username, .. }) = serde_json::from_value::<Account>(account.clone()) {
                                         if $account_id.is_none() || $account_id.clone().map(|s| s.to_lowercase()).as_ref().unwrap_or(&"".to_string()) == &username.to_lowercase() {
                                             if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                                                let (graph, _, authority) = init!(cfg, Some(username), None);
+                                                let (graph, domain, authority) = init!(cfg, Some(username), None);
+                                                let sso_url = format!("https://{}/", cfg.get_authority_host(&domain));
                                                 if let Ok(token_val) = broker.acquire_token_silently(
                                                     "0.0", &session_id,
                                                     &json!({
@@ -1029,7 +1033,7 @@ async fn main() -> ExitCode {
                                                             "clientId": client_id,
                                                             "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
                                                             "requestedScopes": $scopes,
-                                                            "ssoUrl": "https://login.microsoftonline.com/"
+                                                            "ssoUrl": sso_url
                                                         }
                                                     })
                                                 ).await {

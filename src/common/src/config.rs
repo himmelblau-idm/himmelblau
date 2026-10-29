@@ -555,6 +555,33 @@ impl HimmelblauConfig {
         }
     }
 
+    /// Resolve a user's configured domain (including a known alias) before
+    /// selecting its authority. OIDC accounts use the configured issuer host,
+    /// regardless of whether their account-name claim contains a domain.
+    /// The server-generated config is already merged into this configuration by `new`.
+    pub fn get_authority_host_for_account(&self, account_id: &str) -> Option<String> {
+        if let Some(issuer) = self.get_oidc_issuer_url() {
+            let issuer = url::Url::parse(&issuer).ok()?;
+            return issuer.host_str().map(str::to_string);
+        }
+        let (_, domain) = split_username(account_id)?;
+        let domain = self
+            .get_primary_domain_from_alias_simple(domain)
+            .unwrap_or_else(|| domain.to_string());
+        Some(self.get_authority_host(&domain))
+    }
+
+    /// Broker environments are endpoint authorities, so preserve an OIDC issuer's
+    /// nondefault port. FIDO RP IDs continue to use the hostname-only accessor.
+    pub fn get_broker_environment_for_account(&self, account_id: &str) -> Option<String> {
+        if let Some(issuer) = self.get_oidc_issuer_url() {
+            let issuer = url::Url::parse(&issuer).ok()?;
+            issuer.host_str()?;
+            return Some(issuer[url::Position::BeforeHost..url::Position::AfterPort].to_string());
+        }
+        self.get_authority_host_for_account(account_id)
+    }
+
     pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
         self.config.get(domain, "tenant_id")
     }
@@ -637,6 +664,12 @@ impl HimmelblauConfig {
         }
     }
 
+    /// Whether user discovery and enrollment auth request the Microsoft Intune
+    /// resource instead of the Microsoft Intune Enrollment resource.
+    pub fn get_use_intune_auth_resource(&self) -> bool {
+        self.get_apply_policy() || self.get_intune_auth_resource()
+    }
+
     pub fn write(&self) -> Result<(), Error> {
         self.config.write(self.filename.clone())
     }
@@ -690,6 +723,21 @@ impl HimmelblauConfig {
             }
         }
         domains
+    }
+
+    pub fn get_configured_entra_domains(&self) -> Vec<String> {
+        // The array returned by get_configured_domains() might include the
+        // "oidc" section, or an empty entry from a blank `domain =` option.
+        self.get_configured_domains()
+            .into_iter()
+            .filter(|x| !x.is_empty() && x != "oidc")
+            .collect()
+    }
+
+    /// Himmelblau supports a single Entra ID domain. If several are
+    /// configured the first one is used.
+    pub fn get_configured_entra_domain(&self) -> Option<String> {
+        self.get_configured_entra_domains().into_iter().next()
     }
 
     pub fn get_config_file(&self) -> String {
@@ -760,7 +808,7 @@ impl HimmelblauConfig {
             let domain_aliases = match self.config.get(domain, "domain_aliases") {
                 Some(aliases) => aliases
                     .split(",")
-                    .map(|s| s.to_string().to_lowercase())
+                    .map(|s| s.trim().to_lowercase())
                     .collect(),
                 None => vec![],
             };
@@ -878,7 +926,7 @@ impl HimmelblauConfig {
     ) -> Option<String> {
         let name_mapping_script = self.get_name_mapping_script();
         let cn_name_mapping = self.get_cn_name_mapping();
-        let domains = self.get_configured_domains();
+        let domain = self.get_configured_entra_domain();
 
         if account_id.trim().is_empty() {
             return None;
@@ -952,8 +1000,10 @@ impl HimmelblauConfig {
                 }
             }
         }
-        if cn_name_mapping && !account_id.contains('@') && !domains.is_empty() {
-            return Some(format!("{}@{}", account_id, domains[0]));
+        if cn_name_mapping && !account_id.contains('@') {
+            if let Some(domain) = domain {
+                return Some(format!("{}@{}", account_id, domain));
+            }
         }
         Some(account_id.to_string())
     }
@@ -972,10 +1022,8 @@ impl HimmelblauConfig {
             return upn.to_string();
         };
         let primary = self
-            .get_configured_domains()
-            .first()
-            .map(|e| e.as_str())
-            .unwrap_or("")
+            .get_configured_entra_domain()
+            .unwrap_or_default()
             .to_lowercase();
         // Only perform cn name mapping for the primary domain
         let is_primary_cn = self.get_cn_name_mapping() && primary == domain.to_lowercase();
@@ -1516,6 +1564,35 @@ mod tests {
     }
 
     #[test]
+    fn test_get_intune_auth_resource() {
+        let config_data = r#"
+        [global]
+        intune_auth_resource = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_intune_auth_resource(), true);
+        assert_eq!(config.get_apply_policy(), false);
+        assert_eq!(config.get_use_intune_auth_resource(), true);
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_intune_auth_resource(), false);
+        assert_eq!(config_empty.get_use_intune_auth_resource(), false);
+
+        let apply_policy_data = r#"
+        [global]
+        apply_policy = true
+        "#;
+
+        let apply_policy_file = create_temp_config(apply_policy_data);
+        let apply_policy = HimmelblauConfig::new(Some(&apply_policy_file)).unwrap();
+
+        assert_eq!(apply_policy.get_intune_auth_resource(), false);
+        assert_eq!(apply_policy.get_use_intune_auth_resource(), true);
+    }
+
+    #[test]
     fn test_get_home_attr() {
         let config_data = r#"
         [global]
@@ -1760,6 +1837,68 @@ mod tests {
     }
 
     #[test]
+    fn test_get_configured_entra_domain() {
+        // The first entry of `domains` is used
+        let temp_file = create_temp_config(
+            r#"
+        [global]
+        domains = example.com,test.com
+
+        [test.com]
+        [example.com]
+        "#,
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_configured_entra_domain(),
+            Some("example.com".to_string())
+        );
+
+        // The oidc section is never an Entra domain
+        let temp_file = create_temp_config(
+            r#"
+        [global]
+        oidc_issuer_url = https://issuer.example.com
+
+        [oidc]
+        "#,
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_configured_entra_domain(), None);
+
+        // A blank domain option is not a domain
+        let temp_file = create_temp_config(
+            r#"
+        [global]
+        domain =
+        oidc_issuer_url = https://issuer.example.com
+
+        [oidc]
+        "#,
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_configured_entra_domain(), None);
+
+        // Additional domains are listed, but only the first is used
+        let temp_file = create_temp_config(
+            r#"
+        [global]
+        domains = example.com,test.com
+        "#,
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_configured_entra_domains(),
+            vec!["example.com", "test.com"]
+        );
+
+        // No configuration at all
+        let temp_file = create_temp_config("[global]\n");
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_configured_entra_domain(), None);
+    }
+
+    #[test]
     fn test_get_enable_hello() {
         let config_data = r#"
         [global]
@@ -1861,21 +2000,89 @@ mod tests {
     fn test_get_authority_host() {
         let config_data = r#"
         [example.com]
-        authority_host = https://login.suse.com
+        authority_host = login.suse.com
         "#;
 
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(
-            config.get_authority_host("example.com"),
-            "https://login.suse.com"
-        );
+        assert_eq!(config.get_authority_host("example.com"), "login.suse.com");
         let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_authority_host("example.com"),
             DEFAULT_AUTHORITY_HOST
         );
+    }
+
+    #[test]
+    fn test_get_authority_host_for_account_resolves_aliases() {
+        let temp_file = create_temp_config(
+            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\ndomain_aliases = first.example.com, ALIAS.example.com  , third.example.com\n",
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_authority_host_for_account("alice@alias.example.com"),
+            Some("login.microsoftonline.us".to_string())
+        );
+        assert_eq!(config.get_authority_host_for_account("alice"), None);
+    }
+
+    #[test]
+    fn test_get_authority_host_for_oidc_accounts_uses_issuer() {
+        let temp_file = create_temp_config(
+            "[global]\noidc_issuer_url = https://id.example.org/realms/example/.well-known/openid-configuration\n",
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        for account in ["alice", "alice@unrelated.example.com"] {
+            assert_eq!(
+                config.get_authority_host_for_account(account),
+                Some("id.example.org".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn test_broker_environment_preserves_oidc_ports() {
+        for (issuer, environment, host) in [
+            (
+                "https://id.example.org:8443/realm",
+                "id.example.org:8443",
+                "id.example.org",
+            ),
+            (
+                "https://id.example.org/realm",
+                "id.example.org",
+                "id.example.org",
+            ),
+            ("https://[::1]:8443/realm", "[::1]:8443", "[::1]"),
+        ] {
+            let contents = format!("[global]\noidc_issuer_url = {issuer}\n");
+            let temp_file = create_temp_config(&contents);
+            let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+            for account in ["alice", "alice@other.example"] {
+                assert_eq!(
+                    config.get_broker_environment_for_account(account),
+                    Some(environment.to_string())
+                );
+                assert_eq!(
+                    config.get_authority_host_for_account(account),
+                    Some(host.to_string())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_broker_environment_preserves_entra_alias_authority() {
+        let temp_file = create_temp_config(
+            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\ndomain_aliases = alias.example.com\n",
+        );
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_broker_environment_for_account("alice@alias.example.com"),
+            Some("login.microsoftonline.us".to_string())
+        );
+        assert_eq!(config.get_broker_environment_for_account("alice"), None);
     }
 
     #[test]
@@ -2843,6 +3050,29 @@ mod tests {
 
         let result = config.get_mfa_poll_prompt_services();
         assert_eq!(result, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_get_canonicalize_user_services_default_value() {
+        // PAM_USER is never rewritten unless services are explicitly listed.
+        let config = create_empty_config();
+
+        let result = config.get_canonicalize_user_services();
+        assert_eq!(result, Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_get_canonicalize_user_services_comma_separated() {
+        let config_data = r#"
+        [global]
+        canonicalize_user_services = gdm-password , login
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_canonicalize_user_services();
+        assert_eq!(result, vec!["gdm-password", "login"]);
     }
 
     // Tests for parse_ttl_to_seconds()

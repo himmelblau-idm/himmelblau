@@ -346,6 +346,161 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertEqual(cleanup[:3], ["/usr/bin/docker", "rm", "-f"])
             self.assertRegex(cleanup[3], r"^himmelblau-maint-[0-9a-f]{16}$")
 
+    def test_backport_cache_lifecycle_and_partial_setup_cleanup(self):
+        for failure in (None, "create", "holder", "body"):
+            with self.subTest(failure=failure):
+                runner = mock.Mock()
+                def run(argv, **kwargs):
+                    if failure == "create" and argv[1:3] == ["volume", "create"]:
+                        raise sm.MaintenanceError("setup failed")
+                    if failure == "holder" and argv[1:3] == ["run", "--detach"]:
+                        raise sm.MaintenanceError("setup failed")
+                    return sm.CommandResult(0, "", "")
+                runner.run.side_effect = run
+                with mock.patch.dict(os.environ, {"MAINTENANCE_BACKPORT_CACHE": "1", "MAINTENANCE_BUILD_IMAGE": "fixture"}), \
+                     mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+                    def exercise():
+                        with sm.backport_build_cache(runner) as volume:
+                            self.assertRegex(volume, r"^himmelblau-maint-backport-[0-9a-f]{32}$")
+                            if failure == "body":
+                                raise sm.MaintenanceError("build failed")
+                    if failure:
+                        with self.assertRaises(sm.MaintenanceError):
+                            exercise()
+                    else:
+                        exercise()
+                commands = [call.args[0] for call in runner.run.call_args_list]
+                self.assertEqual(commands[-2][1:3], ["rm", "-f"])
+                self.assertEqual(commands[-1][1:3], ["volume", "rm"])
+                if failure != "create":
+                    self.assertIn("o=size=6g,uid=65532,gid=65532,mode=0700,nosuid,nodev,exec", commands[0])
+                    self.assertIn("o=size=64m,uid=65532,gid=65532,mode=0700,nosuid,nodev,noexec", commands[1])
+                    holder = commands[2]
+                    for flag in ("--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges"):
+                        self.assertIn(flag, holder)
+                    self.assertEqual(holder[-4:], ["--entrypoint", "/bin/sleep", "fixture", "infinity"])
+                    self.assertNotIn("/workspace", " ".join(holder))
+
+    def test_backport_cache_disabled_has_no_docker_operations(self):
+        runner = mock.Mock()
+        with mock.patch.dict(os.environ, {"MAINTENANCE_BACKPORT_CACHE": ""}):
+            with sm.backport_build_cache(runner) as volume:
+                self.assertIsNone(volume)
+        runner.run.assert_not_called()
+
+    def test_backport_cache_cleanup_failure_is_fatal_without_masking_primary(self):
+        for failure in ("holder", "volumes", "exception"):
+            for primary in (False, True):
+                with self.subTest(failure=failure, primary=primary):
+                    runner = mock.Mock()
+                    def run(argv, **kwargs):
+                        cleanup = argv[1:3] in (["rm", "-f"], ["volume", "rm"])
+                        if cleanup and failure == "exception":
+                            raise sm.MaintenanceError("cleanup command failed")
+                        bad = ((failure == "holder" and argv[1:3] == ["rm", "-f"]) or
+                               (failure == "volumes" and argv[1:3] == ["volume", "rm"]))
+                        return sm.CommandResult(int(bad), "", "")
+                    runner.run.side_effect = run
+                    original = sm.MaintenanceError("primary build error")
+                    with mock.patch.dict(os.environ, {"MAINTENANCE_BACKPORT_CACHE": "1", "MAINTENANCE_BUILD_IMAGE": "fixture"}), \
+                         mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                         self.assertRaises(sm.MaintenanceError) as caught:
+                        with sm.backport_build_cache(runner):
+                            if primary:
+                                raise original
+                    if primary:
+                        self.assertIs(caught.exception, original)
+                        self.assertIn("backport cache cleanup also failed", original.__notes__)
+                    else:
+                        self.assertEqual(str(caught.exception), "backport cache cleanup failed")
+                    commands = [call.args[0] for call in runner.run.call_args_list]
+                    self.assertEqual(commands[-2][1:3], ["rm", "-f"])
+                    self.assertEqual(commands[-1][1:3], ["volume", "rm"])
+
+    def test_shared_backport_mounts_preserve_build_boundaries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"; source.mkdir(); (source / ".git").mkdir()
+            home = Path(tmp) / "cargo"; (home / "registry").mkdir(parents=True)
+            runner = mock.Mock(root=source)
+            runner.run.return_value = sm.CommandResult(0, "", "")
+            volume = "himmelblau-maint-backport-" + "a" * 32
+            with mock.patch.dict(os.environ, {"MAINTENANCE_BUILD_IMAGE": "fixture", "MAINTENANCE_PROJECT_CARGO_HOME": str(home)}), \
+                 mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+                sm.locked_build(runner, target_volume=volume)
+            argv = runner.run.call_args_list[0].args[0]
+            self.assertIn(f"type=volume,src={volume},dst=/target,volume-nocopy", argv)
+            self.assertIn(f"type=volume,src={volume}-assets,dst=/workspace/target,volume-nocopy", argv)
+            self.assertNotIn("/target:rw,nosuid,nodev,exec,size=6g", argv)
+            for flag in ("--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+                         "65532:65532", "--memory=8g", "--pids-limit=512", "CARGO_INCREMENTAL=0"):
+                self.assertIn(flag, argv)
+            self.assertIn(f"{source}:/workspace:ro", argv)
+            self.assertIn(f"{source / '.git'}:/workspace/.git:ro", argv)
+            self.assertIn(f"{home / 'registry'}:/opt/project-cargo/registry:ro", argv)
+
+    def test_backport_cache_rejects_other_commands_and_writable_networked_builds(self):
+        command = ["cargo", "build", "--workspace", "--locked", "--message-format=json"]
+        volume = "himmelblau-maint-backport-" + "a" * 32
+        for changes in ({"target_volume": "foreign-volume"}, {"network": True}, {"source_rw": True},
+                        {"cache_rw": True}, {"command": ["cargo", "test", "--workspace", "--locked"]}):
+            args = {"command": command, "network": False, "source_rw": False, "cache_rw": False, "target_volume": volume}
+            args.update(changes)
+            runner = mock.Mock()
+            with self.subTest(changes=changes), mock.patch.dict(os.environ, {"MAINTENANCE_BUILD_IMAGE": "fixture"}), \
+                 mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), self.assertRaises(sm.MaintenanceError):
+                sm.contained_repo_command(runner, **args)
+            runner.run.assert_not_called()
+
+    @unittest.skipUnless(os.environ.get("MAINTENANCE_CONTAINER_TESTS") == "1",
+                         "requires the built maintenance Docker image")
+    def test_backport_cache_reuses_artifacts_and_assets_then_final_build_is_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"; (source / "src").mkdir(parents=True); (source / ".git").mkdir()
+            (source / "dep/src").mkdir(parents=True)
+            (source / "Cargo.toml").write_text('[package]\nname="fixture"\nversion="0.1.0"\nedition="2021"\n'
+                                               '[dependencies]\ncache-dep={path="dep"}\n')
+            (source / "dep/Cargo.toml").write_text('[package]\nname="cache-dep"\nversion="0.1.0"\nedition="2021"\n')
+            (source / "dep/src/lib.rs").write_text('pub fn value() -> u32 { 1 }\n')
+            (source / "Cargo.lock").write_text('version=4\n[[package]]\nname="fixture"\nversion="0.1.0"\n'
+                                               'dependencies=["cache-dep"]\n[[package]]\nname="cache-dep"\nversion="0.1.0"\n')
+            (source / "build.rs").write_text('fn main(){std::fs::create_dir_all("target/generated").unwrap();'
+                                            'std::fs::write("target/generated/asset", "asset").unwrap();'
+                                            'println!("cargo:rerun-if-changed=build.rs");}\n')
+            main = 'fn main(){assert_eq!(cache_dep::value(),1);assert_eq!(include_str!("../target/generated/asset"),"asset");}\n'
+            (source / "src/main.rs").write_text(main)
+            home = Path(tmp) / "cargo"; (home / "registry").mkdir(parents=True)
+            runner = sm.Runner(source)
+            def dep_fresh(result):
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rows = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
+                artifacts = [row["fresh"] for row in rows if row.get("reason") == "compiler-artifact"
+                             and row.get("target", {}).get("name") == "cache_dep"]
+                self.assertEqual(len(artifacts), 1)
+                return artifacts[0]
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(home), "MAINTENANCE_BACKPORT_CACHE": "1"}):
+                with sm.backport_build_cache(runner) as volume:
+                    self.assertFalse(dep_fresh(sm.locked_build(runner, target_volume=volume)))
+                    self.assertTrue(dep_fresh(sm.locked_build(runner, target_volume=volume)))
+                    # Recompile the caller without rerunning unchanged build.rs;
+                    # its generated /workspace/target asset must still exist.
+                    (source / "src/main.rs").write_text(main + 'fn changed_caller() {}\n')
+                    self.assertTrue(dep_fresh(sm.locked_build(runner, target_volume=volume)))
+                    (source / "src/main.rs").write_text('use cache_dep::missing_helper; fn main(){}\n')
+                    self.assertNotEqual(sm.locked_build(runner, target_volume=volume).returncode, 0)
+                    (source / "src/main.rs").write_text(main)
+                    self.assertTrue(dep_fresh(sm.locked_build(runner, target_volume=volume)))
+                    # A failed build script can corrupt generated assets outside
+                    # Cargo's fingerprint tracking. Disposing the cache must
+                    # let the restored tree regenerate them in a private build.
+                    build_script = (source / "build.rs").read_text()
+                    (source / "build.rs").write_text('fn main(){std::fs::write("target/generated/asset", "poison").unwrap();'
+                                                    'panic!("failed after damaging shared assets");}\n')
+                    self.assertNotEqual(sm.locked_build(runner, target_volume=volume).returncode, 0)
+                    (source / "build.rs").write_text(build_script)
+                self.assertFalse(dep_fresh(sm.locked_build(runner)))
+                for name in (volume, volume + "-assets"):
+                    self.assertNotEqual(runner.run(["docker", "volume", "inspect", name], check=False).returncode, 0)
+
     @unittest.skipUnless(os.environ.get("MAINTENANCE_CONTAINER_TESTS") == "1",
                          "requires the built maintenance Docker image")
     def test_generated_assets_build_in_read_only_container(self):
@@ -1233,8 +1388,8 @@ sys.exit(int(sys.argv[1]))
         install_block = dockerfile.split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
         self.assertTrue(install_block.startswith("--kill-after=15s 35m /bin/bash -o pipefail -ec "))
         install_shell = shlex.split(install_block.replace("\\\n", ""))[-1]
-        self.assertIn('apt_get update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
-        self.assertIn('apt_get install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        self.assertIn('apt_acquire update update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        self.assertIn('apt_install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
         subprocess.run(["/bin/bash", "-n", "-c", install_shell], check=True)
         # Exercise the exact production function/filter with real APT transport,
         # replacing only installation's entry point with apt-helper download-file.
@@ -1408,6 +1563,157 @@ sys.exit(int(sys.argv[1]))
                 self.assertEqual((root / "sleeps").exists(), broken == "sleep" or expected == 0)
                 self.assertEqual(list((root / "temp").iterdir()), [])
 
+    def test_image_download_errors_and_install_failure_are_not_replayed(self):
+        block = DOCKERFILE.read_text().split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
+        shell = shlex.split(block.replace("\\\n", ""))[-1]
+        prefix = shell.split('echo "apt-provision: stage=update"', 1)[0]
+        probe = prefix + 'apt_install --snapshot "$UBUNTU_SNAPSHOT" --yes fixture'
+        transient = "E: Failed to fetch https://snapshot.invalid/package.deb  503 Service Unavailable"
+        for failure, broken in (("install", ""), ("hash", ""), ("signature", ""), ("404", ""),
+                                ("unknown", ""), ("transient", "tee"), ("transient", "sleep")):
+            with self.subTest(failure=failure, broken=broken), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); (root / "temp").mkdir()
+                output = {"install": transient, "hash": transient + "\nE: Hash Sum mismatch",
+                          "signature": transient + "\nE: The repository is not signed.",
+                          "404": transient.replace("503", "404"), "unknown": "E: Unknown failure",
+                          "transient": transient + "\nE: Some files failed to download"}[failure]
+                apt = root / "apt-get"
+                apt.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALL_LOG"\n'
+                    + ('case " $* " in *" --download-only "*) exit 0;; esac\n' if failure == "install" else "")
+                    + "printf '%s\\n' " + shlex.quote(output) + "\nexit 100\n")
+                apt.chmod(0o700)
+                for name, body in (("sleep", "exit 7"), ("tee", "cat; exit 9")):
+                    if name == broken:
+                        path = root / name; path.write_text("#!/bin/sh\n" + body + "\n"); path.chmod(0o700)
+                result = subprocess.run(["/bin/bash", "-o", "pipefail", "-ec", probe], capture_output=True, text=True,
+                    timeout=5, env={**os.environ, "UBUNTU_SNAPSHOT": "20260924T000000Z", "TMPDIR": str(root / "temp"),
+                                   "CALL_LOG": str(root / "calls"), "PATH": str(root) + os.pathsep + os.environ["PATH"]})
+                self.assertEqual(result.returncode, {"tee": 9, "sleep": 7}.get(broken, 100), result.stdout + result.stderr)
+                calls = (root / "calls").read_text().splitlines()
+                self.assertEqual(len(calls), 2 if failure == "install" else 1)
+                self.assertIn("install --download-only --snapshot 20260924T000000Z --yes fixture", calls[0])
+                if failure == "install":
+                    self.assertIn("install --no-download --snapshot 20260924T000000Z --yes fixture", calls[1])
+                self.assertNotIn("retry_wait_seconds", result.stdout if broken != "sleep" else "")
+                self.assertEqual(list((root / "temp").iterdir()), [])
+
+    @unittest.skipUnless(Path("/usr/bin/dpkg-deb").exists(), "native APT/dpkg unavailable")
+    def test_image_package_download_recovery_and_offline_install(self):
+        """Real APT fetches verified .debs; a recorder isolates dpkg execution."""
+        block = DOCKERFILE.read_text().split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
+        shell = shlex.split(block.replace("\\\n", ""))[-1]
+        prefix = shell.split('echo "apt-provision: stage=update"', 1)[0]
+        # On the parent, exercise the actual one-pass install that failed hosted.
+        install = ('apt_install' if 'apt_install()' in prefix else 'apt_get install')
+        probe = prefix + 'apt_update && ' + install + ' --yes --no-install-recommends maintenance-ready maintenance-later'
+        policy = shlex.split(DOCKERFILE.read_text().split("RUN printf '%s\\n'", 1)[1]
+                             .split("\n\n", 1)[0].replace("\\\n", ""))[:-2]
+        for scenario in ("recover", "persistent", "hash", "404"):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                for path in ("lists/partial", "cache/archives/partial", "bin", "temp", "system/var/lib/dpkg",
+                             "logs", "apt-state"):
+                    (root / path).mkdir(parents=True)
+                status = root / "system/var/lib/dpkg/status"; status.touch()
+                packages = {}
+                index = ""
+                for name in ("maintenance-ready", "maintenance-later"):
+                    package = root / name
+                    (package / "DEBIAN").mkdir(parents=True)
+                    (package / "DEBIAN/control").write_text(
+                        f"Package: {name}\nVersion: 1.0\nArchitecture: all\nMaintainer: Fixture <fixture@example.invalid>\nDescription: fixture\n")
+                    (package / "usr/share" / name).mkdir(parents=True)
+                    (package / "usr/share" / name / "proof").write_text("verified fixture\n")
+                    archive = root / (name + ".deb")
+                    subprocess.run(["dpkg-deb", "--build", str(package), str(archive)], check=True, capture_output=True)
+                    payload = archive.read_bytes(); packages["/" + name + ".deb"] = payload
+                    index += (package.joinpath("DEBIAN/control").read_text()
+                              + f"Filename: {name}.deb\nSize: {len(payload)}\nSHA256: {hashlib.sha256(payload).hexdigest()}\n\n")
+                index = index.encode()
+                release = ("Origin: Fixture\nSuite: stable\nCodename: stable\nArchitectures: amd64\nComponents: main\n"
+                           + "Date: " + email.utils.formatdate(usegmt=True) + "\nSHA256:\n "
+                           + hashlib.sha256(index).hexdigest() + f" {len(index)} main/binary-amd64/Packages\n").encode()
+                class Handler(http.server.BaseHTTPRequestHandler):
+                    counts = {key: 0 for key in packages}
+                    def log_message(self, *args): pass
+                    def do_GET(self):
+                        if self.path == "/dists/stable/Release": payload = release
+                        elif self.path == "/dists/stable/main/binary-amd64/Packages": payload = index
+                        elif self.path in packages:
+                            Handler.counts[self.path] += 1
+                            if self.path == "/maintenance-later.deb":
+                                if scenario == "persistent" or (scenario == "recover" and Handler.counts[self.path] <= 4):
+                                    self.send_error(503); return
+                                if scenario == "404": self.send_error(404); return
+                            payload = packages[self.path]
+                            if scenario == "hash" and self.path == "/maintenance-later.deb":
+                                payload = b"X" + payload[1:]
+                        else: self.send_error(404); return
+                        self.send_response(200); self.send_header("Content-Length", str(len(payload)))
+                        self.end_headers(); self.wfile.write(payload)
+                server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                worker = threading.Thread(target=server.serve_forever, daemon=True); worker.start()
+                sources = root / "sources.list"
+                # Only this synthetic loopback repository is unsigned.
+                sources.write_text(f"deb [trusted=yes] http://127.0.0.1:{server.server_port} stable main\n")
+                # Host dpkg config can contain invoke hooks (e.g. needrestart)
+                # that ignore --root. Record install operations instead of ever
+                # executing those hooks; only version/architecture queries are real.
+                dpkg = root / "bin/dpkg-recorder"
+                dpkg.write_text('#!/bin/sh\ncase "$1" in\n'
+                    '  --version|--print-architecture|--print-foreign-architectures|--assert-*) exec /usr/bin/dpkg "$@";;\n'
+                    'esac\nprintf "%s\\n" "$*" >> "$DPKG_CALL_LOG"\n')
+                dpkg.chmod(0o700)
+                config = root / "apt.conf"
+                config.write_text("\n".join(policy) + "\n" +
+                    f'Dir::Etc::sourcelist "{sources}";\nDir::Etc::sourceparts "-";\nDir::Etc::parts "-";\nDir::Etc::main "-";\n'
+                    f'Dir::State "{root / "apt-state"}";\n'
+                    f'Dir::State::extended_states "{root / "apt-state/extended_states"}";\n'
+                    f'Dir::State::lists "{root / "lists"}";\nDir::State::status "{status}";\n'
+                    f'Dir::Cache "{root / "cache"}";\nDir::Log "{root / "logs"}";\n'
+                    f'Dir::Bin::dpkg "{dpkg}";\n'
+                    'Acquire::Languages "none";\nAPT::Sandbox::User "'
+                    + __import__("pwd").getpwuid(os.geteuid()).pw_name + '";\n')
+                sleeper = root / "bin/sleep"
+                sleeper.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$SLEEP_LOG"\n'); sleeper.chmod(0o700)
+                try:
+                    # Fail before running APT if a future fixture edit reintroduces
+                    # host state or an actual dpkg install, even in root test runs.
+                    resolved = subprocess.run(["apt-config", "shell", "state", "Dir::State::extended_states/f",
+                        "dpkg", "Dir::Bin::dpkg/f"], check=True, capture_output=True, text=True,
+                        env={**os.environ, "APT_CONFIG": str(config)}).stdout
+                    self.assertEqual(shlex.split(resolved), [f"state={root / 'apt-state/extended_states'}", f"dpkg={dpkg}"])
+                    result = subprocess.run(["/bin/bash", "-o", "pipefail", "-ec", probe], capture_output=True, text=True,
+                        timeout=65, env={**os.environ, "APT_CONFIG": str(config), "UBUNTU_SNAPSHOT": "20260924T000000Z",
+                            "TMPDIR": str(root / "temp"), "SLEEP_LOG": str(root / "sleeps"),
+                            "DPKG_CALL_LOG": str(root / "dpkg-calls"),
+                            "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"]})
+                finally:
+                    server.shutdown(); server.server_close(); worker.join(timeout=2)
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 0 if scenario == "recover" else 100, output)
+                self.assertEqual(Handler.counts["/maintenance-ready.deb"], 1, output)
+                self.assertEqual(Handler.counts["/maintenance-later.deb"],
+                                 {"recover": 5, "persistent": 16, "hash": 1, "404": 1}[scenario], output)
+                waits = (root / "sleeps").read_text().splitlines() if (root / "sleeps").exists() else []
+                self.assertEqual(waits, {"recover": ["60"], "persistent": ["60", "120", "240"]}.get(scenario, []))
+                self.assertEqual(list((root / "temp").iterdir()), [])
+                calls = (root / "dpkg-calls").read_text().splitlines() if (root / "dpkg-calls").exists() else []
+                self.assertEqual(status.read_bytes(), b"")
+                if scenario == "recover":
+                    self.assertIn("apt-provision: stage=download retry_wait_seconds=60", output)
+                    self.assertEqual(output.count("apt-provision: stage=install"), 1)
+                    self.assertEqual(len(calls), 2, calls)
+                    self.assertEqual(sum("--unpack" in call for call in calls), 1, calls)
+                    self.assertEqual(sum("--configure" in call for call in calls), 1, calls)
+                    for name in ("maintenance-ready", "maintenance-later"):
+                        cached = root / "cache/archives" / (name + "_1.0_all.deb")
+                        self.assertEqual(cached.read_bytes(), packages["/" + name + ".deb"])
+                else:
+                    self.assertNotIn("apt-provision: stage=install", output)
+                    self.assertEqual(calls, [])
+                self.assertNotIn("Config-Item:", output)
+
     def test_checkout_regular_file_accepts_regular_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "source"; root.mkdir()
@@ -1499,6 +1805,40 @@ sys.exit(int(sys.argv[1]))
                 runner, Path(tmp), "owner/repo", sm.AUTOMATION_PREFIX + "stable-4.x-1", token,
             )
             self.assertFalse(any(Path(tmp).iterdir()))
+
+    def test_secure_push_failure_diagnostics_are_bounded_and_do_not_retry(self):
+        canary = "SECRET https://token@example.test/private ::error::injected"
+        for message, hints in (
+            ("fatal: Authentication failed", ["authentication"]),
+            ("remote: Permission denied", ["authorization"]),
+            ("[remote rejected] repository rule violations", ["remote-policy"]),
+            ("fatal: RPC failed; connection reset", ["transport"]),
+            ("unrecognized failure", []),
+        ):
+            for capture in ("complete", "timeout", "output-limit"):
+                with self.subTest(message=message, capture=capture), tempfile.TemporaryDirectory() as tmp:
+                    result = sm.CommandResult(128, canary, message + " " + canary)
+                    failure = sm.CommandCaptureError("capture failed", capture, result)
+                    runner = mock.Mock()
+                    if capture == "complete": runner.run.return_value = result
+                    else: runner.run.side_effect = failure
+                    output = io.StringIO()
+                    with mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError) as raised:
+                        sm.secure_github_push(runner, Path(tmp), "owner/repo", sm.AUTOMATION_PREFIX + "test", canary)
+                    runner.run.assert_called_once()
+                    self.assertFalse(runner.run.call_args.kwargs["check"])
+                    if capture != "complete": self.assertIs(raised.exception, failure)
+                    else: self.assertEqual(str(raised.exception), "command failed (128): git")
+                    record = json.loads(output.getvalue().removeprefix("git-diagnostics: "))
+                    self.assertEqual(record["operation"], "push")
+                    self.assertEqual(record["capture"], capture)
+                    self.assertEqual(record["exit"], 128)
+                    self.assertEqual(record["hints"], hints)
+                    self.assertEqual(record["stderr_bytes"], len(result.stderr.encode()))
+                    self.assertNotIn(canary, output.getvalue())
+                    self.assertNotIn("::error::", output.getvalue())
+                    self.assertLess(len(output.getvalue()), 300)
+                    self.assertFalse(any(Path(tmp).iterdir()))
 
     def test_pr_body_has_global_utf8_budget_and_reserved_marker(self):
         value = {
@@ -2080,6 +2420,41 @@ class CargoVetTests(unittest.TestCase):
             for name in ("config.toml", "imports.lock"):
                 self.assertEqual((root / "supply-chain" / name).read_text(), originals[name])
             self.assertTrue(all(not store.exists() for store in stores))
+
+    def test_existing_audits_reformat_publisher_comments_without_new_certifications(self):
+        for outcome in ("success", "mutation", "failure"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                (root / "supply-chain").mkdir(parents=True)
+                baseline = ('[[trusted.example]]\ncriteria = "safe-to-deploy"\n'
+                            'user-id = 10\nstart = "2019-01-01"\nend = "2026-09-11"\n')
+                for name, text in (("audits.toml", baseline), ("config.toml", "# policy\n"),
+                                   ("imports.lock", "# refreshed publishers\n")):
+                    (root / "supply-chain" / name).write_text(text)
+                def fmt(_runner, command, **kwargs):
+                    self.assertEqual(command, ["cargo", "vet", "fmt"])
+                    self.assertFalse(kwargs["network"])
+                    self.assertFalse(kwargs["source_rw"])
+                    self.assertFalse(kwargs["cache_rw"])
+                    pending = kwargs["vet_store"] / "audits.toml"
+                    text = pending.read_text().replace("user-id = 10", "user-id = 10 # Publisher (login)")
+                    if outcome == "mutation":
+                        text = text.replace("safe-to-deploy", "safe-to-run")
+                    pending.write_text(text)
+                    if outcome == "failure":
+                        raise sm.MaintenanceError("formatter failed")
+                    return sm.CommandResult(0, "", "")
+                with mock.patch.object(sm, "contained_repo_command", side_effect=fmt):
+                    if outcome == "success":
+                        sm.append_reviewed_audits(mock.Mock(root=root), Path(tmp), [], format_existing=True)
+                    else:
+                        with self.assertRaises(sm.MaintenanceError):
+                            sm.append_reviewed_audits(mock.Mock(root=root), Path(tmp), [], format_existing=True)
+                actual = (root / "supply-chain/audits.toml").read_text()
+                self.assertEqual(actual, baseline.replace("user-id = 10", "user-id = 10 # Publisher (login)")
+                                 if outcome == "success" else baseline)
+                self.assertEqual((root / "supply-chain/config.toml").read_text(), "# policy\n")
+                self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# refreshed publishers\n")
 
     def test_audit_formatter_cannot_publish_partial_or_changed_certifications(self):
         for outcome in ("removed", "added", "duplicate", "criteria", "who", "notes", "policy", "malformed", "symlink", "error", "timeout"):
@@ -2836,10 +3211,45 @@ class MutationBoundaryTests(unittest.TestCase):
                 raise AssertionError(argv)
             runner.git.side_effect = git
             clean_vet = sm.CommandResult(0, VET_SUCCESS, "")
-            with mock.patch.object(sm, "contained_repo_command", return_value=clean_vet), self.assertRaisesRegex(
+            with mock.patch.object(sm, "append_reviewed_audits"), mock.patch.object(sm, "contained_repo_command", return_value=clean_vet), self.assertRaisesRegex(
                 sm.MaintenanceError, "unexpected files changed",
             ):
                 sm.phase_vet_dependencies(mock.Mock(), state, runner)
+
+    def test_refresh_formats_restored_audits_before_locked_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            audits = '[[trusted.example]]\nuser-id = 10\ncriteria = "safe-to-deploy"\n'
+            for name, text in (("audits.toml", audits), ("config.toml", "# policy\n"),
+                               ("imports.lock", "# old publishers\n")):
+                (root / "supply-chain" / name).write_text(text)
+            runner = sm.Runner(root)
+            runner.git(["init"])
+            runner.git(["config", "user.name", "Maintenance test"])
+            runner.git(["config", "user.email", "maintenance-test@example.invalid"])
+            runner.git(["add", "."])
+            runner.git(["commit", "-m", "baseline"])
+            state = sm.State(Path(tmp) / "state")
+            def contained(_runner, command, **kwargs):
+                if command == ["cargo", "vet", "regenerate", "imports"]:
+                    (root / "supply-chain/imports.lock").write_text("# new publishers\n")
+                    (root / "supply-chain/audits.toml").write_text("# pruned\n")
+                elif command == ["cargo", "vet", "fmt"]:
+                    pending = kwargs["vet_store"] / "audits.toml"
+                    self.assertEqual(pending.read_text(), audits)
+                    pending.write_text(audits.replace("user-id = 10", "user-id = 10 # Publisher (login)"))
+                else:
+                    self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
+                    self.assertIn("# Publisher (login)", (kwargs["vet_store"] / "audits.toml").read_text())
+                return sm.CommandResult(0, VET_SUCCESS, "")
+            with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                 mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}):
+                sm.phase_refresh_vet_imports(mock.Mock(), state, runner)
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+            self.assertEqual(set(runner.git(["diff", "--name-only", "HEAD^", "HEAD"]).stdout.splitlines()),
+                             {"supply-chain/imports.lock", "supply-chain/audits.toml"})
+            self.assertEqual((root / "supply-chain/config.toml").read_text(), "# policy\n")
 
     def test_refresh_commits_only_the_import_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2852,16 +3262,16 @@ class MutationBoundaryTests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["diff", "--name-only"]:
                     return sm.CommandResult(0, "supply-chain/imports.lock\n", "")
-                if argv in (["add", "--", "supply-chain/imports.lock"], ["commit", "-m", "chore: refresh cargo vet metadata"]):
+                if argv in (["add", "--", "supply-chain/imports.lock", "supply-chain/audits.toml"], ["commit", "-m", "chore: refresh cargo vet metadata"]):
                     return sm.CommandResult(0, "", "")
                 if argv == ["restore", "--source=HEAD", "--worktree", "--", "supply-chain/config.toml", "supply-chain/audits.toml"]:
                     return sm.CommandResult(0, "", "")
                 raise AssertionError(argv)
             runner.git.side_effect = git
-            with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
+            with mock.patch.object(sm, "append_reviewed_audits"), mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
                  mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}):
                 sm.phase_refresh_vet_imports(mock.Mock(), state, runner)
-            runner.git.assert_any_call(["add", "--", "supply-chain/imports.lock"])
+            runner.git.assert_any_call(["add", "--", "supply-chain/imports.lock", "supply-chain/audits.toml"])
             runner.git.assert_any_call(["commit", "-m", "chore: refresh cargo vet metadata"])
 
     def test_refresh_rejects_unexpected_output(self):
@@ -2871,7 +3281,7 @@ class MutationBoundaryTests(unittest.TestCase):
             sm.CommandResult(0, "", ""),
             sm.CommandResult(0, "Cargo.toml\n", ""),
         ]
-        with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
+        with mock.patch.object(sm, "append_reviewed_audits"), mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
              self.assertRaisesRegex(sm.MaintenanceError, "unexpected path"):
             sm.phase_refresh_vet_imports(mock.Mock(), mock.Mock(), runner)
 
@@ -2923,7 +3333,7 @@ class MutationBoundaryTests(unittest.TestCase):
                             raise sm.MaintenanceError("command timed out")
                     return sm.CommandResult(0, VET_SUCCESS, "")
 
-                with mock.patch.object(sm, "contained_repo_command", side_effect=contained) as command, \
+                with mock.patch.object(sm, "append_reviewed_audits"), mock.patch.object(sm, "contained_repo_command", side_effect=contained) as command, \
                      mock.patch.object(sm, "cargo_metadata", return_value={"packages": [
                          {"name": name, "version": "1.0.0", "id": name,
                           "source": "registry+https://github.com/rust-lang/crates.io-index"}
@@ -4383,8 +4793,14 @@ class MaintenanceHistoryTests(unittest.TestCase):
                 state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": later,
                             "backport_candidates": [earlier, broken, later]})
                 snapshots = []
-                def build(current):
+                volume = "himmelblau-maint-backport-" + "a" * 32
+                def build(current, **kwargs):
                     self.assertIs(current, runner)
+                    if len(snapshots) < 3:
+                        self.assertEqual(kwargs, {"target_volume": volume})
+                    else:
+                        self.assertEqual(kwargs, {})
+                        cache.return_value.__exit__.assert_called_once()
                     head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
                     snapshots.append(head)
                     bad_import = "resolve_hsm_type" in (root / "cli.py").read_text()
@@ -4396,11 +4812,14 @@ class MaintenanceHistoryTests(unittest.TestCase):
                     # Cargo/container execution is tested separately.
                     return runner.run([sys.executable, "-B", "-c", "import cli"], check=False)
                 output = io.StringIO()
-                with mock.patch.object(sm, "locked_build", side_effect=build), \
+                with mock.patch.object(sm, "backport_build_cache") as cache, \
+                     mock.patch.object(sm, "locked_build", side_effect=build), \
                      mock.patch.object(sm.sys, "stderr", output):
+                    cache.return_value.__enter__.return_value = volume
                     sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                cache.return_value.__exit__.assert_called_once()
                 value = state.load()
-                self.assertEqual(len(snapshots), 4)  # Baseline, good, bad, later.
+                self.assertEqual(len(snapshots), 5 if failure == "missing-import" else 4)
                 self.assertEqual(value["backports_applied"], [earlier, later])
                 self.assertEqual(value["backports_conflict_skipped"], [])
                 self.assertEqual(value["backports_deferred"], [broken])
@@ -4417,6 +4836,56 @@ class MaintenanceHistoryTests(unittest.TestCase):
                 self.assertEqual(sm.maintenance_main_through(value), baseline)
                 self.assertIn("Backports reverted after build failure: 1", sm.build_pr_body(value))
                 self.assertIn("Backports Build Failed", "\n".join(sm.sanitized_state_details(value)))
+
+    def test_cache_capacity_failure_retries_once_privately_and_continues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            (runner.root / "fix.txt").write_text("candidate\n")
+            candidate = self.commit(runner, "Candidate")
+            (runner.root / "later.txt").write_text("later\n")
+            later = self.commit(runner, "Later independent fix")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [candidate, later]})
+            calls = []
+            volume = "himmelblau-maint-backport-" + "b" * 32
+            def build(current, **kwargs):
+                calls.append(kwargs)
+                if len(calls) > 2:
+                    cache.return_value.__exit__.assert_called_once()
+                # Simulate a full shared target/asset volume, then a fresh build.
+                return sm.CommandResult(101 if len(calls) == 2 else 0, "", "No space left on device")
+            with mock.patch.object(sm, "backport_build_cache") as cache, \
+                 mock.patch.object(sm, "locked_build", side_effect=build):
+                cache.return_value.__enter__.return_value = volume
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(calls, [{"target_volume": volume}, {"target_volume": volume}, {}, {}])
+            self.assertEqual(state.load()["backports_applied"], [candidate, later])
+            self.assertEqual(state.load()["backports_build_failed"], [])
+            self.assertTrue((runner.root / "fix.txt").exists())
+            self.assertTrue((runner.root / "later.txt").exists())
+
+    def test_cache_disposal_failure_restores_candidate_before_aborting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            (runner.root / "fix.txt").write_text("candidate\n")
+            candidate = self.commit(runner, "Candidate")
+            runner.git(["checkout", "stable-4.x"])
+            before = runner.git(["rev-parse", "HEAD"]).stdout
+            state = sm.State(Path(tmp) / "state")
+            original = {"branch": "stable-4.x", "backport_candidates": [candidate]}
+            state.save(original)
+            with mock.patch.object(sm, "backport_build_cache") as cache, \
+                 mock.patch.object(sm, "locked_build", side_effect=[sm.CommandResult(0, "", ""),
+                                                                    sm.CommandResult(101, "", "")]) as build, \
+                 self.assertRaisesRegex(sm.MaintenanceError, "cleanup failed"):
+                cache.return_value.__enter__.return_value = "himmelblau-maint-backport-" + "c" * 32
+                cache.return_value.__exit__.side_effect = sm.MaintenanceError("backport cache cleanup failed")
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(build.call_count, 2)
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, before)
+            self.assertFalse((runner.root / "fix.txt").exists())
+            self.assertEqual(state.load(), original)
 
     def test_backport_baseline_failure_does_not_mutate_checkout(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4664,6 +5133,44 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.sha }}", stage)
         self.assertNotIn("ref: ${{ inputs.checkpoint-ref }}", stage)
 
+    def test_checkpoint_reports_the_failed_local_git_operation_without_publishing(self):
+        operations = {"status": "status", "branch": "branch", "rev-parse": "head",
+                      "merge-base": "ancestry", "mktree": "empty-tree", "commit-tree": "transport-commit"}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            runner.git(["checkout", "stable-4.x"])
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state = sm.State(root / "state")
+            state.save({"branch": "stable-4.x", "main_head": head, "original_head": head,
+                        "last_phase": "import-dependabot"})
+            env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "MAINTENANCE_TOOLING_COMMIT": head}
+            original = runner.git
+            for command, operation in operations.items():
+                for capture in ("complete", "timeout", "output-limit"):
+                    with self.subTest(command=command, capture=capture):
+                        result = sm.CommandResult(128, "SECRET", "fatal: bad object SECRET ::error::injected")
+                        failure = sm.CommandCaptureError("capture failed", capture, result)
+                        def git(argv, **kwargs):
+                            if argv[0] == command:
+                                if capture != "complete": raise failure
+                                return result
+                            return original(argv, **kwargs)
+                        output = io.StringIO()
+                        with mock.patch.dict(os.environ, env), mock.patch.object(runner, "git", side_effect=git), \
+                             mock.patch.object(sm, "secure_github_push") as push, \
+                             mock.patch.object(sm.sys, "stderr", output), self.assertRaises(sm.MaintenanceError) as raised:
+                            sm.phase_checkpoint(mock.Mock(branch="stable-4.x", stage="vet"), state, runner)
+                        if capture != "complete": self.assertIs(raised.exception, failure)
+                        record = json.loads(output.getvalue().removeprefix("git-diagnostics: "))
+                        self.assertEqual(record["operation"], operation)
+                        self.assertEqual(record["capture"], capture)
+                        self.assertEqual(record["hints"], ["object"])
+                        self.assertNotIn("SECRET", output.getvalue())
+                        self.assertNotIn("::error::", output.getvalue())
+                        push.assert_not_called()
+                        self.assertFalse((state.directory / "checkpoint.json").exists())
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), head)
+
     def test_checkpoint_round_trip_exact_commit_and_data_only_state(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}):
             root = Path(tmp); runner = self.repository(root / "repo")
@@ -4874,7 +5381,8 @@ with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=la
                         raise sm.BackportBatchExpired()
                     return {"decision": True, "reason": "bug-fix"}
                 ai.call.side_effect = review
-                def build(current):
+                def build(current, **kwargs):
+                    self.assertEqual(kwargs, {"target_volume": volume})
                     if (current.root / "next.rs").exists() and expired_at == "build":
                         raise sm.BackportBatchExpired()
                     return sm.CommandResult(0, "", "")
@@ -4884,10 +5392,15 @@ with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=la
                 def packaging(current, pre):
                     if (current.root / "next.rs").exists() and expired_at == "packaging":
                         raise sm.BackportBatchExpired()
-                with mock.patch.object(sm, "AzureAI", return_value=ai), mock.patch.object(sm, "locked_build", side_effect=build), \
+                volume = "himmelblau-maint-backport-" + "e" * 32
+                with mock.patch.object(sm, "backport_build_cache") as cache, \
+                     mock.patch.object(sm, "AzureAI", return_value=ai), mock.patch.object(sm, "locked_build", side_effect=build), \
                      mock.patch.object(sm, "check_backport_packaging", side_effect=packaging), \
                      mock.patch.object(sm, "format_backport", side_effect=fmt), mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                    cache.return_value.__enter__.return_value = volume
                     sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                cache.assert_called_once_with(runner)
+                cache.return_value.__exit__.assert_called_once()
                 saved = state.load()
                 self.assertEqual(saved["backports_applied"], [first])
                 self.assertEqual(saved["backport_cursor"], 2)
@@ -4906,6 +5419,50 @@ with mock.patch.object(sm, "time", mock.Mock(monotonic=lambda: clock[0], time=la
                 self.assertEqual(state.load()["backports_deferred"], [second])
                 self.assertEqual(sm.maintenance_main_through(state.load()), base)
                 self.assertEqual(builds.call_count, 2)  # Fresh baseline plus new attempt.
+
+    def test_staged_batch_shares_cache_and_disables_reuse_after_failed_build(self):
+        for fail_first in (False, True):
+            with self.subTest(fail_first=fail_first), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                (runner.root / "first.rs").write_text("fn first() {}\n")
+                first = self.commit(runner, "Fix first")
+                (runner.root / "second.rs").write_text("fn second() {}\n")
+                second = self.commit(runner, "Fix second")
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": base, "main_head": second})
+                volume = "himmelblau-maint-backport-" + "d" * 32
+                calls = []
+                def build(current, **kwargs):
+                    calls.append(kwargs.copy())
+                    if fail_first and len(calls) > 2:
+                        cache.return_value.__exit__.assert_called_once()
+                    return sm.CommandResult(101 if fail_first and len(calls) == 2 else 0, "", "")
+                ai = mock.Mock(call=mock.Mock(return_value={"decision": True, "reason": "bug-fix"}))
+                with mock.patch.object(sm, "backport_build_cache") as cache, \
+                     mock.patch.object(sm, "AzureAI", return_value=ai), \
+                     mock.patch.object(sm, "locked_build", side_effect=build), \
+                     mock.patch.object(sm, "format_backport"), \
+                     mock.patch.object(sm, "check_backport_packaging"), \
+                     mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                    cache.return_value.__enter__.return_value = volume
+                    sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                cache.assert_called_once_with(runner)
+                cache.return_value.__exit__.assert_called_once()
+                expected = [{"target_volume": volume}] * 2
+                expected += [{}, {}] if fail_first else [{"target_volume": volume}]
+                self.assertEqual(calls, expected)
+                self.assertEqual(state.load()["backports_applied"], [first, second])
+                self.assertEqual(state.load()["backport_remaining"], [])
+
+    def test_staged_workflow_enables_cache_only_for_backports(self):
+        workflow = STAGE_WORKFLOW.read_text()
+        self.assertEqual(workflow.count("MAINTENANCE_BACKPORT_CACHE:"), 1)
+        backports = workflow.split("      - name: Backports —", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("MAINTENANCE_BACKPORT_CACHE: '1'", backports)
+        self.assertIn("startsWith(inputs.stage, 'backports-')", backports)
+        self.assertIn("BranchAndCliTests.test_backport_cache_reuses_artifacts_and_assets_then_final_build_is_clean", workflow)
 
     def test_batch_budget_prevents_long_sleep_and_restores_global_deadline(self):
         with mock.patch.object(sm, "BACKPORT_BATCH_DEADLINE", 10), mock.patch.object(sm.time, "monotonic", return_value=5), \

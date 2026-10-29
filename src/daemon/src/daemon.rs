@@ -41,9 +41,9 @@ use himmelblau_unix_common::constants::{
     DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, INTUNE_POLICY_TASK_TIMEOUT_SECS,
 };
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
-use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::{Id, IdProvider};
-use himmelblau_unix_common::resolver::{AuthSession, Resolver};
+use himmelblau_unix_common::idprovider::IdProviderProxy;
+use himmelblau_unix_common::resolver::{AuthSession, OnExpiry, Resolver};
 use himmelblau_unix_common::unix_config::UidAttr;
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{
@@ -311,7 +311,7 @@ fn peer_may_change_hello_pin(peer_uid: u32, target_uid: Option<u32>) -> bool {
 }
 
 async fn is_account_sudoer(
-    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cachelayer: &Resolver<IdProviderProxy>,
     cfg: &HimmelblauConfig,
     account_id: &str,
 ) -> bool {
@@ -355,7 +355,7 @@ async fn submit_local_groups_task(
 }
 
 async fn reconcile_local_groups_once(
-    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cachelayer: &Resolver<IdProviderProxy>,
     task_channel_tx: &Sender<AsyncTaskRequest>,
     cfg: &HimmelblauConfig,
 ) {
@@ -425,7 +425,7 @@ async fn reconcile_local_groups_once(
 }
 
 async fn reconcile_local_groups_periodically(
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     task_channel_tx: Arc<Sender<AsyncTaskRequest>>,
     cfg: HimmelblauConfig,
     mut shutdown_rx: broadcast::Receiver<bool>,
@@ -455,7 +455,7 @@ async fn reconcile_local_groups_periodically(
 
 async fn handle_client(
     sock: UnixStream,
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     task_channel_tx: &Sender<AsyncTaskRequest>,
     intune_policy_throttle: IntunePolicyThrottle,
     cfg: HimmelblauConfig,
@@ -492,7 +492,7 @@ async fn handle_client(
             ClientRequest::NssAccountByUid(gid) => {
                 trace!("nssaccountbyuid req");
                 cachelayer
-                    .get_nssaccount_gid(gid)
+                    .get_nssaccount_gid(gid, OnExpiry::RefreshInBackground)
                     .await
                     .map(ClientResponse::NssAccount)
                     .unwrap_or_else(|_| {
@@ -504,7 +504,7 @@ async fn handle_client(
                 let account_id = account_id.to_lowercase();
                 trace!("nssaccountbyname req");
                 cachelayer
-                    .get_nssaccount_name(account_id.as_str())
+                    .get_nssaccount_name(account_id.as_str(), OnExpiry::RefreshInBackground)
                     .await
                     .map(ClientResponse::NssAccount)
                     .unwrap_or_else(|_| {
@@ -549,7 +549,7 @@ async fn handle_client(
                 let account_id = account_id.to_lowercase();
                 trace!("nssinitgroups req");
                 cachelayer
-                    .get_initgroups(account_id.as_str())
+                    .get_initgroups(account_id.as_str(), OnExpiry::RefreshIfReachable)
                     .await
                     .map(ClientResponse::NssInitgroups)
                     .unwrap_or_else(|_| {
@@ -707,11 +707,22 @@ async fn handle_client(
                                                                 ))
                                                                 .await
                                                         {
+                                                            let authority_host = match HimmelblauConfig::new(Some(&cfg.get_config_file())) {
+                                                                Ok(current) => current.get_authority_host_for_account(&account_id),
+                                                                Err(err) => {
+                                                                    error!("Failed to reload authority configuration: {}", err);
+                                                                    None
+                                                                }
+                                                            };
                                                             let (tx, rx) = oneshot::channel();
                                                             match task_channel_tx
                                                                 .send_timeout(
                                                                     (
-                                                                        TaskRequest::KerberosConfig(top_level_names, tenant_id),
+                                                                        TaskRequest::KerberosConfig(
+                                                                            top_level_names,
+                                                                            tenant_id,
+                                                                            authority_host,
+                                                                        ),
                                                                         tx,
                                                                     ),
                                                                     Duration::from_millis(100),
@@ -989,7 +1000,7 @@ async fn handle_client(
                         None // not consulted; root is always authorized
                     } else {
                         cachelayer
-                            .get_nssaccount_name(&account_id)
+                            .get_nssaccount_name(&account_id, OnExpiry::Refresh)
                             .await
                             .ok()
                             .flatten()
@@ -1081,7 +1092,10 @@ async fn handle_client(
                     // NOTE: this intentionally uses `get_nssaccount_gid()` even though
                     // `ucred.uid()` is a UID. In the current NSS mapping, the resolver
                     // looks up the account via `gidnumber`, which is used as the NSS uid.
-                    let account_id = match cachelayer.get_nssaccount_gid(ucred.uid()).await {
+                    let account_id = match cachelayer
+                        .get_nssaccount_gid(ucred.uid(), OnExpiry::Refresh)
+                        .await
+                    {
                         Ok(Some(nss_user)) => nss_user.name,
                         _ => {
                             error!(
@@ -1278,7 +1292,7 @@ async fn complete_intune_policy_application(
 }
 
 async fn spawn_intune_policy_application_if_due(
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     cfg: HimmelblauConfig,
     task_channel_tx: Sender<AsyncTaskRequest>,
     intune_policy_throttle: IntunePolicyThrottle,
@@ -1302,7 +1316,7 @@ async fn spawn_intune_policy_application_if_due(
 }
 
 fn spawn_profile_photo_fetch(
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     task_channel_tx: Sender<AsyncTaskRequest>,
     account_id: String,
 ) {
@@ -1355,7 +1369,7 @@ fn spawn_profile_photo_fetch(
 }
 
 fn spawn_intune_policy_application(
-    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cachelayer: Arc<Resolver<IdProviderProxy>>,
     cfg: HimmelblauConfig,
     task_channel_tx: Sender<AsyncTaskRequest>,
     intune_policy_throttle: IntunePolicyThrottle,
@@ -1398,7 +1412,7 @@ fn spawn_intune_policy_application(
 }
 
 async fn apply_intune_policy_for_account(
-    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cachelayer: &Resolver<IdProviderProxy>,
     cfg: &HimmelblauConfig,
     task_channel_tx: &Sender<AsyncTaskRequest>,
     account_id: &str,
@@ -1733,7 +1747,7 @@ fn notify_noop_reload() -> io::Result<()> {
 }
 
 async fn process_etc_passwd_group(
-    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cachelayer: &Resolver<IdProviderProxy>,
 ) -> Result<(), Box<dyn Error>> {
     let mut file = File::open("/etc/passwd").await?;
     let mut contents = vec![];
@@ -2090,7 +2104,7 @@ async fn main() -> ExitCode {
 
             // Create the identify provider connection
             let mut keystore = db.write().await;
-            let idprovider = match HimmelblauMultiProvider::new(cfg.get_config_file().as_str(), &mut keystore).await {
+            let idprovider = match IdProviderProxy::new(cfg.get_config_file().as_str(), &mut keystore).await {
                 Ok(idprovider) => idprovider,
                 Err(e) => {
                     error!("{}", e);
@@ -2192,6 +2206,7 @@ async fn main() -> ExitCode {
             let mut c_broadcast_rx = broadcast_tx.subscribe();
             let mut d_broadcast_rx = broadcast_tx.subscribe();
             let local_groups_broadcast_rx = broadcast_tx.subscribe();
+            let identity_refresh_broadcast_rx = broadcast_tx.subscribe();
 
             let local_groups_cachelayer = cachelayer.clone();
             let local_groups_task_channel_tx = task_channel_tx.clone();
@@ -2204,6 +2219,13 @@ async fn main() -> ExitCode {
                     local_groups_broadcast_rx,
                 )
                 .await;
+            });
+
+            let identity_refresh_cachelayer = cachelayer.clone();
+            let identity_refresher = tokio::spawn(async move {
+                identity_refresh_cachelayer
+                    .refresh_expired_identities(identity_refresh_broadcast_rx)
+                    .await;
             });
 
             let task_b = tokio::spawn(async move {
@@ -2323,7 +2345,7 @@ async fn main() -> ExitCode {
             let dbus_cachelayer = cachelayer.clone();
             let e_broadcast_rx = broadcast_tx.subscribe();
             let task_d = match himmelblau_broker_serve_with_listener::<Broker>(
-                Broker { cachelayer: dbus_cachelayer },
+                Broker { cachelayer: dbus_cachelayer, config_path: cfg.get_config_file() },
                 if broker_listener.is_some() { None } else { Some(broker_socket_path.as_str()) },
                 e_broadcast_rx,
                 broker_listener,
@@ -2525,6 +2547,7 @@ async fn main() -> ExitCode {
             let _ = task_a.await;
             let _ = task_b.await;
             let _ = local_groups_reconciler.await;
+            let _ = identity_refresher.await;
             let _ = task_c.await;
             let _ = task_d.await;
 

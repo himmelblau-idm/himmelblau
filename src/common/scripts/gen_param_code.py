@@ -1234,6 +1234,8 @@ def main():
                         help='Output path for generated generic sample himmelblau.conf')
     parser.add_argument('--debian-conf-example-output', type=str,
                         help='Output path for generated Debian/Ubuntu sample himmelblau.conf')
+    parser.add_argument('--with-orchestrator', action='store_true',
+                        help='Include experimental orchestrator settings in generated docs and sample configs')
     parser.add_argument('--xml-dir', type=str,
                         help='Directory containing XML parameter files')
 
@@ -1272,6 +1274,17 @@ def main():
     # Load all parameters
     print(f'Loading parameters from {xml_dir}...', file=sys.stderr)
     params, sections = load_all_parameters(str(xml_dir))
+    if not args.with_orchestrator:
+        excluded_names = {
+            'experimental_orchestrator_enabled',
+            'orchestrator_socket',
+            'orchestrator_provider',
+            'orchestrator_timeout_secs',
+            'orchestrator_poll_secs',
+        }
+        for param in params:
+            if param.name in excluded_names:
+                param.documented = False
     print(f'Loaded {len(params)} parameters', file=sys.stderr)
 
     # Generate outputs

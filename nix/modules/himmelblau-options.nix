@@ -23,6 +23,10 @@ in
         
         In most cases, this will be the primary domain of your Azure Entra ID tenant. If your organization uses multiple verified domains or aliases, choose the one that your users actually use to sign in.
         
+        Only a single Entra ID domain is supported. If several domains are listed (comma-separated, or through additional domain sections), only the first one is used and the others are ignored. If
+        **oidc_issuer_url**
+        is set, this option is ignored.
+        
         If not specified, the domain is extracted from the UPN of the first user to authenticate and looked up in Entra ID.
       '';
       example = [ "example.com" ];
@@ -38,6 +42,15 @@ in
         This option enables generic OIDC authentication support and allows Himmelblau
         to authenticate against any standards-compliant OIDC provider, rather than
         using the built-in Microsoft Entra ID defaults.
+        
+        Himmelblau prefers native Interaction Code authentication when supported by the
+        configured client. It probes issuers with Okta metadata or hostname hints,
+        issuers advertising the interaction_code grant, and issuers without a usable
+        device authorization flow. Otherwise it uses the existing OIDC device flow.
+        Selection lasts until daemon restart. Temporary outages defer selection.
+        The absence of interaction_code in discovery does not prove it is disabled.
+        Use oidc_force_interaction_code to require native authentication and
+        oidc_redirect_uri to configure its registered redirect URI.
         
         If
         **enable_hello**
@@ -62,7 +75,7 @@ in
         If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
         authentication flow.
         
-        If
+        When the standard OIDC backend is selected, if
         **allow_console_password_only**
         is enabled and the OIDC provider advertises the
         **password**
@@ -74,6 +87,37 @@ in
         grant continue to use the device flow.
       '';
       example = "https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0";
+    };
+
+    oidc_force_interaction_code = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        Require native Interaction Code (IDX) authentication for the configured OIDC
+        issuer. When true, Himmelblau never falls back to device authorization or the
+        browser orchestrator. The server must implement the compatible IDX protocol,
+        and the configured public client must permit Interaction Code.
+        
+        When false, Himmelblau probes likely compatible providers (including Okta) and
+        issuers without device authorization, then falls back quietly when native
+        authentication is unavailable. Selection is fixed until daemon restart;
+        selection during a network outage is deferred until connectivity returns.
+      '';
+    };
+
+    oidc_redirect_uri = mkOption {
+      type = types.nullOr (types.str);
+      default = "http://localhost:8765/callback";
+      description = ''
+        Redirect URI supplied to native OIDC Interaction Code requests. Register this
+        exact URI on the public OIDC application identified by app_id, or configure
+        the URI already registered there. A URI without a fragment or embedded
+        credentials is required.
+        
+        Native PAM flows do not open a callback listener. Policies requiring a browser
+        redirect or external callback must offer another supported native method;
+        otherwise authentication reports that the external step is unsupported.
+      '';
     };
 
     oidc_device_authorization_endpoint = mkOption {
@@ -363,11 +407,77 @@ in
       example = [ "ssh" "cockpit" ];
     };
 
+    canonicalize_user_services = mkOption {
+      type = types.nullOr (types.listOf types.str);
+      default = null;
+      description = ''
+        A comma-separated list of PAM service names for which the PAM module replaces
+        **PAM_USER**
+        with the canonical account name after a successful authentication. The
+        canonical account name is the name the system name service returns for the
+        authenticated account, which is also the name reported by
+        **id -un**
+        for that user.
+        
+        Users can log in with several aliases of the same account, such as the UPN,
+        the short name, or a different letter case. Some applications, such as GDM,
+        copy
+        **PAM_USER**
+        into the
+        **USER**
+        and
+        **LOGNAME**
+        environment variables of the session, which then contain the alias entered at
+        the login prompt instead of the account name.
+        
+        The PAM service name is the name passed by the application when calling
+        **pam_start()**
+        (e.g., "gdm-password", "login").
+        
+        Entries are matched as substrings, so "gdm" will match "gdm-password",
+        "gdm-autologin", etc.
+        
+        **PAM_USER**
+        is only replaced when the canonical account name resolves to the same account
+        as the name entered at the login prompt.
+        
+        Do not list services that require
+        **PAM_USER**
+        to remain unchanged during authentication. sshd aborts the connection when it
+        re-initializes PAM and
+        **PAM_USER**
+        has changed, and already sets
+        **USER**
+        and
+        **LOGNAME**
+        from the account name. polkit, whose PAM service is "polkit-1", rejects the
+        authentication when
+        **PAM_USER**
+        has changed, even to the name of the same account.
+        
+        pam_faillock records failures under the value of
+        **PAM_USER**
+        at the time it runs. When pam_faillock runs before pam_himmelblau in the
+        authentication stack, a successful login resets the failures recorded under
+        the canonical account name, not those recorded under the name entered at the
+        login prompt. When pam_himmelblau runs first, as configured by the authselect
+        profile and by aad-tool configure-pam, pam_faillock does not act on successful
+        Himmelblau logins, and this option does not change its behavior.
+        
+        By default, no service is listed and
+        **PAM_USER**
+        is never modified.
+      '';
+      example = [ "gdm-password" ];
+    };
+
     mfa_method = mkOption {
       type = types.nullOr (types.str);
       default = null;
       description = ''
-        Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. When set, Himmelblau will attempt to use this specific MFA method instead of the default method configured in the user's Entra ID profile. If not set or if the specified method is not available for the user, the default MFA method will be used.
+        Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. For Microsoft Entra ID, Himmelblau requests the named Entra method. For native Okta authentication, this option also accepts Okta remediation or method identifiers, such as challenge-authenticator, push, or otp. An exact Okta identifier takes precedence over the compatibility mappings below.
+        
+        When an Entra method has an Okta equivalent, Himmelblau maps it automatically: PhoneAppNotification and CompanionAppsNotification select Okta Verify push, while PhoneAppOTP selects an Okta verification code. If the configured value is unavailable or cannot be mapped, Himmelblau logs an error and continues with the identity provider's first policy-compliant method.
         
         Valid values include:
         
@@ -386,6 +496,12 @@ in
         - TwoWayVoiceOffice - Phone call to office
         
         - ConsolidatedTelephony - Call or text message
+        
+        - challenge-authenticator - Okta IDX authenticator challenge remediation
+        
+        - push - Okta Verify push notification
+        
+        - otp - Okta Verify verification code
       '';
       example = "TwoWayVoiceMobile";
     };
@@ -495,6 +611,11 @@ in
       type = types.nullOr (types.str);
       default = null;
       description = ''
+        When oidc_issuer_url is configured, this is the OIDC public client identifier.
+        Native Interaction Code authentication requires that grant to be enabled for
+        the authorization server and application, and oidc_redirect_uri to be registered
+        on the application. No client secret is used.
+        
         Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
         the
         **gidNumber**
@@ -638,6 +759,19 @@ in
         This setting does not affect OIDC-based authentication flows.
       '';
       example = false;
+    };
+
+    intune_auth_resource = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        A boolean option that makes Entra ID sign-in authenticate against the Microsoft Intune resource instead of the Microsoft Intune Enrollment resource.
+        This applies to the user lookup and to interactive sign-in through the password and MFA flow, which also joins the device to Entra ID when it is not joined yet. A device code sign-in started directly is not affected; when the password and MFA flow falls back to a device code, the resulting token also targets the Microsoft Intune resource.
+        Use this when Conditional Access policies treat the two resources differently, including on hosts that are not enrolled in Intune.
+        This option does not enroll the device in Intune or apply Intune policies; apply_policy controls both.
+        When apply_policy is enabled, the Microsoft Intune resource is always used and this option has no effect.
+      '';
+      example = true;
     };
 
     authority_host = mkOption {
@@ -934,71 +1068,6 @@ in
         - both -- allow both IPv4 and IPv6 (default)
       '';
       example = "ipv4-only";
-    };
-
-    experimental_orchestrator_enabled = mkOption {
-      type = types.nullOr (types.bool);
-      default = false;
-      description = ''
-        Enable the experimental optional himmelblaud-orchestrator backend for browser-driven
-        OIDC authentication flows.
-        
-        When enabled, OIDC interactive authentication can be delegated to the
-        orchestrator over a Unix socket. If the orchestrator is unavailable or returns
-        an error, Himmelblau falls back to the built-in device authorization grant
-        (DAG) flow.
-      '';
-      example = true;
-    };
-
-    orchestrator_socket = mkOption {
-      type = types.nullOr (types.str);
-      default = "/var/run/himmelblaud/orchestrator.sock";
-      description = ''
-        Unix socket path used by himmelblaud to communicate with
-        himmelblaud-orchestrator.
-        
-        This path must match the orchestrator service configuration.
-      '';
-      example = "/run/himmelblaud/orchestrator.sock";
-    };
-
-    orchestrator_provider = mkOption {
-      type = types.nullOr (types.str);
-      default = null;
-      description = ''
-        Optional explicit provider key passed to himmelblaud-orchestrator when starting
-        an OIDC browser flow.
-        
-        If unset, the orchestrator auto-detects the provider from issuer URL, domain,
-        or embedded provider match rules.
-      '';
-      example = "keycloak";
-    };
-
-    orchestrator_timeout_secs = mkOption {
-      type = types.nullOr (types.ints.unsigned);
-      default = 30;
-      description = ''
-        Timeout in seconds for a single request/response exchange with
-        himmelblaud-orchestrator.
-        
-        This timeout applies to connect, send, and receive operations on the
-        orchestrator Unix socket.
-      '';
-      example = 10;
-    };
-
-    orchestrator_poll_secs = mkOption {
-      type = types.nullOr (types.ints.unsigned);
-      default = 2;
-      description = ''
-        Polling interval in seconds used for orchestrator-driven MFA wait prompts.
-        
-        This value controls how frequently PAM should poll the orchestrator for
-        progress while waiting for external approvals (for example push MFA).
-      '';
-      example = 3;
     };
 
     enable_kerberos_cache = mkOption {

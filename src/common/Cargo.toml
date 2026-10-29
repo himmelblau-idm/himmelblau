@@ -60,7 +60,7 @@ qrcodegen = "1.8.0"
 image = { version = "=0.25.6", default-features = false, features = ["png"] }
 rqrr = { version = "0.11.0", default-features = false }
 urlencoding = { workspace = true }
-zbus = "5.14"
+zbus = "6"
 rand.workspace = true
 gettextrs.workspace = true
 

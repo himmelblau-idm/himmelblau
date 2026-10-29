@@ -348,7 +348,7 @@ src_install
 
     def test_nix_package_exports_and_relocates_desktop_assets(self):
         default_nix = (REPO / "default.nix").read_text()
-        self.assertIn('collabora = cargo_nix.workspaceMembers."himmelblau-collabora".build;', default_nix)
+        self.assertIn('collabora = "himmelblau-collabora";', default_nix)
         self.assertIn('"himmelblau-collabora" = rec {', (REPO / "Cargo.nix").read_text())
         self.assertIn(".#collabora", (REPO / ".github/workflows/nixosbuild-ci.yml").read_text())
         match = re.search(

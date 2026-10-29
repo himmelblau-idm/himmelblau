@@ -20,6 +20,26 @@ members = [
 	"fuzz",
 	"src/orchestrator",
 ]
+default-members = [
+	"src/daemon",
+	"src/cli",
+	"src/common",
+	"src/pam",
+	"src/nss",
+	"src/policies",
+	"src/idmap",
+	"src/broker",
+	"src/sshd-config",
+	"src/sso",
+	"src/sso-policies",
+	"src/qr-greeter",
+	"src/broker-client",
+	"src/selinux",
+	"src/apparmor",
+	"src/o365",
+	"src/collabora",
+	"fuzz",
+]
 resolver = "2"
 
 [patch.crates-io]
@@ -119,7 +139,7 @@ version = "5.0.0"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
-rust-version = "1.88"
+rust-version = "1.89"
 edition = "2021"
 license = "GPL-3.0-or-later"
 homepage = "https://github.com/himmelblau-idm/himmelblau"
@@ -141,7 +161,7 @@ okta = { package = "okta-auth-rs", version = "8.0.1003" }
 anyhow = "^1.0.102"
 tokio = { version = "^1.52.2", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.18", features = ["codec"] }
-zbus = "5.14"
+zbus = "6"
 async-trait = "^0.1.89"
 himmelblau_policies = { path = "src/policies" }
 os-release = "^0.1.0"

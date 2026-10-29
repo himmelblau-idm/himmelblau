@@ -39,7 +39,6 @@ use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::PRT_REFRESH_AGE;
 use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
-use crate::idprovider::oidc_router::OidcRouter;
 use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
 use crate::tpm::confidential_client_creds;
 use crate::unix_passwd::parse_etc_passwd;
@@ -52,7 +51,7 @@ use crate::{
     impl_create_decoupled_hello_key, impl_handle_hello_pin_totp_auth,
     impl_himmelblau_hello_key_helpers, impl_himmelblau_offline_auth_init,
     impl_himmelblau_offline_auth_step, impl_himmelblau_try_unseal, impl_offline_break_glass,
-    impl_provision_hello_key, impl_provision_or_create_hello_key,
+    impl_probe_online, impl_provision_hello_key, impl_provision_or_create_hello_key,
     impl_setup_hello_totp_with_storage_key, impl_unix_user_access, load_cached_prt,
     load_cached_prt_for_try_unseal, seal_prt_with_existing_hello_key,
 };
@@ -128,6 +127,79 @@ fn mfa_flow_uses_push_hint(flow: &MFAAuthContinue) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+/// Map the initial passwordless response to the next PAM request.
+fn passwordless_mfa_response(
+    flow: MFAAuthContinue,
+) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+    auth_handle_mfa_resp!(
+        flow,
+        // Check if Azure provided FIDO credentials (passwordless FIDO)
+        {
+            let fido_challenge = match flow.fido_challenge.clone() {
+                Some(fido_challenge) => fido_challenge,
+                None => return Err(IdpError::BadRequest),
+            };
+            let fido_allow_list = match flow.fido_allow_list.clone() {
+                Some(fido_allow_list) => fido_allow_list,
+                None => return Err(IdpError::BadRequest),
+            };
+            let has_physical_security_key = flow.has_physical_security_key;
+            let has_cross_device = flow.has_cross_device_passkey;
+            return Ok((
+                AuthRequest::Fido {
+                    fido_challenge,
+                    fido_allow_list,
+                    has_physical_security_key,
+                    has_cross_device,
+                },
+                AuthCredHandler::MFA {
+                    flow: Box::new(flow),
+                    password: None,
+                    extra_data: None,
+                    reauth_hello_pin: None,
+                },
+            ));
+        },
+        // Prompt, such as AccessPass
+        {
+            let msg = flow.msg.clone();
+            return Ok((
+                AuthRequest::Input {
+                    enrollment: None,
+                    msg,
+                    echo_on: false,
+                },
+                AuthCredHandler::MFA {
+                    flow: Box::new(flow),
+                    password: None,
+                    extra_data: None,
+                    reauth_hello_pin: None,
+                },
+            ));
+        },
+        {
+            let msg = flow.msg.clone();
+            let polling_interval = flow.polling_interval.unwrap_or(5000);
+            Ok((
+                AuthRequest::MFAPoll {
+                    enrollment: None,
+                    msg,
+                    // Kanidm pam expects a polling_interval in
+                    // seconds, not milliseconds.
+                    polling_interval: polling_interval / 1000,
+                    show_push_hint: mfa_flow_uses_push_hint(&flow),
+                },
+                AuthCredHandler::MFA {
+                    flow: Box::new(flow),
+                    password: None,
+                    extra_data: None,
+                    reauth_hello_pin: None,
+                },
+            ))
+        }
+    )
 }
 
 fn is_device_removed_error(error_codes: &[u32]) -> bool {
@@ -237,702 +309,6 @@ fn msal_error_to_user_message(e: &MsalError) -> String {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
-enum Providers {
-    Oidc(OidcRouter),
-    Himmelblau(HimmelblauProvider),
-}
-
-pub struct HimmelblauMultiProvider {
-    config: Arc<Mutex<HimmelblauConfig>>,
-    providers: Arc<Mutex<HashMap<String, Arc<Providers>>>>,
-}
-
-impl HimmelblauMultiProvider {
-    pub async fn new<D: KeyStoreTxn + Send>(
-        config_filename: &str,
-        keystore: &mut D,
-    ) -> Result<Self> {
-        let config = match HimmelblauConfig::new(Some(config_filename)) {
-            Ok(config) => Arc::new(Mutex::new(config)),
-            Err(e) => return Err(anyhow!("{}", e)),
-        };
-        let idmap = match Idmap::new() {
-            Ok(idmap) => Arc::new(Mutex::new(idmap)),
-            Err(e) => return Err(anyhow!("{:?}", e)),
-        };
-
-        let providers = HashMap::new();
-        let domains = config.lock().await.get_configured_domains();
-        if domains.is_empty() {
-            warn!("No domains configured in himmelblau.conf.");
-        }
-
-        let providers = HimmelblauMultiProvider {
-            config: config.clone(),
-            providers: Arc::new(Mutex::new(providers)),
-        };
-
-        let oidc_issuer_url = config.lock().await.get_oidc_issuer_url();
-        if oidc_issuer_url.is_none() {
-            for domain in domains {
-                debug!("Adding provider for domain {}", domain);
-                let (authority_host, tenant_id, graph_url, odc_provider, app_id, ip_versions) = {
-                    let cfg = config.lock().await;
-                    (
-                        cfg.get_authority_host(&domain),
-                        cfg.get_tenant_id(&domain),
-                        cfg.get_graph_url(&domain),
-                        cfg.get_odc_provider(&domain),
-                        cfg.get_app_id(&domain),
-                        cfg.get_ip_versions(),
-                    )
-                };
-                let request_timeout = config.lock().await.get_request_timeout();
-                let graph = match Graph::new(
-                    &odc_provider,
-                    &domain,
-                    Some(&authority_host),
-                    tenant_id.as_deref(),
-                    graph_url.as_deref(),
-                    Duration::from_secs(request_timeout),
-                    &ip_versions,
-                )
-                .await
-                {
-                    Ok(graph) => graph,
-                    Err(e) => {
-                        error!("Failed initializing provider: {:?}", e);
-                        continue;
-                    }
-                };
-                let app = BrokerClientApplication::new(
-                    None,
-                    app_id.as_deref(),
-                    None,
-                    None,
-                    Duration::from_secs(request_timeout),
-                    &ip_versions,
-                )
-                .map_err(|e| {
-                    error!("Failed initializing provider: {:?}", e);
-                    anyhow!("{:?}", e)
-                })?;
-                let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
-                    .map_err(|e| {
-                        error!("Failed to initialize the provider: {:?}", e);
-                        anyhow!("Failed to initialize the provider")
-                    })?;
-                {
-                    // A client write lock is required here.
-                    let mut client = provider.client.lock().await;
-                    if let Ok(transport_key) =
-                        provider.fetch_loadable_transport_key_from_keystore(keystore)
-                    {
-                        client.set_transport_key(transport_key);
-                    }
-                    if let Ok(cert_key) = provider.fetch_loadable_cert_key_from_keystore(keystore) {
-                        client.set_cert_key(cert_key);
-                    }
-                }
-                providers.providers.lock().await.insert(
-                    domain.to_string(),
-                    Arc::new(Providers::Himmelblau(provider)),
-                );
-            }
-        } else {
-            // Add the oidc provider, if present
-            let provider = OidcRouter::new(&config, "oidc", &idmap)
-                .await
-                .map_err(|e| {
-                    error!("Failed initializing OIDC provider: {:?}", e);
-                    anyhow!("{:?}", e)
-                })?;
-
-            providers
-                .providers
-                .lock()
-                .await
-                .insert("oidc".to_string(), Arc::new(Providers::Oidc(provider)));
-        }
-        if providers.providers.lock().await.is_empty() {
-            return Err(anyhow!("No provider was configured!"));
-        }
-
-        // Spawn periodic cookie clearing loop (Fixes bugs #591 and #491)
-        let providers_ref = providers.providers.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(12 * 60 * 60)).await;
-                let providers: Vec<_> = providers_ref.lock().await.values().cloned().collect();
-                for provider in providers {
-                    match provider.as_ref() {
-                        Providers::Oidc(_) => {}
-                        Providers::Himmelblau(provider) => {
-                            let app = provider.client.lock().await;
-                            app.clear_cookies();
-                        }
-                    }
-                }
-            }
-        });
-
-        Ok(providers)
-    }
-
-    async fn find_provider(&self, domain: &str) -> Result<Arc<Providers>, IdpError> {
-        if let Some(provider) = self.providers.lock().await.get(domain).cloned() {
-            return Ok(provider);
-        }
-
-        let primary_domain = {
-            let mut cfg = self.config.lock().await;
-            cfg.get_primary_domain_from_alias(domain).await
-        };
-
-        if let Some(domain) = primary_domain {
-            /* NEVER introduce a new tenant here: Advisory GHSA-q746-m2wv-qh4v */
-            if let Some(provider) = self.providers.lock().await.get(&domain).cloned() {
-                return Ok(provider);
-            }
-        }
-
-        Err(IdpError::NotFound {
-            what: format!("domain: {}", domain),
-            where_: "providers".to_string(),
-        })
-    }
-}
-
-macro_rules! idp_get_domain_for_account {
-    ($hmp:ident, $account_id:expr) => {{
-        let oidc_issuer_url = $hmp.config.lock().await.get_oidc_issuer_url();
-        if oidc_issuer_url.is_some() {
-            Ok("oidc")
-        } else {
-            match split_username($account_id) {
-                Some((_sam, domain)) => Ok(domain),
-                None => {
-                    debug!("Authentication ignored for local user");
-                    Err(IdpError::NotFound {
-                        what: "domain".to_string(),
-                        where_: format!("account_id: {}", $account_id),
-                    })
-                }
-            }
-        }
-    }};
-}
-
-#[async_trait]
-impl IdProvider for HimmelblauMultiProvider {
-    async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
-        let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
-        for provider in providers {
-            match provider.as_ref() {
-                Providers::Oidc(provider) => provider.offline_break_glass(ttl).await?,
-                Providers::Himmelblau(provider) => {
-                    provider.offline_break_glass(ttl).await?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /* TODO: Kanidm should be modified to provide the account_id to
-     * provider_authenticate, so that we can test the correct provider here.
-     * Currently we go offline if ANY provider is down, which could be
-     * incorrect. */
-    async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
-        let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
-        for provider in providers {
-            match provider.as_ref() {
-                Providers::Oidc(provider) => {
-                    if !provider.check_online(tpm, now).await {
-                        return false;
-                    }
-                }
-                Providers::Himmelblau(provider) => {
-                    if !provider.check_online(tpm, now).await {
-                        return false;
-                    }
-                }
-            }
-        }
-        true
-    }
-
-    async fn unix_user_access<D: KeyStoreTxn + Send>(
-        &self,
-        id: &Id,
-        scopes: Vec<String>,
-        old_token: Option<&UserToken>,
-        client_id: Option<String>,
-        redirect_uri: Option<String>,
-        req_cnf: Option<String>,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-    ) -> Result<UnixUserToken, IdpError> {
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
-        let domain = idp_get_domain_for_account!(self, &account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .unix_user_access(
-                        id,
-                        scopes,
-                        old_token,
-                        client_id,
-                        redirect_uri,
-                        req_cnf,
-                        keystore,
-                        tpm,
-                        machine_key,
-                    )
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .unix_user_access(
-                        id,
-                        scopes,
-                        old_token,
-                        client_id,
-                        redirect_uri,
-                        req_cnf,
-                        keystore,
-                        tpm,
-                        machine_key,
-                    )
-                    .await
-            }
-        }
-    }
-
-    async fn unix_user_tgts<D: KeyStoreTxn + Send>(
-        &self,
-        id: &Id,
-        old_token: Option<&UserToken>,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-    ) -> (
-        Option<Box<KerberosCredentials>>,
-        Option<Box<KerberosCredentials>>,
-        Option<String>,
-        Option<String>,
-    ) {
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
-        let empty = (None, None, None, None);
-        let Ok(domain) = idp_get_domain_for_account!(self, &account_id) else {
-            return empty;
-        };
-
-        let Ok(provider) = self.find_provider(domain).await else {
-            return empty;
-        };
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .unix_user_tgts(id, old_token, keystore, tpm, machine_key)
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .unix_user_tgts(id, old_token, keystore, tpm, machine_key)
-                    .await
-            }
-        }
-    }
-
-    async fn unix_user_prt_cookie<D: KeyStoreTxn + Send>(
-        &self,
-        id: &Id,
-        old_token: Option<&UserToken>,
-        sso_nonce: Option<&str>,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-    ) -> Result<String, IdpError> {
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
-        let domain = idp_get_domain_for_account!(self, &account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .unix_user_prt_cookie(id, old_token, sso_nonce, keystore, tpm, machine_key)
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .unix_user_prt_cookie(id, old_token, sso_nonce, keystore, tpm, machine_key)
-                    .await
-            }
-        }
-    }
-
-    async fn change_auth_token<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        token: &UnixUserToken,
-        new_tok: &str,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-    ) -> Result<bool, IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
-                    .await
-            }
-        }
-    }
-
-    async fn unix_user_get<D: KeyStoreTxn + Send>(
-        &self,
-        id: &Id,
-        old_token: Option<&UserToken>,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-    ) -> Result<UserTokenState, IdpError> {
-        /* AAD doesn't permit user listing (must use cache entries from auth) */
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
-        let domain = idp_get_domain_for_account!(self, &account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .unix_user_get(id, old_token, keystore, tpm, machine_key)
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .unix_user_get(id, old_token, keystore, tpm, machine_key)
-                    .await
-            }
-        }
-    }
-
-    async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        token: Option<&UserToken>,
-        service: &str,
-        no_hello_pin: bool,
-        force_reauth: bool,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-        shutdown_rx: &broadcast::Receiver<()>,
-    ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .unix_user_online_auth_init(
-                        account_id,
-                        token,
-                        service,
-                        no_hello_pin,
-                        force_reauth,
-                        keystore,
-                        tpm,
-                        machine_key,
-                        shutdown_rx,
-                    )
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .unix_user_online_auth_init(
-                        account_id,
-                        token,
-                        service,
-                        no_hello_pin,
-                        force_reauth,
-                        keystore,
-                        tpm,
-                        machine_key,
-                        shutdown_rx,
-                    )
-                    .await
-            }
-        }
-    }
-
-    async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        old_token: &UserToken,
-        service: &str,
-        no_hello_pin: bool,
-        cred_handler: &mut AuthCredHandler,
-        pam_next_req: PamAuthRequest,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-        shutdown_rx: &broadcast::Receiver<()>,
-    ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .unix_user_online_auth_step(
-                        account_id,
-                        old_token,
-                        service,
-                        no_hello_pin,
-                        cred_handler,
-                        pam_next_req,
-                        keystore,
-                        tpm,
-                        machine_key,
-                        shutdown_rx,
-                    )
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .unix_user_online_auth_step(
-                        account_id,
-                        old_token,
-                        service,
-                        no_hello_pin,
-                        cred_handler,
-                        pam_next_req,
-                        keystore,
-                        tpm,
-                        machine_key,
-                        shutdown_rx,
-                    )
-                    .await
-            }
-        }
-    }
-
-    async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        token: Option<&UserToken>,
-        service: &str,
-        no_hello_pin: bool,
-        keystore: &mut D,
-    ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .unix_user_offline_auth_init(account_id, token, service, no_hello_pin, keystore)
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .unix_user_offline_auth_init(account_id, token, service, no_hello_pin, keystore)
-                    .await
-            }
-        }
-    }
-
-    async fn unix_user_offline_auth_step<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        token: &UserToken,
-        cred_handler: &mut AuthCredHandler,
-        pam_next_req: PamAuthRequest,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-        online_at_init: bool,
-    ) -> Result<AuthResult, IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .unix_user_offline_auth_step(
-                        account_id,
-                        token,
-                        cred_handler,
-                        pam_next_req,
-                        keystore,
-                        tpm,
-                        machine_key,
-                        online_at_init,
-                    )
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .unix_user_offline_auth_step(
-                        account_id,
-                        token,
-                        cred_handler,
-                        pam_next_req,
-                        keystore,
-                        tpm,
-                        machine_key,
-                        online_at_init,
-                    )
-                    .await
-            }
-        }
-    }
-
-    async fn unix_user_try_unseal<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        cred: &str,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-        online: bool,
-    ) -> Result<bool, IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
-            Providers::Oidc(provider) => {
-                provider
-                    .unix_user_try_unseal(account_id, cred, keystore, tpm, machine_key, online)
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .unix_user_try_unseal(account_id, cred, keystore, tpm, machine_key, online)
-                    .await
-            }
-        }
-    }
-
-    async fn unix_group_get(
-        &self,
-        _id: &Id,
-        _tpm: &mut tpm::provider::BoxedDynTpm,
-    ) -> Result<GroupToken, IdpError> {
-        /* AAD doesn't permit group listing (must use cache entries from auth) */
-        debug!("Group fetching not supported for HimmelblauMultiProvider");
-        Err(IdpError::BadRequest)
-    }
-
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: Option<&str>,
-        keystore: &mut D,
-    ) -> CacheState {
-        match account_id {
-            Some(account_id) => match idp_get_domain_for_account!(self, account_id) {
-                Ok(domain) => match self.find_provider(domain).await {
-                    Ok(provider) => match provider.as_ref() {
-                        Providers::Oidc(provider) => {
-                            return provider.get_cachestate(Some(account_id), keystore).await
-                        }
-                        Providers::Himmelblau(provider) => {
-                            return provider.get_cachestate(Some(account_id), keystore).await
-                        }
-                    },
-                    Err(..) => return CacheState::Offline,
-                },
-                Err(..) => return CacheState::Offline,
-            },
-            None => {
-                let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
-                for provider in providers {
-                    match provider.as_ref() {
-                        Providers::Oidc(provider) => {
-                            match provider.get_cachestate(None, keystore).await {
-                                CacheState::Offline => return CacheState::Offline,
-                                CacheState::OfflineNextCheck(time) => {
-                                    return CacheState::OfflineNextCheck(time)
-                                }
-                                _ => continue,
-                            }
-                        }
-                        Providers::Himmelblau(provider) => {
-                            match provider.get_cachestate(None, keystore).await {
-                                CacheState::Offline => return CacheState::Offline,
-                                CacheState::OfflineNextCheck(time) => {
-                                    return CacheState::OfflineNextCheck(time)
-                                }
-                                _ => continue,
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        CacheState::Online
-    }
-
-    async fn export_broker_prts(&self) -> Result<Vec<u8>, serde_json::Error> {
-        let providers: Vec<_> = self
-            .providers
-            .lock()
-            .await
-            .iter()
-            .map(|(domain, provider)| (domain.clone(), provider.clone()))
-            .collect();
-        let mut all: HashMap<String, Vec<u8>> = HashMap::new();
-        for (domain, provider) in providers {
-            if let Providers::Himmelblau(p) = provider.as_ref() {
-                let data = p.export_broker_prts().await?;
-                all.insert(domain, data);
-            }
-        }
-        serde_json::to_vec(&all)
-    }
-
-    async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
-        let all: HashMap<String, Vec<u8>> = serde_json::from_slice(data)?;
-        let providers = self.providers.lock().await.clone();
-        for (domain, blob) in &all {
-            if let Some(provider) = providers.get(domain) {
-                let Providers::Himmelblau(p) = provider.as_ref() else {
-                    continue;
-                };
-                if let Err(e) = p.import_broker_prts(blob).await {
-                    tracing::warn!("Failed to import PRTs for domain {}: {:?}", domain, e);
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 // If the provider is offline, we need to backoff and wait a bit.
 const OFFLINE_NEXT_CHECK: Duration = Duration::from_secs(15);
 
@@ -994,6 +370,14 @@ impl HimmelblauProvider {
             init: OnceCell::new(),
             bad_pin_counter: BadPinCounter::new(),
         })
+    }
+
+    pub fn client(&self) -> &Mutex<BrokerClientApplication> {
+        &self.client
+    }
+
+    pub fn domain(&self) -> &str {
+        &self.domain
     }
 
     /// Export PRT entries for FD store persistence.
@@ -1142,8 +526,13 @@ impl IdProvider for HimmelblauProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
-        impl_check_online!(self, tpm, now)
+    async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
+        impl_check_online!(self, now)
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    async fn probe_online(&self, _account_id: Option<&str>, now: SystemTime) -> bool {
+        impl_probe_online!(self, now)
     }
 
     #[instrument(skip(
@@ -1527,9 +916,8 @@ impl IdProvider for HimmelblauProvider {
                     Some(_) => return Ok(UserTokenState::UseCached),
                     // Otherwise, see if we should fake it
                     None => {
-                        let apply_policy = self.config.lock().await.get_apply_policy();
                         let mut auth_options = vec![];
-                        if apply_policy {
+                        if self.config.lock().await.get_use_intune_auth_resource() {
                             auth_options.push(AuthOption::IntuneEnable);
                         }
                         // This existence probe can report a false positive.
@@ -1550,6 +938,21 @@ impl IdProvider for HimmelblauProvider {
                             error!(?e, "Failed checking user existence");
                             IdpError::BadRequest
                         })? {
+                            // Never synthesize a user from a numeric identifier
+                            if let Id::Gid(_) = id {
+                                debug!(?id, "Rejecting to synthesize user from numeric ID");
+                                return Err(IdpError::NotFound {
+                                    what: "account_id".to_string(),
+                                    where_: format!("account_id: {}", account_id)
+                                });
+                            } else if split_username(&account_id).is_none() {
+                                debug!(?id, "Rejecting to synthesize user from plain name");
+                                return Err(IdpError::NotFound {
+                                    what: "account_id".to_string(),
+                                    where_: format!("account_id: {}", account_id)
+                                });
+                            }
+
                             // Generate a lookup-only UserToken. Its real UUID
                             // requires a provider-backed token.
                             let id_attr_map = self.config.lock().await.get_id_attr_map();
@@ -1864,7 +1267,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    #[instrument(skip(self, account_id, _token, keystore, tpm, _machine_key, _shutdown_rx))]
+    #[instrument(skip(self, account_id, _token, keystore, _tpm, _machine_key, _shutdown_rx))]
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -1873,7 +1276,7 @@ impl IdProvider for HimmelblauProvider {
         no_hello_pin: bool,
         force_reauth: bool,
         keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
@@ -1981,8 +1384,7 @@ impl IdProvider for HimmelblauProvider {
                 if is_remote_service {
                     auth_options.push(AuthOption::RemoteSession);
                 }
-                let apply_policy = self.config.lock().await.get_apply_policy();
-                if apply_policy {
+                if self.config.lock().await.get_use_intune_auth_resource() {
                     auth_options.push(AuthOption::IntuneEnable);
                 }
 
@@ -2046,7 +1448,7 @@ impl IdProvider for HimmelblauProvider {
                         "Console password-only mode: requesting password first to check sign-in frequency",
                     );
                     // Check if the network is up before prompting for password
-                    if !self.attempt_online(tpm, SystemTime::now()).await {
+                    if !self.attempt_online(SystemTime::now()).await {
                         return Ok((
                             AuthRequest::InitDenied {
                                 msg: tr("Network outage detected."),
@@ -2070,7 +1472,7 @@ impl IdProvider for HimmelblauProvider {
                 if !auth_init.passwordless() {
                     // Check if the network is even up prior to sending a
                     // password prompt.
-                    if !self.attempt_online(tpm, SystemTime::now()).await {
+                    if !self.attempt_online(SystemTime::now()).await {
                         return Ok((
                             AuthRequest::InitDenied {
                                 msg: tr("Network outage detected."),
@@ -2110,45 +1512,7 @@ impl IdProvider for HimmelblauProvider {
                             return Err(IdpError::BadRequest);
                         }
                     );
-                    // Check if Azure provided FIDO credentials (passwordless FIDO)
-                    if let (Some(fido_challenge), Some(fido_allow_list)) =
-                        (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
-                    {
-                        let has_physical_security_key = flow.has_physical_security_key;
-                        let has_cross_device = flow.has_cross_device_passkey;
-                        return Ok((
-                            AuthRequest::Fido {
-                                fido_challenge,
-                                fido_allow_list,
-                                has_physical_security_key,
-                                has_cross_device,
-                            },
-                            AuthCredHandler::MFA {
-                                flow: Box::new(flow),
-                                password: None,
-                                extra_data: None,
-                                reauth_hello_pin: None,
-                            },
-                        ));
-                    }
-                    let msg = flow.msg.clone();
-                    let polling_interval = flow.polling_interval.unwrap_or(5000);
-                    Ok((
-                        AuthRequest::MFAPoll {
-                            enrollment: None,
-                            msg,
-                            // Kanidm pam expects a polling_interval in
-                            // seconds, not milliseconds.
-                            polling_interval: polling_interval / 1000,
-                            show_push_hint: mfa_flow_uses_push_hint(&flow),
-                        },
-                        AuthCredHandler::MFA {
-                            flow: Box::new(flow),
-                            password: None,
-                            extra_data: None,
-                            reauth_hello_pin: None,
-                        },
-                    ))
+                    passwordless_mfa_response(flow)
                 }
             } else {
                 let mut auth_options = vec![];
@@ -2192,7 +1556,7 @@ impl IdProvider for HimmelblauProvider {
         } else {
             // Check if the network is even up prior to sending a PIN prompt,
             // otherwise we duplicate the PIN prompt when the network goes down.
-            if !self.attempt_online(tpm, SystemTime::now()).await {
+            if !self.attempt_online(SystemTime::now()).await {
                 // We are offline, fail the authentication now
                 debug!("Network down encountered during online auth init");
                 return Err(IdpError::BadRequest);
@@ -2322,7 +1686,7 @@ impl IdProvider for HimmelblauProvider {
                                 enable_passwordless_qr_bluetooth,
                                 enable_passwordless,
                                 mfa_method,
-                                apply_policy,
+                                use_intune_auth_resource,
                             ) = {
                                 let cfg = self.config.lock().await;
                                 (
@@ -2333,7 +1697,7 @@ impl IdProvider for HimmelblauProvider {
                                     cfg.get_enable_passwordless_qr_bluetooth(),
                                     cfg.get_enable_passwordless(),
                                     cfg.get_mfa_method(),
-                                    cfg.get_apply_policy(),
+                                    cfg.get_use_intune_auth_resource(),
                                 )
                             };
                             let is_remote_service = service.starts_with("remote:")
@@ -2363,7 +1727,7 @@ impl IdProvider for HimmelblauProvider {
                                     "Forcing MFA for device enrollment despite console password-only mode."
                                 );
                             }
-                            if apply_policy {
+                            if use_intune_auth_resource {
                                 auth_options.push(AuthOption::IntuneEnable);
                             }
 
@@ -2577,7 +1941,7 @@ impl IdProvider for HimmelblauProvider {
                     enable_passwordless_qr_bluetooth,
                     enable_passwordless,
                     mfa_method,
-                    apply_policy,
+                    use_intune_auth_resource,
                 ) = {
                     let cfg = self.config.lock().await;
                     (
@@ -2589,7 +1953,7 @@ impl IdProvider for HimmelblauProvider {
                         cfg.get_enable_passwordless_qr_bluetooth(),
                         cfg.get_enable_passwordless(),
                         cfg.get_mfa_method(),
-                        cfg.get_apply_policy(),
+                        cfg.get_use_intune_auth_resource(),
                     )
                 };
                 let is_remote_service = service.starts_with("remote:")
@@ -2622,7 +1986,7 @@ impl IdProvider for HimmelblauProvider {
                     if is_remote_service {
                         auth_options.push(AuthOption::RemoteSession);
                     }
-                    if apply_policy {
+                    if use_intune_auth_resource {
                         auth_options.push(AuthOption::IntuneEnable);
                     }
 
@@ -3912,7 +3276,7 @@ impl IdProvider for HimmelblauProvider {
                 // MFA is required and the PRT sign-in frequency check fails, we'll
                 // need ForceMFA. If ROPC was skipped (device not enrolled), the
                 // enrollment flow may be MFA or password-only per MS policy.
-                let mfa_confirmed_required = ropc_result.is_some();
+                let mut mfa_confirmed_required = ropc_result.is_some();
 
                 match ropc_result {
                     Some(Ok(token)) => {
@@ -3966,6 +3330,19 @@ impl IdProvider for HimmelblauProvider {
                     }
                     Some(Err(MsalError::ChangePassword)) => {
                         return Ok(password_change_required(cred_handler, cred));
+                    }
+                    Some(Err(MsalError::AADSTSError(ref aadsts_err)))
+                        if [50058, 50133].contains(&aadsts_err.code) =>
+                    {
+                        // Entra won't sign in silently with this password, as when it must be changed:
+                        // AADSTS50058 (it issued the PRT, then wants an interactive sign-in) or AADSTS50133 (the
+                        // session ended with a password reset or expiry). The interactive flow below shows what it
+                        // wants (the change page, or MFA if policy asks), and checks the password again.
+                        debug!(
+                            "ROPC: interactive sign-in required (AADSTS{}), trying the interactive flow",
+                            aadsts_err.code
+                        );
+                        mfa_confirmed_required = false;
                     }
                     Some(Err(e)) => {
                         // ROPC failed - this could be a bad password or other error
@@ -4088,11 +3465,16 @@ impl IdProvider for HimmelblauProvider {
                         Err(e) => {
                             error!("Failed to change user password: {:?}", e);
                             *cred_handler = AuthCredHandler::ChangePassword { old_cred: old_cred.to_string() };
+                            // The provider's own reason (the tenant's password policy, for one), not the generic refusal.
+                            let reason = match &e {
+                                MsalError::GeneralFailure(msg) => msg.to_string(),
+                                _ => msal_error_to_user_message(&e),
+                            };
                             return Ok((
                                 AuthResult::Next(
                                     AuthRequest::ChangePassword { msg: tr_fmt(
                                         "Failed to change user password: {msg}",
-                                        &[("msg", msal_error_to_user_message(&e))],
+                                        &[("msg", reason)],
                                     )}
                                 ),
                                 AuthCacheAction::None,
@@ -4148,8 +3530,7 @@ impl IdProvider for HimmelblauProvider {
                 if sfa_enabled {
                     opts.push(AuthOption::NoDAGFallback);
                 }
-                let apply_policy = self.config.lock().await.get_apply_policy();
-                if apply_policy {
+                if self.config.lock().await.get_use_intune_auth_resource() {
                     opts.push(AuthOption::IntuneEnable);
                 }
 
@@ -4685,11 +4066,7 @@ impl IdProvider for HimmelblauProvider {
         Err(IdpError::BadRequest)
     }
 
-    async fn get_cachestate<D: KeyStoreTxn + Send>(
-        &self,
-        _account_id: Option<&str>,
-        _keystore: &mut D,
-    ) -> CacheState {
+    async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState {
         (*self.state.lock().await).clone()
     }
 }
@@ -4771,7 +4148,7 @@ impl HimmelblauProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn attempt_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
+    async fn attempt_online(&self, now: SystemTime) -> bool {
         let authority_host = self
             .graph
             .authority_host()
@@ -4801,7 +4178,7 @@ impl HimmelblauProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    fn fetch_loadable_transport_key_from_keystore<D: KeyStoreTxn + Send>(
+    pub(crate) fn fetch_loadable_transport_key_from_keystore<D: KeyStoreTxn + Send>(
         &self,
         keystore: &mut D,
     ) -> Result<Option<LoadableMsOapxbcRsaKey>, IdpError> {
@@ -4817,7 +4194,7 @@ impl HimmelblauProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    fn fetch_loadable_cert_key_from_keystore<D: KeyStoreTxn + Send>(
+    pub(crate) fn fetch_loadable_cert_key_from_keystore<D: KeyStoreTxn + Send>(
         &self,
         keystore: &mut D,
     ) -> Result<Option<LoadableMsDeviceEnrolmentKey>, IdpError> {
@@ -6002,6 +5379,100 @@ mod tests {
                 is_default: true,
             }],
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn passwordless_mfa_response_dispatches_by_default_method() {
+        for method in ["AccessPass", "FidoKey", "PhoneAppNotification"] {
+            let mut flow = mfa_flow_with_method(method);
+            flow.msg = "Enter Temporary Access Pass".to_string();
+            flow.polling_interval = Some(7000);
+            if method == "FidoKey" {
+                flow.fido_challenge = Some("challenge".to_string());
+                flow.fido_allow_list = Some(vec!["credential".to_string()]);
+                flow.has_physical_security_key = true;
+                flow.has_cross_device_passkey = true;
+            }
+            let (request, handler) = super::passwordless_mfa_response(flow).unwrap();
+            match (method, request) {
+                (
+                    "AccessPass",
+                    AuthRequest::Input {
+                        enrollment,
+                        msg,
+                        echo_on,
+                    },
+                ) => {
+                    assert!(enrollment.is_none());
+                    assert_eq!(msg, "Enter Temporary Access Pass");
+                    assert!(!echo_on);
+                }
+                (
+                    "FidoKey",
+                    AuthRequest::Fido {
+                        fido_challenge,
+                        fido_allow_list,
+                        has_physical_security_key,
+                        has_cross_device,
+                    },
+                ) => {
+                    assert_eq!(fido_challenge, "challenge");
+                    assert_eq!(fido_allow_list, vec!["credential".to_string()]);
+                    assert!(has_physical_security_key);
+                    assert!(has_cross_device);
+                }
+                (
+                    "PhoneAppNotification",
+                    AuthRequest::MFAPoll {
+                        enrollment,
+                        msg,
+                        polling_interval,
+                        show_push_hint,
+                    },
+                ) => {
+                    assert!(enrollment.is_none());
+                    assert_eq!(msg, "Enter Temporary Access Pass");
+                    assert_eq!(polling_interval, 7);
+                    assert!(show_push_hint);
+                }
+                _ => panic!("incorrect passwordless response for {method}"),
+            }
+            match handler {
+                AuthCredHandler::MFA {
+                    flow,
+                    password,
+                    extra_data,
+                    reauth_hello_pin,
+                } => {
+                    assert_eq!(
+                        flow.get_default_mfa_method_details()
+                            .unwrap()
+                            .auth_method_id,
+                        method
+                    );
+                    assert!(password.is_none());
+                    assert!(extra_data.is_none());
+                    assert!(reauth_hello_pin.is_none());
+                }
+                _ => panic!("passwordless response must retain its MFA handler"),
+            }
+        }
+    }
+
+    #[test]
+    fn passwordless_mfa_response_rejects_incomplete_fido() {
+        for missing_challenge in [true, false] {
+            let mut flow = mfa_flow_with_method("FidoKey");
+            if missing_challenge {
+                flow.fido_allow_list = Some(vec!["credential".to_string()]);
+            } else {
+                flow.fido_challenge = Some("challenge".to_string());
+            }
+            assert!(matches!(
+                super::passwordless_mfa_response(flow),
+                Err(super::IdpError::BadRequest)
+            ));
         }
     }
 

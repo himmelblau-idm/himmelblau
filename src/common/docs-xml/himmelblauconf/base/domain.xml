@@ -13,14 +13,19 @@ match the domain name that users enter when signing in (for example, the domain 
 
 In most cases, this will be the primary domain of your Azure Entra ID tenant. If your organization uses multiple verified domains or aliases, choose the one that your users actually use to sign in.
 
+Only a single Entra ID domain is supported. If several domains are listed (comma-separated, or through additional domain sections), only the first one is used and the others are ignored. If
+.B oidc_issuer_url
+is set, this option is ignored.
+
 If not specified, the domain is extracted from the UPN of the first user to authenticate and looked up in Entra ID.
 </description>
 <conf_description>Primary Entra ID domain used for user sign-in.</conf_description>
 <default>Extracted from first user's UPN</default>
 <example>domain = example.com</example>
 <required>true</required>
-<!-- Note: 'domain' is documented as a single string but actually behaves
-     as a comma-separated list, aliased to 'domains'. This is handled by
-     get_configured_domains() which we keep as a custom handler. -->
+<!-- Note: 'domain' is documented as a single string but is parsed as a
+     comma-separated list, aliased to 'domains', of which only the first
+     entry is used. This is handled by get_configured_domains() which we keep
+     as a custom handler. -->
 <handler>get_configured_domains</handler>
 </parameter>
