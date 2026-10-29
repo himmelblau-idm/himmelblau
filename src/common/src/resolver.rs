@@ -30,6 +30,8 @@ use zeroize::Zeroizing;
 use crate::config::InitgroupsMode;
 use crate::constants::SERVER_CONFIG_PATH;
 use crate::db::{Cache, CacheTxn, Db};
+use crate::idprovider::himmelblau::is_synthetic_primary_group;
+use crate::idprovider::interface::synthetic_primary_group_gid;
 use crate::idprovider::interface::{
     AuthCacheAction,
     AuthCredHandler,
@@ -2568,6 +2570,930 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn initgroups_rejects_numeric_gid_owned_by_another_identity() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        for mode in [InitgroupsMode::Full, InitgroupsMode::Named] {
+            for provider_first in [false, true] {
+                let resolver = setup_resolver_with(0, mode, Vec::new()).await;
+                let synthetic = synthetic_primary_group(2400);
+                let provider_group = GroupToken {
+                    uuid: uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                    name: "generic-oidc-group".into(),
+                    spn: "generic-oidc-group".into(),
+                    gidnumber: synthetic.gidnumber,
+                };
+                let mut user = test_token();
+                user.groups.push(synthetic.clone());
+                if provider_first {
+                    resolver
+                        .set_cache_grouptoken(&provider_group)
+                        .await
+                        .unwrap();
+                }
+                resolver
+                    .set_cache_usertoken(&mut user, false)
+                    .await
+                    .unwrap();
+                if !provider_first {
+                    // The valid synthetic membership initially works. A later
+                    // provider arrival must invalidate it without refreshing
+                    // the already-cached user token.
+                    assert_eq!(
+                        resolver
+                            .get_initgroups(&user.spn, OnExpiry::Refresh)
+                            .await
+                            .unwrap(),
+                        Some(vec![2100, 2400])
+                    );
+                    resolver
+                        .set_cache_grouptoken(&provider_group)
+                        .await
+                        .unwrap();
+                }
+                for refresh in [false, true] {
+                    if refresh {
+                        resolver
+                            .set_cache_usertoken(&mut user, false)
+                            .await
+                            .unwrap();
+                    }
+                    assert_eq!(
+                        resolver
+                            .get_initgroups(&user.spn, OnExpiry::Refresh)
+                            .await
+                            .unwrap(),
+                        Some(vec![2100])
+                    );
+                }
+
+                // A real claim for the occupying identity still grants its
+                // GID, even alongside the rejected synthetic claim.
+                user.groups.push(provider_group.clone());
+                resolver
+                    .set_cache_usertoken(&mut user, false)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    resolver
+                        .get_initgroups(&user.spn, OnExpiry::Refresh)
+                        .await
+                        .unwrap(),
+                    Some(vec![2100, 2400])
+                );
+
+                // Neither provider claims nor synthetic-looking labels can
+                // evade the ownership check by using a different UUID.
+                let mut impostor = provider_group.clone();
+                impostor.uuid = uuid::uuid!("dddddddd-dddd-dddd-dddd-dddddddddddd");
+                impostor.name = synthetic.name.clone();
+                impostor.spn = synthetic.spn.clone();
+                user.groups = vec![test_token().groups[0].clone(), impostor];
+                resolver
+                    .set_cache_usertoken(&mut user, false)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    resolver
+                        .get_initgroups(&user.spn, OnExpiry::Refresh)
+                        .await
+                        .unwrap(),
+                    Some(vec![2100])
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn local_user_mapping_refresh_removes_obsolete_primary_membership() {
+        use crate::idprovider::himmelblau::{
+            local_user_ids_and_groups_from_passwd, synthetic_primary_group,
+        };
+        for mode in [InitgroupsMode::Full, InitgroupsMode::Named] {
+            let resolver = setup_resolver_with(0, mode, Vec::new()).await;
+            let mut user = test_token();
+            user.real_gidnumber = Some(2400);
+            user.groups.push(synthetic_primary_group(2400));
+            resolver
+                .set_cache_usertoken(&mut user, false)
+                .await
+                .unwrap();
+            assert_eq!(
+                resolver
+                    .get_initgroups(&user.spn, OnExpiry::Refresh)
+                    .await
+                    .unwrap(),
+                Some(vec![2100, 2400])
+            );
+            // This production helper runs after cached Graph fallback and before
+            // publishing a user_map identity resolved from the local passwd file.
+            let (uid, gid) = local_user_ids_and_groups_from_passwd(
+                b"local:x:1000:1001:Local:/home/local:/bin/sh\n",
+                "local",
+                user.uuid,
+                &mut user.groups,
+            )
+            .unwrap();
+            user.gidnumber = uid;
+            user.real_gidnumber = Some(gid);
+            for _ in 0..2 {
+                resolver
+                    .set_cache_usertoken(&mut user, false)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    resolver
+                        .get_initgroups(&user.spn, OnExpiry::Refresh)
+                        .await
+                        .unwrap(),
+                    Some(vec![2100])
+                );
+                assert!(resolver.get_nssgroup_gid(2400).await.unwrap().is_none());
+                assert!(resolver.get_nssgroup_gid(1001).await.unwrap().is_none());
+                let cached = resolver
+                    .get_usertoken(Id::Name(user.spn.clone()))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(cached.gidnumber, 1000);
+                assert_eq!(cached.real_gidnumber, Some(1001));
+                assert_eq!(cached.groups.len(), 1);
+                assert_eq!(cached.groups[0].gidnumber, 2100);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn obsolete_synthetic_rows_are_removed_after_last_member_moves() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+        let resolver = setup_resolver().await;
+        let mut first = test_token();
+        first.real_gidnumber = Some(2400);
+        first.groups = vec![synthetic_primary_group(2400)];
+        resolver
+            .set_cache_usertoken(&mut first, false)
+            .await
+            .expect("first old GID");
+        let mut second = first.clone();
+        second.uuid = uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        second.name = "second".into();
+        second.spn = "second@example.com".into();
+        second.gidnumber = 3000;
+        resolver
+            .set_cache_usertoken(&mut second, false)
+            .await
+            .expect("second old GID");
+        first.real_gidnumber = Some(2500);
+        first.groups = vec![synthetic_primary_group(2500)];
+        resolver
+            .set_cache_usertoken(&mut first, false)
+            .await
+            .expect("first new GID");
+        {
+            let mut txn = resolver.db.write().await;
+            assert!(txn
+                .get_groups()
+                .expect("enumerate")
+                .iter()
+                .any(|g| g.uuid == synthetic_primary_group(2400).uuid));
+            assert_eq!(
+                txn.get_group_members(synthetic_primary_group(2400).uuid)
+                    .expect("remaining member")[0]
+                    .uuid,
+                second.uuid
+            );
+        }
+        second.real_gidnumber = Some(2500);
+        second.groups = vec![synthetic_primary_group(2500)];
+        resolver
+            .set_cache_usertoken(&mut second, false)
+            .await
+            .expect("second new GID");
+        let mut txn = resolver.db.write().await;
+        assert!(!txn
+            .get_groups()
+            .expect("enumerate")
+            .iter()
+            .any(|g| g.uuid == synthetic_primary_group(2400).uuid));
+        assert_eq!(
+            txn.get_group_members(synthetic_primary_group(2500).uuid)
+                .expect("new members")
+                .len(),
+            2
+        );
+        assert!(txn
+            .get_group(&Id::Gid(2100))
+            .expect("ordinary group lookup")
+            .is_some());
+        txn.commit().expect("valid memberships");
+    }
+
+    #[tokio::test]
+    async fn legacy_primary_group_migrates_to_canonical_synthetic_row() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        for target_gid in [2000, 2400] {
+            let resolver = setup_resolver().await;
+            let mut user = test_token();
+            let legacy = GroupToken {
+                name: user.spn.clone(),
+                spn: user.spn.clone(),
+                uuid: user.uuid,
+                gidnumber: user.gidnumber,
+            };
+            user.groups = vec![legacy.clone()];
+            resolver
+                .set_cache_usertoken(&mut user, false)
+                .await
+                .expect("cache legacy fallback");
+
+            let synthetic = synthetic_primary_group(target_gid);
+            user.real_gidnumber = Some(target_gid);
+            user.groups = vec![synthetic.clone()];
+            resolver
+                .set_cache_usertoken(&mut user, false)
+                .await
+                .expect("migrate legacy fallback");
+
+            let mut txn = resolver.db.write().await;
+            assert!(txn
+                .get_group(&Id::Name(user.spn.clone()))
+                .expect("legacy lookup")
+                .is_none());
+            let (cached, _) = txn
+                .get_group(&Id::Gid(target_gid))
+                .expect("GID lookup")
+                .expect("canonical synthetic row");
+            assert_eq!(cached.uuid, synthetic.uuid);
+            assert_eq!(
+                txn.get_group_members(synthetic.uuid)
+                    .expect("canonical members")[0]
+                    .uuid,
+                user.uuid
+            );
+            assert!(!txn
+                .get_groups()
+                .expect("enumerate groups")
+                .iter()
+                .any(|group| group.uuid == legacy.uuid));
+            txn.commit().expect("valid migration");
+        }
+    }
+
+    #[tokio::test]
+    async fn standalone_group_preserves_ambiguous_account_primary_group() {
+        let resolver = setup_resolver().await;
+        let mut user = test_token();
+        let legacy = GroupToken {
+            name: user.spn.clone(),
+            spn: user.spn.clone(),
+            uuid: user.uuid,
+            gidnumber: 2400,
+        };
+        user.groups = vec![legacy.clone()];
+        resolver
+            .set_cache_usertoken(&mut user, false)
+            .await
+            .expect("cache legacy fallback");
+
+        let real = GroupToken {
+            name: "real-primary".into(),
+            spn: "real-primary".into(),
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            gidnumber: legacy.gidnumber,
+        };
+        resolver
+            .set_cache_grouptoken(&real)
+            .await
+            .expect("preserve ambiguous GID owner");
+
+        let mut txn = resolver.db.write().await;
+        let (cached, _) = txn
+            .get_group(&Id::Gid(real.gidnumber))
+            .expect("GID lookup")
+            .expect("account primary group");
+        assert_eq!(cached.uuid, legacy.uuid);
+        assert_eq!(
+            txn.get_group_members(legacy.uuid)
+                .expect("owner membership")[0]
+                .uuid,
+            user.uuid
+        );
+        assert!(txn
+            .get_group(&Id::Name(real.name.clone()))
+            .expect("incoming lookup")
+            .is_none());
+        txn.commit().expect("account identity remains consistent");
+    }
+
+    #[tokio::test]
+    async fn same_owner_refresh_replaces_legacy_fallback_with_real_group() {
+        for renamed in [false, true] {
+            let resolver = setup_resolver().await;
+            let mut user = test_token();
+            let legacy = GroupToken {
+                name: user.spn.clone(),
+                spn: user.spn.clone(),
+                uuid: user.uuid,
+                gidnumber: 2400,
+            };
+            user.groups = vec![legacy.clone()];
+            resolver
+                .set_cache_usertoken(&mut user, false)
+                .await
+                .expect("cache legacy fallback");
+
+            let real = GroupToken {
+                name: "real-primary".into(),
+                spn: "real-primary".into(),
+                uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                gidnumber: legacy.gidnumber,
+            };
+            if renamed {
+                user.spn = "renamed@example.com".into();
+            }
+            user.groups = vec![real.clone()];
+            user.real_gidnumber = Some(real.gidnumber);
+            resolver
+                .set_cache_usertoken(&mut user, false)
+                .await
+                .expect("reconcile real primary group");
+
+            let mut txn = resolver.db.write().await;
+            let (cached, _) = txn
+                .get_group(&Id::Gid(real.gidnumber))
+                .expect("GID lookup")
+                .expect("real primary group");
+            assert_eq!(cached.uuid, real.uuid);
+            assert_eq!(
+                txn.get_group_members(real.uuid)
+                    .expect("real primary membership")[0]
+                    .uuid,
+                user.uuid
+            );
+            assert!(txn
+                .get_group(&Id::Name(legacy.name))
+                .expect("legacy lookup")
+                .is_none());
+            txn.commit().expect("coordinated primary-group migration");
+        }
+    }
+
+    #[tokio::test]
+    async fn upn_change_removes_old_legacy_primary_group() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        let resolver = setup_resolver().await;
+        let mut user = test_token();
+        let old_spn = user.spn.clone();
+        let legacy = GroupToken {
+            name: old_spn.clone(),
+            spn: old_spn.clone(),
+            uuid: user.uuid,
+            gidnumber: user.gidnumber,
+        };
+        user.groups = vec![legacy];
+        resolver
+            .set_cache_usertoken(&mut user, false)
+            .await
+            .expect("cache old UPN fallback");
+
+        user.spn = "renamed@example.com".into();
+        user.real_gidnumber = Some(2400);
+        user.groups = vec![synthetic_primary_group(2400)];
+        resolver
+            .set_cache_usertoken(&mut user, false)
+            .await
+            .expect("cache renamed user");
+
+        let mut txn = resolver.db.write().await;
+        assert!(txn
+            .get_group(&Id::Name(old_spn))
+            .expect("old fallback lookup")
+            .is_none());
+        assert_eq!(
+            txn.get_group(&Id::Gid(2400))
+                .expect("new primary GID lookup")
+                .expect("new synthetic group")
+                .0
+                .uuid,
+            synthetic_primary_group(2400).uuid
+        );
+        txn.commit().expect("valid UPN migration");
+    }
+
+    #[tokio::test]
+    async fn deleting_account_removes_legacy_primary_group() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        let resolver = setup_resolver().await;
+        let mut user = test_token();
+        let legacy = GroupToken {
+            name: user.spn.clone(),
+            spn: user.spn.clone(),
+            uuid: user.uuid,
+            gidnumber: 2400,
+        };
+        user.groups = vec![legacy.clone()];
+        resolver
+            .set_cache_usertoken(&mut user, false)
+            .await
+            .expect("cache legacy fallback");
+        resolver
+            .delete_cache_usertoken(user.uuid)
+            .await
+            .expect("delete account");
+
+        let mut replacement = test_token();
+        replacement.uuid = uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        replacement.name = "replacement".into();
+        replacement.spn = "replacement@example.com".into();
+        replacement.groups = vec![synthetic_primary_group(legacy.gidnumber)];
+        resolver
+            .set_cache_usertoken(&mut replacement, false)
+            .await
+            .expect("cache replacement user");
+
+        let mut txn = resolver.db.write().await;
+        assert!(txn
+            .get_group(&Id::Name(user.spn.clone()))
+            .expect("legacy lookup")
+            .is_none());
+        let (cached, _) = txn
+            .get_group(&Id::Gid(legacy.gidnumber))
+            .expect("replacement GID lookup")
+            .expect("synthetic replacement");
+        assert_eq!(cached.uuid, synthetic_primary_group(legacy.gidnumber).uuid);
+        txn.commit().expect("valid replacement");
+    }
+
+    #[tokio::test]
+    async fn reserved_group_name_is_cacheable_for_generic_provider() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+        for reserved_spn in [false, true] {
+            let resolver = setup_resolver().await;
+            let mut user = test_token();
+            let synthetic = synthetic_primary_group(2400);
+            let mut conflicting = GroupToken {
+                uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                name: "directory-group".into(),
+                spn: "directory-group".into(),
+                gidnumber: 2500,
+            };
+            if reserved_spn {
+                conflicting.spn = synthetic.name.clone();
+            } else {
+                conflicting.name = synthetic.name.clone();
+            }
+            user.groups = vec![conflicting.clone()];
+            resolver
+                .set_cache_usertoken(&mut user, false)
+                .await
+                .expect("cache generic claim using Entra-reserved name");
+            assert_eq!(user.groups.len(), 1);
+            let mut txn = resolver.db.write().await;
+            let (cached, _) = txn
+                .get_account(&Id::Name(user.spn.clone()))
+                .expect("account lookup")
+                .expect("user cached");
+            assert!(cached.groups.iter().any(|g| g.uuid == conflicting.uuid));
+            assert_eq!(
+                txn.get_group(&Id::Gid(conflicting.gidnumber))
+                    .expect("group lookup")
+                    .expect("reserved claim cached")
+                    .0
+                    .uuid,
+                conflicting.uuid
+            );
+            txn.commit().expect("memberships valid");
+        }
+    }
+
+    #[tokio::test]
+    async fn generic_reserved_labels_preserve_active_synthetic_group() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        // Exercise name-only, SPN-only, and both-label collisions through both
+        // standalone group caching and user-token caching, then refresh each.
+        for (name_collision, spn_collision) in [(true, false), (false, true), (true, true)] {
+            for via_user in [false, true] {
+                let resolver = setup_resolver().await;
+                let synthetic = synthetic_primary_group(2400);
+                let mut entra = test_token();
+                entra.real_gidnumber = Some(synthetic.gidnumber);
+                entra.groups = vec![synthetic.clone()];
+                resolver
+                    .set_cache_usertoken(&mut entra, false)
+                    .await
+                    .unwrap();
+                let generic = GroupToken {
+                    uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                    name: if name_collision {
+                        synthetic.name.clone()
+                    } else {
+                        "directory-group".into()
+                    },
+                    spn: if spn_collision {
+                        synthetic.spn.clone()
+                    } else {
+                        "directory-group".into()
+                    },
+                    gidnumber: 2500,
+                };
+                let mut oidc = test_token();
+                oidc.uuid = uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc");
+                oidc.name = "oidc-user".into();
+                oidc.spn = "oidc-user@example.com".into();
+                oidc.gidnumber = 3000;
+                oidc.real_gidnumber = Some(generic.gidnumber);
+                oidc.groups = vec![generic.clone()];
+                let alias = format!("{}-synthetic", synthetic.name);
+                for _ in 0..2 {
+                    if via_user {
+                        resolver
+                            .set_cache_usertoken(&mut oidc, false)
+                            .await
+                            .unwrap();
+                    } else {
+                        resolver.set_cache_grouptoken(&generic).await.unwrap();
+                    }
+                    let nss = resolver.get_nssgroup_gid(2400).await.unwrap().unwrap();
+                    assert_eq!(nss.name, alias);
+                    assert_eq!(nss.members, vec![entra.name.clone()]);
+                    let by_name = resolver.get_nssgroup_name(&alias).await.unwrap().unwrap();
+                    assert_eq!(by_name.gid, 2400);
+                    for name in [&generic.name, &generic.spn] {
+                        assert_eq!(
+                            resolver.get_nssgroup_name(name).await.unwrap().unwrap().gid,
+                            2500
+                        );
+                    }
+                    assert!(resolver
+                        .get_nssgroups()
+                        .await
+                        .unwrap()
+                        .iter()
+                        .any(|g| g.gid == 2400 && g.name == alias));
+                    let mut txn = resolver.db.write().await;
+                    let cached = txn.get_group(&Id::Gid(2500)).unwrap().unwrap().0;
+                    assert_eq!(cached.uuid, generic.uuid);
+                    assert_eq!(cached.name, generic.name);
+                    assert_eq!(cached.spn, generic.spn);
+                    let members = txn.get_group_members(generic.uuid).unwrap();
+                    assert_eq!(members.len(), usize::from(via_user));
+                    assert!(!members.iter().any(|member| member.uuid == entra.uuid));
+                    txn.commit().unwrap();
+                    resolver
+                        .set_cache_usertoken(&mut entra, false)
+                        .await
+                        .unwrap();
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_claim_preserves_synthetic_alias_lookup_in_both_arrival_orders() {
+        use crate::idprovider::himmelblau::{is_synthetic_primary_group, synthetic_primary_group};
+        for provider_first in [false, true] {
+            let resolver = setup_resolver().await;
+            let synthetic = synthetic_primary_group(2400);
+            let canonical_owner = GroupToken {
+                uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                name: synthetic.name.clone(),
+                spn: synthetic.spn.clone(),
+                gidnumber: 2500,
+            };
+            resolver
+                .set_cache_grouptoken(&canonical_owner)
+                .await
+                .unwrap();
+            let alias_claim = GroupToken {
+                uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                name: format!("{}-synthetic", synthetic.name),
+                spn: format!("{}-synthetic", synthetic.name),
+                gidnumber: 2600,
+            };
+            let mut entra = test_token();
+            entra.real_gidnumber = Some(2400);
+            entra.groups = vec![synthetic.clone()];
+            let mut oidc = test_token();
+            oidc.uuid = uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc");
+            oidc.name = "oidc-user".into();
+            oidc.spn = "oidc-user@example.com".into();
+            oidc.gidnumber = 3000;
+            oidc.real_gidnumber = Some(2600);
+            oidc.groups = vec![alias_claim.clone()];
+            if provider_first {
+                resolver
+                    .set_cache_usertoken(&mut oidc, false)
+                    .await
+                    .unwrap();
+            }
+            resolver
+                .set_cache_usertoken(&mut entra, false)
+                .await
+                .unwrap();
+            resolver
+                .set_cache_usertoken(&mut oidc, false)
+                .await
+                .unwrap();
+            for _ in 0..3 {
+                resolver
+                    .set_cache_usertoken(&mut entra, false)
+                    .await
+                    .unwrap();
+                resolver
+                    .set_cache_usertoken(&mut oidc, false)
+                    .await
+                    .unwrap();
+                let nss = resolver
+                    .get_nssgroup_name(&alias_claim.name)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(nss.gid, 2600);
+                assert_eq!(nss.name, alias_claim.name);
+                assert_eq!(nss.members, vec![oidc.name.clone()]);
+                let primary = resolver.get_nssgroup_gid(2400).await.unwrap().unwrap();
+                assert_eq!(primary.name, format!("{}-1", alias_claim.name));
+                assert_eq!(primary.members, vec![entra.name.clone()]);
+                assert_eq!(
+                    resolver
+                        .get_nssgroup_name(&primary.name)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .gid,
+                    2400
+                );
+                assert_eq!(
+                    resolver
+                        .get_nssgroup_name(&canonical_owner.name)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .gid,
+                    2500
+                );
+                assert_eq!(
+                    resolver
+                        .get_initgroups(&entra.spn, OnExpiry::Refresh)
+                        .await
+                        .unwrap(),
+                    Some(vec![2400])
+                );
+                assert_eq!(
+                    resolver
+                        .get_initgroups(&oidc.spn, OnExpiry::Refresh)
+                        .await
+                        .unwrap(),
+                    Some(vec![2600])
+                );
+                let mut txn = resolver.db.write().await;
+                let cached = txn.get_group(&Id::Gid(2400)).unwrap().unwrap().0;
+                assert_eq!(cached.uuid, synthetic.uuid);
+                assert!(is_synthetic_primary_group(&cached));
+                assert_eq!(
+                    txn.get_account(&Id::Name(oidc.spn.clone()))
+                        .unwrap()
+                        .unwrap()
+                        .0
+                        .groups[0]
+                        .name,
+                    alias_claim.name
+                );
+                txn.commit().unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn generic_reserved_group_replaces_stale_synthetic_and_resolves_by_name() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        let resolver = setup_resolver().await;
+        let synthetic = synthetic_primary_group(2400);
+        // A stale row has no cached account membership. Active synthetic
+        // groups must survive a label collision at a different GID.
+        resolver
+            .set_cache_grouptoken(&synthetic)
+            .await
+            .expect("cache unreferenced Entra synthetic group");
+
+        let generic = GroupToken {
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            name: synthetic.name.clone(),
+            spn: synthetic.spn.clone(),
+            gidnumber: 2500,
+        };
+        resolver
+            .set_cache_grouptoken(&generic)
+            .await
+            .expect("cache generic reserved-name claim");
+
+        let group = resolver
+            .get_nssgroup_name(&generic.name)
+            .await
+            .expect("generic group lookup")
+            .expect("generic group remains resolvable");
+        assert_eq!(group.name, generic.name);
+        assert_eq!(group.gid, generic.gidnumber);
+        let mut txn = resolver.db.write().await;
+        assert!(txn
+            .get_group(&Id::Gid(synthetic.gidnumber))
+            .expect("stale synthetic lookup")
+            .is_none());
+        assert_eq!(
+            txn.get_group(&Id::Name(generic.name.clone()))
+                .expect("generic name lookup")
+                .expect("generic group cached")
+                .0
+                .uuid,
+            generic.uuid
+        );
+        txn.commit().expect("no dangling synthetic memberships");
+    }
+
+    #[tokio::test]
+    async fn synthetic_primary_group_does_not_replace_real_group_or_grant_directory_claim() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+        let resolver = setup_resolver().await;
+        let mut other = test_token();
+        other.uuid = uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        other.name = "other".to_string();
+        other.spn = "other@example.com".to_string();
+        other.gidnumber = 3000;
+        other.real_gidnumber = Some(2100);
+        other.groups = vec![synthetic_primary_group(2100)];
+        resolver
+            .set_cache_usertoken(&mut other, false)
+            .await
+            .expect("cache other user");
+        assert_eq!(other.groups.len(), 1);
+        assert_eq!(other.groups[0].uuid, synthetic_primary_group(2100).uuid);
+        let mut dbtxn = resolver.db.write().await;
+        let real_uuid = test_token().groups[0].uuid;
+        let (real, _) = dbtxn
+            .get_group(&Id::Name(real_uuid.to_string()))
+            .expect("lookup real group")
+            .expect("real group was replaced");
+        assert_eq!(real.name, "linux-users");
+        let members = dbtxn.get_group_members(real_uuid).expect("group members");
+        assert_eq!(members.len(), 1);
+        assert!(members
+            .iter()
+            .any(|member| member.spn == "testuser@example.com"));
+        assert!(!members
+            .iter()
+            .any(|member| member.spn == "other@example.com"));
+    }
+
+    #[tokio::test]
+    async fn real_group_arrival_discards_synthetic_members_across_refreshes() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+        for via_user in [false, true] {
+            let resolver = setup_resolver().await;
+            let mut first = test_token();
+            first.real_gidnumber = Some(2400);
+            first.groups = vec![synthetic_primary_group(2400)];
+            resolver
+                .set_cache_usertoken(&mut first, false)
+                .await
+                .expect("cache first");
+            let mut second = first.clone();
+            second.uuid = uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+            second.name = "second".to_string();
+            second.spn = "second@example.com".to_string();
+            second.gidnumber = 3000;
+            resolver
+                .set_cache_usertoken(&mut second, false)
+                .await
+                .expect("cache second");
+            let real = GroupToken {
+                uuid: uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                name: "real-primary".to_string(),
+                spn: "real-primary".to_string(),
+                gidnumber: 2400,
+            };
+            if via_user {
+                let mut third = first.clone();
+                third.uuid = uuid::uuid!("dddddddd-dddd-dddd-dddd-dddddddddddd");
+                third.name = "third".to_string();
+                third.spn = "third@example.com".to_string();
+                third.groups = vec![real.clone()];
+                resolver
+                    .set_cache_usertoken(&mut third, false)
+                    .await
+                    .expect("cache real member");
+            } else {
+                resolver
+                    .set_cache_grouptoken(&real)
+                    .await
+                    .expect("cache real group");
+            }
+            // Both the GID and account update paths must commit without dangling FKs.
+            resolver
+                .set_cache_usertoken(&mut first, false)
+                .await
+                .expect("refresh first");
+            resolver
+                .set_cache_usertoken(&mut second, false)
+                .await
+                .expect("refresh second");
+            let mut dbtxn = resolver.db.write().await;
+            let members = dbtxn.get_group_members(real.uuid).expect("members");
+            assert!(!members.iter().any(|m| m.uuid == first.uuid));
+            assert!(!members.iter().any(|m| m.uuid == second.uuid));
+            assert!(dbtxn
+                .get_group_members(synthetic_primary_group(2400).uuid)
+                .expect("old members")
+                .is_empty());
+            let (cached, _) = dbtxn
+                .get_account(&Id::Name(second.spn.clone()))
+                .expect("account")
+                .expect("cached account");
+            assert_eq!(cached.groups[0].uuid, synthetic_primary_group(2400).uuid);
+            assert!(!cached.groups.iter().any(|group| group.uuid == real.uuid));
+            dbtxn.commit().expect("no dangling memberships");
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_upn_named_primary_group_remains_resolvable() {
+        let resolver = setup_resolver().await;
+        let mut user = test_token();
+        user.groups = vec![GroupToken {
+            name: user.spn.clone(),
+            spn: user.spn.clone(),
+            uuid: user.uuid,
+            gidnumber: user.gidnumber,
+        }];
+        resolver
+            .set_cache_usertoken(&mut user, false)
+            .await
+            .expect("cache legacy fallback");
+        let group = resolver
+            .get_nssgroup_name(&user.spn)
+            .await
+            .expect("lookup legacy")
+            .expect("legacy group");
+        assert_eq!(group.gid, user.gidnumber);
+        assert_eq!(group.name, user.spn);
+    }
+
+    #[tokio::test]
+    async fn synthetic_primary_group_name_round_trips() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+        let resolver = setup_resolver().await;
+        let mut user = test_token();
+        let group = synthetic_primary_group(2000);
+        user.groups = vec![group.clone()];
+        resolver
+            .set_cache_usertoken(&mut user, false)
+            .await
+            .expect("cache synthetic group");
+        let result = resolver
+            .get_nssgroup_name(&group.name)
+            .await
+            .expect("lookup synthetic group")
+            .expect("synthetic group missing");
+        assert_eq!(result.name, group.name);
+        assert_eq!(result.gid, group.gidnumber);
+
+        let original = resolver
+            .get_nssgroup_name(&group.name)
+            .await
+            .expect("lookup original")
+            .expect("original synthetic group");
+        assert_eq!(original.name, group.name);
+        assert_eq!(original.gid, group.gidnumber);
+        assert_eq!(
+            super::synthetic_primary_group_gid("himmelblau-primary-group-02000"),
+            None
+        );
+        assert_eq!(
+            super::synthetic_primary_group_gid("himmelblau-primary-group-2000-synthetic"),
+            Some(2000)
+        );
+        assert_eq!(
+            super::synthetic_primary_group_gid("himmelblau-primary-group-2000-synthetic-3"),
+            Some(2000)
+        );
+        for invalid in [
+            "himmelblau-primary-group-2000-synthetic-0",
+            "himmelblau-primary-group-2000-synthetic-03",
+            "himmelblau-primary-group-2000-synthetic-extra",
+        ] {
+            assert_eq!(super::synthetic_primary_group_gid(invalid), None);
+        }
+        assert_eq!(
+            super::synthetic_primary_group_gid("himmelblau-primary-group-4294967296"),
+            None
+        );
+    }
+
+    #[tokio::test]
     async fn online_auth_init_offline_fallback_does_not_reenter_db_lock() {
         let resolver = setup_resolver().await;
         let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
@@ -3365,7 +4291,9 @@ where
             token.shell = Some(self.default_shell.clone())
         }
 
-        // Filter out groups that are in the nxset
+        // Filter excluded groups. Provider-specific group namespaces must be
+        // handled by the provider; generic OIDC group claims are otherwise
+        // allowed to use any safe claim value accepted by its parser.
         {
             let nxset_txn = self.nxset.lock().await;
             token.groups.retain(|g| {
@@ -3382,15 +4310,16 @@ where
                 .is_some_and(|(cached, _)| {
                     cached.uuid == token.uuid && cached.tenant_id != token.tenant_id
                 });
-        token
-            .groups
-            .iter()
-            // We need to add the groups first
-            .try_for_each(|g| dbtxn.update_group(g, offset.as_secs()))
-            .and_then(|_|
-                // So that when we add the account it can make the relationships.
-                dbtxn
-                    .update_account(token, offset.as_secs()))
+        // Keep synthetic membership in the user token (not a real Entra
+        // object-id claim). update_group preserves a genuine directory row at
+        // the GID, but replaces the obsolete UPN-named fallback representation.
+        for group in &token.groups {
+            dbtxn
+                .update_group_with_owner(group, offset.as_secs(), Some(token.uuid))
+                .map_err(|_| ResolverError)?;
+        }
+        dbtxn
+            .update_account(token, offset.as_secs())
             .and_then(|_| {
                 if clear_password {
                     // Commit invalidation with the authenticated identity so
@@ -4101,6 +5030,23 @@ where
     }
 
     pub async fn get_nssgroup_name(&self, grp_id: &str) -> ResolverResult<Option<NssGroup>> {
+        if let Some(gid) = synthetic_primary_group_gid(grp_id) {
+            let token = self.get_grouptoken(Id::Gid(gid)).await?;
+            // Checking the full deterministic token, including UUID, prevents
+            // an Entra group with a synthetic-looking name from using this path.
+            if let Some(token) = token
+                .filter(is_synthetic_primary_group)
+                .filter(|token| token.name == grp_id)
+            {
+                return Ok(Some(NssGroup {
+                    members: self.get_groupmembers(token.uuid).await,
+                    name: token.name,
+                    gid: token.gidnumber,
+                }));
+            }
+            // The textual form is valid for generic OIDC claims too. If no
+            // canonical synthetic token owns this name, use the normal lookup.
+        }
         self.get_nssgroup(Id::Name(grp_id.to_string())).await
     }
 
@@ -4119,24 +5065,48 @@ where
         let Some((tok, _)) = token else {
             return Ok(None);
         };
-        if self.initgroups_mode == InitgroupsMode::Full {
-            return Ok(Some(tok.groups.iter().map(|g| g.gidnumber).collect()));
-        }
-        let mut named = Vec::with_capacity(tok.groups.len());
+        let requested: Vec<_> = tok.groups.iter().map(|group| group.gidnumber).collect();
+        let owners: HashMap<_, _> = {
+            let mut txn = self.db.read().await;
+            txn.get_groups_by_gids(&requested)
+                .map_err(|_| ResolverError)?
+                .into_iter()
+                .map(|group| (group.gidnumber, group))
+                .collect()
+        };
+        let mut gids = Vec::with_capacity(tok.groups.len());
         for group in &tok.groups {
-            match self.get_nssgroup_gid(group.gidnumber).await {
-                Ok(Some(nss_group)) if !nss_group.name.is_empty() => {
-                    named.push(group.gidnumber);
-                }
-                Ok(Some(_)) | Ok(None) | Err(_) => {
+            // A raw claim is not proof of ownership of a cached numeric GID.
+            // In particular, a real provider group can replace a synthetic
+            // primary group after the user token was cached. Check at lookup
+            // time in both modes, rather than relying on memberof_t alone.
+            match owners.get(&group.gidnumber) {
+                Some(cached) if cached.uuid != group.uuid => {
                     debug!(
                         gid = group.gidnumber,
-                        "skipping supplementary group with no NSS name"
+                        "skipping supplementary group owned by another identity"
+                    );
+                }
+                Some(cached)
+                    if self.initgroups_mode == InitgroupsMode::Full
+                        || !self.token_gidattr(&cached).is_empty() =>
+                {
+                    gids.push(group.gidnumber);
+                }
+                // Full mode intentionally permits claims without an NSS row,
+                // but never claims whose GID has a different known owner.
+                None if self.initgroups_mode == InitgroupsMode::Full => {
+                    gids.push(group.gidnumber);
+                }
+                Some(_) | None => {
+                    debug!(
+                        gid = group.gidnumber,
+                        "skipping supplementary group with no verified NSS identity"
                     );
                 }
             }
         }
-        Ok(Some(named))
+        Ok(Some(gids))
     }
 
     /// Checks PAM account access, applying the configured group allow list.
