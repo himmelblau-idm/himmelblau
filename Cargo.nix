@@ -3411,6 +3411,16 @@ rec {
         ];
 
       };
+      "cpubits" = rec {
+        crateName = "cpubits";
+        version = "0.1.1";
+        edition = "2024";
+        sha256 = "1bh6rvanxm00myf1rmnh44hq2jdxn69971c92s4klz0k76f5zf0m";
+        authors = [
+          "RustCrypto Developers"
+        ];
+
+      };
       "cpufeatures 0.2.17" = rec {
         crateName = "cpufeatures";
         version = "0.2.17";
@@ -3542,16 +3552,20 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
-      "crypto-bigint" = rec {
+      "crypto-bigint 0.5.5" = rec {
         crateName = "crypto-bigint";
         version = "0.5.5";
         edition = "2021";
-        sha256 = "0xmbdff3g6ii5sbxjxc31xfkv9lrmyril4arh3dzckd4gjsjzj8d";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/crypto-bigint/0.5.5; };
         libName = "crypto_bigint";
         authors = [
-          "RustCrypto Developers"
+          "David Mulder <dmulder@suse.com>"
         ];
         dependencies = [
+          {
+            name = "crypto-bigint";
+            packageId = "crypto-bigint 0.7.10";
+          }
           {
             name = "generic-array";
             packageId = "generic-array";
@@ -3561,6 +3575,7 @@ rec {
             name = "rand_core";
             packageId = "rand_core 0.6.4";
             optional = true;
+            usesDefaultFeatures = false;
           }
           {
             name = "subtle";
@@ -3574,25 +3589,70 @@ rec {
             usesDefaultFeatures = false;
           }
         ];
+        features = {
+          "alloc" = [ "crypto-bigint/alloc" ];
+          "default" = [ "crypto-bigint/default" ];
+          "der" = [ "dep:der" ];
+          "extra-sizes" = [ "crypto-bigint/extra-sizes" ];
+          "generic-array" = [ "dep:generic-array" ];
+          "rand" = [ "crypto-bigint/rand" ];
+          "rand_core" = [ "dep:rand_core" ];
+          "rlp" = [ "dep:rlp" ];
+          "serde" = [ "crypto-bigint/serde" "serdect" ];
+          "serdect" = [ "dep:serdect" ];
+          "zeroize" = [ "dep:zeroize" ];
+        };
+        resolvedDefaultFeatures = [ "generic-array" "rand_core" "zeroize" ];
+      };
+      "crypto-bigint 0.7.10" = rec {
+        crateName = "crypto-bigint";
+        version = "0.7.10";
+        edition = "2024";
+        sha256 = "04dyl8pzc00l7bmsa3br86dczs45hwhkw7wjzg9dl0xs9jv5q0ww";
+        libName = "crypto_bigint";
+        authors = [
+          "RustCrypto Developers"
+        ];
+        dependencies = [
+          {
+            name = "cpubits";
+            packageId = "cpubits";
+          }
+          {
+            name = "ctutils";
+            packageId = "ctutils";
+          }
+          {
+            name = "num-traits";
+            packageId = "num-traits";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "rand_core";
+            packageId = "rand_core 0.10.0";
+            optional = true;
+            usesDefaultFeatures = false;
+          }
+        ];
         devDependencies = [
           {
             name = "rand_core";
-            packageId = "rand_core 0.6.4";
-            features = [ "std" ];
+            packageId = "rand_core 0.10.0";
           }
         ];
         features = {
           "alloc" = [ "serdect?/alloc" ];
-          "default" = [ "rand" ];
-          "der" = [ "dep:der" ];
-          "generic-array" = [ "dep:generic-array" ];
-          "rand" = [ "rand_core/std" ];
+          "default" = [ "rand_core" ];
+          "der" = [ "dep:der" "hybrid-array" ];
+          "getrandom" = [ "dep:getrandom" "rand_core" ];
+          "hybrid-array" = [ "dep:hybrid-array" ];
           "rand_core" = [ "dep:rand_core" ];
           "rlp" = [ "dep:rlp" ];
           "serde" = [ "dep:serdect" ];
+          "subtle" = [ "dep:subtle" "ctutils/subtle" "hybrid-array?/subtle" ];
           "zeroize" = [ "dep:zeroize" ];
         };
-        resolvedDefaultFeatures = [ "generic-array" "rand_core" "zeroize" ];
+        resolvedDefaultFeatures = [ "default" "rand_core" ];
       };
       "crypto-common 0.1.6" = rec {
         crateName = "crypto-common";
@@ -4049,9 +4109,9 @@ rec {
       };
       "ctutils" = rec {
         crateName = "ctutils";
-        version = "0.4.0";
+        version = "0.4.7";
         edition = "2024";
-        sha256 = "1r6mpsz1j0mk7f72a139khn9ri1h5fpx5lss8zpj0lbg8kaac18h";
+        sha256 = "12l2ck796m702jbjfr5gbc5r1mip09mlnnw7b7dskn4ndzynydx2";
         authors = [
           "RustCrypto Developers"
         ];
@@ -5243,7 +5303,7 @@ rec {
           }
           {
             name = "crypto-bigint";
-            packageId = "crypto-bigint";
+            packageId = "crypto-bigint 0.5.5";
             usesDefaultFeatures = false;
             features = [ "rand_core" "generic-array" "zeroize" ];
           }
@@ -15499,9 +15559,9 @@ rec {
       };
       "rustls-webpki" = rec {
         crateName = "rustls-webpki";
-        version = "0.103.15";
+        version = "0.103.16";
         edition = "2021";
-        sha256 = "1hhanq3lz384v4nccacnjfwsyy99n3yc6m6iw8kljz8yicfwzhzk";
+        sha256 = "10djm2f00xzi5qlbcfqjhhn2smk2h9aw8b4l74qncz4xsfvb2hs4";
         libName = "webpki";
         dependencies = [
           {
