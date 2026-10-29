@@ -555,7 +555,7 @@ impl PamHooks for PamKanidm {
             service
         };
 
-        let account_id = match pamh.get_user(None) {
+        let supplied_account_id = match pamh.get_user(None) {
             Ok(aid) => aid,
             Err(e) => {
                 error!(err = ?e, "get_user");
@@ -573,9 +573,9 @@ impl PamHooks for PamKanidm {
             service_canonicalizes_user(&cfg.get_canonicalize_user_services(), svc)
         });
         let user_map = UserMap::new(&cfg.get_user_map_file());
-        let account_id = match user_map.get_upn_from_local(&account_id) {
+        let account_id = match user_map.get_upn_from_local(&supplied_account_id) {
             Some(account_id) => account_id,
-            None => match cfg.map_name_to_upn(&account_id) {
+            None => match cfg.map_name_to_upn(&supplied_account_id) {
                 Some(upn) => upn,
                 None => return PamResultCode::PAM_IGNORE,
             },
@@ -656,11 +656,12 @@ impl PamHooks for PamKanidm {
         let result = authenticate_with_client(
             daemon_client,
             authtok,
-            cfg,
+            cfg.clone(),
             &account_id,
             &service,
             opts,
             msg_printer,
+            Some(&supplied_account_id),
         );
 
         if set_authtok && result == PamResultCode::PAM_SUCCESS {
