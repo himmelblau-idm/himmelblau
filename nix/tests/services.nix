@@ -1,6 +1,7 @@
 # Evaluation fixture consumed by scripts/test_nixos_services.py; no packages are built.
 {
   nixpkgs ? <nixpkgs>,
+  chromiumEnable ? null,
   tpmEnabled ? true,
   tcti ? "device:/dev/tpmrm0",
   tssGroup ? "tss",
@@ -27,6 +28,9 @@ let
         security.tpm2 = {
           enable = tpmEnabled;
           inherit tssGroup;
+        };
+        programs.chromium = pkgs.lib.mkIf (chromiumEnable != null) {
+          enable = chromiumEnable;
         };
       }
     ];
