@@ -200,9 +200,13 @@ in
       nativeMessagingHosts.packages = [ cfg.ssoPackage ];
     };
 
-    programs.chromium.extensions = [
-      "jlnfnnolkbjieggibinobhkjdfbpcohn"
-    ];
+    # programs.chromium only writes /etc policy files and installs no package.
+    programs.chromium = {
+      enable = lib.mkDefault true;
+      extensions = [
+        "jlnfnnolkbjieggibinobhkjdfbpcohn"
+      ];
+    };
     environment.etc."chromium/native-messaging-hosts/linux_entra_sso.json".source =
       "${cfg.ssoPackage}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
     environment.etc."opt/chrome/native-messaging-hosts/linux_entra_sso.json".source =
