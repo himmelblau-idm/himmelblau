@@ -970,7 +970,7 @@ impl HimmelblauConfig {
                                 if let Err(e) = name_cache.insert_mapping(&upn, account_id) {
                                     error!(
                                         "Failed to cache name mapping for {} as {}: {}",
-                                        account_id, upn, e
+                                        upn, account_id, e
                                     );
                                 }
                             }

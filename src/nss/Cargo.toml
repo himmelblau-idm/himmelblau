@@ -44,3 +44,6 @@ pre_uninstall_script = "scripts/prerm"
 
 [package.metadata.generate-rpm.provides]
 libnss-aad = ""
+
+[dev-dependencies]
+serde_json = { workspace = true }
