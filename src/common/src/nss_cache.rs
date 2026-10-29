@@ -53,7 +53,9 @@ impl NssCache {
         let conn = if path.exists() {
             if is_root && *mode == Mode::ReadWrite {
                 writable = true;
-                Some(Connection::open(db_path)?)
+                let conn = Connection::open(db_path)?;
+                Self::add_display_name(&conn);
+                Some(conn)
             } else {
                 Some(Connection::open_with_flags(
                     db_path,
@@ -71,7 +73,8 @@ impl NssCache {
                     gecos TEXT NOT NULL,
                     homedir TEXT NOT NULL,
                     shell TEXT NOT NULL,
-                    last_updated INTEGER NOT NULL
+                    last_updated INTEGER NOT NULL,
+                    display_name TEXT
                  )",
                 [],
             )?;
@@ -85,14 +88,29 @@ impl NssCache {
         Ok(NssCache { conn, writable })
     }
 
+    fn add_display_name(conn: &Connection) {
+        if conn
+            .prepare("SELECT display_name FROM nss_passwd LIMIT 0")
+            .is_err()
+        {
+            let _ = conn.execute("ALTER TABLE nss_passwd ADD COLUMN display_name TEXT", []);
+        }
+    }
+
     pub fn insert_user(&self, user: &NssUser) -> Result<()> {
         if let Some(conn) = &self.conn {
             if self.writable {
+                let name = user
+                    .canonical_name
+                    .as_ref()
+                    .map(|canonical| canonical.to_lowercase())
+                    .unwrap_or_else(|| user.name.clone());
+                let display_name = user.canonical_name.as_ref().map(|_| &user.name);
                 if !user.cacheable {
                     // A lookup-only result must also invalidate older fallback rows.
                     conn.execute(
                         "DELETE FROM nss_passwd WHERE name = ?1 OR uid = ?2",
-                        params![user.name, user.uid],
+                        params![name, user.uid],
                     )?;
                     return Ok(());
                 }
@@ -101,118 +119,105 @@ impl NssCache {
                     .unwrap_or_default()
                     .as_secs() as i64;
 
-                let _ = conn.execute(
-                    "INSERT OR REPLACE INTO nss_passwd (name, uid, gid, gecos, homedir, shell, last_updated)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                let tx = conn.unchecked_transaction()?;
+                tx.execute(
+                    "DELETE FROM nss_passwd WHERE uid = ?1 AND name != ?2",
+                    params![user.uid, name],
+                )?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO nss_passwd (name, uid, gid, gecos, homedir, shell, last_updated, display_name)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
-                        user.name,
+                        name,
                         user.uid,
                         user.gid,
                         user.gecos,
                         user.homedir,
                         user.shell,
-                        now
+                        now,
+                        display_name
                     ],
-                );
+                )?;
+                tx.commit()?;
             }
         }
         Ok(())
     }
 
-    pub fn get_user(&self, id: &Id) -> Option<NssUser> {
-        self.conn.as_ref()?;
-
-        let max_age_secs: i64 = 48 * 3600; // 48 hours
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-
-        let (query, param) = match id {
-            Id::Name(n) => (
-                "SELECT name, uid, gid, gecos, homedir, shell, last_updated
-                FROM nss_passwd WHERE name = ?1",
-                n as &dyn rusqlite::ToSql,
-            ),
-            Id::Gid(uid) => (
-                "SELECT name, uid, gid, gecos, homedir, shell, last_updated
-                FROM nss_passwd WHERE uid = ?1",
-                uid as &dyn rusqlite::ToSql,
-            ),
+    fn query_users(&self, filter: &str, params: &[&dyn rusqlite::ToSql]) -> Vec<(NssUser, i64)> {
+        let Some(conn) = self.conn.as_ref() else {
+            return Vec::new();
         };
+        let columns = "name, uid, gid, gecos, homedir, shell, last_updated";
+        let query = format!("SELECT {columns}, display_name FROM nss_passwd {filter}");
+        let legacy_query = format!("SELECT {columns}, NULL FROM nss_passwd {filter}");
+        let Ok(mut stmt) = conn
+            .prepare(&query)
+            .or_else(|_| conn.prepare(&legacy_query))
+        else {
+            return Vec::new();
+        };
+        let Ok(rows) = stmt.query_map(params, |row| {
+            let key: String = row.get(0)?;
+            let display_name: Option<String> = row.get(7)?;
+            let user = NssUser {
+                canonical_name: display_name.as_ref().map(|_| key.clone()),
+                name: display_name.unwrap_or(key),
+                uid: row.get(1)?,
+                gid: row.get(2)?,
+                gecos: row.get(3)?,
+                homedir: row.get(4)?,
+                shell: row.get(5)?,
+                cacheable: true,
+            };
+            Ok((user, row.get(6)?))
+        }) else {
+            return Vec::new();
+        };
+        let users: Vec<(NssUser, i64)> = rows.flatten().collect();
+        users
+    }
 
-        if let Some(conn) = &self.conn {
-            let mut stmt = conn.prepare(query).ok()?;
-            let mut rows = stmt.query([param]).ok()?;
-            if let Ok(Some(row)) = rows.next() {
-                let last_updated: i64 = row.get(6).ok()?;
-                if now - last_updated > max_age_secs {
-                    return None;
-                }
-
-                Some(NssUser {
-                    name: row.get(0).ok()?,
-                    uid: row.get(1).ok()?,
-                    gid: row.get(2).ok()?,
-                    gecos: row.get(3).ok()?,
-                    homedir: row.get(4).ok()?,
-                    shell: row.get(5).ok()?,
-                    cacheable: true,
-                })
-            } else {
-                None
+    /// Qualified names resolve only by canonical UPN; an unqualified name may be one user's display name.
+    pub fn get_user(&self, id: &Id) -> Option<NssUser> {
+        let (filter, key): (&str, &dyn rusqlite::ToSql) = match id {
+            Id::Name(name) => ("WHERE name = ?1 COLLATE NOCASE", name),
+            Id::Gid(uid) => ("WHERE uid = ?1", uid),
+        };
+        let oldest = oldest_fresh();
+        let mut owners = self.query_users(filter, &[key]);
+        if owners.is_empty() {
+            let Id::Name(name) = id else {
+                return None;
+            };
+            if name.contains('@') {
+                return None;
             }
-        } else {
-            None
+            owners = self.query_users("WHERE display_name = ?1 COLLATE NOCASE", &[name]);
+            owners.retain(|(_, updated)| *updated >= oldest);
+        }
+        match owners.as_slice() {
+            [(user, updated)] if *updated >= oldest => Some(user.clone()),
+            _ => None,
         }
     }
 
     pub fn get_users(&self) -> Vec<NssUser> {
-        let mut users = Vec::new();
-        if self.conn.is_none() {
-            return users;
-        }
-
-        let max_age_secs: i64 = 48 * 3600; // 48 hours
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-
-        if let Some(conn) = &self.conn {
-            let mut stmt = match conn.prepare(
-                "SELECT name, uid, gid, gecos, homedir, shell, last_updated FROM nss_passwd",
-            ) {
-                Ok(stmt) => stmt,
-                Err(_) => return users,
-            };
-
-            let rows = stmt.query_map([], |row| {
-                let last_updated: i64 = row.get(6)?;
-                if now - last_updated <= max_age_secs {
-                    Ok(Some(NssUser {
-                        name: row.get(0)?,
-                        uid: row.get(1)?,
-                        gid: row.get(2)?,
-                        gecos: row.get(3)?,
-                        homedir: row.get(4)?,
-                        shell: row.get(5)?,
-                        cacheable: true,
-                    }))
-                } else {
-                    Ok(None)
-                }
-            });
-
-            if let Ok(mapped_rows) = rows {
-                for user in mapped_rows.flatten().flatten() {
-                    users.push(user);
-                }
-            }
-        }
-
-        users
+        let oldest = oldest_fresh();
+        self.query_users("", &[])
+            .into_iter()
+            .filter(|(_, updated)| *updated >= oldest)
+            .map(|(user, _)| user)
+            .collect()
     }
+}
+
+fn oldest_fresh() -> i64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    now - 48 * 3600 // 48 hours
 }
 
 #[cfg(test)]
@@ -228,7 +233,7 @@ mod tests {
         conn.execute_batch(
             "CREATE TABLE nss_passwd (
                 name TEXT PRIMARY KEY, uid INTEGER, gid INTEGER, gecos TEXT,
-                homedir TEXT, shell TEXT, last_updated INTEGER
+                homedir TEXT, shell TEXT, last_updated INTEGER, display_name TEXT
             )",
         )
         .unwrap();
@@ -241,6 +246,7 @@ mod tests {
     fn test_user() -> NssUser {
         NssUser {
             name: "user@example.com".to_string(),
+            canonical_name: None,
             uid: 2000,
             gid: 2000,
             gecos: String::new(),
@@ -301,5 +307,111 @@ mod tests {
             assert_eq!(users.len(), 1);
             assert_eq!(users[0].name, unrelated.name);
         }
+    }
+
+    fn alias_user(canonical: &str, name: &str, uid: u32) -> NssUser {
+        NssUser {
+            name: name.to_string(),
+            canonical_name: Some(canonical.to_string()),
+            cacheable: true,
+            uid,
+            gid: uid,
+            ..test_user()
+        }
+    }
+
+    fn by_name(cache: &NssCache, name: &str) -> Option<NssUser> {
+        cache.get_user(&Id::Name(name.to_string()))
+    }
+
+    #[test]
+    fn display_name_resolves_only_unqualified_and_unambiguously() {
+        let cache = test_cache();
+        cache
+            .insert_user(&alias_user("alice.long@contoso.com", "alice", 1000))
+            .unwrap();
+        let found = by_name(&cache, "alice").unwrap();
+        assert_eq!(
+            found.canonical_name.as_deref(),
+            Some("alice.long@contoso.com")
+        );
+        assert!(by_name(&cache, "ALICE.long@contoso.com").is_some());
+        assert!(by_name(&cache, "alice@contoso.com").is_none());
+
+        cache
+            .insert_user(&alias_user("alice.long@fabrikam.com", "alice", 1001))
+            .unwrap();
+        assert!(by_name(&cache, "alice").is_none());
+        assert_eq!(cache.get_users().len(), 2);
+    }
+
+    #[test]
+    fn canonical_identity_wins_over_a_display_name_even_when_expired() {
+        let cache = test_cache();
+        cache
+            .insert_user(&alias_user("alice@contoso.com", "bob", 1001))
+            .unwrap();
+        cache
+            .insert_user(&alias_user("bob", "bob@contoso.com", 1002))
+            .unwrap();
+        cache
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute(
+                "UPDATE nss_passwd SET last_updated = 0 WHERE name = 'bob'",
+                [],
+            )
+            .unwrap();
+        assert!(by_name(&cache, "bob").is_none());
+        assert!(cache.get_user(&Id::Gid(1002)).is_none());
+        assert_eq!(cache.get_users().len(), 1);
+    }
+
+    #[test]
+    fn refresh_replaces_the_previous_owner_of_a_uid() {
+        let cache = test_cache();
+        cache
+            .insert_user(&alias_user("old.upn@contoso.com", "alice", 1000))
+            .unwrap();
+        cache
+            .insert_user(&alias_user("new.upn@contoso.com", "alice", 1000))
+            .unwrap();
+        assert!(by_name(&cache, "old.upn@contoso.com").is_none());
+        let found = by_name(&cache, "alice").unwrap();
+        assert_eq!(found.canonical_name.as_deref(), Some("new.upn@contoso.com"));
+        assert_eq!(cache.get_users().len(), 1);
+    }
+
+    #[test]
+    fn legacy_cache_is_readable_and_migrated() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nss_passwd (
+                name TEXT PRIMARY KEY, uid INTEGER, gid INTEGER, gecos TEXT,
+                homedir TEXT, shell TEXT, last_updated INTEGER
+            );
+            INSERT INTO nss_passwd VALUES
+                ('alice', 1000, 1000, '', '/home/alice', '/bin/sh', strftime('%s', 'now'));",
+        )
+        .unwrap();
+        let mut cache = NssCache {
+            conn: Some(conn),
+            writable: false,
+        };
+        assert!(by_name(&cache, "alice").unwrap().canonical_name.is_none());
+        assert_eq!(cache.get_users().len(), 1);
+
+        cache.writable = true;
+        NssCache::add_display_name(cache.conn.as_ref().unwrap());
+        cache
+            .insert_user(&alias_user(
+                "alice.long@contoso.com",
+                "alice@contoso.com",
+                1000,
+            ))
+            .unwrap();
+        assert_eq!(cache.get_users().len(), 1);
+        assert!(by_name(&cache, "alice").is_none());
     }
 }
