@@ -87,6 +87,10 @@ You may want to install this one extra if you use a browser other than firefox /
 
 - `himmelblau.packages.<arch>.sso`: Used to facilitate the communication to the broker
 
+For Firefox, the module adds the linux-entra-sso extension policy and its native messaging host to
+`programs.firefox`. nixpkgs only applies them when `programs.firefox.enable = true;` is set, which also
+installs Firefox through its NixOS module. Set it if you want Entra ID SSO in Firefox.
+
 These packages are optional and need to be installed by you:
 
 - `himmelblau.packages.<arch>.aad-tool`: The cli to interact with your daemon - you probably want to install it.
