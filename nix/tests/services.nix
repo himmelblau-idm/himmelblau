@@ -38,6 +38,10 @@ in
   nscdEnabled = cfg.services.nscd.enable;
   hsmPinPath = cfg.services.himmelblau.settings.hsm_pin_path;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
+  chromiumPolicies = pkgs.lib.genAttrs [
+    "chromium/policies/managed/default.json"
+    "opt/chrome/policies/managed/default.json"
+  ] (path: cfg.environment.etc.${path}.text or null);
   warnings = cfg.warnings;
   assertions = map (assertion: assertion.message) (
     builtins.filter (assertion: !assertion.assertion) cfg.assertions
