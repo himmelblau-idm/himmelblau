@@ -3,6 +3,8 @@ set -e
 
 config_file="/etc/himmelblau/himmelblau.conf"
 saved_config="${config_file}.rpmsave"
+upgrade_restart_marker="/run/himmelblau-rpm-upgrade-restart"
+config_restored=0
 
 # RPM creates .rpmsave after %post when an owned config is removed during an
 # upgrade, so recover the previous local configuration at transaction end.
@@ -12,8 +14,24 @@ if [ -f "$saved_config" ] && [ ! -e "$config_file" ] && [ ! -L "$config_file" ];
         echo "Failed to restore Himmelblau configuration from $saved_config" >&2
         exit 1
     fi
+    config_restored=1
+fi
 
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl try-restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+# During an upgrade, RPM runs the new package's %post before the old package's
+# %preun. Older %preun scripts stop the newly started daemons, so recover once
+# the transaction is complete. The marker is only created for a live upgrade
+# where postinst was allowed to start services.
+if [ -f "$upgrade_restart_marker" ]; then
+    rm -f -- "$upgrade_restart_marker"
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 \
+        && systemctl is-enabled --quiet himmelblaud.service; then
+        if [ "$config_restored" -eq 1 ]; then
+            systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        else
+            systemctl start himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        fi
     fi
+elif [ "$config_restored" -eq 1 ] && command -v systemctl >/dev/null 2>&1; then
+    # Preserve the existing configuration-recovery behavior outside upgrades.
+    systemctl try-restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
 fi
