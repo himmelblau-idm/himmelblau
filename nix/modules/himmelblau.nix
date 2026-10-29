@@ -192,11 +192,10 @@ in
     ];
 
     programs.firefox = {
-      policies = {
-        Extensions.Install = [
-          "https://github.com/siemens/linux-entra-sso/releases/download/v1.7.1/linux_entra_sso-1.7.1.xpi"
-        ];
-      };
+      # Same ExtensionSettings force_installed entry himmelblau-sso-policies
+      # installs on deb/rpm, read from its policies.json so both stay on one
+      # linux-entra-sso release.
+      policies = (lib.importJSON ../../src/sso-policies/src/firefox/policies.json).policies;
       nativeMessagingHosts.packages = [ cfg.ssoPackage ];
     };
 
