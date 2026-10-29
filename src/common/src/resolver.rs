@@ -1413,7 +1413,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn account_authorization_without_allow_list_preserves_unknown_users() {
+    async fn account_authorization_without_allow_list_skips_refresh_for_cached_users() {
         let mut resolver = setup_resolver().await;
         resolver.pam_allow_groups.clear();
         resolver.client.user_get_error.store(2, Ordering::Release);
@@ -1425,15 +1425,48 @@ mod tests {
                 .unwrap(),
             Some(true)
         );
-        assert_eq!(
-            resolver
-                .pam_account_allowed("unknown@example.com")
-                .await
-                .unwrap(),
-            None
-        );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
         assert!(resolver.identity_refreshes.lock().await.queued.is_empty());
+    }
+
+    #[tokio::test]
+    async fn account_authorization_without_allow_list_allows_uncached_lookup_only_users() {
+        let mut resolver = setup_resolver().await;
+        resolver.pam_allow_groups.clear();
+        resolver
+            .delete_cache_usertoken(test_token().uuid)
+            .await
+            .unwrap();
+        resolver.client.user_get_error.store(3, Ordering::Release);
+
+        assert_eq!(
+            resolver
+                .pam_account_allowed(&test_token().spn)
+                .await
+                .unwrap(),
+            Some(true)
+        );
+        assert!(resolver.get_cached_usertokens().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn account_authorization_without_allow_list_reports_unresolved_users_as_unknown() {
+        for user_get_error in [1, 2] {
+            let mut resolver = setup_resolver().await;
+            resolver.pam_allow_groups.clear();
+            resolver
+                .client
+                .user_get_error
+                .store(user_get_error, Ordering::Release);
+
+            assert_eq!(
+                resolver
+                    .pam_account_allowed("unknown@example.com")
+                    .await
+                    .unwrap(),
+                None
+            );
+        }
     }
 
     #[tokio::test]
@@ -4108,17 +4141,18 @@ where
 
     /// Checks PAM account access, applying the configured group allow list.
     ///
-    /// When no groups are configured, cached identities are allowed without a provider refresh;
-    /// accounts without a cached identity remain unknown.
+    /// Without an allow list, a cached identity is allowed without a provider refresh, even if
+    /// it has expired. An uncached account is resolved through the provider and allowed if found.
     pub async fn pam_account_allowed(&self, account_id: &str) -> ResolverResult<Option<bool>> {
         if self.pam_allow_groups.is_empty() {
             if self.check_nxset(Some(account_id), None).await {
                 return Ok(None);
             }
-            let (_, token) = self
-                .lookup_cached_usertoken(&Id::Name(account_id.to_string()))
-                .await?;
-            return Ok(token.map(|_| true));
+            let id = Id::Name(account_id.to_string());
+            if let (_, Some(_)) = self.lookup_cached_usertoken(&id).await? {
+                return Ok(Some(true));
+            }
+            return Ok(self.get_usertoken(id).await?.map(|_| true));
         }
 
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
