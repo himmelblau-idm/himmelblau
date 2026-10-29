@@ -106,7 +106,7 @@ CHECKPOINT_KEYS = {
     "backport_review_required", "backports_applied", "backports_conflict_skipped", "backports_build_failed",
     "backports_deferred", "backports_adapted", "backports_repair_failed", "backports_conflict_details",
     "backport_summaries", "backport_outcomes", "backport_cursor", "backport_remaining",
-    "network_not_before",
+    "network_not_before", "incomplete_stages",
 }
 
 
@@ -3984,8 +3984,15 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
     if runner.git(["status", "--porcelain"]).stdout:
         raise MaintenanceError("final validation left repository changes")
     value = state.load(); value.setdefault("gate_results", []).append("repository-clean: passed"); state.save(value)
+    incomplete = [s for s in os.environ.get("MAINTENANCE_INCOMPLETE_STAGES", "").split(",") if s]
+    if len(incomplete) != len(set(incomplete)) or any(s not in CHECKPOINT_STAGES for s in incomplete):
+        raise MaintenanceError("invalid incomplete maintenance stages")
+    if incomplete:
+        value = state.load()
+        value["incomplete_stages"] = incomplete
+        state.save(value)
     value = state.load()
-    manual = bool(manual_audit_work(value))
+    manual = bool(manual_audit_work(value) or value.get("incomplete_stages"))
     value["manual_audit_head" if manual else "validated_head"] = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
     state.save(value)
     state.event("validate", "final audits require manual work; draft publication only" if manual else "all final gates passed")
@@ -4076,7 +4083,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
         "already_covered", "vet_accepted", "vet_rejected", "dependabot_imported", "dependabot_skipped",
         "backport_candidates", "backport_skipped", "backports_applied", "backports_conflict_skipped", "gate_results",
         "backports_deferred", "backport_remaining",
-        "backports_build_failed", "manual_audit_work",
+        "backports_build_failed", "manual_audit_work", "incomplete_stages",
     )
     lines: list[str] = []
     for key in keys:
@@ -4096,6 +4103,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
 
 def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
     manual = manual_audit_work(value)
+    incomplete = value.get("incomplete_stages", [])
     through = maintenance_main_through(value)
     marker = f"{MARKER} {require_sha(str(through))}"
     run_id = os.environ.get("GITHUB_RUN_ID", "")
@@ -4106,8 +4114,8 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         else "Full details are in the maintenance run summary and logs."
     )
     summary = "Refresh supply-chain metadata; no version bump." if value.get("metadata_only") else "Validated stable maintenance release."
-    if manual:
-        summary = "DRAFT: final audits need manual work; release validation is incomplete."
+    if manual or incomplete:
+        summary = "DRAFT: incomplete maintenance stages or audits require manual work."
     lines = [
         "## Summary", "", summary + " Human review required; never auto-merged.", "",
         "## What Changed", "",
@@ -4136,6 +4144,9 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         "- [ ] Resolve final audit work and rerun all release validation." if manual else "- [x] Automated validation completed.",
         "- [ ] Maintainer review of backports and integration impact.", "", marker,
     ]
+    if incomplete:
+        lines.extend(["", "### Incomplete stages (manual action required)", ""])
+        lines.extend(f"- [ ] Re-run and review `{stage}`; checkpoint was not produced." for stage in incomplete)
     if manual:
         lines.extend(["", "### Manual audit work", ""])
         for row in manual:
@@ -4215,9 +4226,10 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
     if value.get("no_changes"):
         state.event("publish", "no changes; no PR created"); return
     manual = manual_audit_work(value)
-    if value.get("checkpointed") or manual:
+    incomplete = value.get("incomplete_stages", [])
+    if value.get("checkpointed") or manual or incomplete:
         head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
-        approval = "manual_audit_head" if manual else "validated_head"
+        approval = "manual_audit_head" if manual or incomplete else "validated_head"
         if value.get(approval) != head or runner.git(["status", "--porcelain"]).stdout:
             raise MaintenanceError("checkpoint publication requires final gates for the exact clean HEAD")
         stable = runner.git(["ls-remote", "--exit-code", "origin", f"refs/heads/{require_branch(value['branch'])}"]).stdout.split()
@@ -4241,7 +4253,7 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
         # before ready_for_review so even that policy sees its exemption.
         "body": body, "draft": True,
     }
-    if manual:
+    if manual or incomplete:
         payload["title"] = f"Manual audit work required: {value['branch']} maintenance"
     repo = github_repository()
     pr = http_json(f"https://api.github.com/repos/{repo}/pulls", method="POST", headers=github_headers(), body=payload)
@@ -4257,7 +4269,7 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
         node_id = pr.get("node_id")
         if not isinstance(node_id, str) or not re.fullmatch(r"[A-Za-z0-9_=-]{1,200}", node_id):
             raise MaintenanceError("GitHub did not return a valid PR node id")
-        if not manual:
+        if not (manual or incomplete):
             mark_maintenance_pr_ready(repo, number, node_id, state)
     except MaintenanceError:
         close_failed_maintenance_pr(repo, number, state)
@@ -4270,7 +4282,7 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
     lines = ["# Stable maintenance report", "", f"Last phase: `{value.get('last_phase', 'not started')}`", ""]
     if value.get("failed_phase"):
         lines.extend([f"Failed phase: `{value['failed_phase']}` — {value.get('failure', 'failed closed')}", ""])
-    if manual_audit_work(value) and value.get("manual_audit_head"):
+    if (manual_audit_work(value) or value.get("incomplete_stages")) and value.get("manual_audit_head"):
         lines.extend(["**Final audits require manual work. Draft only; release validation incomplete.**", ""])
     if value.get("skip"):
         numbers = ", ".join(f"#{number}" for number in value.get("blocking_pull_requests", []))
