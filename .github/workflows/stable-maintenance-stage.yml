@@ -9,6 +9,9 @@ on:
       stage:
         type: string
         required: true
+      incomplete-stages:
+        type: string
+        default: ''
       previous-stage:
         type: string
         default: ''
@@ -60,6 +63,7 @@ jobs:
       MAINTENANCE_BUILD_IMAGE: himmelblau-stable-maintenance:local
       TARGET_BRANCH: ${{ inputs.branch }}
       MAINTENANCE_STAGE: ${{ inputs.stage }}
+      MAINTENANCE_INCOMPLETE_STAGES: ${{ inputs.incomplete-stages }}
       MAINTENANCE_TOOLING_COMMIT: ${{ github.sha }}
     steps:
       - name: Harden the runner (block unapproved outbound calls)
