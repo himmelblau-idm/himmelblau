@@ -53,8 +53,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    env:
-      DOCKER_CONFIG: ${{ runner.temp }}/himmelblau-registry-auth
     steps:
       - name: Checkout release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,7 +68,9 @@ jobs:
           persist-credentials: false
       # SUSE registration persists in image layers; do not export those layers.
       - name: Isolate registry credentials from the default Docker configuration
-        run: mkdir -p -m 0700 "$DOCKER_CONFIG"
+        run: |
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/himmelblau-registry-auth" >> "$GITHUB_ENV"
+          mkdir -p -m 0700 "$RUNNER_TEMP/himmelblau-registry-auth"
       - name: Log in to the build-container cache registry
         if: ${{ !fromJSON(inputs.spec).scc }}
         id: cache-login
