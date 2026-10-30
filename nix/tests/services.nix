@@ -19,6 +19,7 @@ let
           aadToolPackage = pkgs.writeShellScriptBin "aad-tool" "";
           ssoPackage = pkgs.emptyDirectory;
           brokerPackage = pkgs.emptyDirectory;
+          brokerPinentryPackage = pkgs.pinentry-gnome3;
           pamPackage = pkgs.emptyDirectory // { lib = pkgs.emptyDirectory; };
           nssPackage = pkgs.emptyDirectory;
           settings.tpm_tcti_name = tcti;
@@ -63,6 +64,10 @@ in
       pkgs.openssl
       pkgs.systemd
       pkgs.tpm2-tools
+    ];
+    brokerTools = map toString [
+      pkgs.xdg-utils
+      pkgs.pinentry-gnome3
     ];
     tasksTools = map toString [
       pkgs.shadow

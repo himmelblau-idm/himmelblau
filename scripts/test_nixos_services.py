@@ -153,7 +153,7 @@ NIXOS_ENVIRONMENT_TOOLS = {
     "himmelblaud.service": None,
     "himmelblaud-tasks.service": "tasksTools",
     "himmelblau-hsm-pin-init.service": "initializerTools",
-    "himmelblau-broker.service": None,
+    "himmelblau-broker.service": "brokerTools",
     "himmelblau-compliance-check.service": None,
 }
 
