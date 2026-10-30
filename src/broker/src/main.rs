@@ -19,7 +19,7 @@ use himmelblau_unix_common::auth::{authenticate, MessagePrinter};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::pam::{Options, PamResultCode};
 use identity_dbus_broker::{session_broker_serve, LogLevelCallbacks, SessionBroker};
-use pinentry::PassphraseInput;
+use pinentry::{unix, PassphraseInput};
 use sd_notify::NotifyState;
 use secrecy::ExposeSecret;
 use std::fmt;
@@ -108,6 +108,16 @@ fn interactive_session_available() -> bool {
         info!("No pinentry binary found on PATH; cannot prompt interactively");
     }
     has_display && has_pinentry
+}
+
+/// Return a valid terminal type for pinentry's Assuan options.
+///
+/// Some graphical session managers export `TERM=`. pinentry-rs only applies
+/// its fallback when the variable is absent, and an empty `ttytype` option is
+/// rejected by pinentry before a graphical dialog can be shown.
+fn pinentry_tty_type(term: Option<&str>) -> &str {
+    term.filter(|value| !value.is_empty())
+        .unwrap_or("xterm-256color")
 }
 
 /// True when a broker SSO cookie response carries a usable cookie.
@@ -220,11 +230,21 @@ fn show_pinentry_message(msg: &str) {
         "OK"
     };
     if let Some(mut dialog) = pinentry::MessageDialog::with_default_binary() {
+        let term = std::env::var("TERM").ok();
+        dialog.with_unix_options(
+            unix::Options::builder()
+                .tty_type(pinentry_tty_type(term.as_deref()))
+                .build(),
+        );
         // Pinentry-rs panics on oversized Assuan lines; never let that
         // unwind through the D-Bus handler (Edge AcquireTokenInteractively).
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = dialog.with_ok(ok_label).show_message(msg);
-        }));
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            dialog.with_ok(ok_label).show_message(msg)
+        })) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => debug!("pinentry message failed: {:?}", e),
+            Err(_) => debug!("pinentry message panicked"),
+        }
     }
 }
 
@@ -264,9 +284,15 @@ impl MessagePrinter for PinentryMessagePrinter {
 
     fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
         let mut input = PassphraseInput::with_default_binary()?;
+        let term = std::env::var("TERM").ok();
         input
             .with_description("Entra ID Authentication")
-            .with_prompt(prompt);
+            .with_prompt(prompt)
+            .with_unix_options(
+                unix::Options::builder()
+                    .tty_type(pinentry_tty_type(term.as_deref()))
+                    .build(),
+            );
         match input.interact() {
             Ok(secret) => Some(secret.expose_secret().to_string()),
             Err(e) => {
@@ -673,6 +699,16 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pinentry_tty_type_replaces_missing_or_empty_values() {
+        assert_eq!(pinentry_tty_type(None), "xterm-256color");
+        assert_eq!(pinentry_tty_type(Some("")), "xterm-256color");
+        assert_eq!(
+            pinentry_tty_type(Some("screen-256color")),
+            "screen-256color"
+        );
+    }
 
     #[test]
     fn extracts_top_level_account() {
