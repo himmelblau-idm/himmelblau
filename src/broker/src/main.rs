@@ -242,8 +242,9 @@ fn show_pinentry_message(msg: &str) {
             dialog.with_ok(ok_label).show_message(msg)
         })) {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => debug!("pinentry message failed: {:?}", e),
-            Err(_) => debug!("pinentry message panicked"),
+            Ok(Err(pinentry::Error::Cancelled)) => {}
+            Ok(Err(e)) => error!("pinentry message failed: {:?}", e),
+            Err(_) => error!("pinentry message panicked"),
         }
     }
 }

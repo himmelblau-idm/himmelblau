@@ -39,6 +39,7 @@ in
   nscdEnabled = cfg.services.nscd.enable;
   hsmPinPath = cfg.services.himmelblau.settings.hsm_pin_path;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
+  dbusPackages = map toString cfg.services.dbus.packages;
   warnings = cfg.warnings;
   assertions = map (assertion: assertion.message) (
     builtins.filter (assertion: !assertion.assertion) cfg.assertions
@@ -48,6 +49,7 @@ in
     daemon = toString cfg.services.himmelblau.daemonPackage;
     aadTool = toString cfg.services.himmelblau.aadToolPackage;
     broker = toString cfg.services.himmelblau.brokerPackage;
+    gcr = toString pkgs.gcr;
     config = toString cfg.environment.etc."himmelblau/himmelblau.conf".source;
     localeArchive = "${cfg.i18n.glibcLocales}/lib/locale/locale-archive";
     timezone = "${pkgs.tzdata}/share/zoneinfo";

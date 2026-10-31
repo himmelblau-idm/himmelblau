@@ -619,6 +619,11 @@ class NixosServiceTests(unittest.TestCase):
         self.assertIn("nscd.service", daemon["After"].split())
         self.assertNotIn("nscd.service", daemon.get("Conflicts", "").split())
 
+    def test_gnome_pinentry_registers_its_dbus_helper(self):
+        self.assertIn(
+            self.evaluated["paths"]["gcr"], self.evaluated["dbusPackages"]
+        )
+
     def test_network_online_ordering_has_explicit_dependencies(self):
         for name, unit in self.units.items():
             if "network-online.target" not in unit["Unit"].get("After", "").split():
