@@ -20,7 +20,7 @@ jobs:
   vet:
     needs: [dependencies]
     # Attempt later stages after failure; use the newest available checkpoint.
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -35,7 +35,7 @@ jobs:
   backports-1:
     needs: [dependencies, vet]
     # Attempt later stages after failure; use the newest available checkpoint.
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -50,7 +50,7 @@ jobs:
   backports-2:
     needs: [dependencies, vet, backports-1]
     # Attempt later stages after failure; use the newest available checkpoint.
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -65,7 +65,7 @@ jobs:
   backports-3:
     needs: [dependencies, vet, backports-1, backports-2]
     # Attempt later stages after failure; use the newest available checkpoint.
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -80,7 +80,7 @@ jobs:
   backports-4:
     needs: [dependencies, vet, backports-1, backports-2, backports-3]
     # Attempt later stages after failure; use the newest available checkpoint.
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -95,7 +95,7 @@ jobs:
   final:
     needs: [dependencies, vet, backports-1, backports-2, backports-3, backports-4]
     # Attempt later stages after failure; use the newest available checkpoint.
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
