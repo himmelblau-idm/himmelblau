@@ -23,18 +23,21 @@ let
     modules = [
       ../modules/himmelblau.nix
       {
-        services.himmelblau = {
-          enable = true;
-          daemonPackage = pkgs.emptyDirectory;
-          aadToolPackage = pkgs.writeShellScriptBin "aad-tool" "";
-          ssoPackage = pkgs.emptyDirectory;
-          brokerPackage = pkgs.emptyDirectory;
-          inherit brokerPinentryPackage;
-          pamPackage = pkgs.emptyDirectory // { lib = pkgs.emptyDirectory; };
-          nssPackage = pkgs.emptyDirectory;
-          settings.tpm_tcti_name = tcti;
-          settings.hsm_pin_path = pinPath;
-        };
+        services.himmelblau =
+          {
+            enable = true;
+            daemonPackage = pkgs.emptyDirectory;
+            aadToolPackage = pkgs.writeShellScriptBin "aad-tool" "";
+            ssoPackage = pkgs.emptyDirectory;
+            brokerPackage = pkgs.emptyDirectory;
+            pamPackage = pkgs.emptyDirectory // { lib = pkgs.emptyDirectory; };
+            nssPackage = pkgs.emptyDirectory;
+            settings.tpm_tcti_name = tcti;
+            settings.hsm_pin_path = pinPath;
+          }
+          // pkgs.lib.optionalAttrs (brokerPinentry != null) {
+            inherit brokerPinentryPackage;
+          };
         security.tpm2 = {
           enable = tpmEnabled;
           inherit tssGroup;
