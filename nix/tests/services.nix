@@ -5,9 +5,19 @@
   tcti ? "device:/dev/tpmrm0",
   tssGroup ? "tss",
   pinPath ? "/var/lib/himmelblaud/hsm-pin",
+  brokerPinentry ? "gnome3",
 }:
 let
   pkgs = import nixpkgs { };
+  brokerPinentryPackage =
+    if brokerPinentry == null then
+      null
+    else if brokerPinentry == "gnome3" then
+      pkgs.pinentry-gnome3
+    else if brokerPinentry == "curses" then
+      pkgs.pinentry-curses
+    else
+      throw "unsupported brokerPinentry fixture value: ${brokerPinentry}";
   evaluated = import (pkgs.path + "/nixos/lib/eval-config.nix") {
     system = builtins.currentSystem;
     modules = [
@@ -19,7 +29,7 @@ let
           aadToolPackage = pkgs.writeShellScriptBin "aad-tool" "";
           ssoPackage = pkgs.emptyDirectory;
           brokerPackage = pkgs.emptyDirectory;
-          brokerPinentryPackage = pkgs.pinentry-gnome3;
+          inherit brokerPinentryPackage;
           pamPackage = pkgs.emptyDirectory // { lib = pkgs.emptyDirectory; };
           nssPackage = pkgs.emptyDirectory;
           settings.tpm_tcti_name = tcti;
@@ -50,6 +60,9 @@ in
     aadTool = toString cfg.services.himmelblau.aadToolPackage;
     broker = toString cfg.services.himmelblau.brokerPackage;
     gcr = toString pkgs.gcr;
+    xdgUtils = toString pkgs.xdg-utils;
+    pinentryGnome3 = toString pkgs.pinentry-gnome3;
+    pinentryCurses = toString pkgs.pinentry-curses;
     config = toString cfg.environment.etc."himmelblau/himmelblau.conf".source;
     localeArchive = "${cfg.i18n.glibcLocales}/lib/locale/locale-archive";
     timezone = "${pkgs.tzdata}/share/zoneinfo";
@@ -69,8 +82,7 @@ in
     ];
     brokerTools = map toString [
       pkgs.xdg-utils
-      pkgs.pinentry-gnome3
-    ];
+    ] ++ pkgs.lib.optional (brokerPinentryPackage != null) brokerPinentryPackage;
     tasksTools = map toString [
       pkgs.shadow
       pkgs.bash
