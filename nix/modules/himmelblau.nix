@@ -91,6 +91,18 @@ in
         description = "Package himmelblau_broker - used for sso";
       };
 
+      brokerPinentryPackage = lib.mkOption {
+        type = lib.types.nullOr lib.types.package;
+        default = null;
+        example = lib.literalExpression "pkgs.pinentry-gnome3";
+        description = ''
+          Graphical pinentry package used by the authentication broker.
+          Leave this null for silent-only SSO. Setting it enables interactive
+          broker prompts and should be combined with a pinentry implementation
+          suitable for the configured graphical session.
+        '';
+      };
+
       pamPackage = lib.mkOption {
         type = lib.types.path;
         description = "Library for the pam module";
@@ -207,7 +219,12 @@ in
       "${cfg.ssoPackage}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
     environment.etc."opt/chrome/native-messaging-hosts/linux_entra_sso.json".source =
       "${cfg.ssoPackage}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
-    services.dbus.packages = [ cfg.brokerPackage ];
+    services.dbus.packages =
+      [ cfg.brokerPackage ]
+      ++ lib.optional (
+        cfg.brokerPinentryPackage != null
+        && lib.elem "gnome3" (cfg.brokerPinentryPackage.flavors or [ ])
+      ) pkgs.gcr;
 
     # Add himmelblau to the list of name services to lookup users/groups
     system.nssModules = [ cfg.nssPackage ];
@@ -279,6 +296,9 @@ in
       description = "Himmelblau Authentication Broker";
       after = [ "graphical-session.target" ];
       partOf = [ "graphical-session.target" ];
+      path =
+        [ pkgs.xdg-utils ]
+        ++ lib.optional (cfg.brokerPinentryPackage != null) cfg.brokerPinentryPackage;
       serviceConfig = {
         Type = "dbus";
         BusName = "com.microsoft.identity.broker1";

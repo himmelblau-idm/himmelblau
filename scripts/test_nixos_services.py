@@ -153,7 +153,7 @@ NIXOS_ENVIRONMENT_TOOLS = {
     "himmelblaud.service": None,
     "himmelblaud-tasks.service": "tasksTools",
     "himmelblau-hsm-pin-init.service": "initializerTools",
-    "himmelblau-broker.service": None,
+    "himmelblau-broker.service": "brokerTools",
     "himmelblau-compliance-check.service": None,
 }
 
@@ -618,6 +618,26 @@ class NixosServiceTests(unittest.TestCase):
         daemon = self.units["himmelblaud.service"]["Unit"]
         self.assertIn("nscd.service", daemon["After"].split())
         self.assertNotIn("nscd.service", daemon.get("Conflicts", "").split())
+
+    def test_broker_pinentry_is_opt_in_and_registers_only_gnome_helper(self):
+        cases = [
+            (None, None, False),
+            ("curses", "pinentryCurses", False),
+            ("gnome3", "pinentryGnome3", True),
+        ]
+        for selection, expected_pinentry, expect_gcr in cases:
+            with self.subTest(selection=selection):
+                evaluated = evaluate(brokerPinentry=selection)
+                broker = evaluated["userUnits"]["himmelblau-broker.service"]
+                paths = evaluated["paths"]
+                self.assertIn(f'{paths["xdgUtils"]}/bin', broker)
+                for key in ["pinentryGnome3", "pinentryCurses"]:
+                    self.assertEqual(
+                        f'{paths[key]}/bin' in broker, key == expected_pinentry
+                    )
+                self.assertEqual(
+                    paths["gcr"] in evaluated["dbusPackages"], expect_gcr
+                )
 
     def test_network_online_ordering_has_explicit_dependencies(self):
         for name, unit in self.units.items():
