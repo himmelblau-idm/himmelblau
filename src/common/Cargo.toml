@@ -45,7 +45,7 @@ anyhow = { workspace = true }
 csv = { workspace = true }
 sketching = { workspace = true }
 regex = "1.12.3"
-sha2 = "0.11.0"
+sha2 = "0.11.1"
 base64.workspace = true
 authenticator = { version = "0.5.0", default-features = false, features = ["crypto_openssl"] }
 libwebauthn = "0.10.0"
