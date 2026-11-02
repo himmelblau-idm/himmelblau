@@ -1709,6 +1709,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.18.0 -> 1.20.1"
 
+[[audits.url]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "2.5.7 -> 2.5.8"
+
 [[audits.utoipa]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
