@@ -19,7 +19,7 @@ use std::num::NonZeroUsize;
 use std::ops::DerefMut;
 use std::path::Path;
 use std::string::ToString;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime};
 
@@ -59,6 +59,51 @@ use himmelblau::auth::UserToken as UnixUserToken;
 const NXCACHE_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 const UNREACHABLE_RETRY: Duration = Duration::from_secs(15);
 const BUSY_REFRESH_RETRY: Duration = Duration::from_secs(1);
+const BACKGROUND_REFRESH_ADMISSION_DELAY: Duration = Duration::from_millis(100);
+const BACKGROUND_REFRESH_IN_PROGRESS: usize = 1 << (usize::BITS - 1);
+const PAM_WAITERS_MASK: usize = BACKGROUND_REFRESH_IN_PROGRESS - 1;
+
+struct PamAdmission<'a> {
+    state: &'a AtomicUsize,
+    background: bool,
+}
+
+impl<'a> PamAdmission<'a> {
+    /// Registers PAM while it waits for the session lock.
+    fn pam_waiter(state: &'a AtomicUsize) -> Self {
+        state.fetch_add(1, Ordering::AcqRel);
+        Self {
+            state,
+            background: false,
+        }
+    }
+
+    /// Reserves provider admission only when no PAM session is waiting.
+    fn try_background(state: &'a AtomicUsize) -> Option<Self> {
+        state
+            .compare_exchange(
+                0,
+                BACKGROUND_REFRESH_IN_PROGRESS,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .ok()
+            .map(|_| Self {
+                state,
+                background: true,
+            })
+    }
+}
+
+impl Drop for PamAdmission<'_> {
+    fn drop(&mut self) {
+        if self.background {
+            self.state.fetch_and(PAM_WAITERS_MASK, Ordering::Release);
+        } else {
+            self.state.fetch_sub(1, Ordering::Release);
+        }
+    }
+}
 
 // These keys deliberately mirror account_t's UUID/name/SPN/GID conflicts.
 // They are not tenant-scoped because the database's uniqueness constraints are not.
@@ -178,6 +223,7 @@ where
     // A refresh holds this through its cache commit; invalidation and clearing take the writer.
     identity_cache_lock: RwLock<()>,
     pam_sessions: Arc<RwLock<()>>,
+    pam_admission: AtomicUsize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1219,6 +1265,94 @@ mod tests {
         drop(session);
     }
 
+    /// Gives a waiting PAM session priority over provider work and retries the refresh later.
+    #[tokio::test]
+    async fn concurrent_refresh_yields_to_pam_waiting_before_provider_work() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver.client.user_get_error.store(3, Ordering::Release);
+        resolver.client.probe_stall.store(true, Ordering::Release);
+        resolver.queue_identity_refresh(&token.spn).await;
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let mut worker = Box::pin(resolver.refresh_queued_identities(&shutdown_rx));
+        assert!(futures::poll!(&mut worker).is_pending());
+        assert_eq!(
+            resolver.client.probe_online_calls.load(Ordering::Acquire),
+            1
+        );
+
+        let refreshes = resolver.identity_refreshes.lock().await;
+        resolver.client.probe_release.notify_one();
+        assert!(futures::poll!(&mut worker).is_pending());
+        tokio::time::sleep(super::BACKGROUND_REFRESH_ADMISSION_DELAY).await;
+        assert!(futures::poll!(&mut worker).is_pending());
+        assert!(resolver.pam_sessions.try_write().is_err());
+
+        let mut init = Box::pin(resolver.pam_account_authenticate_init(
+            &token.spn,
+            "sshd",
+            false,
+            false,
+            shutdown_rx.resubscribe(),
+        ));
+        assert!(futures::poll!(&mut init).is_pending());
+        drop(refreshes);
+        worker.await;
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        assert_eq!(
+            resolver.identity_refreshes.lock().await.queued,
+            vec![token.spn.clone()]
+        );
+
+        let (session, response) = init.await.unwrap();
+        assert!(matches!(response, PamAuthResponse::Password { .. }));
+        drop(session);
+
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver.client.probe_stall.store(false, Ordering::Release);
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+    }
+
+    /// Keeps PAM behind provider work only after that work has begun.
+    #[tokio::test]
+    async fn concurrent_refresh_finishes_provider_work_before_waiting_pam() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver.client.user_get_error.store(3, Ordering::Release);
+        resolver
+            .client
+            .user_get_stall
+            .store(true, Ordering::Release);
+        resolver.queue_identity_refresh(&token.spn).await;
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let mut background = Box::pin(resolver.refresh_queued_identities(&shutdown_rx));
+        tokio::select! {
+            _ = resolver.client.user_get_started.notified() => {}
+            _ = &mut background => panic!("background refresh completed before provider release"),
+        }
+
+        let mut init = Box::pin(resolver.pam_account_authenticate_init(
+            &token.spn,
+            "sshd",
+            false,
+            false,
+            shutdown_rx.resubscribe(),
+        ));
+        assert!(futures::poll!(&mut init).is_pending());
+        resolver
+            .client
+            .user_get_stall
+            .store(false, Ordering::Release);
+        resolver.client.user_get_release.notify_one();
+        background.await;
+
+        let (session, response) = init.await.unwrap();
+        assert!(matches!(response, PamAuthResponse::Password { .. }));
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+        drop(session);
+    }
+
     #[tokio::test]
     async fn concurrent_refresh_initgroups_uses_the_background_refresh_result() {
         let resolver = setup_resolver_with(0, InitgroupsMode::Full, vec![removed_group()]).await;
@@ -1231,7 +1365,10 @@ mod tests {
         resolver.queue_identity_refresh(&token.spn).await;
         let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
         let mut background = Box::pin(resolver.refresh_queued_identities(&shutdown_rx));
-        assert!(futures::poll!(&mut background).is_pending());
+        tokio::select! {
+            _ = resolver.client.user_get_started.notified() => {}
+            _ = &mut background => panic!("background refresh completed before provider release"),
+        }
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
         let mut groups =
             Box::pin(resolver.get_initgroups(&token.spn, OnExpiry::RefreshIfReachable));
@@ -3407,6 +3544,7 @@ where
             identity_refresh_ready: Notify::new(),
             identity_cache_lock: RwLock::new(()),
             pam_sessions: Arc::new(RwLock::new(())),
+            pam_admission: AtomicUsize::new(0),
         })
     }
 
@@ -3598,6 +3736,10 @@ where
             if !shutdown_rx.is_empty() {
                 break;
             }
+            tokio::time::sleep(BACKGROUND_REFRESH_ADMISSION_DELAY).await;
+            if !shutdown_rx.is_empty() {
+                break;
+            }
             if !self.try_background_refresh(&id, token).await {
                 self.defer_identity_refresh(spn).await;
                 continue;
@@ -3666,6 +3808,9 @@ where
         if current.uuid != token.uuid || current.tenant_id != token.tenant_id {
             return true;
         }
+        let Some(_admission) = PamAdmission::try_background(&self.pam_admission) else {
+            return false;
+        };
         if self
             .refresh_usertoken_locked(account_id, Some((current, false)), &mut refresh, hsm)
             .await
@@ -4865,7 +5010,9 @@ where
             return Ok((AuthSession::Denied, PamAuthResponse::Unknown));
         }
 
+        let pam_waiter = PamAdmission::pam_waiter(&self.pam_admission);
         let activity = self.pam_sessions.clone().read_owned().await;
+        drop(pam_waiter);
         // An offline session must not overwrite an identity replaced after its lookup.
         let cache_generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
         let id = Id::Name(account_id.to_string());
@@ -5003,7 +5150,9 @@ where
     ) -> ResolverResult<PamAuthResponse> {
         if let AuthSession::InProgress { activity, .. } = auth_session {
             if activity.is_none() {
+                let pam_waiter = PamAdmission::pam_waiter(&self.pam_admission);
                 *activity = Some(self.pam_sessions.clone().read_owned().await);
+                drop(pam_waiter);
             }
         }
         let result = self
