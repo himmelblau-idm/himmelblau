@@ -3626,11 +3626,6 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "4.3.2 -> 4.3.4"
 
-[[audits.himmelblau.audits.zeroize]]
-who = "David Mulder <dmulder@samba.org>"
-criteria = "safe-to-deploy"
-delta = "1.8.2 -> 1.9.0"
-
 [[audits.himmelblau.audits.zeroize_derive]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -5405,6 +5400,13 @@ This code DOES contain unsafe code required to internally call volatiles
 for deleting data. This is expected and documented behavior.
 """
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.zeroize]]
+who = "Alex Franchuk <afranchuk@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "1.8.2 -> 1.9.1"
+notes = "Minor stylistic changes to unsafe blocks, many tests added/updated."
+aggregated-from = "https://raw.githubusercontent.com/mozilla/cargo-vet/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.zeroize_derive]]
 who = "Benjamin Beurdouche <beurdouche@mozilla.com>"
