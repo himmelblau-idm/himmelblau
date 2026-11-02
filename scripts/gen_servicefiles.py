@@ -34,6 +34,10 @@ MINVER = {
     "ProtectClock": 245,
     "ProtectKernelLogs": 244,
     "LoadCredentialEncrypted": 250,
+    # $SYSTEMD_ACTIVATION_UNIT (v240, systemd/systemd@d521916d) lets nss_himmelblau
+    # skip the daemon while its own unit starts; without it socket activation
+    # deadlocks (#1930). himmelblaud binds its own sockets when none are passed.
+    "SocketActivation": 240,
 }
 
 def detect_systemd_version():
@@ -57,6 +61,16 @@ def bool_env(val: str) -> bool:
     return val.lower() in ("1", "true", "yes", "on")
 
 def main():
+    """Generate the unit files for the detected or assumed systemd version.
+
+    Every directive newer than BASELINE_VERSION is gated on its MINVER entry,
+    so one source tree yields units a 239 manager can still parse as well as
+    units that use everything a current manager offers. The service, timer and
+    HSM PIN units land in --out-dir; the .socket units are written next to this
+    script in platform/systemd, because packaging lists them as static assets
+    rather than build outputs, and are skipped entirely below the
+    SocketActivation minimum.
+    """
     ap = argparse.ArgumentParser(description="Generate Himmelblau systemd unit files.")
     ap.add_argument("--out-dir", default=".", help="Output directory for generated units.")
     ap.add_argument("--assume-version", type=int, default=None,
@@ -162,6 +176,20 @@ def main():
         hsm_pin_init_wants = "Wants=himmelblau-hsm-pin-init.service"
 
     # ---- Compose himmelblaud.service ----
+    socket_units = "himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket"
+    if supported("SocketActivation"):
+        daemon_after_sockets = " " + socket_units
+        daemon_requires_line = "Requires=" + socket_units
+        daemon_sockets_line = "Sockets=" + socket_units
+        daemon_runtime_dir_line = ""
+    else:
+        daemon_after_sockets = ""
+        daemon_requires_line = ""
+        daemon_sockets_line = ""
+        # Without the socket units nothing else creates /run/himmelblaud for
+        # the daemon to bind in (4.0.6 had this line for the same reason).
+        daemon_runtime_dir_line = "RuntimeDirectory=himmelblaud"
+
     fd_store_preserve = ""
     if supported("FileDescriptorStorePreserve"):
         if supported("PinnedFdStoreSocketActivation"):
@@ -183,8 +211,8 @@ def main():
 
 [Unit]
 Description=Himmelblau Authentication Daemon
-After={' '.join(base_after)}{' ' + hsm_pin_init_after if hsm_pin_init_after else ''} himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket
-Requires=himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket
+After={' '.join(base_after)}{' ' + hsm_pin_init_after if hsm_pin_init_after else ''}{daemon_after_sockets}
+{daemon_requires_line}
 Before={' '.join(base_before)}
 Wants={' '.join(base_wants)}
 {hsm_pin_init_wants}
@@ -204,12 +232,13 @@ UMask=0027
 CacheDirectory=himmelblaud
 StateDirectory=himmelblaud
 ConfigurationDirectory=himmelblau
+{daemon_runtime_dir_line}
 
 {type_line}
 {'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc' if supported('LoadCredentialEncrypted') else ''}
 {'Environment=HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin' if supported('LoadCredentialEncrypted') else ''}
 ExecStart=/usr/sbin/himmelblaud
-Sockets=himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket
+{daemon_sockets_line}
 Restart=on-failure
 RestartSec=500ms
 WatchdogSec=120s
@@ -431,7 +460,6 @@ WantedBy=timers.target
 
     # Debian and openSUSE socket units are the same. Write them once.
     socket_dir = Path(__file__).resolve().parent.parent / "platform" / "systemd"
-    socket_dir.mkdir(parents=True, exist_ok=True)
 
     def write_socket(name: str, desc: str, listen: str, fdname: str, extra: str = "") -> None:
         (socket_dir / name).write_text(
@@ -443,27 +471,32 @@ WantedBy=timers.target
         )
         print(f"[gen-systemd] Wrote: {socket_dir / name}")
 
-    write_socket(
-        "himmelblaud.socket",
-        "Himmelblau Authentication Daemon Socket",
-        "/run/himmelblaud/socket",
-        "himmelblaud",
-        extra="SocketMode=0666\n",
-    )
-    write_socket(
-        "himmelblaud-tasks.socket",
-        "Himmelblau Daemon Task Socket",
-        "/run/himmelblaud/task_sock",
-        "himmelblaud-task",
-        extra="SocketMode=0600\nSocketUser=root\nSocketGroup=root\n",
-    )
-    write_socket(
-        "himmelblaud-broker.socket",
-        "Himmelblau Daemon Broker Socket",
-        "/run/himmelblaud/broker_sock",
-        "himmelblaud-broker",
-        extra="SocketMode=0666\n",
-    )
+    if supported("SocketActivation"):
+        socket_dir.mkdir(parents=True, exist_ok=True)
+        write_socket(
+            "himmelblaud.socket",
+            "Himmelblau Authentication Daemon Socket",
+            "/run/himmelblaud/socket",
+            "himmelblaud",
+            extra="SocketMode=0666\n",
+        )
+        write_socket(
+            "himmelblaud-tasks.socket",
+            "Himmelblau Daemon Task Socket",
+            "/run/himmelblaud/task_sock",
+            "himmelblaud-task",
+            extra="SocketMode=0600\nSocketUser=root\nSocketGroup=root\n",
+        )
+        write_socket(
+            "himmelblaud-broker.socket",
+            "Himmelblau Daemon Broker Socket",
+            "/run/himmelblaud/broker_sock",
+            "himmelblaud-broker",
+            extra="SocketMode=0666\n",
+        )
+    else:
+        print(f"[gen-systemd] systemd {ver} predates $SYSTEMD_ACTIVATION_UNIT "
+              "(240); skipping socket units, himmelblaud will bind its own.")
 
     (out_dir / "himmelblaud.service").write_text(daemon_unit)
     (out_dir / "himmelblaud-tasks.service").write_text(tasks_unit)

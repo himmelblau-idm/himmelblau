@@ -65,6 +65,11 @@ if selinux_configured; then
         # Restart daemons now that the policy is loaded (if present)
         if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ] && ! is_live_system; then
           systemctl daemon-reload >/dev/null 2>&1 || :
+          # Same guard as the daemon postinst, which skips it when it defers here.
+          if ! grep -q '^Sockets=' /usr/lib/systemd/system/himmelblaud.service 2>/dev/null; then
+            systemctl stop himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket >/dev/null 2>&1 || :
+            systemctl reset-failed himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket >/dev/null 2>&1 || :
+          fi
           systemctl restart himmelblaud.service himmelblaud-tasks.service >/dev/null 2>&1 || :
         fi
 

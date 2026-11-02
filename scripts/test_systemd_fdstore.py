@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Check generated units and optionally exercise their FD-store lifecycle.
 
-Generator checks cover systemd 239 and newer, and rejection below that baseline.
+Generator checks cover systemd 239 and newer, and rejection below that baseline,
+including the socket-activation gate that keeps the daemon off socket units on
+managers without $SYSTEMD_ACTIVATION_UNIT.
 Run the live tests with HIMMELBLAU_SYSTEMD_TESTS=1 python3
 scripts/test_systemd_fdstore.py -v. They use disposable user units, a dummy
 daemon and a synthetic token; no root, Entra account or installed daemon is used.
@@ -54,6 +56,41 @@ class GeneratorTests(unittest.TestCase):
                 self.assertEqual(service.get("FileDescriptorStoreMax"), "1")
                 expected_preserve = "yes" if version >= 257 else "restart" if version >= 254 else None
                 self.assertEqual(service.get("FileDescriptorStorePreserve"), expected_preserve)
+
+    def test_socket_activation_version_gating(self):
+        """Socket activation has to be all or nothing for a given version.
+
+        A manager that cannot set $SYSTEMD_ACTIVATION_UNIT (anything before
+        240) deadlocks when the daemon is socket-activated (#1930), so below
+        that version neither the Requires=/Sockets=/After= wiring nor the
+        .socket files may be emitted, and from 240 up all of them must be.
+
+        RuntimeDirectory= follows the same switch in reverse: the socket units
+        create /run/himmelblaud when they are in play, so the daemon only needs
+        to be given that directory itself when they are not.
+        """
+        sockets = "himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket"
+        for version in (239, 240, 253, 257):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                unit = read_unit(generate(root, version) / "himmelblaud.service")
+                units = [root / "platform/systemd" / name for name in sockets.split()]
+                if version >= 240:
+                    self.assertEqual(unit["Unit"].get("Requires"), sockets)
+                    self.assertEqual(unit["Service"].get("Sockets"), sockets)
+                    self.assertTrue(unit["Unit"]["After"].endswith(" " + sockets))
+                    self.assertIsNone(unit["Service"].get("RuntimeDirectory"))
+                    for path in units:
+                        self.assertTrue(path.is_file(), path)
+                else:
+                    self.assertIsNone(unit["Unit"].get("Requires"))
+                    self.assertIsNone(unit["Service"].get("Sockets"))
+                    self.assertNotIn(".socket", unit["Unit"]["After"])
+                    self.assertEqual(
+                        unit["Service"].get("RuntimeDirectory"), "himmelblaud"
+                    )
+                    for path in units:
+                        self.assertFalse(path.exists(), path)
 
 
 @unittest.skipUnless(os.getenv("HIMMELBLAU_SYSTEMD_TESTS") == "1", "opt-in user systemd integration tests")
