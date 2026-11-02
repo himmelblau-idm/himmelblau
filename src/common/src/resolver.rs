@@ -20,10 +20,11 @@ use std::ops::DerefMut;
 use std::path::Path;
 use std::string::ToString;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime};
 
 use lru::LruCache;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, MutexGuard, Notify, OwnedRwLockReadGuard, RwLock};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -57,6 +58,7 @@ use himmelblau::auth::UserToken as UnixUserToken;
 
 const NXCACHE_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 const UNREACHABLE_RETRY: Duration = Duration::from_secs(15);
+const BUSY_REFRESH_RETRY: Duration = Duration::from_secs(1);
 
 // These keys deliberately mirror account_t's UUID/name/SPN/GID conflicts.
 // They are not tenant-scoped because the database's uniqueness constraints are not.
@@ -86,6 +88,7 @@ enum CacheUpdateResult {
 #[allow(clippy::large_enum_variant)]
 pub enum AuthSession {
     InProgress {
+        activity: Option<OwnedRwLockReadGuard<()>>,
         account_id: String,
         service: String,
         id: Id,
@@ -121,6 +124,18 @@ struct IdentityRefreshes {
     queued: Vec<String>,
     // At most one refresh per identity per cache lifetime.
     next_allowed: HashMap<String, SystemTime>,
+    active: HashMap<IdentityRefreshKey, Weak<Mutex<IdentityRefresh>>>,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum IdentityRefreshKey {
+    Cached(Uuid, Option<Uuid>),
+    Uncached(Id),
+}
+
+#[derive(Default)]
+struct IdentityRefresh {
+    committed: Option<(Uuid, Option<Uuid>)>,
 }
 
 fn refresh_due(state: &CacheState) -> bool {
@@ -160,6 +175,9 @@ where
     password_cache_generations: Mutex<HashMap<PasswordCacheKey, PasswordCacheGeneration>>,
     identity_refreshes: Mutex<IdentityRefreshes>,
     identity_refresh_ready: Notify,
+    // A refresh holds this through its cache commit; invalidation and clearing take the writer.
+    identity_cache_lock: RwLock<()>,
+    pam_sessions: Arc<RwLock<()>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,7 +212,7 @@ impl Display for Id {
 mod tests {
     use super::{AuthSession, CacheUpdateResult, OnExpiry, Resolver};
     use crate::config::InitgroupsMode;
-    use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
+    use crate::db::{Cache, CacheTxn, Db, KeyStore, KeyStoreTxn};
     use crate::idprovider::interface::{
         tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
         IdProvider, IdpError, UserToken, UserTokenState,
@@ -222,6 +240,7 @@ mod tests {
         probe_online_calls: AtomicUsize,
         try_unseal_online: AtomicBool,
         user_get_calls: AtomicUsize,
+        user_get_started: Notify,
         try_unseal_calls: AtomicUsize,
         user_get_error: AtomicUsize,
         user_get_stall: AtomicBool,
@@ -244,6 +263,7 @@ mod tests {
                 probe_online_calls: AtomicUsize::new(0),
                 try_unseal_online: AtomicBool::new(false),
                 user_get_calls: AtomicUsize::new(0),
+                user_get_started: Notify::new(),
                 try_unseal_calls: AtomicUsize::new(0),
                 user_get_error: AtomicUsize::new(0),
                 user_get_stall: AtomicBool::new(false),
@@ -294,15 +314,16 @@ mod tests {
             self.probe_online_result.load(Ordering::Acquire)
         }
 
-        async fn unix_user_get<D: KeyStoreTxn + Send>(
+        async fn unix_user_get<D: KeyStore + Sync>(
             &self,
             _id: &Id,
             _token: Option<&UserToken>,
-            _keystore: &mut D,
+            _keystore: &D,
             _tpm: &mut tpm::provider::BoxedDynTpm,
             _machine_key: &tpm::structures::StorageKey,
         ) -> Result<UserTokenState, IdpError> {
             self.user_get_calls.fetch_add(1, Ordering::AcqRel);
+            self.user_get_started.notify_one();
             if self.user_get_stall.load(Ordering::Acquire) {
                 self.user_get_release.notified().await;
             }
@@ -789,6 +810,509 @@ mod tests {
                 .cacheable
         );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_reuses_only_a_committed_same_identity_result() {
+        for second_id in [
+            Id::Name(test_token().name),
+            Id::Name(test_token().uuid.to_string()),
+            Id::Gid(test_token().gidnumber),
+        ] {
+            let resolver = setup_resolver().await;
+            let token = test_token();
+            let id = Id::Name(token.spn.clone());
+            resolver.client.user_get_error.store(6, Ordering::Release);
+            resolver.client.auth_token.write().unwrap().displayname = "Refreshed".to_string();
+            resolver
+                .client
+                .user_get_stall
+                .store(true, Ordering::Release);
+            let mut first = Box::pin(resolver.refresh_usertoken(&id, Some(token.clone())));
+            assert!(futures::poll!(&mut first).is_pending());
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+            let mut second = Box::pin(resolver.refresh_usertoken(&second_id, Some(token.clone())));
+            assert!(futures::poll!(&mut second).is_pending());
+
+            resolver
+                .client
+                .user_get_stall
+                .store(false, Ordering::Release);
+            resolver.client.user_get_release.notify_one();
+            assert_eq!(first.await.unwrap().unwrap().uuid, token.uuid);
+            let hsm = resolver.hsm.lock().await;
+            let refreshed = tokio::time::timeout(Duration::from_secs(1), second)
+                .await
+                .expect("committed refresh waited for an unrelated HSM holder")
+                .unwrap()
+                .unwrap();
+            assert_eq!(refreshed.uuid, token.uuid);
+            assert_eq!(refreshed.displayname, "Refreshed");
+            drop(hsm);
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+
+            resolver.refresh_usertoken(&id, Some(token)).await.unwrap();
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_retries_after_an_unvalidated_result() {
+        for result in [0, 1, 2, 3] {
+            let resolver = setup_resolver().await;
+            let token = test_token();
+            let id = Id::Name(token.spn.clone());
+            resolver
+                .client
+                .user_get_error
+                .store(result, Ordering::Release);
+            resolver
+                .client
+                .user_get_stall
+                .store(true, Ordering::Release);
+            let mut first = Box::pin(resolver.refresh_usertoken(&id, Some(token.clone())));
+            assert!(futures::poll!(&mut first).is_pending());
+            let mut second = Box::pin(resolver.refresh_usertoken(&id, Some(token)));
+            assert!(futures::poll!(&mut second).is_pending());
+
+            resolver
+                .client
+                .user_get_stall
+                .store(false, Ordering::Release);
+            resolver.client.user_get_release.notify_one();
+            first.await.unwrap();
+            resolver.client.user_get_error.store(6, Ordering::Release);
+            second.await.unwrap();
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 2);
+            assert!(!resolver.get_cached_usertoken(&id).await.unwrap().0);
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_retries_after_cancellation() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        let id = Id::Name(token.spn.clone());
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver
+            .client
+            .user_get_stall
+            .store(true, Ordering::Release);
+        let mut first = Box::pin(resolver.refresh_usertoken(&id, Some(token.clone())));
+        assert!(futures::poll!(&mut first).is_pending());
+        let mut second = Box::pin(resolver.refresh_usertoken(&id, Some(token)));
+        assert!(futures::poll!(&mut second).is_pending());
+        drop(first);
+        resolver
+            .client
+            .user_get_stall
+            .store(false, Ordering::Release);
+
+        tokio::time::timeout(Duration::from_secs(5), second)
+            .await
+            .expect("cancelled refresh retained its locks")
+            .unwrap();
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 2);
+        assert!(!resolver.get_cached_usertoken(&id).await.unwrap().0);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_does_not_skip_for_an_unrelated_hsm_holder() {
+        let expiry = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        let resolver = setup_resolver_with_expiry(expiry).await;
+        let token = test_token();
+        let id = Id::Name(token.spn.clone());
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        let hsm = resolver.hsm.lock().await;
+        let mut refresh = Box::pin(resolver.refresh_usertoken(&id, Some(token)));
+        assert!(futures::poll!(&mut refresh).is_pending());
+        drop(hsm);
+        refresh.await.unwrap();
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_releases_the_database_during_provider_work() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        let id = Id::Name(token.spn.clone());
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver
+            .client
+            .user_get_stall
+            .store(true, Ordering::Release);
+        let mut refresh = Box::pin(resolver.refresh_usertoken(&id, Some(token)));
+        assert!(futures::poll!(&mut refresh).is_pending());
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+
+        let mut dbtxn = tokio::time::timeout(Duration::from_secs(1), resolver.db.write())
+            .await
+            .expect("provider work held the database writer");
+        dbtxn.insert_tagged_hsm_key("unrelated", &"value").unwrap();
+        dbtxn.commit().unwrap();
+        assert!(resolver
+            .get_cached_usertoken(&id)
+            .await
+            .unwrap()
+            .1
+            .is_some());
+
+        resolver.client.user_get_release.notify_one();
+        refresh.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_defers_background_work_while_hsm_is_busy() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver.queue_identity_refresh(&token.spn).await;
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let hsm = resolver.hsm.lock().await;
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            resolver.refresh_queued_identities(&shutdown_rx),
+        )
+        .await
+        .expect("background refresh queued behind the HSM");
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        resolver
+            .identity_refreshes
+            .lock()
+            .await
+            .next_allowed
+            .insert(token.spn.clone(), SystemTime::UNIX_EPOCH);
+        resolver.queue_identity_refresh(&token.spn).await;
+        assert_eq!(
+            resolver.identity_refreshes.lock().await.queued,
+            vec![token.spn]
+        );
+
+        drop(hsm);
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+        assert!(resolver.identity_refreshes.lock().await.queued.is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_defers_background_work_until_pam_disconnects() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver.client.user_get_error.store(3, Ordering::Release);
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let (session, response) = resolver
+            .pam_account_authenticate_init(
+                &token.spn,
+                "sshd",
+                false,
+                false,
+                shutdown_rx.resubscribe(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, PamAuthResponse::Password { .. }));
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver.queue_identity_refresh(&token.spn).await;
+
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        assert_eq!(
+            resolver.identity_refreshes.lock().await.queued,
+            vec![token.spn]
+        );
+
+        drop(session);
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_does_not_share_another_identity_or_tenant() {
+        for change_tenant in [false, true] {
+            let resolver = setup_resolver().await;
+            let token = test_token();
+            let id = Id::Name(token.spn.clone());
+            let mut other = token.clone();
+            if change_tenant {
+                other.tenant_id = Some(uuid::Uuid::new_v4());
+            } else {
+                other.uuid = uuid::Uuid::new_v4();
+                other.name = "other".to_string();
+                other.spn = "other@example.com".to_string();
+                other.gidnumber += 1;
+            }
+            let other_id = Id::Name(other.spn.clone());
+            resolver.client.user_get_error.store(6, Ordering::Release);
+            resolver
+                .client
+                .user_get_stall
+                .store(true, Ordering::Release);
+            let mut first = Box::pin(resolver.refresh_usertoken(&id, Some(token)));
+            assert!(futures::poll!(&mut first).is_pending());
+            let mut second = Box::pin(resolver.refresh_usertoken(&other_id, Some(other.clone())));
+            assert!(futures::poll!(&mut second).is_pending());
+            resolver
+                .client
+                .user_get_stall
+                .store(false, Ordering::Release);
+            resolver.client.user_get_release.notify_one();
+            first.await.unwrap();
+            *resolver.client.auth_token.write().unwrap() = other.clone();
+            let result = second.await.unwrap().unwrap();
+            assert_eq!(
+                (result.uuid, result.tenant_id),
+                (other.uuid, other.tenant_id)
+            );
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_rechecks_expiry_before_reusing_a_result() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        let id = Id::Name(token.spn.clone());
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver
+            .client
+            .user_get_stall
+            .store(true, Ordering::Release);
+        let mut first = Box::pin(resolver.refresh_usertoken(&id, Some(token.clone())));
+        assert!(futures::poll!(&mut first).is_pending());
+        let mut second = Box::pin(resolver.refresh_usertoken(&id, Some(token.clone())));
+        assert!(futures::poll!(&mut second).is_pending());
+        resolver
+            .client
+            .user_get_stall
+            .store(false, Ordering::Release);
+        resolver.client.user_get_release.notify_one();
+        first.await.unwrap();
+        let mut txn = resolver.db.write().await;
+        txn.update_account(&token, 0).unwrap();
+        txn.commit().unwrap();
+
+        second.await.unwrap();
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 2);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_retries_after_cache_persistence_fails() {
+        let (resolver, conn) = setup_sql_resolver().await;
+        let token = test_token();
+        let id = Id::Name(token.spn.clone());
+        conn.execute_batch(
+            "CREATE TRIGGER fail_refresh BEFORE UPDATE OF token ON account_t
+             BEGIN SELECT RAISE(ABORT, 'injected cache failure'); END;",
+        )
+        .unwrap();
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver
+            .client
+            .user_get_stall
+            .store(true, Ordering::Release);
+        let mut first = Box::pin(resolver.refresh_usertoken(&id, Some(token.clone())));
+        assert!(futures::poll!(&mut first).is_pending());
+        let mut second = Box::pin(resolver.refresh_usertoken(&id, Some(token)));
+        assert!(futures::poll!(&mut second).is_pending());
+        resolver
+            .client
+            .user_get_stall
+            .store(false, Ordering::Release);
+        resolver.client.user_get_release.notify_one();
+        assert!(first.await.is_err());
+        conn.execute_batch("DROP TRIGGER fail_refresh").unwrap();
+
+        second.await.unwrap();
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 2);
+        assert!(!resolver.get_cached_usertoken(&id).await.unwrap().0);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_invalidation_follows_the_cache_commit() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        let id = Id::Name(token.spn.clone());
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver
+            .client
+            .user_get_stall
+            .store(true, Ordering::Release);
+        let mut refresh = Box::pin(resolver.refresh_usertoken(&id, Some(token)));
+        assert!(futures::poll!(&mut refresh).is_pending());
+        let mut invalidate = Box::pin(resolver.invalidate());
+        assert!(futures::poll!(&mut invalidate).is_pending());
+        resolver.client.user_get_release.notify_one();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            refresh.await.unwrap();
+            invalidate.await.unwrap();
+        })
+        .await
+        .expect("refresh and invalidation deadlocked");
+        assert!(resolver.get_cached_usertoken(&id).await.unwrap().0);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_worker_retries_deferred_work_without_another_lookup() {
+        let resolver = setup_resolver().await;
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver.queue_identity_refresh(&test_token().spn).await;
+        let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let hsm = resolver.hsm.lock().await;
+        let mut worker = Box::pin(resolver.refresh_expired_identities(shutdown_rx));
+        assert!(futures::poll!(&mut worker).is_pending());
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        drop(hsm);
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(worker, async {
+                resolver.client.user_get_started.notified().await;
+                shutdown_tx.send(()).unwrap();
+            });
+        })
+        .await
+        .expect("deferred refresh was lost");
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+        assert!(resolver.identity_refreshes.lock().await.queued.is_empty());
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_rechecks_pam_activity_after_the_probe() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver.client.user_get_error.store(3, Ordering::Release);
+        resolver.client.probe_stall.store(true, Ordering::Release);
+        resolver.queue_identity_refresh(&token.spn).await;
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let mut worker = Box::pin(resolver.refresh_queued_identities(&shutdown_rx));
+        assert!(futures::poll!(&mut worker).is_pending());
+        assert_eq!(
+            resolver.client.probe_online_calls.load(Ordering::Acquire),
+            1
+        );
+        let (session, _) = resolver
+            .pam_account_authenticate_init(
+                &token.spn,
+                "sshd",
+                false,
+                false,
+                shutdown_rx.resubscribe(),
+            )
+            .await
+            .unwrap();
+        resolver.client.probe_release.notify_one();
+        worker.await;
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        assert_eq!(
+            resolver.identity_refreshes.lock().await.queued,
+            vec![token.spn]
+        );
+        drop(session);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_initgroups_uses_the_background_refresh_result() {
+        let resolver = setup_resolver_with(0, InitgroupsMode::Full, vec![removed_group()]).await;
+        let token = test_token();
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver
+            .client
+            .user_get_stall
+            .store(true, Ordering::Release);
+        resolver.queue_identity_refresh(&token.spn).await;
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let mut background = Box::pin(resolver.refresh_queued_identities(&shutdown_rx));
+        assert!(futures::poll!(&mut background).is_pending());
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+        let mut groups =
+            Box::pin(resolver.get_initgroups(&token.spn, OnExpiry::RefreshIfReachable));
+        assert!(futures::poll!(&mut groups).is_pending());
+        resolver
+            .client
+            .user_get_stall
+            .store(false, Ordering::Release);
+        resolver.client.user_get_release.notify_one();
+        background.await;
+
+        assert_eq!(groups.await.unwrap(), Some(vec![token.groups[0].gidnumber]));
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_pam_init_cancellation_releases_background_work() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver.client.user_get_error.store(3, Ordering::Release);
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let hsm = resolver.hsm.lock().await;
+        let mut init = Box::pin(resolver.pam_account_authenticate_init(
+            &token.spn,
+            "sshd",
+            false,
+            false,
+            shutdown_rx.resubscribe(),
+        ));
+        assert!(futures::poll!(&mut init).is_pending());
+        drop(hsm);
+        resolver.queue_identity_refresh(&token.spn).await;
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+
+        drop(init);
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        resolver.refresh_queued_identities(&shutdown_rx).await;
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn concurrent_refresh_resumes_after_terminal_pam_responses() {
+        for outcome in ["success", "denied", "error"] {
+            let resolver = setup_resolver().await;
+            let token = test_token();
+            resolver.client.user_get_error.store(3, Ordering::Release);
+            let (_shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+            let (mut session, _) = resolver
+                .pam_account_authenticate_init(
+                    &token.spn,
+                    "sshd",
+                    false,
+                    false,
+                    shutdown_rx.resubscribe(),
+                )
+                .await
+                .unwrap();
+            resolver
+                .client
+                .user_get_error
+                .store(if outcome == "success" { 5 } else { 2 }, Ordering::Release);
+            if outcome == "denied" {
+                resolver.client.set_cache_state(CacheState::Offline);
+            }
+            let result = resolver
+                .pam_account_authenticate_step(
+                    &mut session,
+                    PamAuthRequest::Password {
+                        cred: "wrong".to_string(),
+                    },
+                )
+                .await;
+            match outcome {
+                "success" => assert!(matches!(result, Ok(PamAuthResponse::Success))),
+                "denied" => assert!(matches!(result, Ok(PamAuthResponse::Denied(_)))),
+                _ => assert!(result.is_err()),
+            }
+            resolver.client.set_cache_state(CacheState::Online);
+            resolver.client.user_get_error.store(6, Ordering::Release);
+            resolver.invalidate().await.unwrap();
+            resolver.queue_identity_refresh(&token.spn).await;
+            resolver.refresh_queued_identities(&shutdown_rx).await;
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+        }
     }
 
     #[tokio::test]
@@ -2743,6 +3267,7 @@ mod tests {
         resolver.client.set_cache_state(CacheState::Offline);
         let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
         let mut auth_session = AuthSession::InProgress {
+            activity: None,
             account_id: "testuser@example.com".to_string(),
             service: "gdm-password".to_string(),
             id: Id::Name("testuser@example.com".to_string()),
@@ -2875,6 +3400,8 @@ where
             password_cache_generations: Mutex::new(HashMap::new()),
             identity_refreshes: Mutex::new(IdentityRefreshes::default()),
             identity_refresh_ready: Notify::new(),
+            identity_cache_lock: RwLock::new(()),
+            pam_sessions: Arc::new(RwLock::new(())),
         })
     }
 
@@ -2894,6 +3421,7 @@ where
     }
 
     pub async fn clear_cache(&self) -> ResolverResult<()> {
+        let _cache_guard = self.identity_cache_lock.write().await;
         let mut nxcache_txn = self.nxcache.lock().await;
         nxcache_txn.clear();
         let mut dbtxn = self.db.write().await;
@@ -2902,7 +3430,11 @@ where
             .and_then(|_| dbtxn.clear_hello_keys())
             .and_then(|_| dbtxn.commit())
             .map_err(|_| ())?;
-        *self.identity_refreshes.lock().await = IdentityRefreshes::default();
+        {
+            let mut refreshes = self.identity_refreshes.lock().await;
+            refreshes.queued.clear();
+            refreshes.next_allowed.clear();
+        }
 
         // Also delete the generated himmelblau.conf. This unjoins the host!
         let path = Path::new(SERVER_CONFIG_PATH);
@@ -2913,6 +3445,7 @@ where
     }
 
     pub async fn invalidate(&self) -> ResolverResult<()> {
+        let _cache_guard = self.identity_cache_lock.write().await;
         let mut nxcache_txn = self.nxcache.lock().await;
         nxcache_txn.clear();
         let mut dbtxn = self.db.write().await;
@@ -2960,10 +3493,11 @@ where
     async fn queue_identity_refresh(&self, spn: &str) {
         let now = SystemTime::now();
         let mut refreshes = self.identity_refreshes.lock().await;
-        if refreshes
-            .next_allowed
-            .get(spn)
-            .is_some_and(|next_allowed| now < *next_allowed)
+        if refreshes.queued.iter().any(|queued| queued == spn)
+            || refreshes
+                .next_allowed
+                .get(spn)
+                .is_some_and(|next_allowed| now < *next_allowed)
         {
             return;
         }
@@ -2985,10 +3519,12 @@ where
         mut shutdown_rx: broadcast::Receiver<T>,
     ) {
         loop {
+            let deferred = !self.identity_refreshes.lock().await.queued.is_empty();
             tokio::select! {
                 biased;
                 _ = shutdown_rx.recv() => break,
                 _ = self.identity_refresh_ready.notified() => {}
+                _ = tokio::time::sleep(BUSY_REFRESH_RETRY), if deferred => {}
             }
             self.refresh_queued_identities(&shutdown_rx).await;
         }
@@ -3002,6 +3538,10 @@ where
         for spn in queued {
             if !shutdown_rx.is_empty() {
                 break;
+            }
+            if self.pam_sessions.try_write().is_err() || self.hsm.try_lock().is_err() {
+                self.defer_identity_refresh(spn).await;
+                continue;
             }
             let id = Id::Name(spn.clone());
             match self.lookup_cached_usertoken(&id).await {
@@ -3018,7 +3558,7 @@ where
             let domain = spn
                 .rsplit_once('@')
                 .map_or(spn.as_str(), |(_, domain)| domain);
-            // A refresh holds the HSM and database locks that sign-in needs, so probe first.
+            // Probe before reserving the HSM or delaying a sign-in.
             let online = match reachable.get(domain) {
                 Some(online) => *online,
                 None => {
@@ -3047,8 +3587,12 @@ where
             let Ok((true, Some(token))) = self.lookup_cached_usertoken(&id).await else {
                 continue;
             };
-            if self.refresh_usertoken(&id, Some(token)).await.is_err() {
-                warn!(account_id = %id, "Failed to refresh an expired cached identity");
+            if !shutdown_rx.is_empty() {
+                break;
+            }
+            if !self.try_background_refresh(&id, token).await {
+                self.defer_identity_refresh(spn).await;
+                continue;
             }
             if !matches!(self.get_cachestate(Some(&spn)).await, CacheState::Online) {
                 reachable.insert(domain.to_string(), false);
@@ -3060,6 +3604,65 @@ where
                     .insert(spn, retry);
             }
         }
+    }
+
+    async fn defer_identity_refresh(&self, spn: String) {
+        let mut refreshes = self.identity_refreshes.lock().await;
+        if !refreshes.queued.contains(&spn) {
+            refreshes.queued.push(spn);
+        }
+    }
+
+    async fn identity_refresh(
+        &self,
+        account_id: &Id,
+        token: Option<&UserToken>,
+    ) -> Arc<Mutex<IdentityRefresh>> {
+        let key = match token {
+            Some(token) => IdentityRefreshKey::Cached(token.uuid, token.tenant_id),
+            None => IdentityRefreshKey::Uncached(account_id.clone()),
+        };
+        let mut refreshes = self.identity_refreshes.lock().await;
+        refreshes
+            .active
+            .retain(|_, active| active.strong_count() > 0);
+        if let Some(active) = refreshes.active.get(&key).and_then(Weak::upgrade) {
+            return active;
+        }
+        let active = Arc::new(Mutex::new(IdentityRefresh::default()));
+        refreshes.active.insert(key, Arc::downgrade(&active));
+        active
+    }
+
+    async fn try_background_refresh(&self, account_id: &Id, token: UserToken) -> bool {
+        let Ok(_activity) = self.pam_sessions.try_write() else {
+            return false;
+        };
+        let Ok(_cache_guard) = self.identity_cache_lock.try_read() else {
+            return false;
+        };
+        let active = self.identity_refresh(account_id, Some(&token)).await;
+        let Ok(mut refresh) = active.try_lock() else {
+            return false;
+        };
+        let Ok(hsm) = self.hsm.try_lock() else {
+            return false;
+        };
+        // Authentication or another refresh may have committed since the probe.
+        let Ok((true, Some(current))) = self.lookup_cached_usertoken(account_id).await else {
+            return true;
+        };
+        if current.uuid != token.uuid || current.tenant_id != token.tenant_id {
+            return true;
+        }
+        if self
+            .refresh_usertoken_locked(account_id, Some((current, false)), &mut refresh, hsm)
+            .await
+            .is_err()
+        {
+            warn!(account_id = %account_id, "Failed to refresh an expired cached identity");
+        }
+        true
     }
 
     async fn get_cached_grouptokens(&self) -> ResolverResult<Vec<GroupToken>> {
@@ -3469,15 +4072,44 @@ where
         account_id: &Id,
         token: Option<(UserToken, bool)>,
     ) -> ResolverResult<Option<(UserToken, bool)>> {
-        let mut hsm_lock = self.hsm.lock().await;
-        let mut dbtxn = self.db.write().await;
+        let active = self
+            .identity_refresh(account_id, token.as_ref().map(|(token, _)| token))
+            .await;
+        let mut refresh = active.lock().await;
+        if let Some(identity) = refresh.committed {
+            let (expired, cached) = self.lookup_cached_usertoken(account_id).await?;
+            if let Some(cached) =
+                cached.filter(|cached| !expired && (cached.uuid, cached.tenant_id) == identity)
+            {
+                return Ok(Some((cached, true)));
+            }
+        }
+        loop {
+            let hsm = self.hsm.lock().await;
+            if let Ok(_cache_guard) = self.identity_cache_lock.try_read() {
+                return self
+                    .refresh_usertoken_locked(account_id, token, &mut refresh, hsm)
+                    .await;
+            }
+            // Invalidation must not wait for a refresh still waiting for the HSM.
+            drop(hsm);
+            drop(self.identity_cache_lock.read().await);
+        }
+    }
 
+    async fn refresh_usertoken_locked(
+        &self,
+        account_id: &Id,
+        token: Option<(UserToken, bool)>,
+        refresh: &mut IdentityRefresh,
+        mut hsm_lock: MutexGuard<'_, BoxedDynTpm>,
+    ) -> ResolverResult<Option<(UserToken, bool)>> {
         let user_get_result = self
             .client
             .unix_user_get(
                 account_id,
                 token.as_ref().map(|(token, _)| token),
-                &mut dbtxn,
+                &self.db,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
             )
@@ -3486,7 +4118,6 @@ where
         // Order this provider observation before another request can replace it.
         let generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
         drop(hsm_lock);
-        dbtxn.commit().map_err(|_| ())?;
 
         match user_get_result {
             Ok(UserTokenState::Update(mut n_tok)) => {
@@ -3494,7 +4125,14 @@ where
                     .set_cache_usertoken_guarded(&mut n_tok, generation, None)
                     .await?
                 {
-                    CacheUpdateResult::Updated => Ok(Some((n_tok, true))),
+                    CacheUpdateResult::Updated => {
+                        if token.as_ref().is_none_or(|(old, _)| {
+                            old.uuid == n_tok.uuid && old.tenant_id == n_tok.tenant_id
+                        }) {
+                            refresh.committed = Some((n_tok.uuid, n_tok.tenant_id));
+                        }
+                        Ok(Some((n_tok, true)))
+                    }
                     CacheUpdateResult::Superseded | CacheUpdateResult::IdentityChanged => {
                         // A newer observation won. Never return the stale token
                         // as authenticated/cacheable after discarding its write.
@@ -4212,6 +4850,7 @@ where
             return Ok((AuthSession::Denied, PamAuthResponse::Unknown));
         }
 
+        let activity = self.pam_sessions.clone().read_owned().await;
         // An offline session must not overwrite an identity replaced after its lookup.
         let cache_generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
         let id = Id::Name(account_id.to_string());
@@ -4307,6 +4946,8 @@ where
         match maybe_err {
             Ok((next_req, cred_handler)) => {
                 let auth_session = AuthSession::InProgress {
+                    activity: (!matches!(&next_req, AuthRequest::InitDenied { .. }))
+                        .then_some(activity),
                     account_id: account_id.to_string(),
                     service: service.to_string(),
                     id,
@@ -4344,8 +4985,37 @@ where
         auth_session: &mut AuthSession,
         pam_next_req: PamAuthRequest,
     ) -> ResolverResult<PamAuthResponse> {
+        if let AuthSession::InProgress { activity, .. } = auth_session {
+            if activity.is_none() {
+                *activity = Some(self.pam_sessions.clone().read_owned().await);
+            }
+        }
+        let result = self
+            .pam_account_authenticate_step_inner(auth_session, pam_next_req)
+            .await;
+        if matches!(
+            result,
+            Err(_)
+                | Ok(PamAuthResponse::Success
+                    | PamAuthResponse::Denied(_)
+                    | PamAuthResponse::InitDenied { .. }
+                    | PamAuthResponse::Unknown)
+        ) {
+            if let AuthSession::InProgress { activity, .. } = auth_session {
+                *activity = None;
+            }
+        }
+        result
+    }
+
+    async fn pam_account_authenticate_step_inner(
+        &self,
+        auth_session: &mut AuthSession,
+        pam_next_req: PamAuthRequest,
+    ) -> ResolverResult<PamAuthResponse> {
         let state = match auth_session {
             AuthSession::InProgress {
+                activity: _,
                 account_id,
                 service: _,
                 id: _,
@@ -4365,6 +5035,7 @@ where
         let maybe_err = match (&mut *auth_session, state) {
             (
                 &mut AuthSession::InProgress {
+                    activity: _,
                     ref account_id,
                     ref service,
                     id: _,
@@ -4481,6 +5152,7 @@ where
             */
             (
                 &mut AuthSession::InProgress {
+                    activity: _,
                     ref account_id,
                     service: _,
                     id: _,

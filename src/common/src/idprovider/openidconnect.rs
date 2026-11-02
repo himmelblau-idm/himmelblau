@@ -18,7 +18,7 @@
 
 use crate::config::HimmelblauConfig;
 use crate::constants::ID_MAP_CACHE;
-use crate::db::KeyStoreTxn;
+use crate::db::{KeyStore, KeyStoreTxn};
 use crate::i18n::{tr, tr_fmt};
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::flip_displayname_comma;
@@ -2822,11 +2822,11 @@ impl IdProvider for OidcProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn unix_user_get<D: KeyStoreTxn + Send>(
+    async fn unix_user_get<D: KeyStore + Sync>(
         &self,
         id: &Id,
         token: Option<&UserToken>,
-        _keystore: &mut D,
+        _keystore: &D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {

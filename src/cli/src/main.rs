@@ -633,9 +633,8 @@ async fn confidential_client_access_token(
     let loadable_machine_key = tpm_loadable_machine_key!(db, tpm, auth_value, false, return None);
     let machine_key = tpm_machine_key!(tpm, auth_value, loadable_machine_key, cfg, return None);
 
-    let mut keystore = db.write().await;
     if let Ok(Some((cred_client_id, client_creds))) =
-        confidential_client_creds(&mut tpm, &mut keystore, &machine_key, &domain)
+        confidential_client_creds(&mut tpm, &db, &machine_key, &domain).await
     {
         if let Some(client_id) = client_id {
             if client_id.to_lowercase() != cred_client_id.to_lowercase() {

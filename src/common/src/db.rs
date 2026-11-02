@@ -46,7 +46,7 @@ pub trait Cache {
 
 #[async_trait]
 pub trait KeyStore {
-    type Txn<'db>
+    type Txn<'db>: KeyStoreTxn + Send
     where
         Self: 'db;
 
@@ -264,6 +264,15 @@ impl Cache for Db {
     async fn write<'db>(&'db self) -> Self::Txn<'db> {
         let conn = self.conn.lock().await;
         DbTxn::new(conn, &self.crypto_policy)
+    }
+}
+
+#[async_trait]
+impl KeyStore for Db {
+    type Txn<'db> = DbTxn<'db>;
+
+    async fn write_keystore<'db>(&'db self) -> Self::Txn<'db> {
+        self.write().await
     }
 }
 
