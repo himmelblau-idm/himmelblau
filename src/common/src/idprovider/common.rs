@@ -1337,16 +1337,31 @@ macro_rules! impl_change_auth_token {
 
 #[macro_export]
 macro_rules! impl_check_online {
-    ($self:ident, $tpm:ident, $now:expr) => {{
+    ($self:ident, $now:expr) => {{
         let state = $self.state.lock().await.clone();
         match state {
             // Proceed
             CacheState::Online => true,
             CacheState::OfflineNextCheck(at_time) if $now >= at_time => {
                 // Attempt online. If fails, return token.
-                $self.attempt_online($tpm, $now).await
+                $self.attempt_online($now).await
             }
             CacheState::OfflineNextCheck(_) | CacheState::Offline => false,
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! impl_probe_online {
+    ($self:ident, $now:expr) => {{
+        let state = $self.state.lock().await.clone();
+        match state {
+            CacheState::OfflineNextCheck(at_time) if $now < at_time => false,
+            CacheState::Offline => false,
+            // An Online state can be stale after a suspend or network change.
+            CacheState::Online | CacheState::OfflineNextCheck(_) => {
+                $self.attempt_online($now).await
+            }
         }
     }};
 }
@@ -1436,7 +1451,78 @@ mod tests {
         should_renew_expired_try_unseal_prt, should_warn_last_hello_pin_attempt,
         try_unseal_policy_denial, BadPinCounter, KeyType, TryUnsealPolicyDenial,
     };
-    use std::time::Duration;
+    use crate::idprovider::interface::CacheState;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, SystemTime};
+
+    struct ConnectivityFixture {
+        state: tokio::sync::Mutex<CacheState>,
+        reachable: bool,
+        attempts: AtomicUsize,
+    }
+
+    impl ConnectivityFixture {
+        fn new(state: CacheState, reachable: bool) -> Self {
+            Self {
+                state: tokio::sync::Mutex::new(state),
+                reachable,
+                attempts: AtomicUsize::new(0),
+            }
+        }
+
+        async fn attempt_online(&self, now: SystemTime) -> bool {
+            self.attempts.fetch_add(1, Ordering::AcqRel);
+            *self.state.lock().await = if self.reachable {
+                CacheState::Online
+            } else {
+                CacheState::OfflineNextCheck(now + Duration::from_secs(15))
+            };
+            self.reachable
+        }
+
+        async fn check_online(&self, now: SystemTime) -> bool {
+            impl_check_online!(self, now)
+        }
+
+        async fn probe_online(&self, now: SystemTime) -> bool {
+            impl_probe_online!(self, now)
+        }
+
+        fn attempts(&self) -> usize {
+            self.attempts.load(Ordering::Acquire)
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_online_verifies_a_cached_online_state() {
+        let now = SystemTime::now();
+        let provider = ConnectivityFixture::new(CacheState::Online, false);
+        assert!(provider.check_online(now).await);
+        assert_eq!(provider.attempts(), 0);
+        assert!(!provider.probe_online(now).await);
+        assert_eq!(provider.attempts(), 1);
+        assert!(matches!(
+            *provider.state.lock().await,
+            CacheState::OfflineNextCheck(_)
+        ));
+
+        let provider = ConnectivityFixture::new(CacheState::OfflineNextCheck(now), true);
+        assert!(provider.probe_online(now).await);
+        assert_eq!(provider.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn probe_online_respects_offline_and_retry_states() {
+        let now = SystemTime::now();
+        for state in [
+            CacheState::Offline,
+            CacheState::OfflineNextCheck(now + Duration::from_secs(60)),
+        ] {
+            let provider = ConnectivityFixture::new(state, true);
+            assert!(!provider.probe_online(now).await);
+            assert_eq!(provider.attempts(), 0);
+        }
+    }
 
     #[tokio::test]
     async fn authority_probe_does_not_follow_redirects() {
