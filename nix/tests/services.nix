@@ -5,6 +5,7 @@
   tcti ? "device:/dev/tpmrm0",
   tssGroup ? "tss",
   pinPath ? "/var/lib/himmelblaud/hsm-pin",
+  tryUnseal ? false,
 }:
 let
   pkgs = import nixpkgs { };
@@ -23,6 +24,7 @@ let
           nssPackage = pkgs.emptyDirectory;
           settings.tpm_tcti_name = tcti;
           settings.hsm_pin_path = pinPath;
+          tryUnsealFlag = tryUnseal;
         };
         security.tpm2 = {
           enable = tpmEnabled;
@@ -75,5 +77,10 @@ in
   );
   userUnits = pkgs.lib.mapAttrs (name: unit: unit.text) (
     pkgs.lib.filterAttrs (name: unit: pkgs.lib.hasPrefix "himmelblau" name) cfg.systemd.user.units
+  );
+  pamLoginAuthModules = pkgs.lib.mapAttrs (name: rule: rule.modulePath) (
+    pkgs.lib.filterAttrs (
+      name: rule: pkgs.lib.hasPrefix "himmelblau" name
+    ) cfg.security.pam.services.login.rules.auth
   );
 }
