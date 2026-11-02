@@ -37,12 +37,11 @@ fn decode(bytes: &[u8]) -> Result<String> {
         Some(1) => Ok(bytes[1..].iter().map(|b| char::from(*b)).collect()),
         Some(0) => {
             let rest = &bytes[1..];
-            if rest.len() % 2 != 0 {
+            let (pairs, remainder) = rest.as_chunks::<2>();
+            if !remainder.is_empty() {
                 bail!("Invalid UTF-16 localStorage value");
             }
-            let chars = rest
-                .chunks_exact(2)
-                .map(|b| u16::from_le_bytes([b[0], b[1]]));
+            let chars = pairs.iter().copied().map(u16::from_le_bytes);
             Ok(String::from_utf16(&chars.collect::<Vec<_>>())?)
         }
         _ => bail!("Unknown localStorage encoding"),
@@ -93,7 +92,7 @@ fn secure_storage(root: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn provision_one(root: &PathBuf, url: &str) -> Result<()> {
+fn provision_one(root: &Path, url: &str) -> Result<()> {
     if !root.exists() {
         bail!("Collabora profile does not exist yet");
     }
@@ -198,12 +197,12 @@ pub fn remove() -> Result<()> {
     Ok(())
 }
 
-fn remove_one(root: &PathBuf) -> Result<()> {
+fn remove_one(root: &Path) -> Result<()> {
     let path = root.join("Local Storage/leveldb");
     if !path.exists() {
         return Ok(());
     }
-    secure_storage(&root)?;
+    secure_storage(root)?;
     let mut db = DB::open(&path, Options::default())
         .map_err(|e| anyhow::anyhow!("Cannot open {}: {e}", path.display()))?;
     if let Some(bytes) = db.get(&key()) {
@@ -215,7 +214,7 @@ fn remove_one(root: &PathBuf) -> Result<()> {
         db.flush().map_err(|e| anyhow::anyhow!("DB flush: {e}"))?
     }
     db.close().map_err(|e| anyhow::anyhow!("DB close: {e}"))?;
-    secure_storage(&root)?;
+    secure_storage(root)?;
     Ok(())
 }
 
