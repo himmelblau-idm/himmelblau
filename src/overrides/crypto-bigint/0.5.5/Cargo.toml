@@ -1,0 +1,38 @@
+[package]
+name = "crypto-bigint"
+version = "0.5.5"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+alloc = ["crypto-bigint/alloc"]
+default = ["crypto-bigint/default"]
+extra-sizes = ["crypto-bigint/extra-sizes"]
+rand = ["crypto-bigint/rand"]
+serde = ["crypto-bigint/serde", "serdect"]
+generic-array = ["dep:generic-array"]
+zeroize = ["dep:zeroize"]
+
+[dependencies]
+crypto-bigint = { version = "^0.7.6" }
+der = { version = "^0.7", optional = true, default-features = false }
+rand_core = { version = "^0.6.4", optional = true, default-features = false }
+rlp = { version = "^0.5", optional = true, default-features = false }
+serdect = { version = "^0.2", optional = true, default-features = false }
+
+[dependencies.generic-array]
+version = "0.14"
+optional = true
+
+[dependencies.zeroize]
+version = "1"
+optional = true
+default-features = false
+
+[dependencies.subtle]
+version = "2"
+default-features = false

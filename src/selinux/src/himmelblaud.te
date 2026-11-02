@@ -1426,6 +1426,26 @@ optional {
 	allow syslogd_t himmelblaud_orchestrator_t:lnk_file read;
 }
 
+#============= cockpit_session_t ==============
+# Cockpit uses Himmelblau configuration, NSS caching, and authentication sockets.
+optional {
+	require {
+		type cockpit_session_t;
+	}
+	allow cockpit_session_t himmelblau_etc_t:dir { getattr open read search };
+	allow cockpit_session_t himmelblau_etc_t:file { getattr open read };
+	allow cockpit_session_t himmelblau_etc_t:lnk_file { getattr read };
+	allow cockpit_session_t himmelblau_var_cache_t:dir search;
+	allow cockpit_session_t himmelblau_var_cache_t:file { getattr open read };
+	allow cockpit_session_t himmelblau_var_cache_t:lnk_file read;
+	# Root NSS callers update the SQLite cache and create/remove its journals.
+	allow cockpit_session_t himmelblau_nss_cache_t:dir { add_name getattr remove_name search write };
+	allow cockpit_session_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+	allow cockpit_session_t himmelblau_var_run_t:dir search;
+	allow cockpit_session_t himmelblau_var_run_t:sock_file write;
+	allow cockpit_session_t himmelblaud_t:unix_stream_socket connectto;
+}
+
 #============= auditd_t ==============
 # auditd inspects daemon metadata and writes to our runtime socket when plugin hooks run
 optional {
@@ -1437,14 +1457,16 @@ optional {
 	allow auditd_t himmelblau_etc_t:lnk_file { getattr read };
 	allow auditd_t himmelblau_var_cache_t:dir search;
 	allow auditd_t himmelblau_var_cache_t:lnk_file read;
-	allow auditd_t himmelblau_nss_cache_t:dir { getattr search setattr };
+	# NSS SQLite updates require journal creation and cleanup as well as DB writes.
+	allow auditd_t himmelblau_nss_cache_t:dir { add_name getattr remove_name search setattr write };
 	allow auditd_t himmelblau_nss_cache_t:file getattr;
 	allow auditd_t himmelblau_var_run_t:dir search;
 	allow auditd_t himmelblau_var_run_t:sock_file write;
 	allow auditd_t himmelblaud_t:unix_stream_socket connectto;
 
 	allow auditd_t himmelblau_var_cache_t:file { getattr open read };
-	allow auditd_t himmelblau_nss_cache_t:file { getattr lock open read write };}
+	allow auditd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+}
 
 #============= systemd_userdbd_t ==============
 # systemd_userdbd_t is for systemd-userdbd, may not exist on all distros
