@@ -29,4 +29,11 @@ jobs:
         name: himmelblau
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
     - run: nix flake check
-    - run: nix build --no-link --print-out-paths --max-jobs 1 ".#himmelblau" ".#himmelblau-desktop" | cachix push himmelblau
+    - name: Build and push all packages to cachix
+      shell: bash
+      run: |
+        nix build --no-link --print-out-paths --max-jobs 1 \
+          --no-write-lock-file --impure --expr '
+            let flake = builtins.getFlake (toString ./.);
+            in builtins.attrValues flake.packages.${builtins.currentSystem}
+          ' | cachix push himmelblau
