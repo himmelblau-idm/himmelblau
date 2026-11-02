@@ -307,6 +307,7 @@ pub trait IdProvider {
         true
     }
 
+    /// Resolves or refreshes a user's provider identity, using the supplied keystore for credentials.
     async fn unix_user_get<D: KeyStore + Sync>(
         &self,
         _id: &Id,

@@ -50,6 +50,7 @@ pub trait KeyStore {
     where
         Self: 'db;
 
+    /// Opens a transaction for reading and writing sealed credential material.
     async fn write_keystore<'db>(&'db self) -> Self::Txn<'db>;
 }
 

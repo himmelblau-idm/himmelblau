@@ -765,6 +765,7 @@ impl IdProvider for HimmelblauProvider {
         )
     }
 
+    /// Resolves an Entra identity or returns a cache-preserving result when refresh cannot complete.
     #[instrument(skip_all)]
     async fn unix_user_get<D: KeyStore + Sync>(
         &self,

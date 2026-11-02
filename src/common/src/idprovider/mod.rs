@@ -394,6 +394,7 @@ impl IdProvider for IdProviderProxy {
         }
     }
 
+    /// Routes a user lookup to the provider selected for the account.
     async fn unix_user_get<D: KeyStore + Sync>(
         &self,
         id: &Id,

@@ -32,6 +32,7 @@ fn key() -> Vec<u8> {
     key
 }
 
+/// Decodes Chromium's Latin-1 or UTF-16 localStorage string representation.
 fn decode(bytes: &[u8]) -> Result<String> {
     match bytes.first() {
         Some(1) => Ok(bytes[1..].iter().map(|b| char::from(*b)).collect()),
@@ -92,6 +93,7 @@ fn secure_storage(root: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Registers the Collabora provider in one profile's localStorage database.
 fn provision_one(root: &Path, url: &str) -> Result<()> {
     if !root.exists() {
         bail!("Collabora profile does not exist yet");
@@ -197,6 +199,7 @@ pub fn remove() -> Result<()> {
     Ok(())
 }
 
+/// Removes the Collabora provider from one profile while preserving other entries.
 fn remove_one(root: &Path) -> Result<()> {
     let path = root.join("Local Storage/leveldb");
     if !path.exists() {

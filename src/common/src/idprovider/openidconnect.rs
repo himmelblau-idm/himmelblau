@@ -2821,6 +2821,7 @@ impl IdProvider for OidcProvider {
         impl_probe_online!(self, now)
     }
 
+    /// Refreshes authenticated OIDC identities or creates a lookup-only identity for an uncached user.
     #[instrument(level = "debug", skip_all)]
     async fn unix_user_get<D: KeyStore + Sync>(
         &self,

@@ -376,6 +376,7 @@ macro_rules! tpm_machine_key {
     };
 }
 
+/// Loads a domain's confidential-client credentials before performing TPM operations.
 pub async fn confidential_client_creds<D: crate::db::KeyStore + Sync>(
     hsm: &mut kanidm_hsm_crypto::provider::BoxedDynTpm,
     keystore: &D,
@@ -494,6 +495,7 @@ mod tests {
     use kanidm_hsm_crypto::AuthValue;
     use zeroize::Zeroizing;
 
+    /// Verifies sealed-secret loading, malformed payload errors, and domain isolation.
     #[tokio::test]
     async fn confidential_creds_read_sealed_material_and_preserve_errors() {
         let db = Db::new("").unwrap();

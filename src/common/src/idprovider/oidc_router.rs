@@ -361,6 +361,7 @@ impl IdProvider for OidcRouter {
         }
     }
 
+    /// Resolves a user through the selected OIDC provider, or uses the cache while selection is pending.
     async fn unix_user_get<D: KeyStore + Sync>(
         &self,
         id: &Id,

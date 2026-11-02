@@ -1154,6 +1154,7 @@ impl IdProvider for OktaProvider {
         impl_offline_break_glass!(self, ttl)
     }
 
+    /// Refreshes a cached Okta identity or creates a lookup-only identity for an uncached user.
     async fn unix_user_get<D: KeyStore + Sync>(
         &self,
         id: &Id,

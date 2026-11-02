@@ -582,6 +582,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
     Some(token)
 }
 
+/// Retrieves a confidential-client access token for the selected account or domain.
 #[instrument(skip(client_id, account_id, domain))]
 async fn confidential_client_access_token(
     client_id: Option<String>,

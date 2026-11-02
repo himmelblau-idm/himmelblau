@@ -314,6 +314,7 @@ mod tests {
             self.probe_online_result.load(Ordering::Acquire)
         }
 
+        /// Simulates provider refreshes, including controllable stalls and errors.
         async fn unix_user_get<D: KeyStore + Sync>(
             &self,
             _id: &Id,
@@ -812,6 +813,7 @@ mod tests {
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
     }
 
+    /// Confirms overlapping aliases reuse only a committed refresh for the same identity.
     #[tokio::test]
     async fn concurrent_refresh_reuses_only_a_committed_same_identity_result() {
         for second_id in [
@@ -856,6 +858,7 @@ mod tests {
         }
     }
 
+    /// Confirms unvalidated provider results do not suppress a waiting refresh.
     #[tokio::test]
     async fn concurrent_refresh_retries_after_an_unvalidated_result() {
         for result in [0, 1, 2, 3] {
@@ -1031,6 +1034,7 @@ mod tests {
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
     }
 
+    /// Confirms refresh coordination separates identities and tenants.
     #[tokio::test]
     async fn concurrent_refresh_does_not_share_another_identity_or_tenant() {
         for change_tenant in [false, true] {
@@ -1269,6 +1273,7 @@ mod tests {
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
     }
 
+    /// Confirms terminal PAM outcomes release background refreshes.
     #[tokio::test]
     async fn concurrent_refresh_resumes_after_terminal_pam_responses() {
         for outcome in ["success", "denied", "error"] {
@@ -3420,6 +3425,7 @@ where
         self.client.get_cachestate(account_id).await
     }
 
+    /// Clears cached identities and Hello keys, drops queued refreshes, and removes host config.
     pub async fn clear_cache(&self) -> ResolverResult<()> {
         let _cache_guard = self.identity_cache_lock.write().await;
         let mut nxcache_txn = self.nxcache.lock().await;
@@ -3444,6 +3450,7 @@ where
         Ok(())
     }
 
+    /// Invalidates cached identities and clears their refresh backoff state.
     pub async fn invalidate(&self) -> ResolverResult<()> {
         let _cache_guard = self.identity_cache_lock.write().await;
         let mut nxcache_txn = self.nxcache.lock().await;
@@ -3490,6 +3497,7 @@ where
         Ok(current.filter(|token| !expired && token.uuid == uuid && token.tenant_id == tenant_id))
     }
 
+    /// Queues an expired identity unless it is already queued or inside its retry window.
     async fn queue_identity_refresh(&self, spn: &str) {
         let now = SystemTime::now();
         let mut refreshes = self.identity_refreshes.lock().await;
@@ -3530,7 +3538,7 @@ where
         }
     }
 
-    // On shutdown, finish the refresh in progress but skip the rest of the batch.
+    /// Processes queued identities and defers refreshes blocked by PAM or HSM activity.
     async fn refresh_queued_identities<T>(&self, shutdown_rx: &broadcast::Receiver<T>) {
         let queued = std::mem::take(&mut self.identity_refreshes.lock().await.queued);
         // Identities of one domain share a provider: probe once, until a refresh finds it offline.
@@ -3606,6 +3614,7 @@ where
         }
     }
 
+    /// Requeues an identity once so the worker can retry it later.
     async fn defer_identity_refresh(&self, spn: String) {
         let mut refreshes = self.identity_refreshes.lock().await;
         if !refreshes.queued.contains(&spn) {
@@ -3613,6 +3622,7 @@ where
         }
     }
 
+    /// Returns shared refresh state keyed by cached identity or uncached account ID.
     async fn identity_refresh(
         &self,
         account_id: &Id,
@@ -3634,6 +3644,7 @@ where
         active
     }
 
+    /// Tries a background refresh only when PAM, cache, identity, and HSM locks are available.
     async fn try_background_refresh(&self, account_id: &Id, token: UserToken) -> bool {
         let Ok(_activity) = self.pam_sessions.try_write() else {
             return false;
@@ -4057,6 +4068,7 @@ where
             .map_err(|_| ResolverError)
     }
 
+    /// Refreshes a user's provider token and returns the resulting identity.
     async fn refresh_usertoken(
         &self,
         account_id: &Id,
@@ -4067,6 +4079,7 @@ where
             .map(|result| result.map(|(token, _)| token))
     }
 
+    /// Refreshes a user's token and reports whether the result can be cached.
     async fn refresh_usertoken_with_cacheability(
         &self,
         account_id: &Id,
@@ -4097,6 +4110,7 @@ where
         }
     }
 
+    /// Performs provider lookup and persists the resulting identity while holding the HSM guard.
     async fn refresh_usertoken_locked(
         &self,
         account_id: &Id,
@@ -4830,6 +4844,7 @@ where
         }))
     }
 
+    /// Starts a PAM authentication session and tracks activity that defers background refreshes.
     pub async fn pam_account_authenticate_init(
         &self,
         account_id: &str,
@@ -4980,6 +4995,7 @@ where
         }
     }
 
+    /// Processes one PAM response while keeping background refreshes deferred for the session.
     pub async fn pam_account_authenticate_step(
         &self,
         auth_session: &mut AuthSession,
@@ -5008,6 +5024,7 @@ where
         result
     }
 
+    /// Applies a credential response and advances or completes a PAM authentication session.
     async fn pam_account_authenticate_step_inner(
         &self,
         auth_session: &mut AuthSession,
