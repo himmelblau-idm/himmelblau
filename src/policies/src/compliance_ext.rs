@@ -686,12 +686,7 @@ mod tests {
         ];
         let mut errors = Vec::new();
 
-        ComplianceCSE::apply_distribution_compliance(
-            &mut details,
-            "ubuntu",
-            "26.04",
-            &mut errors,
-        );
+        ComplianceCSE::apply_distribution_compliance(&mut details, "ubuntu", "26.04", &mut errors);
 
         assert!(errors.is_empty());
         assert_eq!(details[1].new_compliance_state, "Compliant");
