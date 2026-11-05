@@ -47,7 +47,7 @@ let
       isSubsection = n: v: lib.isAttrs v && !(lib.isList v);
 
       globalOpts = lib.filterAttrs (n: v: !(isSubsection n v)) settings;
-      subsections = lib.filterAttrs isSubsection settings;
+      subsections = lib.filterAttrs (n: v: n != "tenant" && isSubsection n v) settings;
 
       # Convert global options (they go in [global] section)
       globalSection = lib.mapAttrs (n: v: toIniValue v) (filterNulls globalOpts);
@@ -56,9 +56,15 @@ let
       convertedSubsections = lib.mapAttrs (
         sectionName: sectionOpts: lib.mapAttrs (n: v: toIniValue v) (filterNulls sectionOpts)
       ) subsections;
+      tenants = lib.mapAttrs' (
+        label: options:
+        lib.nameValuePair "tenant.${label}" (
+          lib.mapAttrs (n: v: toIniValue v) (filterNulls options)
+        )
+      ) (settings.tenant or { });
     in
     # Only include global section if it has values
-    (if globalSection != { } then { global = globalSection; } else { }) // convertedSubsections;
+    (if globalSection != { } then { global = globalSection; } else { }) // convertedSubsections // tenants;
 
   ini = pkgs.formats.ini { };
   configFile = ini.generate "himmelblau.conf" (toIniSettings cfg.settings);

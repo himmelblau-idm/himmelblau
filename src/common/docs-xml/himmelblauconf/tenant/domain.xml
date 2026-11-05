@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="domain" section="tenant" type="string" rust_type="String" order="100">
+<description>Primary domain and persistent storage key for this provider.</description>
+<required>true</required>
+<example>domain = example.com</example>
+<handler>parse_providers</handler>
+</parameter>
