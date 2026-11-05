@@ -1902,30 +1902,32 @@ async fn main() -> ExitCode {
                 }
             }
 
+            let report = cfg.validate();
+            for warning in &report.warnings {
+                warn!(warning = %warning, "Configuration warning");
+            }
+            for error in &report.errors {
+                error!(error = %error, "Configuration error");
+            }
+
             if clap_args.get_flag("configtest") {
                 eprintln!("###################################");
                 eprintln!("Dumping configs:\n###################################");
                 eprintln!("###################################");
                 eprintln!("Config (from {:#?})", cfg.get_effective_config_paths());
                 eprintln!("{:?}", cfg);
-                return ExitCode::SUCCESS;
+                return if report.is_ok() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                };
             }
 
-            // Validate that idmap_range and subid_range don't overlap
-            let subid_range = cfg.get_subid_range();
-            let idmap_range = cfg.get_idmap_range("_");
-
-            // Ranges overlap if one starts before the other ends
-            if idmap_range.0 <= subid_range.1 && subid_range.0 <= idmap_range.1 {
-                error!(
-                    "Configuration error: idmap_range ({}-{}) overlaps with subid_range ({}-{}). \
-                    These ranges must not overlap to prevent ID conflicts. \
-                    Please adjust your configuration.",
-                    idmap_range.0, idmap_range.1, subid_range.0, subid_range.1
-                );
+            if !report.is_ok() {
                 return ExitCode::FAILURE;
             }
 
+            let subid_range = cfg.get_subid_range();
             info!(
                 "Subordinate ID support enabled with range {}-{}",
                 subid_range.0, subid_range.1
