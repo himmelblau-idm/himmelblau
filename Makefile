@@ -71,7 +71,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	$(MAKE) $$TARGET; \
 	echo "Packages written to ./packaging/"
 
-test: test-hsm-pin-init test-cargo-vet-review test-build-options dockerfiles ## Run shell regressions and cargo tests in a container
+test: test-hsm-pin-init test-daemon-postinst test-cargo-vet-review test-build-options dockerfiles ## Run shell regressions and cargo tests in a container
 	mkdir -p target/test
 	$(DOCKER) build -t himmelblau-test-build -f images/Dockerfile.test .
 	$(DOCKER) run --rm --security-opt label=disable -it \
@@ -82,6 +82,10 @@ test: test-hsm-pin-init test-cargo-vet-review test-build-options dockerfiles ## 
 .PHONY: test-hsm-pin-init
 test-hsm-pin-init: ## Run isolated HSM PIN initializer regressions
 	python3 scripts/test_hsm_pin_init.py
+
+.PHONY: test-daemon-postinst
+test-daemon-postinst: ## Run isolated daemon post-install regressions
+	python3 scripts/test_daemon_postinst.py
 
 .PHONY: test-cargo-vet-review
 test-cargo-vet-review: ## Run offline cargo-vet review assistant regressions
