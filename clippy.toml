@@ -11,3 +11,8 @@ too-many-arguments-threshold = 9
 
 # default's 250
 type-complexity-threshold = 300
+
+# unwrap, expect and panic are denied in production code, tests may use them
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

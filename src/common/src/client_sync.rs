@@ -56,6 +56,167 @@ fn should_skip_daemon_call_for(
         )
 }
 
+pub struct DaemonClientBlocking {
+    stream: UnixStream,
+}
+
+impl DaemonClientBlocking {
+    pub fn new(path: &str) -> std::io::Result<DaemonClientBlocking> {
+        debug!(%path);
+
+        let stream = UnixStream::connect(path).map_err(|e| {
+            // ENOENT means the daemon isn't running - expected during boot,
+            // daemon-reload, or when himmelblau is not configured. Log at
+            // debug to avoid distracting users with spurious error output.
+            if e.kind() == ErrorKind::NotFound {
+                debug!(
+                    "himmelblaud socket not found at {} (daemon not running?)",
+                    path
+                );
+            } else {
+                error!(
+                    "Unix socket stream setup error while connecting to {} -> {:?}",
+                    path, e
+                );
+            }
+            e
+        })?;
+
+        Ok(DaemonClientBlocking { stream })
+    }
+
+    pub fn call_and_wait(
+        &mut self,
+        req: &ClientRequest,
+        timeout: u64,
+    ) -> Result<ClientResponse, Box<dyn Error>> {
+        let timeout = Duration::from_secs(timeout);
+        // Use a short per-read timeout so we can poll without blocking the
+        // entire wall-clock budget in a single read() call. This is critical
+        // for long-running daemon operations like MFA device flow polling
+        // which can take well over 60 seconds.
+        let read_poll = Duration::from_secs(1);
+
+        let data = serde_json::to_vec(&req).map_err(|e| {
+            error!("socket encoding error -> {:?}", e);
+            Box::new(IoError::other("JSON encode error"))
+        })?;
+
+        match self.stream.set_read_timeout(Some(read_poll)) {
+            Ok(()) => {}
+            Err(e) => {
+                error!(
+                    "Unix socket stream setup error while setting read timeout -> {:?}",
+                    e
+                );
+                return Err(Box::new(e));
+            }
+        };
+        match self.stream.set_write_timeout(Some(timeout)) {
+            Ok(()) => {}
+            Err(e) => {
+                error!(
+                    "Unix socket stream setup error while setting write timeout -> {:?}",
+                    e
+                );
+                return Err(Box::new(e));
+            }
+        };
+
+        self.stream
+            .write_all(data.as_slice())
+            .and_then(|_| self.stream.flush())
+            .map_err(|e| {
+                error!("stream write error -> {:?}", e);
+                e
+            })
+            .map_err(Box::new)?;
+
+        // Now wait on the response.
+        let start = SystemTime::now();
+        let mut data = Vec::with_capacity(1024);
+
+        loop {
+            let mut buffer = [0; 1024];
+            let durr = SystemTime::now().duration_since(start).map_err(Box::new)?;
+            if durr > timeout {
+                error!("Socket timeout waiting for daemon response");
+                return Err(Box::new(IoError::new(
+                    ErrorKind::TimedOut,
+                    "socket timeout",
+                )));
+            }
+            match self.stream.read(&mut buffer) {
+                Ok(0) => {
+                    error!("Socket closed before a complete response was received");
+                    return Err(Box::new(IoError::new(
+                        ErrorKind::UnexpectedEof,
+                        "socket closed before a complete response was received",
+                    )));
+                }
+                Ok(count) => {
+                    data.extend_from_slice(&buffer[..count]);
+                    match serde_json::from_slice::<ClientResponse>(&data) {
+                        Ok(response) => return Ok(response),
+                        Err(e) if e.is_eof() => {
+                            debug!(
+                                "Read {} bytes; waiting for the rest of the JSON response",
+                                count
+                            );
+                        }
+                        Err(e) => {
+                            error!("socket encoding error -> {:?}", e);
+                            return Err(Box::new(IoError::other("JSON decode error")));
+                        }
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+                    // set_read_timeout() causes blocking reads to return
+                    // WouldBlock/TimedOut when no data arrives within the
+                    // timeout window. Check the wall-clock timeout and retry.
+                    let durr = SystemTime::now().duration_since(start).map_err(Box::new)?;
+                    if durr > timeout {
+                        error!("Socket timeout waiting for daemon response");
+                        return Err(Box::new(IoError::new(
+                            ErrorKind::TimedOut,
+                            "socket timeout",
+                        )));
+                    }
+                }
+                Err(e) => {
+                    error!("Stream read failure from {:?} -> {:?}", &self.stream, e);
+                    return Err(Box::new(e));
+                }
+            }
+        }
+    }
+
+    /// This writes the request to the existing socket and returns immediately,
+    /// without waiting for a response.
+    pub fn call_and_forget(&mut self, req: &ClientRequest) -> Result<(), Box<dyn Error>> {
+        let data = serde_json::to_vec(req).map_err(|e| {
+            warn!("socket encoding error -> {:?}", e);
+            Box::new(IoError::other("JSON encode error"))
+        })?;
+
+        let timeout = Duration::from_secs(2);
+        self.stream.set_write_timeout(Some(timeout)).map_err(|e| {
+            warn!("set_write_timeout error -> {:?}", e);
+            Box::new(e)
+        })?;
+
+        self.stream
+            .write_all(data.as_slice())
+            .and_then(|_| self.stream.flush())
+            .map_err(|e| {
+                warn!("stream write error -> {:?}", e);
+                Box::new(e)
+            })?;
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -253,166 +414,5 @@ mod tests {
             ClientResponse::Error
         ));
         server.join().unwrap();
-    }
-}
-
-pub struct DaemonClientBlocking {
-    stream: UnixStream,
-}
-
-impl DaemonClientBlocking {
-    pub fn new(path: &str) -> std::io::Result<DaemonClientBlocking> {
-        debug!(%path);
-
-        let stream = UnixStream::connect(path).map_err(|e| {
-            // ENOENT means the daemon isn't running - expected during boot,
-            // daemon-reload, or when himmelblau is not configured. Log at
-            // debug to avoid distracting users with spurious error output.
-            if e.kind() == ErrorKind::NotFound {
-                debug!(
-                    "himmelblaud socket not found at {} (daemon not running?)",
-                    path
-                );
-            } else {
-                error!(
-                    "Unix socket stream setup error while connecting to {} -> {:?}",
-                    path, e
-                );
-            }
-            e
-        })?;
-
-        Ok(DaemonClientBlocking { stream })
-    }
-
-    pub fn call_and_wait(
-        &mut self,
-        req: &ClientRequest,
-        timeout: u64,
-    ) -> Result<ClientResponse, Box<dyn Error>> {
-        let timeout = Duration::from_secs(timeout);
-        // Use a short per-read timeout so we can poll without blocking the
-        // entire wall-clock budget in a single read() call. This is critical
-        // for long-running daemon operations like MFA device flow polling
-        // which can take well over 60 seconds.
-        let read_poll = Duration::from_secs(1);
-
-        let data = serde_json::to_vec(&req).map_err(|e| {
-            error!("socket encoding error -> {:?}", e);
-            Box::new(IoError::other("JSON encode error"))
-        })?;
-
-        match self.stream.set_read_timeout(Some(read_poll)) {
-            Ok(()) => {}
-            Err(e) => {
-                error!(
-                    "Unix socket stream setup error while setting read timeout -> {:?}",
-                    e
-                );
-                return Err(Box::new(e));
-            }
-        };
-        match self.stream.set_write_timeout(Some(timeout)) {
-            Ok(()) => {}
-            Err(e) => {
-                error!(
-                    "Unix socket stream setup error while setting write timeout -> {:?}",
-                    e
-                );
-                return Err(Box::new(e));
-            }
-        };
-
-        self.stream
-            .write_all(data.as_slice())
-            .and_then(|_| self.stream.flush())
-            .map_err(|e| {
-                error!("stream write error -> {:?}", e);
-                e
-            })
-            .map_err(Box::new)?;
-
-        // Now wait on the response.
-        let start = SystemTime::now();
-        let mut data = Vec::with_capacity(1024);
-
-        loop {
-            let mut buffer = [0; 1024];
-            let durr = SystemTime::now().duration_since(start).map_err(Box::new)?;
-            if durr > timeout {
-                error!("Socket timeout waiting for daemon response");
-                return Err(Box::new(IoError::new(
-                    ErrorKind::TimedOut,
-                    "socket timeout",
-                )));
-            }
-            match self.stream.read(&mut buffer) {
-                Ok(0) => {
-                    error!("Socket closed before a complete response was received");
-                    return Err(Box::new(IoError::new(
-                        ErrorKind::UnexpectedEof,
-                        "socket closed before a complete response was received",
-                    )));
-                }
-                Ok(count) => {
-                    data.extend_from_slice(&buffer[..count]);
-                    match serde_json::from_slice::<ClientResponse>(&data) {
-                        Ok(response) => return Ok(response),
-                        Err(e) if e.is_eof() => {
-                            debug!(
-                                "Read {} bytes; waiting for the rest of the JSON response",
-                                count
-                            );
-                        }
-                        Err(e) => {
-                            error!("socket encoding error -> {:?}", e);
-                            return Err(Box::new(IoError::other("JSON decode error")));
-                        }
-                    }
-                }
-                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
-                    // set_read_timeout() causes blocking reads to return
-                    // WouldBlock/TimedOut when no data arrives within the
-                    // timeout window. Check the wall-clock timeout and retry.
-                    let durr = SystemTime::now().duration_since(start).map_err(Box::new)?;
-                    if durr > timeout {
-                        error!("Socket timeout waiting for daemon response");
-                        return Err(Box::new(IoError::new(
-                            ErrorKind::TimedOut,
-                            "socket timeout",
-                        )));
-                    }
-                }
-                Err(e) => {
-                    error!("Stream read failure from {:?} -> {:?}", &self.stream, e);
-                    return Err(Box::new(e));
-                }
-            }
-        }
-    }
-
-    /// This writes the request to the existing socket and returns immediately,
-    /// without waiting for a response.
-    pub fn call_and_forget(&mut self, req: &ClientRequest) -> Result<(), Box<dyn Error>> {
-        let data = serde_json::to_vec(req).map_err(|e| {
-            warn!("socket encoding error -> {:?}", e);
-            Box::new(IoError::other("JSON encode error"))
-        })?;
-
-        let timeout = Duration::from_secs(2);
-        self.stream.set_write_timeout(Some(timeout)).map_err(|e| {
-            warn!("set_write_timeout error -> {:?}", e);
-            Box::new(e)
-        })?;
-
-        self.stream
-            .write_all(data.as_slice())
-            .and_then(|_| self.stream.flush())
-            .map_err(|e| {
-                warn!("stream write error -> {:?}", e);
-                Box::new(e)
-            })?;
-
-        Ok(())
     }
 }
