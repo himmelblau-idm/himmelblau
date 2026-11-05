@@ -1963,16 +1963,14 @@ impl OidcApplication {
             let client_id = {
                 let config = config.lock().await;
                 ClientId::new(config.get_app_id(domain).ok_or_else(|| {
-                    error!(
-                        "Missing OIDC client ID in config: `[global] app_id` required for OIDC auth"
-                    );
+                    error!(domain, "Missing app_id for OIDC provider");
                     IdpError::BadRequest
                 })?)
             };
 
             let issuer_url = {
                 let config = config.lock().await;
-                IssuerUrl::new(config.get_oidc_issuer_url().ok_or_else(|| {
+                IssuerUrl::new(config.get_oidc_issuer_url(Some(domain)).ok_or_else(|| {
                     error!("Missing OIDC issuer URL in config");
                     IdpError::BadRequest
                 })?)
@@ -1980,7 +1978,7 @@ impl OidcApplication {
                     error!(
                         ?e,
                         "Invalid OIDC issuer URL: {:?}",
-                        config.get_oidc_issuer_url()
+                        config.get_oidc_issuer_url(Some(domain))
                     );
                     IdpError::BadRequest
                 })?
@@ -2023,8 +2021,10 @@ impl OidcApplication {
                 .device_authorization_endpoint
                 .clone();
 
-            let configured_device_endpoint =
-                config.lock().await.get_oidc_device_authorization_endpoint();
+            let configured_device_endpoint = config
+                .lock()
+                .await
+                .get_oidc_device_authorization_endpoint(Some(domain));
 
             // Create a public client: pass None for the client secret.
             // Whether this works depends on provider configuration. Many support it.
@@ -2436,7 +2436,7 @@ impl OidcProvider {
             .config
             .lock()
             .await
-            .get_oidc_issuer_url()
+            .get_oidc_issuer_url(Some(&self.domain))
             .ok_or_else(|| {
                 error!("Missing OIDC issuer URL in config");
                 IdpError::BadRequest
@@ -2618,7 +2618,11 @@ impl OidcProvider {
             "Prepared DAG details for orchestrator start"
         );
 
-        let issuer_url = self.config.lock().await.get_oidc_issuer_url();
+        let issuer_url = self
+            .config
+            .lock()
+            .await
+            .get_oidc_issuer_url(Some(&self.domain));
         let Some(extra_data) = orchestrator_try_start(
             &cfg,
             account_id,
@@ -2769,9 +2773,9 @@ impl OidcProvider {
         let (shell, account_id_claims, strip_at_suffix) = {
             let config = self.config.lock().await;
             (
-                config.get_shell(None),
-                config.get_oidc_account_id_claims(),
-                config.get_oidc_account_id_strip_at_suffix(),
+                config.get_shell(Some(&self.domain)),
+                config.get_oidc_account_id_claims(Some(&self.domain)),
+                config.get_oidc_account_id_strip_at_suffix(Some(&self.domain)),
             )
         };
         let token2 = self
@@ -2983,7 +2987,7 @@ impl IdProvider for OidcProvider {
             real_gidnumber: Some(uid),
             gidnumber: gid,
             displayname,
-            shell: Some(self.config.lock().await.get_shell(None)),
+            shell: Some(self.config.lock().await.get_shell(Some(&self.domain))),
             groups: vec![GroupToken {
                 name: account_id.to_string(),
                 spn: account_id.to_string(),
@@ -3345,9 +3349,9 @@ impl IdProvider for OidcProvider {
                 let (shell, account_id_claims, strip_at_suffix) = {
                     let config = self.config.lock().await;
                     (
-                        config.get_shell(None),
-                        config.get_oidc_account_id_claims(),
-                        config.get_oidc_account_id_strip_at_suffix(),
+                        config.get_shell(Some(&self.domain)),
+                        config.get_oidc_account_id_claims(Some(&self.domain)),
+                        config.get_oidc_account_id_strip_at_suffix(Some(&self.domain)),
                     )
                 };
                 let token2 = self

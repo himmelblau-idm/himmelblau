@@ -28,7 +28,7 @@ import re
 import sys
 import textwrap
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 from pathlib import Path
 import datetime
@@ -60,6 +60,7 @@ class Parameter:
     handler: Optional[str]  # Custom handler function name
     enum_values: List[EnumValue]
     env_override: Optional[str]
+    examples: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -69,6 +70,7 @@ class Section:
     title: str
     preamble: str
     subsection_intro: str
+    examples: List[ET.Element] = field(default_factory=list)
 
 
 DESCRIPTIVE_DEFAULT_MARKERS = [
@@ -101,7 +103,8 @@ def parse_xml_file(filepath: str) -> tuple[List[Parameter], List[Section]]:
             name=root.get('name', ''),
             title=root.findtext('title', ''),
             preamble=root.findtext('preamble', '').strip(),
-            subsection_intro=root.findtext('subsection_intro', '').strip()
+            subsection_intro=root.findtext('subsection_intro', '').strip(),
+            examples=root.findall('example'),
         )
         sections.append(section)
         return parameters, sections
@@ -135,7 +138,8 @@ def parse_xml_file(filepath: str) -> tuple[List[Parameter], List[Section]]:
             required=param_elem.findtext('required', 'false').lower() == 'true',
             handler=param_elem.findtext('handler'),
             enum_values=enum_values,
-            env_override=param_elem.findtext('env_override')
+            env_override=param_elem.findtext('env_override'),
+            examples=[e.text.strip() for e in param_elem.findall('example') if e.text and e.text.strip()],
         )
         parameters.append(param)
         return parameters, sections
@@ -292,7 +296,9 @@ def generate_rust_code(params: List[Parameter], sections: Dict[str, Section]) ->
 
         elif param.param_type == 'string_list':
             default_expr = param.default_const if param.default_const else f'DEFAULT_{param.name.upper()}'
-            lines.append(f'        match self.config.get("{section}", "{param.name}") {{')
+            value = (f'self.domain_or_global_value(domain, "{param.name}")'
+                     if param.domain_specific else f'self.config.get("{section}", "{param.name}")')
+            lines.append(f'        match {value} {{')
             lines.append(f'            Some(val) => val.split(\',\').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),')
             if param.default:
                 lines.append(f'            None => {default_expr}.split(\',\').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),')
@@ -317,7 +323,93 @@ def generate_rust_code(params: List[Parameter], sections: Dict[str, Section]) ->
         lines.append('')
 
     lines.append('}')
+    lines.append('')
+    lines.append('impl ProviderConfig {')
+    for param in sorted(params, key=lambda p: p.name):
+        if not param.domain_specific or param.section != 'global':
+            continue
+        if param.name in ('pam_allow_groups', 'sudo_groups'):
+            call = f'config.{param.name}_for_provider(self)'
+        elif param.name in ('app_id', 'authority_host', 'idmap_range', 'logon_token_app_id'):
+            call = f'config.get_{param.name}(&self.domain)'
+        else:
+            call = f'config.get_{param.name}(Some(&self.domain))'
+        lines.append(f'    pub fn get_{param.name}(&self, config: &HimmelblauConfig) -> {param.rust_type} {{')
+        lines.append(f'        {call}')
+        lines.append('    }')
+    lines.append('}')
+    lines.extend(generate_example_tests(params, sections))
     return '\n'.join(lines)
+
+def rust_string(value: str) -> str:
+    hashes = '#'
+    while '"' + hashes in value:
+        hashes += '#'
+    return f'r{hashes}"{value}"{hashes}'
+
+
+def example_config(example: str) -> str:
+    return '\n'.join(line for line in example.strip().splitlines() if line.strip() != '.br')
+
+
+def generate_example_tests(params: List[Parameter], sections: Dict[str, Section]) -> List[str]:
+    lines = ['', '#[cfg(test)]', 'mod documentation_examples {', '    use super::*;']
+    for param in sorted(params, key=lambda p: (p.section, p.name)):
+        for index, example in enumerate(param.examples):
+            text = example_config(example)
+            section = param.section
+            if section == 'tenant':
+                section = 'tenant.example'
+                if not text.startswith('['):
+                    text = f'[{section}]\ndomain = example.com\n{text}'
+            elif not text.startswith('['):
+                text = f'[{section}]\n{text}'
+            lines.extend([
+                '    #[test]',
+                f'    fn {param.section}_{param.name}_{index}() {{',
+                f'        let cfg = HimmelblauConfig::from_test_config({rust_string(text)});',
+                f'        let value = cfg.config.get("{section}", "{param.name}").expect("Example must set its parameter");',
+            ])
+            if param.param_type == 'bool':
+                check = 'parse_bool(&value).is_some()'
+            elif param.param_type in ('u32', 'u64', 'usize'):
+                check = f'value.parse::<{param.param_type}>().is_ok()'
+            elif param.param_type == 'range':
+                check = 'parse_range(&value).is_some()'
+            elif param.param_type == 'ttl':
+                check = 'parse_ttl_to_seconds(&value).is_some()'
+            elif param.param_type == 'enum':
+                choices = ', '.join(rust_string(v.config_value) for v in param.enum_values)
+                check = f'[{choices}].contains(&value.to_lowercase().as_str())'
+            elif param.name == 'oidc_issuer_url':
+                check = 'parse_issuer_url(&value).is_ok_and(|url| url.is_some())'
+            else:
+                check = '!value.is_empty()'
+            lines.extend([
+                f'        assert!({check}, "Invalid documentation value: {{value}}");',
+                '        let report = cfg.validate();',
+                '        assert!(report.is_ok(), "{:?}", report.errors);',
+                '    }',
+            ])
+    for name, section in sorted(sections.items()):
+        for index, example in enumerate(section.examples):
+            lines.extend([
+                '    #[test]',
+                f'    fn {name}_configuration_{index}() {{',
+                f'        let cfg = HimmelblauConfig::from_test_config({rust_string(example_config(example.text or ""))});',
+                '        let report = cfg.validate();',
+                '        assert!(report.is_ok(), "{:?}", report.errors);',
+            ])
+            if example.get('providers'):
+                providers = ', '.join(rust_string(p) for p in example.get('providers').split(','))
+                lines.append(f'        assert_eq!(cfg.get_configured_domains(), vec![{providers}]);')
+            if example.get('default'):
+                lines.append(f'        assert_eq!(cfg.default_provider().unwrap().domain, {rust_string(example.get("default"))});')
+            if example.get('oidc'):
+                lines.append(f'        assert_eq!(cfg.provider_for_domain({rust_string(example.get("oidc"))}).unwrap().kind, ProviderKind::Oidc);')
+            lines.append('    }')
+    lines.append('}')
+    return lines
 
 
 def _gen_domain_specific_bool(param: Parameter, default_expr: str) -> str:
@@ -481,7 +573,7 @@ def generate_man_page(params: List[Parameter], sections: Dict[str, Section]) -> 
     lines.append('file is the primary configuration file for the Himmelblau authentication module. It defines global and optional settings required for Azure Entra ID-based authentication and device management.')
     lines.append('')
     lines.append('.P')
-    lines.append('While Himmelblau is designed to be highly configurable, it can normally be used without any custom configuration. For desktop authentication with Azure Entra ID, all that is required is for Himmelblau to be installed and for a user to log in. The domain will be automatically extracted from the first user\'s UPN and looked up in Entra ID.')
+    lines.append('Configure an Entra ID domain or an OIDC issuer before starting the daemon. Use one [tenant.<label>] section per provider for multi-tenant setups.')
     lines.append('')
     lines.append('.P')
     lines.append('Himmelblau has many capabilities, but most are enabled by default and configured automatically at install time. The options documented below allow administrators to customize behavior for specific environments or requirements.')
@@ -520,6 +612,7 @@ def generate_man_page(params: List[Parameter], sections: Dict[str, Section]) -> 
     lines.append('.RE')
     lines.append('')
     lines.append("Lines beginning with a '#' are comments and are ignored by the parser.")
+    lines.append('Boolean values accept true, yes, on, t, y or 1, and false, no, off, f, n or 0, in any case.')
     lines.append('')
 
     # Parameters section
@@ -588,6 +681,19 @@ def generate_man_page(params: List[Parameter], sections: Dict[str, Section]) -> 
                 lines.append('.P')
                 lines.append(f'Example: {param.example}')
                 lines.append('')
+
+    if 'tenant' in sections:
+        section = sections['tenant']
+        lines.extend([f'.SH {section.title}', normalize_troff_text(section.preamble),
+                      '.SS [tenant.<label>]', normalize_troff_text(section.subsection_intro)])
+        for param in sorted((p for p in params if p.section == 'tenant'), key=lambda p: p.order):
+            lines.extend(['.TP', f'.B {param.name}', normalize_troff_text(param.description)])
+            if param.default:
+                lines.extend(['.P', f'Default: {param.default}'])
+        scoped = ', '.join(sorted(p.name for p in params if p.domain_specific))
+        lines.extend(['.P', f'Per-provider options: {scoped}.'])
+        for example in section.examples:
+            lines.extend(['.P', '.nf', example_config(example.text or ''), '.fi'])
 
     # See also
     lines.append('.SH SEE ALSO')
@@ -833,6 +939,11 @@ def generate_conf_example(
 
     lines.append('')
     _append_offline_breakglass_example(lines, params, sections, debian_mode=debian_mode)
+    if 'tenant' in sections:
+        lines.extend(['', '# Multi-tenant providers (use instead of global domain/issuer settings).'])
+        for example in sections['tenant'].examples:
+            lines.extend('# ' + line for line in example_config(example.text or '').splitlines())
+            lines.append('')
 
     return '\n'.join(lines).rstrip() + '\n'
 
@@ -1107,6 +1218,20 @@ def generate_nix_options(params: List[Parameter], sections: Dict[str, Section]) 
     for section_name, section_params in sorted(params_by_section.items()):
         if section_name == 'global':
             continue
+        if section_name == 'tenant':
+            lines.extend([
+                '    tenant = mkOption {',
+                '      default = { };',
+                '      description = "Named Entra ID and OIDC identity providers.";',
+                '      type = types.attrsOf (types.submodule {',
+                '        options = {',
+            ])
+            scoped = {p.name: p for p in params if p.domain_specific and p.documented}
+            scoped.update({p.name: p for p in section_params})
+            for param in sorted(scoped.values(), key=lambda p: p.name):
+                lines.extend(_generate_nix_option(param, indent=10, use_default=False))
+            lines.extend(['        };', '      });', '    };', ''])
+            continue
 
         # Get section info if available
         section_info = sections.get(section_name)
@@ -1135,7 +1260,7 @@ def generate_nix_options(params: List[Parameter], sections: Dict[str, Section]) 
     return '\n'.join(lines)
 
 
-def _generate_nix_option(param: Parameter, indent: int = 4) -> List[str]:
+def _generate_nix_option(param: Parameter, indent: int = 4, use_default: bool = True) -> List[str]:
     """Generate a single NixOS option definition."""
     lines = []
     ind = ' ' * indent
@@ -1148,7 +1273,7 @@ def _generate_nix_option(param: Parameter, indent: int = 4) -> List[str]:
     lines.append(f'{ind}  type = types.nullOr ({nix_type});')
 
     # Default - use actual default value if available, otherwise null
-    nix_default = format_nix_default(param)
+    nix_default = format_nix_default(param) if use_default else None
     if nix_default is not None:
         lines.append(f'{ind}  default = {nix_default};')
     else:
@@ -1163,7 +1288,7 @@ def _generate_nix_option(param: Parameter, indent: int = 4) -> List[str]:
 
         lines.append(f"{ind}  description = ''")
         for desc_line in clean_desc.split('\n'):
-            lines.append(f'{ind}    {desc_line}')
+            lines.append(f'{ind}    {desc_line}'.rstrip())
         lines.append(f"{ind}  '';")
 
     # Example

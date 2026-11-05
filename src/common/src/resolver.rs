@@ -28,6 +28,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::config::InitgroupsMode;
+use crate::config::{HimmelblauConfig, ProviderConfig, ProviderKind};
 use crate::constants::SERVER_CONFIG_PATH;
 use crate::db::{Cache, CacheTxn, Db};
 use crate::idprovider::interface::{
@@ -305,6 +306,22 @@ where
     /// Import broker PRTs previously exported by [`Self::export_broker_prts`].
     pub async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
         self.client.import_broker_prts(data).await
+    }
+
+    pub async fn provider_status(&self) -> Vec<(String, bool)> {
+        self.client.provider_status().await
+    }
+
+    pub async fn provider_for_account(&self, account: &str) -> Option<ProviderConfig> {
+        self.client.provider_for_account(account).await
+    }
+
+    fn token_provider(&self, token: &UserToken) -> Option<(&HimmelblauConfig, ProviderConfig)> {
+        let cfg = self.client.provider_config()?;
+        let provider = cfg
+            .provider_for_account(&token.spn)
+            .or_else(|| cfg.provider_for_gid(token.gidnumber))?;
+        Some((cfg, provider))
     }
 
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
@@ -1297,7 +1314,14 @@ where
                 trace!("offline expired, next check {:?}, refresh cache", time);
                 // Attempt to refresh the item
                 // Return it.
-                if SystemTime::now() >= time && self.test_connection().await {
+                let account = item
+                    .as_ref()
+                    .map(|(t, _)| t.spn.as_str())
+                    .or(match &account_id {
+                        Id::Name(name) => Some(name.as_str()),
+                        Id::Gid(_) => None,
+                    });
+                if SystemTime::now() >= time && self.test_connection_for_account(account).await {
                     // We brought ourselves online, lets go
                     self.refresh_usertoken_with_cacheability(&account_id, item)
                         .await
@@ -1381,7 +1405,10 @@ where
 
     #[inline(always)]
     fn token_homedirectory_alias(&self, token: &UserToken) -> Option<String> {
-        self.home_alias.map(|t| match t {
+        let alias = self
+            .token_provider(token)
+            .map_or(self.home_alias, |(cfg, p)| p.get_home_alias(cfg));
+        alias.map(|t| match t {
             // If we have an alias. use it.
             HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
             HomeAttr::Spn => token.spn.as_str().to_string(),
@@ -1392,7 +1419,10 @@ where
 
     #[inline(always)]
     fn token_homedirectory_attr(&self, token: &UserToken) -> String {
-        match self.home_attr {
+        let attr = self
+            .token_provider(token)
+            .map_or(self.home_attr, |(cfg, p)| p.get_home_attr(cfg));
+        match attr {
             HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
             HomeAttr::Spn => token.spn.as_str().to_string(),
             HomeAttr::Name => token.name.as_str().to_string(),
@@ -1408,7 +1438,11 @@ where
 
     #[inline(always)]
     fn token_abs_homedirectory(&self, token: &UserToken) -> String {
-        format!("{}{}", self.home_prefix, self.token_homedirectory(token))
+        let prefix = self.token_provider(token).map_or_else(
+            || self.home_prefix.clone(),
+            |(cfg, p)| p.get_home_prefix(cfg),
+        );
+        format!("{}{}", prefix, self.token_homedirectory(token))
     }
 
     #[inline(always)]
@@ -1562,18 +1596,33 @@ where
     /// Without an allow list, a cached identity is allowed without a provider refresh, even if
     /// it has expired. An uncached account is resolved through the provider and allowed if found.
     pub async fn pam_account_allowed(&self, account_id: &str) -> ResolverResult<Option<bool>> {
-        if self.pam_allow_groups.is_empty() {
-            if self.check_nxset(Some(account_id), None).await {
-                return Ok(None);
-            }
-            let id = Id::Name(account_id.to_string());
-            if let (_, Some(_)) = self.lookup_cached_usertoken(&id).await? {
-                return Ok(Some(true));
-            }
-            return Ok(self.get_usertoken(id).await?.map(|_| true));
+        if self.check_nxset(Some(account_id), None).await {
+            return Ok(None);
         }
-
-        let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
+        let id = Id::Name(account_id.to_string());
+        let (_, cached) = self.lookup_cached_usertoken(&id).await?;
+        let provider = match cached.as_ref().and_then(|token| self.token_provider(token)) {
+            Some((_, provider)) => Some(provider),
+            None => self.client.provider_for_account(account_id).await,
+        };
+        let (allowed, oidc_auth) = match self.client.provider_config().zip(provider) {
+            Some((cfg, provider)) => (
+                provider
+                    .get_pam_allow_groups(cfg)
+                    .into_iter()
+                    .collect::<BTreeSet<_>>(),
+                provider.kind == ProviderKind::Oidc,
+            ),
+            None if self.client.provider_config().is_some() => return Ok(None),
+            None => (self.pam_allow_groups.clone(), self.oidc_auth),
+        };
+        if allowed.is_empty() {
+            return Ok(match cached {
+                Some(_) => Some(true),
+                None => self.get_usertoken(id).await?.map(|_| true),
+            });
+        }
+        let token = self.get_usertoken(id).await?;
         Ok(token.map(|tok| {
             // Never ever EVER list Entra group names in the allowed groups
             // set. This is a SECURITY RISK! See CVE-2025-49012. Group
@@ -1586,7 +1635,7 @@ where
                 .iter()
                 .flat_map(|g| {
                     let mut ids = vec![g.uuid.hyphenated().to_string()];
-                    if self.oidc_auth {
+                    if oidc_auth {
                         ids.push(g.spn.clone());
                     }
                     ids
@@ -1594,17 +1643,12 @@ where
                 .chain(std::iter::once(account_id.to_string()))
                 .collect();
 
+            let intersection_count = user_set.intersection(&allowed).count();
             debug!(
-                "Checking if user is in allowed groups ({:?}) -> {:?}",
-                self.pam_allow_groups,
-                user_set
-                    .iter()
-                    .filter(|s| s.as_str() != account_id)
-                    .cloned(),
+                intersection_count,
+                valid = tok.valid,
+                "Checking provider group access"
             );
-            let intersection_count = user_set.intersection(&self.pam_allow_groups).count();
-            debug!("Number of intersecting groups: {}", intersection_count);
-            debug!("User has valid token: {}", tok.valid);
 
             intersection_count > 0 && tok.valid
         }))
@@ -1644,7 +1688,7 @@ where
 
         let online_at_init = if !matches!(state, CacheState::Online) {
             // Attempt a cache online.
-            self.test_connection().await
+            self.test_connection_for_account(Some(account_id)).await
         } else {
             true
         };
@@ -2122,8 +2166,7 @@ where
             return Ok(false);
         };
 
-        let state = self.get_cachestate(Some(account_id)).await;
-        let online_at_init = self.test_connection_for_state(state).await;
+        let online_at_init = self.test_connection_for_account(Some(account_id)).await;
 
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
@@ -2182,11 +2225,11 @@ where
     }
 
     pub async fn test_connection(&self) -> bool {
-        let state = self.get_cachestate(None).await;
-        self.test_connection_for_state(state).await
+        self.test_connection_for_account(None).await
     }
 
-    async fn test_connection_for_state(&self, state: CacheState) -> bool {
+    async fn test_connection_for_account(&self, account: Option<&str>) -> bool {
+        let state = self.get_cachestate(account).await;
         match state {
             CacheState::Offline => {
                 trace!("Offline -> no change");
@@ -2201,7 +2244,14 @@ where
 
                 let mut hsm_lock = self.hsm.lock().await;
 
-                let res = self.client.check_online(hsm_lock.deref_mut(), now).await;
+                let res = match account {
+                    Some(account) => {
+                        self.client
+                            .check_online_for_account(account, hsm_lock.deref_mut(), now)
+                            .await
+                    }
+                    None => self.client.check_online(hsm_lock.deref_mut(), now).await,
+                };
 
                 drop(hsm_lock);
 
@@ -2218,6 +2268,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{AuthSession, CacheUpdateResult, OnExpiry, Resolver};
+    use crate::config::HimmelblauConfig;
     use crate::config::InitgroupsMode;
     use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{
@@ -2236,6 +2287,7 @@ mod tests {
     use tokio::sync::{broadcast, Notify};
 
     struct OfflineFallbackProvider {
+        settings: Option<HimmelblauConfig>,
         cache_state: RwLock<CacheState>,
         check_online_result: AtomicBool,
         probe_online_result: AtomicBool,
@@ -2258,6 +2310,7 @@ mod tests {
     impl OfflineFallbackProvider {
         fn new() -> Self {
             Self {
+                settings: None,
                 cache_state: RwLock::new(CacheState::Online),
                 check_online_result: AtomicBool::new(true),
                 probe_online_result: AtomicBool::new(true),
@@ -2292,6 +2345,10 @@ mod tests {
 
     #[async_trait]
     impl IdProvider for OfflineFallbackProvider {
+        fn provider_config(&self) -> Option<&HimmelblauConfig> {
+            self.settings.as_ref()
+        }
+
         async fn check_online(
             &self,
             _tpm: &mut tpm::provider::BoxedDynTpm,
@@ -3435,6 +3492,45 @@ mod tests {
         );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
         assert!(resolver.identity_refreshes.lock().await.queued.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mixed_provider_authorization_scopes_group_claims_and_home_settings() {
+        let mut resolver = setup_resolver().await;
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        for (kind, allowed) in [("entra", false), ("oidc", true)] {
+            let issuer = if kind == "oidc" {
+                "oidc_issuer_url=https://id.example.com\napp_id=linux\n"
+            } else {
+                ""
+            };
+            let settings = HimmelblauConfig::from_test_config(&format!(
+                "[tenant.a]\ntype={kind}\n{issuer}domain=example.com\ndefault=true\nidmap_range=1000-10000\npam_allow_groups=linux-users\nhome_prefix=/home/a/\n\
+                 [tenant.b]\ndomain=other.example\nidmap_range=10001-20000\npam_allow_groups=linux-users\nhome_prefix=/home/b/\n"
+            ));
+            assert!(settings.validate().is_ok());
+            resolver.client.settings = Some(settings);
+            assert_eq!(
+                resolver
+                    .pam_account_allowed(&test_token().spn)
+                    .await
+                    .unwrap(),
+                Some(allowed)
+            );
+            assert_eq!(
+                resolver.token_abs_homedirectory(&test_token()),
+                "/home/a/testuser@example.com"
+            );
+        }
+        let cfg = resolver.client.settings.as_mut().unwrap();
+        cfg.set("tenant.a", "pam_allow_groups", "different-group");
+        assert_eq!(
+            resolver
+                .pam_account_allowed(&test_token().spn)
+                .await
+                .unwrap(),
+            Some(false)
+        );
     }
 
     #[tokio::test]

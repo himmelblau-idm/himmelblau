@@ -284,7 +284,7 @@ pub enum CredOpt {
         client_id: String,
         /// The tenant domain this secret is associated with.
         #[arg(long)]
-        domain: String,
+        domain: Option<String>,
         /// The client secret value copied from the Entra ID portal.
         #[arg(long)]
         secret: String,
@@ -320,7 +320,7 @@ pub enum CredOpt {
         client_id: String,
         /// The tenant domain this certificate is associated with.
         #[arg(long)]
-        domain: String,
+        domain: Option<String>,
         /// Number of days the self-signed certificate will be valid.
         #[arg(long)]
         valid_days: u64,
@@ -345,7 +345,7 @@ pub enum CredOpt {
         debug: bool,
         /// The tenant domain whose creds will be deleted.
         #[arg(long)]
-        domain: String,
+        domain: Option<String>,
         /// Delete only the client secret (not the certificate).
         #[arg(long)]
         secret: bool,
@@ -365,7 +365,7 @@ pub enum CredOpt {
         #[clap(short, long)]
         debug: bool,
         #[arg(long)]
-        domain: String,
+        domain: Option<String>,
     },
 }
 
@@ -570,6 +570,9 @@ pub enum HimmelblauUnixOpt {
     clap(after_help = "Support Himmelblau: Financial support helps keep cloud identity for Linux open.\nLearn more: https://himmelblau-idm.org/donations/")
 )]
 pub struct HimmelblauUnixParser {
+    /// Select a configured tenant by its primary domain or an alias.
+    #[clap(long)]
+    pub domain: Option<String>,
     #[clap(subcommand)]
     pub commands: HimmelblauUnixOpt,
 }

@@ -164,9 +164,11 @@ impl OktaProvider {
         standard: &OidcProvider,
     ) -> Result<Self, OktaError> {
         let cfg = config.lock().await;
-        let issuer = cfg.get_oidc_issuer_url().ok_or(OktaError::Configuration)?;
+        let issuer = cfg
+            .get_oidc_issuer_url(Some(domain))
+            .ok_or(OktaError::Configuration)?;
         let client_id = cfg.get_app_id(domain).ok_or(OktaError::Configuration)?;
-        let redirect_uri = cfg.get_oidc_redirect_uri();
+        let redirect_uri = cfg.get_oidc_redirect_uri(Some(domain));
         let origin = reqwest::Url::parse(&issuer)
             .map_err(|_| OktaError::Configuration)?
             .origin()
@@ -307,9 +309,9 @@ impl OktaProvider {
         }
         let cfg = self.config.lock().await;
         let (shell, account_claims, strip) = (
-            cfg.get_shell(None),
-            cfg.get_oidc_account_id_claims(),
-            cfg.get_oidc_account_id_strip_at_suffix(),
+            cfg.get_shell(Some(&self.domain)),
+            cfg.get_oidc_account_id_claims(Some(&self.domain)),
+            cfg.get_oidc_account_id_strip_at_suffix(Some(&self.domain)),
         );
         drop(cfg);
         let identity = oidc_user_token_from_claims(
@@ -1043,7 +1045,7 @@ impl IdProvider for OktaProvider {
             real_gidnumber: Some(uid),
             gidnumber: gid,
             displayname: flip_displayname_comma(""),
-            shell: Some(self.config.lock().await.get_shell(None)),
+            shell: Some(self.config.lock().await.get_shell(Some(&self.domain))),
             groups: vec![GroupToken {
                 name: account.into(),
                 spn: account.into(),
