@@ -257,7 +257,7 @@ def generate_rust_code(params: List[Parameter], sections: Dict[str, Section]) ->
             if param.domain_specific:
                 lines.append(_gen_domain_specific_bool(param, default_expr))
             else:
-                lines.append(f'        match_bool(self.config.get("{section}", "{param.name}"), {default_expr})')
+                lines.append(f'        match_bool("{param.name}", self.config.get("{section}", "{param.name}"), {default_expr})')
 
         elif param.param_type in ('u64', 'u32', 'usize'):
             default_expr = param.default_const if param.default_const else f'DEFAULT_{param.name.upper()}'
@@ -322,67 +322,33 @@ def generate_rust_code(params: List[Parameter], sections: Dict[str, Section]) ->
 
 def _gen_domain_specific_bool(param: Parameter, default_expr: str) -> str:
     """Generate code for a domain-specific boolean parameter."""
-    return f'''        match domain {{
-            Some(domain) => match self.config.get(domain, "{param.name}") {{
-                Some(val) => match_bool(Some(val), {default_expr}),
-                None => match_bool(self.config.get("global", "{param.name}"), {default_expr}),
-            }},
-            None => match_bool(self.config.get("global", "{param.name}"), {default_expr}),
-        }}'''
+    return f'''        match_bool(
+            "{param.name}",
+            self.domain_or_global_value(domain, "{param.name}"),
+            {default_expr},
+        )'''
 
 
 def _gen_domain_specific_number(param: Parameter, default_expr: str) -> str:
     """Generate code for a domain-specific numeric parameter."""
-    return f'''        match domain {{
-            Some(domain) => match self.config.get(domain, "{param.name}") {{
-                Some(val) => val.parse::<{param.param_type}>().unwrap_or_else(|_| {{
-                    error!("Failed parsing {param.name} from config: {{}}", val);
-                    {default_expr}
-                }}),
-                None => match self.config.get("global", "{param.name}") {{
-                    Some(val) => val.parse::<{param.param_type}>().unwrap_or_else(|_| {{
-                        error!("Failed parsing {param.name} from config: {{}}", val);
-                        {default_expr}
-                    }}),
-                    None => {default_expr},
-                }},
-            }},
-            None => match self.config.get("global", "{param.name}") {{
-                Some(val) => val.parse::<{param.param_type}>().unwrap_or_else(|_| {{
-                    error!("Failed parsing {param.name} from config: {{}}", val);
-                    {default_expr}
-                }}),
-                None => {default_expr},
-            }},
+    return f'''        match self.domain_or_global_value(domain, "{param.name}") {{
+            Some(val) => val.parse::<{param.param_type}>().unwrap_or_else(|_| {{
+                error!(key = "{param.name}", value = %val, "Invalid number, using default");
+                {default_expr}
+            }}),
+            None => {default_expr},
         }}'''
 
 
 def _gen_domain_specific_string(param: Parameter, default_expr: str) -> str:
     """Generate code for a domain-specific string parameter."""
-    return f'''        match domain {{
-            Some(domain) => match self.config.get(domain, "{param.name}") {{
-                Some(val) => val,
-                None => match self.config.get("global", "{param.name}") {{
-                    Some(val) => val,
-                    None => String::from({default_expr}),
-                }},
-            }},
-            None => match self.config.get("global", "{param.name}") {{
-                Some(val) => val,
-                None => String::from({default_expr}),
-            }},
-        }}'''
+    return f'''        self.domain_or_global_value(domain, "{param.name}")
+            .unwrap_or_else(|| String::from({default_expr}))'''
 
 
 def _gen_domain_specific_option_string(param: Parameter) -> str:
     """Generate code for a domain-specific Option<String> parameter."""
-    return f'''        match domain {{
-            Some(domain) => match self.config.get(domain, "{param.name}") {{
-                Some(val) => Some(val),
-                None => self.config.get("global", "{param.name}"),
-            }},
-            None => self.config.get("global", "{param.name}"),
-        }}'''
+    return f'''        self.domain_or_global_value(domain, "{param.name}")'''
 
 
 def _gen_enum_getter(param: Parameter) -> str:
