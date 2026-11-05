@@ -20,14 +20,17 @@ in
         The primary Azure Entra ID domain name used for authentication. This value
         **SHOULD**
         match the domain name that users enter when signing in (for example, the domain portion of their UPN).
-        
+
         In most cases, this will be the primary domain of your Azure Entra ID tenant. If your organization uses multiple verified domains or aliases, choose the one that your users actually use to sign in.
-        
-        Only a single Entra ID domain is supported. If several domains are listed (comma-separated, or through additional domain sections), only the first one is used and the others are ignored. If
+
+        This legacy format selects one provider. If several domains are listed
+        (comma-separated or through additional domain sections), the first is used and a
+        warning is logged. Use one [tenant.<label>] section per provider for multi-tenant
+        setups. If
         **oidc_issuer_url**
         is set, this option is ignored.
-        
-        If not specified, the domain is extracted from the UPN of the first user to authenticate and looked up in Entra ID.
+
+        Configure a provider before starting the daemon.
       '';
       example = [ "example.com" ];
     };
@@ -38,11 +41,11 @@ in
       description = ''
         Specifies the OpenID Connect (OIDC) issuer URL used by Himmelblau to discover
         OIDC provider metadata and endpoints.
-        
+
         This option enables generic OIDC authentication support and allows Himmelblau
         to authenticate against any standards-compliant OIDC provider, rather than
         using the built-in Microsoft Entra ID defaults.
-        
+
         Himmelblau prefers native Interaction Code authentication when supported by the
         configured client. It probes issuers with Okta metadata or hostname hints,
         issuers advertising the interaction_code grant, and issuers without a usable
@@ -51,30 +54,30 @@ in
         The absence of interaction_code in discovery does not prove it is disabled.
         Use oidc_force_interaction_code to require native authentication and
         oidc_redirect_uri to configure its registered redirect URI.
-        
+
         If
         **enable_hello**
         is set to true (the default), the client application must allow refresh tokens
         and include the
         **offline_access**
         scope for Hello enrollment to function with OIDC providers.
-        
+
         When this option is set, the following option is
         **REQUIRED**
         and must be configured consistently:
-        
+
         - **app_id**
         - Used as the OIDC client identifier
-        
+
         The issuer URL
         **MUST**
         exactly match the issuer value advertised by the OIDC provider, including
         any required path components.
         Incorrect issuer URLs will cause provider discovery to fail.
-        
+
         If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
         authentication flow.
-        
+
         When the standard OIDC backend is selected, if
         **allow_console_password_only**
         is enabled and the OIDC provider advertises the
@@ -97,7 +100,7 @@ in
         issuer. When true, Himmelblau never falls back to device authorization or the
         browser orchestrator. The server must implement the compatible IDX protocol,
         and the configured public client must permit Interaction Code.
-        
+
         When false, Himmelblau probes likely compatible providers (including Okta) and
         issuers without device authorization, then falls back quietly when native
         authentication is unavailable. Selection is fixed until daemon restart;
@@ -113,7 +116,7 @@ in
         exact URI on the public OIDC application identified by app_id, or configure
         the URI already registered there. A URI without a fragment or embedded
         credentials is required.
-        
+
         Native PAM flows do not open a callback listener. Policies requiring a browser
         redirect or external callback must offer another supported native method;
         otherwise authentication reports that the external step is unsupported.
@@ -140,12 +143,12 @@ in
       description = ''
         A comma-separated, ordered list of OIDC userinfo claim names to use as the
         Linux account name for generic OIDC providers.
-        
+
         When this option is set, Himmelblau tries each named claim in order and uses
         the first claim that is present as a non-empty string. The claim names are not
         limited to standard OpenID Connect claims; provider-specific userinfo claims
         may also be listed.
-        
+
         If none of the configured claims match a non-empty string claim in userinfo,
         Himmelblau logs a warning and falls back to the default account-name selection:
         **preferred_username**
@@ -168,7 +171,7 @@ in
         then
         **email**
         fallback.
-        
+
         This is useful when the selected OIDC claim is scoped, such as
         **user@example.com,**
         but the desired Linux account name is only the local portion.
@@ -197,9 +200,9 @@ in
         A comma-separated list of users and groups permitted to access the system.
         For Entra ID, users should be specified by UPN. Entra ID groups MUST be specified using their Object ID GUID. Group names may not be used because these names are not guaranteed to be unique in Entra ID.
         For generic OIDC providers, group and role entries may be specified by the exact value emitted in the userinfo groups, realm_access.roles, or resource_access roles claim.
-        
+
         If not set, all users are permitted to authenticate.
-        
+
         This restriction is enforced during PAM account management: a user who is not
         permitted causes pam_himmelblau to return PAM_AUTH_ERR from its account phase.
         A PAM stack that discards that result (for example an account line whose
@@ -217,7 +220,7 @@ in
       description = ''
         Specify whether to map uid/gid based on the object name, the object uuid, or based on the rfc2307 schema extension attributes synchronized from an on-prem Active Directory instance. Mapping by name or by rfc2307 is recommended.
       '';
-      example = "name";
+      example = "uuid";
     };
 
     rfc2307_group_fallback_map = mkOption {
@@ -238,7 +241,7 @@ in
         **gidNumber**
         will not be available to NSS.
       '';
-      example = "name";
+      example = "uuid";
     };
 
     enable_hello = mkOption {
@@ -246,7 +249,7 @@ in
       default = true;
       description = ''
         Enables or disables user enrollment in Windows Hello authentication. If disabled, users will need to provide MFA for each login.
-        
+
         For OIDC providers (when
         **oidc_issuer_url**
         is set), Hello enrollment requires the client application to allow refresh tokens and include the
@@ -261,7 +264,7 @@ in
       default = false;
       description = ''
         Allows Windows Hello PIN authentication for remote services without requiring Hello TOTP. When enabled, remote logins may use Hello PIN alone, restoring the legacy behavior for SSH and similar services.
-        
+
         This weakens remote authentication and is not recommended unless you explicitly accept the risk. Prefer enabling Hello TOTP instead.
       '';
       example = true;
@@ -272,9 +275,9 @@ in
       default = false;
       description = ''
         Enables or disables the use of a local Time-based One-Time Password (TOTP) in combination with Windows Hello authentication. When enabled, users are required to authenticate using both their Hello PIN and a TOTP generated by a standard authenticator application.
-        
+
         The TOTP secret is enrolled and enforced locally on the host and is independent of any cloud-based MFA or identity provider. Users who have not yet enrolled a TOTP secret will be prompted to complete TOTP enrollment.
-        
+
         Hello PIN alone is not permitted for remote authentication unless allow_remote_hello is enabled. When Hello TOTP is enabled, Hello + TOTP is accepted for remote services; otherwise remote logins skip Hello and require MFA. The non-interactive PAM try_unseal option is incompatible with Hello TOTP. When this setting is enabled, try_unseal is refused before cached SSO material is loaded because the hook cannot collect a TOTP. Use the normal interactive Himmelblau authentication flow instead.
       '';
       example = true;
@@ -334,27 +337,27 @@ in
         using only the user's password for local sessions. If Microsoft Entra ID
         requires MFA (based on Conditional Access policies), the user will be prompted
         for MFA automatically.
-        
+
         This option does
         **NOT**
         affect remote authentication methods such as SSH, which
         always require MFA (unless the user has Hello + TOTP configured or allow_remote_hello is enabled).
-        
+
         Remote connections are detected using multiple signals:
-        
+
         - PAM_RHOST - If the remote host is set to a non-localhost value
-        
+
         - PAM_SERVICE - If the service name matches entries in
         **password_only_remote_services_deny_list**
-        
+
         - PAM_TTY - If the terminal name contains "ssh" (fallback check)
-        
+
         For Microsoft Entra ID, this option requires the device to be domain-joined,
         matching the behavior of Microsoft-managed devices. Users can still use Hello
         PIN authentication if it is configured. To require MFA for all logins
         (including local console), set this option to
         **false.**
-        
+
         When a generic OIDC provider is configured (see
         **oidc_issuer_url**
         ), this option also enables password-only login using the OIDC Resource Owner
@@ -378,11 +381,11 @@ in
         **allow_console_password_only**
         setting. These are typically remote access services where password-only
         authentication should never be permitted.
-        
+
         The PAM service name is the name passed by the application when calling
         **pam_start()**
         (e.g., "sshd", "login", "gdm-password").
-        
+
         Entries are matched as substrings, so "ssh" will match "ssh", "sshd", "openssh", etc.
       '';
       example = [ "ssh" "telnet" "vnc" "xrdp" ];
@@ -397,11 +400,11 @@ in
         that do not display
         **PAM_TEXT_INFO**
         messages until an input prompt is shown.
-        
+
         This setting only applies when the
         **mfa_poll_prompt**
         PAM module option is enabled.
-        
+
         Entries are matched as substrings, so "ssh" will match "ssh", "sshd", "openssh", etc.
       '';
       example = [ "ssh" "cockpit" ];
@@ -418,7 +421,7 @@ in
         authenticated account, which is also the name reported by
         **id -un**
         for that user.
-        
+
         Users can log in with several aliases of the same account, such as the UPN,
         the short name, or a different letter case. Some applications, such as GDM,
         copy
@@ -429,18 +432,18 @@ in
         **LOGNAME**
         environment variables of the session, which then contain the alias entered at
         the login prompt instead of the account name.
-        
+
         The PAM service name is the name passed by the application when calling
         **pam_start()**
         (e.g., "gdm-password", "login").
-        
+
         Entries are matched as substrings, so "gdm" will match "gdm-password",
         "gdm-autologin", etc.
-        
+
         **PAM_USER**
         is only replaced when the canonical account name resolves to the same account
         as the name entered at the login prompt.
-        
+
         Do not list services that require
         **PAM_USER**
         to remain unchanged during authentication. sshd aborts the connection when it
@@ -454,7 +457,7 @@ in
         authentication when
         **PAM_USER**
         has changed, even to the name of the same account.
-        
+
         pam_faillock records failures under the value of
         **PAM_USER**
         at the time it runs. When pam_faillock runs before pam_himmelblau in the
@@ -463,7 +466,7 @@ in
         login prompt. When pam_himmelblau runs first, as configured by the authselect
         profile and by aad-tool configure-pam, pam_faillock does not act on successful
         Himmelblau logins, and this option does not change its behavior.
-        
+
         By default, no service is listed and
         **PAM_USER**
         is never modified.
@@ -476,31 +479,31 @@ in
       default = null;
       description = ''
         Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. For Microsoft Entra ID, Himmelblau requests the named Entra method. For native Okta authentication, this option also accepts Okta remediation or method identifiers, such as challenge-authenticator, push, or otp. An exact Okta identifier takes precedence over the compatibility mappings below.
-        
+
         When an Entra method has an Okta equivalent, Himmelblau maps it automatically: PhoneAppNotification and CompanionAppsNotification select Okta Verify push, while PhoneAppOTP selects an Okta verification code. If the configured value is unavailable or cannot be mapped, Himmelblau logs an error and continues with the identity provider's first policy-compliant method.
-        
+
         Valid values include:
-        
+
         - PhoneAppNotification - Authenticator app push notification
-        
+
         - CompanionAppsNotification - MFA via Outlook app/Authenticator Lite
-        
+
         - PhoneAppOTP - Authenticator app verification code
-        
+
         - OneWaySMS - Text message code
-        
+
         - TwoWayVoiceMobile - Phone call to mobile
-        
+
         - TwoWayVoiceAlternateMobile - Phone call to alternate mobile number
-        
+
         - TwoWayVoiceOffice - Phone call to office
-        
+
         - ConsolidatedTelephony - Call or text message
-        
+
         - challenge-authenticator - Okta IDX authenticator challenge remediation
-        
+
         - push - Okta Verify push notification
-        
+
         - otp - Okta Verify verification code
       '';
       example = "TwoWayVoiceMobile";
@@ -529,13 +532,13 @@ in
       default = "named";
       description = ''
         Controls which supplementary groups Himmelblau returns from NSS initgroups.
-        
+
         - named -- return only groups that resolve to an NSS name (default). A GID that
         **getgrgid**
         cannot name is omitted, so tools such as
         **groups**
         do not fail on an unnamed group id.
-        
+
         - full -- return every cached group GID, including ones with no NSS name. Use this when debugging a missing membership.
       '';
       example = "named";
@@ -615,16 +618,16 @@ in
         Native Interaction Code authentication requires that grant to be enabled for
         the authorization server and application, and oidc_redirect_uri to be registered
         on the application. No client secret is used.
-        
+
         Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
         the
         **gidNumber**
         attribute used in RFC 2307 idmapping).
-        
+
         If
         **logon_token_app_id**
         is not set, this application ID is also used when requesting access tokens for the user logon script.
-        
+
         **Note:** In the Azure Portal for the application corresponding to **app_id**, ensure that the redirect URI
         *himmelblau://Himmelblau.EntraId.BrokerPlugin*
         is enabled under "Mobile and desktop applications" in the Authentication section.
@@ -643,9 +646,9 @@ in
         If not set, the value of
         **app_id**
         will be used instead.
-        
+
         This option allows using a separate application registration that carries the specific API permissions required by logon scripts.
-        
+
         **Note:** In the Azure Portal for the application corresponding to **logon_token_app_id**, ensure that the redirect URI
         *https://login.microsoftonline.com/common/oauth2/nativeclient*
         is enabled under "Mobile and desktop applications" in the Authentication section.
@@ -735,9 +738,9 @@ in
       default = null;
       description = ''
         Specifies the path to an executable script used for mapping custom names to UPN names. The script MUST accept a single argument, which will always be a mapped name. The script MUST print the corresponding UPN (User Principal Name) to stdout. If the script does not recognize the input name, it MUST simply return the input name unchanged. This option is particularly useful in environments where direct UPN-to-CN mappings are impractical or where custom transformations are required.
-        
+
         The script must handle the input gracefully and return the correct UPN or the input name if unrecognized. Errors must be handled to avoid authentication failures.
-        
+
         Example Script:
         #!/bin/bash
         # Convert CN to UPN, or return the input name if unrecognized
@@ -797,27 +800,27 @@ in
       default = "tpm_bound_soft_if_possible";
       description = ''
         Specifies how Himmelblau should handle secure key storage. This option determines whether to use a TPM (Trusted Platform Module) bound software-based HSM, a TPM, or a hybrid approach.
-        
+
         The available options are:
-        
+
         - **tpm_bound_soft_if_possible**
         - Use a software-based HSM that encrypts key material locally on the system, but binds the parent AuthCode to the TPM, if available.
-        
+
         - **tpm**
         - Use a hardware TPM exclusively for storing and binding cryptographic keys.
-        
+
         - **tpm_if_possible**
         - Attempt to use a hardware TPM if available; if not, fall back to the software HSM. If the TPM has previously been used for key storage, the system will not fall back to the software HSM.
-        
+
         This setting is important for protecting sensitive cryptographic keys in a secure environment, reducing the risk of compromise if the system is breached.
-        
+
         Note that the old
         **soft**
         option has been deprecated. Environments currently enrolled using
         **soft**
         will be automatically migrated to
         **tpm_bound_soft_if_possible.**
-        
+
         To validate whether Himmelblau is utilizing the hardware TPM, run the command `sudo aad-tool tpm` for a status report.
       '';
       example = "tpm";
@@ -833,12 +836,12 @@ in
         **tpm**
         or
         **tpm_if_possible.**
-        
+
         Common values include:
-        
+
         - **device:/dev/tpmrm0**
         - This uses the kernel TPM resource manager device, which is the recommended default for most Linux systems.
-        
+
         Other TCTI strings may be required depending on your system's TPM driver or configuration. This option allows advanced control over how Himmelblau connects to the TPM for performing cryptographic operations.
       '';
       example = "device:/dev/tpm0";
@@ -914,11 +917,11 @@ in
       default = "uuid";
       description = ''
         The attribute used to create a home directory for a user. Available options include:
-        
+
         - UUID
-        
+
         - SPN
-        
+
         - CN
       '';
       example = "UUID";
@@ -929,11 +932,11 @@ in
       default = "spn";
       description = ''
         The symlinked alias for the user's home directory. Available options include:
-        
+
         - UUID
-        
+
         - SPN
-        
+
         - CN
       '';
       example = "SPN";
@@ -953,7 +956,7 @@ in
       default = "200000-2000200000";
       description = ''
         Specifies the range of IDs to be used for the user and group mappings.
-        
+
         When this option is modified, you
         **SHOULD**
         run:
@@ -968,9 +971,9 @@ in
       default = "2100000000-4200000000";
       description = ''
         Specifies the range of subordinate IDs (subuid/subgid) to be allocated for container support (podman, rootless containers, etc.).
-        
+
         Himmelblau will automatically add entries to /etc/subuid and /etc/subgid for each user at login. Each user receives a 65536-ID slice from this range, allocated deterministically based on a hash of their username.
-        
+
         This feature is enabled by default with the default range shown below.
       '';
       example = "2100000000-4200000000";
@@ -1039,11 +1042,11 @@ in
       default = "/etc/himmelblau/user-map";
       description = ''
         Specifies the path to a user-mapping file used to map local user accounts to Azure Entra ID user accounts, allowing them to authenticate using Entra ID credentials.
-        
+
         Each line of the file must contain a single mapping entry in the format:
         local_username:name@domain
         Blank lines and lines beginning with '#' are ignored.
-        
+
         Example user-map file entries:
         # local_username:samaccountname@domain
         alice:alice@contoso.com
@@ -1058,13 +1061,13 @@ in
       default = "both";
       description = ''
         Controls which IP version family Himmelblau should use for outbound network connections.
-        
+
         Supported values are:
-        
+
         - ipv4-only -- use only IPv4 sockets
-        
+
         - ipv6-only -- use only IPv6 sockets
-        
+
         - both -- allow both IPv4 and IPv6 (default)
       '';
       example = "ipv4-only";
@@ -1098,7 +1101,7 @@ in
         default = false;
         description = ''
           Boolean value specifying whether offline breakglass mode is permitted.
-          
+
           When set to
           **true,**
           Himmelblau will cache secure, salted password verifiers for
@@ -1106,7 +1109,7 @@ in
           Entra ID users who successfully authenticate online.
           These verifiers can then be used to authenticate the same users when Entra ID is unreachable,
           allowing MFA users to log in using their cached password.
-          
+
           If this option is set to
           **false,**
           Himmelblau will continue to cache password verifiers only for SFA-only users,
@@ -1118,11 +1121,11 @@ in
           command
           **aad-tool offline-breakglass**
           will also have no effect.
-          
+
           Administrators must enable this option well in advance of an outage,
           as password verifiers for MFA users are only stored following a successful online authentication.
           It is too late to enable this feature once Entra ID is already unreachable.
-          
+
           Enabling offline breakglass mode carries significant risk.
           If a device is stolen or compromised, and network access to Entra ID is blocked,
           attackers could effectively disable MFA protection by forcing the system into
@@ -1130,7 +1133,7 @@ in
           Administrators should enable this mode
           **only after careful consideration**
           of their organization's security posture and offline access requirements.
-          
+
           This feature does not apply to passwordless accounts.
           If an MFA user signs in using a passwordless method,
           no password hash exists to cache, and offline breakglass cannot function for that user.
@@ -1155,6 +1158,345 @@ in
         '';
       };
 
+    };
+
+    tenant = mkOption {
+      default = { };
+      description = "Named Entra ID and OIDC identity providers.";
+      type = types.attrsOf (types.submodule {
+        options = {
+          app_id = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              When oidc_issuer_url is configured, this is the OIDC public client identifier.
+              Native Interaction Code authentication requires that grant to be enabled for
+              the authorization server and application, and oidc_redirect_uri to be registered
+              on the application. No client secret is used.
+
+              Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
+              the
+              **gidNumber**
+              attribute used in RFC 2307 idmapping).
+
+              If
+              **logon_token_app_id**
+              is not set, this application ID is also used when requesting access tokens for the user logon script.
+
+              **Note:** In the Azure Portal for the application corresponding to **app_id**, ensure that the redirect URI
+              *himmelblau://Himmelblau.EntraId.BrokerPlugin*
+              is enabled under "Mobile and desktop applications" in the Authentication section.
+              This allows Himmelblau to correctly handle interactive token redirection.
+            '';
+            example = "d023f7aa-d214-4b59-911d-6074de623765";
+          };
+          authority_host = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Specifies the hostname for Microsoft authentication.
+            '';
+            example = "login.microsoftonline.us";
+          };
+          default = mkOption {
+            type = types.nullOr (types.bool);
+            default = null;
+            description = ''
+              Serve bare account names with this provider. Exactly one provider must be the default in a multi-provider configuration.
+            '';
+            example = true;
+          };
+          domain = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Primary domain and persistent storage key for this provider.
+            '';
+            example = "example.com";
+          };
+          domain_aliases = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            description = ''
+              Comma-separated sign-in domains served by this provider. Each alias belongs to exactly one provider.
+            '';
+            example = [ "example.org" "example.net" ];
+          };
+          home_alias = mkOption {
+            type = types.nullOr (types.enum [ "uuid" "spn" "cn" ]);
+            default = null;
+            description = ''
+              The symlinked alias for the user's home directory. Available options include:
+
+              - UUID
+
+              - SPN
+
+              - CN
+            '';
+            example = "SPN";
+          };
+          home_attr = mkOption {
+            type = types.nullOr (types.enum [ "uuid" "spn" "cn" ]);
+            default = null;
+            description = ''
+              The attribute used to create a home directory for a user. Available options include:
+
+              - UUID
+
+              - SPN
+
+              - CN
+            '';
+            example = "UUID";
+          };
+          home_prefix = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              The prefix to use for user home directories.
+              On SELinux systems, a custom prefix must have a persistent file-context
+              equivalence to /home before users' homes are created. This labels the prefix
+              home_root_t and applies the normal home/content contexts to its whole subtree.
+              For example:
+              sudo mkdir -p /home/entra
+              sudo semanage fcontext -a -e /home "$(readlink -f /home/entra)"
+              sudo restorecon -R "$(readlink -f /home/entra)"
+              Resolve the destination when /home is a symlink, such as on Aurora; retain
+              /home as the equivalence source. Use the same setup for prefixes outside /home.
+              Relabel only the configured prefix. Changing just its directory label with
+              chcon does not provide the descendant file-context rules.
+            '';
+            example = "/home/entra/";
+          };
+          idmap_range = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Specifies the range of IDs to be used for the user and group mappings.
+
+              When this option is modified, you
+              **SHOULD**
+              run:
+              sudo aad-tool cache-clear --full
+              To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data. Afterwards, restart himmelblaud.
+            '';
+            example = "10000000-10999999";
+          };
+          logon_token_app_id = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Specifies an alternate Azure Entra ID application (client) ID to be used exclusively for acquiring
+              **ACCESS_TOKEN**
+              values on behalf of the user during logon script execution.
+              If not set, the value of
+              **app_id**
+              will be used instead.
+
+              This option allows using a separate application registration that carries the specific API permissions required by logon scripts.
+
+              **Note:** In the Azure Portal for the application corresponding to **logon_token_app_id**, ensure that the redirect URI
+              *https://login.microsoftonline.com/common/oauth2/nativeclient*
+              is enabled under "Mobile and desktop applications" in the Authentication section.
+              This is required for Himmelblau to obtain tokens via the public client flow.
+            '';
+            example = "544e695f-5d78-442e-b14e-e114e95e640c";
+          };
+          oidc_account_id_claims = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            description = ''
+              A comma-separated, ordered list of OIDC userinfo claim names to use as the
+              Linux account name for generic OIDC providers.
+
+              When this option is set, Himmelblau tries each named claim in order and uses
+              the first claim that is present as a non-empty string. The claim names are not
+              limited to standard OpenID Connect claims; provider-specific userinfo claims
+              may also be listed.
+
+              If none of the configured claims match a non-empty string claim in userinfo,
+              Himmelblau logs a warning and falls back to the default account-name selection:
+              **preferred_username**
+              first, then
+              **email.**
+            '';
+            example = [ "uid" "username" "preferred_username" "email" ];
+          };
+          oidc_account_id_strip_at_suffix = mkOption {
+            type = types.nullOr (types.bool);
+            default = null;
+            description = ''
+              A boolean option that removes any suffix beginning with
+              **@**
+              from the OIDC account name selected by
+              **oidc_account_id_claims**
+              or by the default
+              **preferred_username**
+              then
+              **email**
+              fallback.
+
+              This is useful when the selected OIDC claim is scoped, such as
+              **user@example.com,**
+              but the desired Linux account name is only the local portion.
+              Only enable this when the remaining local portion is unique across all accepted
+              OIDC issuers/domains; otherwise distinct identities that differ only by suffix
+              can collide on the same Linux account name.
+            '';
+            example = true;
+          };
+          oidc_device_authorization_endpoint = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Optional device authorization endpoint for generic OIDC providers that omit
+              **device_authorization_endpoint**
+              from their discovery metadata. The discovered endpoint is preferred when it
+              is present. This option is used only when
+              **oidc_issuer_url**
+              is configured.
+            '';
+            example = "https://idp.example.com/device/code";
+          };
+          oidc_force_interaction_code = mkOption {
+            type = types.nullOr (types.bool);
+            default = null;
+            description = ''
+              Require native Interaction Code (IDX) authentication for the configured OIDC
+              issuer. When true, Himmelblau never falls back to device authorization or the
+              browser orchestrator. The server must implement the compatible IDX protocol,
+              and the configured public client must permit Interaction Code.
+
+              When false, Himmelblau probes likely compatible providers (including Okta) and
+              issuers without device authorization, then falls back quietly when native
+              authentication is unavailable. Selection is fixed until daemon restart;
+              selection during a network outage is deferred until connectivity returns.
+            '';
+          };
+          oidc_issuer_url = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Specifies the OpenID Connect (OIDC) issuer URL used by Himmelblau to discover
+              OIDC provider metadata and endpoints.
+
+              This option enables generic OIDC authentication support and allows Himmelblau
+              to authenticate against any standards-compliant OIDC provider, rather than
+              using the built-in Microsoft Entra ID defaults.
+
+              Himmelblau prefers native Interaction Code authentication when supported by the
+              configured client. It probes issuers with Okta metadata or hostname hints,
+              issuers advertising the interaction_code grant, and issuers without a usable
+              device authorization flow. Otherwise it uses the existing OIDC device flow.
+              Selection lasts until daemon restart. Temporary outages defer selection.
+              The absence of interaction_code in discovery does not prove it is disabled.
+              Use oidc_force_interaction_code to require native authentication and
+              oidc_redirect_uri to configure its registered redirect URI.
+
+              If
+              **enable_hello**
+              is set to true (the default), the client application must allow refresh tokens
+              and include the
+              **offline_access**
+              scope for Hello enrollment to function with OIDC providers.
+
+              When this option is set, the following option is
+              **REQUIRED**
+              and must be configured consistently:
+
+              - **app_id**
+              - Used as the OIDC client identifier
+
+              The issuer URL
+              **MUST**
+              exactly match the issuer value advertised by the OIDC provider, including
+              any required path components.
+              Incorrect issuer URLs will cause provider discovery to fail.
+
+              If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
+              authentication flow.
+
+              When the standard OIDC backend is selected, if
+              **allow_console_password_only**
+              is enabled and the OIDC provider advertises the
+              **password**
+              grant type in its discovery document, local console logins are offered
+              password-only (single-factor) authentication via the Resource Owner Password
+              Credentials (ROPC) grant instead of the device-authorization (browser) flow.
+              Providers that do not advertise the
+              **password**
+              grant continue to use the device flow.
+            '';
+            example = "https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0";
+          };
+          oidc_redirect_uri = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Redirect URI supplied to native OIDC Interaction Code requests. Register this
+              exact URI on the public OIDC application identified by app_id, or configure
+              the URI already registered there. A URI without a fragment or embedded
+              credentials is required.
+
+              Native PAM flows do not open a callback listener. Policies requiring a browser
+              redirect or external callback must offer another supported native method;
+              otherwise authentication reports that the external step is unsupported.
+            '';
+          };
+          pam_allow_groups = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            description = ''
+              A comma-separated list of users and groups permitted to access the system.
+              For Entra ID, users should be specified by UPN. Entra ID groups MUST be specified using their Object ID GUID. Group names may not be used because these names are not guaranteed to be unique in Entra ID.
+              For generic OIDC providers, group and role entries may be specified by the exact value emitted in the userinfo groups, realm_access.roles, or resource_access roles claim.
+
+              If not set, all users are permitted to authenticate.
+
+              This restriction is enforced during PAM account management: a user who is not
+              permitted causes pam_himmelblau to return PAM_AUTH_ERR from its account phase.
+              A PAM stack that discards that result (for example an account line whose
+              control maps every non-success return to ignore) silently admits users that the
+              allow list is meant to reject, because a later module such as pam_unix then
+              succeeds for any resolvable user. When composing an account stack by hand,
+              make sure the denial is terminal.
+            '';
+            example = [ "f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12" "5ba4ef1d-e454-4f43-ba7c-6fe6f1601915" "admin@himmelblau-idm.org" ];
+          };
+          shell = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              The default shell for users. This will be assigned when the user logs in.
+            '';
+            example = "/bin/zsh";
+          };
+          sudo_groups = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            description = ''
+              A comma-separated list of Azure Entra ID group object IDs whose members should be granted
+              **sudo**
+              access on this system.
+              If
+              **local_sudo_group**
+              is not defined, the local group
+              **sudo**
+              will be used.
+            '';
+            example = [ "f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12" "5ba4ef1d-e454-4f43-ba7c-6fe6f1601915" ];
+          };
+          type = mkOption {
+            type = types.nullOr (types.enum [ "entra" "oidc" ]);
+            default = null;
+            description = ''
+              Provider protocol: entra or oidc. OIDC requires oidc_issuer_url and app_id.
+            '';
+            example = "entra";
+          };
+        };
+      });
     };
 
   };

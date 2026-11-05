@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "October 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "November 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -36,7 +36,7 @@ The
 file is the primary configuration file for the Himmelblau authentication module. It defines global and optional settings required for Azure Entra ID-based authentication and device management.
 
 .P
-While Himmelblau is designed to be highly configurable, it can normally be used without any custom configuration. For desktop authentication with Azure Entra ID, all that is required is for Himmelblau to be installed and for a user to log in. The domain will be automatically extracted from the first user's UPN and looked up in Entra ID.
+Configure an Entra ID domain or an OIDC issuer before starting the daemon. Use one [tenant.<label>] section per provider for multi-tenant setups.
 
 .P
 Himmelblau has many capabilities, but most are enabled by default and configured automatically at install time. The options documented below allow administrators to customize behavior for specific environments or requirements.
@@ -71,6 +71,7 @@ parameter = value
 .RE
 
 Lines beginning with a '#' are comments and are ignored by the parser.
+Boolean values accept true, yes, on, t, y or 1, and false, no, off, f, n or 0, in any case.
 
 .SH PARAMETERS
 
@@ -86,14 +87,17 @@ match the domain name that users enter when signing in (for example, the domain 
 
 In most cases, this will be the primary domain of your Azure Entra ID tenant. If your organization uses multiple verified domains or aliases, choose the one that your users actually use to sign in.
 
-Only a single Entra ID domain is supported. If several domains are listed (comma-separated, or through additional domain sections), only the first one is used and the others are ignored. If
+This legacy format selects one provider. If several domains are listed
+(comma-separated or through additional domain sections), the first is used and a
+warning is logged. Use one [tenant.<label>] section per provider for multi-tenant
+setups. If
 .B oidc_issuer_url
 is set, this option is ignored.
 
-If not specified, the domain is extracted from the UPN of the first user to authenticate and looked up in Entra ID.
+Configure a provider before starting the daemon.
 
 .P
-Default: Extracted from first user's UPN
+Default: Not set
 
 .P
 Example: domain = example.com
@@ -294,7 +298,7 @@ Specify whether to map uid/gid based on the object name, the object uuid, or bas
 Default: name
 
 .P
-Example: id_attr_map = <name|uuid|rfc2307>
+Example: id_attr_map = uuid
 
 .TP
 .B rfc2307_group_fallback_map
@@ -314,7 +318,7 @@ defined in the directory, this setting determines the fallback method for mappin
 will not be available to NSS.
 
 .P
-Example: rfc2307_group_fallback_map = <name|uuid>
+Example: rfc2307_group_fallback_map = uuid
 
 .TP
 .B enable_hello
@@ -646,7 +650,7 @@ full \(em return every cached group GID, including ones with no NSS name. Use th
 Default: named
 
 .P
-Example: initgroups_mode = <named|full>
+Example: initgroups_mode = named
 
 .TP
 .B local_groups_reconcile_interval
@@ -1398,6 +1402,99 @@ ttl = 1d
 .br
 # Permit offline MFA logins for up to 24 hours after activation
 
+.SH TENANT CONFIGURATION
+Each [tenant.<label>] section defines one provider served by the daemon.
+Use type = entra for Microsoft Entra ID or type = oidc for OpenID Connect.
+Okta backend selection is automatic within each OIDC provider.
+.P
+Set domain to the provider's primary domain and domain_aliases to its other
+sign-in domains. The domain keys device credentials, the server cache and ID
+mapping. Preserve that value and idmap_range when converting an existing
+configuration. Legacy OIDC configurations use domain = oidc as their storage key;
+list their scoped account suffixes in domain_aliases when converting them.
+.P
+With several providers, mark exactly one default = true and assign each a
+non-overlapping idmap_range. A single provider is the implicit default.
+Bare account names and cn_name_mapping use the default provider.
+OIDC account-name claims on other providers must contain a configured domain or
+alias. oidc_account_id_strip_at_suffix is supported on the default provider.
+.P
+Provider settings override [global] settings. Discovered metadata is stored
+separately in /var/cache/himmelblaud/himmelblau.conf. Only administrator
+configuration defines providers. Unknown Entra aliases are accepted after their
+tenant ID is matched to a configured provider.
+.P
+Initialization and connectivity checks run independently for each provider.
+Initialization failures are logged and skipped; startup fails if none initialize.
+aad-tool status reports connectivity per provider. aad-tool --domain DOMAIN
+selects a provider for tenant-scoped commands; credential commands also accept
+--domain after the subcommand. The default provider is used when no account or
+domain is supplied.
+.P
+pam_allow_groups and sudo_groups are evaluated for the selected provider.
+Entra group rules use object IDs. OIDC pam_allow_groups also accepts group claims.
+Duplicate group display names retain separate UUIDs and memberships; ambiguous
+name lookups fail. Keep home directories distinct: CN home naming requires a
+separate home_prefix for each tenant sharing that naming scheme.
+Each home_prefix directory must already exist.
+.P
+When apply_policy is enabled, each Entra tenant enrolls and applies its Intune
+policy. Device-wide settings are shared: the last applied policy wins on conflicts.
+.P
+The daemon validates configuration at startup and with --configtest. It rejects
+mixed legacy/stanza definitions, duplicate domains, aliases or tenant identities,
+overlapping ID ranges, and multi-provider rfc2307 mappings.
+.SS [tenant.<label>]
+One section per provider; labels are local configuration handles.
+.TP
+.B domain
+Primary domain and persistent storage key for this provider.
+.TP
+.B type
+Provider protocol: entra or oidc. OIDC requires oidc_issuer_url and app_id.
+.P
+Default: entra
+.TP
+.B default
+Serve bare account names with this provider. Exactly one provider must be the default in a multi-provider configuration.
+.P
+Default: false
+.TP
+.B domain_aliases
+Comma-separated sign-in domains served by this provider. Each alias belongs to exactly one provider.
+.P
+Per-provider options: app_id, authority_host, home_alias, home_attr, home_prefix, idmap_range, logon_token_app_id, oidc_account_id_claims, oidc_account_id_strip_at_suffix, oidc_device_authorization_endpoint, oidc_force_interaction_code, oidc_issuer_url, oidc_redirect_uri, pam_allow_groups, shell, sudo_groups.
+.P
+.nf
+[tenant.contoso]
+domain = contoso.com
+domain_aliases = contoso.org
+default = true
+idmap_range = 200000-999999
+home_prefix = /home/contoso/
+
+[tenant.fabrikam]
+domain = fabrikam.com
+idmap_range = 1000000-1999999
+home_prefix = /home/fabrikam/
+.fi
+.P
+.nf
+[tenant.contoso]
+domain = contoso.com
+default = true
+idmap_range = 200000-999999
+home_prefix = /home/contoso/
+
+[tenant.partners]
+type = oidc
+domain = partners.example
+oidc_issuer_url = https://id.partners.example/realms/linux
+app_id = linux-login
+idmap_range = 1000000-1999999
+home_prefix = /home/partners/
+pam_allow_groups = linux-users
+.fi
 .SH SEE ALSO
 .BR himmelblaud(8),
 .BR himmelblaud-tasks(8)
