@@ -1383,6 +1383,65 @@ optional {
 	allow sshd_session_t himmelblaud_t:unix_stream_socket connectto;
 }
 
+#============= sshd_t ==============
+# sshd_t is sshd itself. Where OpenSSH has no separate sshd-session binary
+# (sshd_session_t), such as EL8 and EL9, sshd_t also resolves the user, so
+# without this Entra ID users are rejected as "Invalid user" over SSH.
+optional {
+	require {
+		type sshd_t;
+	}
+	allow sshd_t himmelblau_etc_t:dir { getattr open read search };
+	allow sshd_t himmelblau_etc_t:file { getattr open read };
+	allow sshd_t himmelblau_etc_t:lnk_file { getattr read };
+	allow sshd_t himmelblau_var_cache_t:dir search;
+	allow sshd_t himmelblau_server_conf_t:file { getattr open read };
+	allow sshd_t himmelblau_var_cache_t:lnk_file read;
+	allow sshd_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search setattr write };
+	allow sshd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+	allow sshd_t himmelblau_var_run_t:dir search;
+	allow sshd_t himmelblau_var_run_t:sock_file write;
+	allow sshd_t himmelblaud_t:unix_stream_socket connectto;
+}
+
+#============= sysadm_sudo_t ==============
+# sysadm_sudo_t is sudo/su run by a confined administrator (sysadm_u)
+optional {
+	require {
+		type sysadm_sudo_t;
+	}
+	allow sysadm_sudo_t himmelblau_etc_t:dir { getattr open read search };
+	allow sysadm_sudo_t himmelblau_etc_t:file { getattr open read };
+	allow sysadm_sudo_t himmelblau_etc_t:lnk_file { getattr read };
+	allow sysadm_sudo_t himmelblau_var_cache_t:dir { getattr open read search };
+	allow sysadm_sudo_t himmelblau_server_conf_t:file { getattr open read };
+	allow sysadm_sudo_t himmelblau_var_cache_t:lnk_file read;
+	allow sysadm_sudo_t himmelblau_nss_cache_t:dir { getattr open read search };
+	allow sysadm_sudo_t himmelblau_nss_cache_t:file { getattr lock open read };
+	allow sysadm_sudo_t himmelblau_var_run_t:dir search;
+	allow sysadm_sudo_t himmelblau_var_run_t:sock_file write;
+	allow sysadm_sudo_t himmelblaud_t:unix_stream_socket connectto;
+}
+
+#============= sysadm_t ==============
+# sysadm_t is a confined administrator's shell (sysadm_u)
+optional {
+	require {
+		type sysadm_t;
+	}
+	allow sysadm_t himmelblau_etc_t:dir { getattr open read search };
+	allow sysadm_t himmelblau_etc_t:file { getattr open read };
+	allow sysadm_t himmelblau_etc_t:lnk_file { getattr read };
+	allow sysadm_t himmelblau_var_cache_t:dir { getattr open read search };
+	allow sysadm_t himmelblau_server_conf_t:file { getattr open read };
+	allow sysadm_t himmelblau_var_cache_t:lnk_file read;
+	allow sysadm_t himmelblau_nss_cache_t:dir { getattr open read search };
+	allow sysadm_t himmelblau_nss_cache_t:file { getattr lock open read };
+	allow sysadm_t himmelblau_var_run_t:dir search;
+	allow sysadm_t himmelblau_var_run_t:sock_file write;
+	allow sysadm_t himmelblaud_t:unix_stream_socket connectto;
+}
+
 #============= systemd_logind_t ==============
 # systemd_logind_t is for systemd-logind, may not exist on non-systemd systems
 optional {
