@@ -41,7 +41,9 @@ use himmelblau::{ConfidentialClientApplication, UserToken};
 use himmelblau_unix_common::auth::{authenticate_async, SimpleMessagePrinter};
 use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client::call_daemon;
-use himmelblau_unix_common::config::{parse_ttl_to_seconds, split_username, HimmelblauConfig};
+use himmelblau_unix_common::config::{
+    parse_ttl_to_seconds, HimmelblauConfig, ProviderConfig, ProviderKind,
+};
 use himmelblau_unix_common::constants::{
     CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
     DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, DEFAULT_HSM_PIN_PATH_ENC, DEFAULT_ODC_PROVIDER,
@@ -582,6 +584,35 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
     Some(token)
 }
 
+fn select_entra_provider(
+    cfg: &HimmelblauConfig,
+    account: Option<&str>,
+    domain: Option<&str>,
+) -> Result<ProviderConfig, &'static str> {
+    let account_provider = account
+        .map(|a| {
+            cfg.provider_for_account(a)
+                .ok_or("Account does not belong to a configured provider")
+        })
+        .transpose()?;
+    let domain_provider = domain
+        .map(|d| {
+            cfg.provider_for_domain(d)
+                .ok_or("Domain does not belong to a configured provider")
+        })
+        .transpose()?;
+    if let (Some(a), Some(d)) = (&account_provider, &domain_provider) {
+        if a.domain != d.domain {
+            return Err("Account and --domain select different providers");
+        }
+    }
+    account_provider
+        .or(domain_provider)
+        .or_else(|| cfg.default_provider())
+        .filter(|p| p.kind == ProviderKind::Entra)
+        .ok_or("An Entra provider is required")
+}
+
 #[instrument(skip(client_id, account_id, domain))]
 async fn confidential_client_access_token(
     client_id: Option<String>,
@@ -600,24 +631,8 @@ async fn confidential_client_access_token(
         }
     };
 
-    let domain = if let Some(account_id) = &account_id {
-        match split_username(account_id) {
-            Some((_, domain)) => domain.to_string(),
-            None => {
-                error!("Could not split domain from input username");
-                return None;
-            }
-        }
-    } else if let Some(domain) = domain {
-        domain
-    } else if let Some(domain) = cfg.get_configured_entra_domain() {
-        // Attempt using the default domain
-        debug!(?domain, "Using default domain");
-        domain
-    } else {
-        error!("No domain is configured");
-        return None;
-    };
+    let provider = select_entra_provider(&cfg, account_id.as_deref(), domain.as_deref()).ok()?;
+    let domain = provider.domain;
 
     let db = match Db::new(&cfg.get_db_path()) {
         Ok(db) => db,
@@ -683,6 +698,7 @@ async fn confidential_client_access_token(
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let opt = HimmelblauUnixParser::parse();
+    let selected_domain = opt.domain.clone();
 
     let debug = match opt.commands {
         HimmelblauUnixOpt::Cred(CredOpt::Cert {
@@ -809,20 +825,18 @@ async fn main() -> ExitCode {
 
     macro_rules! init {
         ($cfg:expr, $account_id:expr, $domain:expr) => {{
-            let domain = if let Some(account_id) = $account_id {
-                match split_username(&account_id) {
-                    Some((_, domain)) => domain.to_string(),
-                    None => {
-                        error!("Could not split domain from input username");
-                        return ExitCode::FAILURE;
-                    }
+            let account: Option<String> = $account_id;
+            let domain: Option<String> = $domain;
+            let domain = domain.or_else(|| selected_domain.clone());
+            let provider = match select_entra_provider(&$cfg, account.as_deref(), domain.as_deref())
+            {
+                Ok(provider) => provider,
+                Err(error) => {
+                    error!(error, "Cannot select provider");
+                    return ExitCode::FAILURE;
                 }
-            } else if let Some(domain) = $domain {
-                domain
-            } else {
-                error!("No domain input provided.");
-                return ExitCode::FAILURE;
             };
+            let domain = provider.domain;
 
             let ip_versions = $cfg.get_ip_versions();
             let graph = match Graph::new(
@@ -850,6 +864,19 @@ async fn main() -> ExitCode {
             let authority = format!("https://{}/{}", $cfg.get_authority_host(&domain), tenant_id);
 
             (graph, domain, authority)
+        }};
+    }
+
+    macro_rules! credential_domain {
+        ($cfg:expr, $domain:expr) => {{
+            let domain = $domain.or_else(|| selected_domain.clone());
+            match select_entra_provider(&$cfg, None, domain.as_deref()) {
+                Ok(provider) => provider.domain,
+                Err(error) => {
+                    error!(error, "Cannot select credential provider");
+                    return ExitCode::FAILURE;
+                }
+            }
         }};
     }
 
@@ -971,7 +998,7 @@ async fn main() -> ExitCode {
             if result.is_none() && !$skip_confidential && unsafe { libc::geteuid() } == 0 {
                 debug!("Attempting confidential client auth ...");
                 if let Some((domain, access_token)) = confidential_client_access_token(
-                    $client_id.clone(), $account_id.clone(), None
+                    $client_id.clone(), $account_id.clone(), selected_domain.clone()
                 ).await {
                     let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
                         Ok(c) => c,
@@ -1123,6 +1150,7 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let domain = credential_domain!(cfg, domain);
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -1326,6 +1354,7 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let domain = credential_domain!(cfg, domain);
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -1399,6 +1428,7 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let domain = credential_domain!(cfg, domain);
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -1453,6 +1483,7 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let domain = credential_domain!(cfg, domain);
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -2290,24 +2321,36 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let req = ClientRequest::Status;
+            let req = ClientRequest::ProviderStatus;
 
             let spath = PathBuf::from(cfg.get_socket_path());
             if !spath.exists() {
                 error!(
                     "himmelblaud socket {} does not exist - is the service running?",
                     cfg.get_socket_path()
-                )
+                );
+                return ExitCode::FAILURE;
             } else {
                 match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
                     Ok(r) => match r {
-                        ClientResponse::Ok => println!("working!"),
+                        ClientResponse::ProviderStatus(providers) => {
+                            let mut all_online = !providers.is_empty();
+                            for (domain, online) in providers {
+                                println!("{domain}: {}", if online { "online" } else { "offline" });
+                                all_online &= online;
+                            }
+                            if !all_online {
+                                return ExitCode::FAILURE;
+                            }
+                        }
                         _ => {
                             error!("Error: unexpected response -> {:?}", r);
+                            return ExitCode::FAILURE;
                         }
                     },
                     Err(e) => {
                         error!("Error -> {:?}", e);
+                        return ExitCode::FAILURE;
                     }
                 }
             }
@@ -2517,7 +2560,7 @@ async fn main() -> ExitCode {
 mod tests {
     use super::HimmelblauUnixParser;
     use super::{insert_module_line, preserve_numeric_account_success};
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
     use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
     use himmelblau_unix_common::tpm::resolve_hsm_type;
     use himmelblau_unix_common::unix_config::HsmType;
@@ -2526,6 +2569,61 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn credential_domain_accepts_root_subcommand_and_default_selection() {
+        use super::{CredOpt, HimmelblauUnixOpt};
+        for (args, root, local) in [
+            (
+                vec!["aad-tool", "--domain", "a.example", "cred", "list"],
+                Some("a.example"),
+                None,
+            ),
+            (
+                vec!["aad-tool", "cred", "list", "--domain", "b.example"],
+                None,
+                Some("b.example"),
+            ),
+            (vec!["aad-tool", "cred", "list"], None, None),
+        ] {
+            let parsed = HimmelblauUnixParser::try_parse_from(args).unwrap();
+            assert_eq!(parsed.domain.as_deref(), root);
+            let HimmelblauUnixOpt::Cred(CredOpt::List { domain, .. }) = parsed.commands else {
+                panic!("expected cred list");
+            };
+            assert_eq!(domain.as_deref(), local);
+        }
+    }
+
+    #[test]
+    fn tenant_selection_resolves_aliases_and_rejects_mismatched_accounts() {
+        use super::{select_entra_provider, HimmelblauConfig};
+        let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(format!("cli-tenants-{}.conf", uuid::Uuid::new_v4()));
+        fs::write(&path, "[tenant.a]\ndomain=a.example\ndomain_aliases=alias.example\ndefault=true\nidmap_range=200000-300000\n\
+                         [tenant.b]\ndomain=b.example\nidmap_range=300001-400000\n").unwrap();
+        let cfg = HimmelblauConfig::new(path.to_str()).unwrap();
+        fs::remove_file(path).unwrap();
+        assert_eq!(
+            select_entra_provider(&cfg, None, None).unwrap().domain,
+            "a.example"
+        );
+        assert_eq!(
+            select_entra_provider(&cfg, None, Some("ALIAS.EXAMPLE"))
+                .unwrap()
+                .domain,
+            "a.example"
+        );
+        assert_eq!(
+            select_entra_provider(&cfg, Some("bob@b.example"), None)
+                .unwrap()
+                .domain,
+            "b.example"
+        );
+        assert!(select_entra_provider(&cfg, Some("bob@b.example"), Some("a.example")).is_err());
+        assert!(select_entra_provider(&cfg, None, Some("unknown.example")).is_err());
+    }
 
     const ACCOUNT_LINE: &str =
         "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";

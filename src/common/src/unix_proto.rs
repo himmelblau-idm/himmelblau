@@ -242,6 +242,7 @@ pub enum ClientRequest {
     ClearCache,
     OfflineBreakGlass(Option<u64>),
     Status,
+    ProviderStatus,
     ComplianceCheck,
 }
 
@@ -277,6 +278,7 @@ impl ClientRequest {
             ClientRequest::ClearCache => "ClearCache".to_string(),
             ClientRequest::OfflineBreakGlass(ttl) => format!("OfflineBreakGlass({:?})", ttl),
             ClientRequest::Status => "Status".to_string(),
+            ClientRequest::ProviderStatus => "ProviderStatus".to_string(),
             ClientRequest::ComplianceCheck => "ComplianceCheck".to_string(),
         }
     }
@@ -291,6 +293,7 @@ pub enum ClientResponse {
     NssInitgroups(Option<Vec<u32>>),
 
     PamStatus(Option<bool>),
+    ProviderStatus(Vec<(String, bool)>),
     PamAuthenticateStepResponse(PamAuthResponse),
 
     Ok,

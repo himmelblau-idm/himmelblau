@@ -25,7 +25,7 @@ use himmelblau::intune::{
     fetch_intune_portal_versions, IntuneForLinux, IntuneStatus, NoncompliantRule,
 };
 use himmelblau::{ClientInfo, EnrollAttrs, IdToken, UserToken};
-use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
+use himmelblau_unix_common::config::{HimmelblauConfig, ProviderKind};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -45,9 +45,11 @@ pub async fn apply_intune_policy(
 ) -> Result<Vec<NoncompliantRule>> {
     debug!(?account_id, "Attempting to enforce policies");
 
-    let domain = split_username(account_id)
-        .map(|(_, domain)| domain)
-        .ok_or(anyhow!("Failed to parse domain name from account id",))?;
+    let provider = config
+        .provider_for_account(account_id)
+        .filter(|p| p.kind == ProviderKind::Entra)
+        .ok_or_else(|| anyhow!("No configured Entra provider for account"))?;
+    let domain = provider.domain.as_str();
 
     debug!(
         ?account_id,
@@ -60,9 +62,9 @@ pub async fn apply_intune_policy(
     let graph = Graph::new(
         &config.get_odc_provider(domain),
         domain,
-        None,
-        None,
-        None,
+        Some(&provider.get_authority_host(config)),
+        config.get_tenant_id(domain).as_deref(),
+        config.get_graph_url(domain).as_deref(),
         Duration::from_secs(request_timeout),
         &ip_versions,
     )

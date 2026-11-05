@@ -594,7 +594,28 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 .map_err(|e| self.sqlite_error("invalidate legacy accounts", &e))?;
         }
 
-        self.set_db_version(DBV_MAIN, 2)?;
+        if db_version < 3 {
+            // Directory display names are not unique; identity and membership use UUIDs.
+            self.conn
+                .execute_batch(
+                    "CREATE TABLE group_new (
+                    uuid TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    spn TEXT NOT NULL,
+                    gidnumber INTEGER NOT NULL UNIQUE,
+                    token BLOB NOT NULL,
+                    expiry NUMERIC NOT NULL
+                );
+                INSERT INTO group_new SELECT * FROM group_t;
+                DROP TABLE group_t;
+                ALTER TABLE group_new RENAME TO group_t;
+                CREATE INDEX group_name_idx ON group_t(name);
+                CREATE INDEX group_spn_idx ON group_t(spn);",
+                )
+                .map_err(|e| self.sqlite_error("migrate group names", &e))?;
+        }
+
+        self.set_db_version(DBV_MAIN, 3)?;
 
         Ok(())
     }
@@ -1154,7 +1175,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
         })?;
 
         let mut stmt = self.conn
-            .prepare("INSERT OR REPLACE INTO group_t (uuid, name, spn, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry)")
+            .prepare("INSERT INTO group_t (uuid, name, spn, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry) ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, spn=excluded.spn, gidnumber=excluded.gidnumber, token=excluded.token, expiry=excluded.expiry")
             .map_err(|e| {
                 self.sqlite_error("prepare", &e)
             })?;
@@ -1439,7 +1460,7 @@ mod tests {
 
         let mut dbtxn = db.write().await;
         dbtxn.migrate().unwrap();
-        assert_eq!(dbtxn.get_db_version(DBV_MAIN), 2);
+        assert_eq!(dbtxn.get_db_version(DBV_MAIN), 3);
         assert!(dbtxn.get_unexpired_accounts(100).unwrap().is_empty());
         for account in [&lookup_only, &authenticated] {
             let (stored, expiry) = dbtxn
@@ -1871,8 +1892,22 @@ mod tests {
         gt1.spn = "testgroup2@example.com".to_string();
         // Now, add gt2 which dups on gt1 name/spn.
         dbtxn.update_group(&gt2, 0).unwrap();
-        let r2 = dbtxn.get_group(&id_name).unwrap();
-        assert!(r2.unwrap().0.uuid == uuid::uuid!("799123b2-3802-4b19-b0b8-1ffae2aa9a4b"));
+        assert!(dbtxn.get_group(&id_name).is_err());
+        assert_eq!(
+            dbtxn.get_group(&Id::Gid(2000)).unwrap().unwrap().0.uuid,
+            gt1.uuid
+        );
+        assert_eq!(
+            dbtxn.get_group(&Id::Gid(2001)).unwrap().unwrap().0.uuid,
+            gt2.uuid
+        );
+        let mut colliding = gt2.clone();
+        colliding.gidnumber = gt1.gidnumber;
+        assert!(dbtxn.update_group(&colliding, 0).is_err());
+        assert_eq!(
+            dbtxn.get_group(&Id::Gid(2000)).unwrap().unwrap().0.uuid,
+            gt1.uuid
+        );
         let r3 = dbtxn.get_group(&id_name2).unwrap();
         assert!(r3.is_none());
 

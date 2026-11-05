@@ -15,7 +15,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use crate::config::{split_username, HimmelblauConfig};
+use crate::config::{split_username, HimmelblauConfig, ProviderConfig, ProviderKind};
 use crate::db::KeyStoreTxn;
 use crate::idprovider::himmelblau::HimmelblauProvider;
 use crate::idprovider::interface::{
@@ -29,6 +29,7 @@ use ::himmelblau::graph::Graph;
 use ::himmelblau::BrokerClientApplication;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use futures::future::join_all;
 use idmap::Idmap;
 use libkrimes::proto::KerberosCredentials;
 use std::collections::HashMap;
@@ -52,55 +53,40 @@ enum Providers {
 
 pub struct IdProviderProxy {
     config: Arc<Mutex<HimmelblauConfig>>,
-    provider: Arc<Providers>,
+    settings: HimmelblauConfig,
+    providers: HashMap<String, Arc<Providers>>,
 }
 
-impl IdProviderProxy {
-    pub async fn new<D: KeyStoreTxn + Send>(
-        config_filename: &str,
-        keystore: &mut D,
+impl Providers {
+    async fn new(
+        config: &Arc<Mutex<HimmelblauConfig>>,
+        settings: &ProviderConfig,
+        idmap: &Arc<Mutex<Idmap>>,
     ) -> Result<Self> {
-        let config = match HimmelblauConfig::new(Some(config_filename)) {
-            Ok(config) => Arc::new(Mutex::new(config)),
-            Err(e) => return Err(anyhow!("{}", e)),
-        };
-        let idmap = match Idmap::new() {
-            Ok(idmap) => Arc::new(Mutex::new(idmap)),
-            Err(e) => return Err(anyhow!("{:?}", e)),
-        };
-
-        let domain = config.lock().await.get_configured_entra_domain();
-        let oidc_issuer_url = config.lock().await.get_oidc_issuer_url();
-        let provider = match (oidc_issuer_url, domain) {
-            (None, None) => {
-                return Err(anyhow!("No provider was configured!"));
-            }
-            (Some(_), _) => {
-                let provider = OidcRouter::new(&config, "oidc", &idmap)
+        let domain = &settings.domain;
+        let provider = match settings.kind {
+            ProviderKind::Oidc => {
+                let provider = OidcRouter::new(config, domain, idmap)
                     .await
-                    .map_err(|e| {
-                        error!("Failed initializing OIDC provider: {:?}", e);
-                        anyhow!("{:?}", e)
-                    })?;
+                    .map_err(|e| anyhow!("{e:?}"))?;
                 Providers::Oidc(provider)
             }
-            (_, Some(domain)) => {
-                debug!("Adding provider for domain {}", domain);
+            ProviderKind::Entra => {
                 let (authority_host, tenant_id, graph_url, odc_provider, app_id, ip_versions) = {
                     let cfg = config.lock().await;
                     (
-                        cfg.get_authority_host(&domain),
-                        cfg.get_tenant_id(&domain),
-                        cfg.get_graph_url(&domain),
-                        cfg.get_odc_provider(&domain),
-                        cfg.get_app_id(&domain),
+                        settings.get_authority_host(&cfg),
+                        cfg.get_tenant_id(domain),
+                        cfg.get_graph_url(domain),
+                        cfg.get_odc_provider(domain),
+                        settings.get_app_id(&cfg),
                         cfg.get_ip_versions(),
                     )
                 };
                 let request_timeout = config.lock().await.get_request_timeout();
                 let graph = Graph::new(
                     &odc_provider,
-                    &domain,
+                    domain,
                     Some(&authority_host),
                     tenant_id.as_deref(),
                     graph_url.as_deref(),
@@ -108,10 +94,7 @@ impl IdProviderProxy {
                     &ip_versions,
                 )
                 .await
-                .map_err(|e| {
-                    error!("Failed initializing provider: {:?}", e);
-                    anyhow!("Failed to initialize the provider")
-                })?;
+                .map_err(|e| anyhow!("{e:?}"))?;
                 let app = BrokerClientApplication::new(
                     None,
                     app_id.as_deref(),
@@ -120,45 +103,96 @@ impl IdProviderProxy {
                     Duration::from_secs(request_timeout),
                     &ip_versions,
                 )
-                .map_err(|e| {
-                    error!("Failed initializing provider: {:?}", e);
-                    anyhow!("{:?}", e)
-                })?;
-                let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
-                    .map_err(|e| {
-                        error!("Failed to initialize the provider: {:?}", e);
-                        anyhow!("Failed to initialize the provider")
-                    })?;
-                {
-                    // A client write lock is required here.
-                    let mut client = provider.client().lock().await;
-                    if let Ok(transport_key) =
-                        provider.fetch_loadable_transport_key_from_keystore(keystore)
-                    {
-                        client.set_transport_key(transport_key);
-                    }
-                    if let Ok(cert_key) = provider.fetch_loadable_cert_key_from_keystore(keystore) {
-                        client.set_cert_key(cert_key);
-                    }
-                }
+                .map_err(|e| anyhow!("{e:?}"))?;
+                let provider = HimmelblauProvider::new(app, config, domain, graph, idmap)
+                    .map_err(|e| anyhow!("{e:?}"))?;
                 Providers::Himmelblau(provider)
             }
         };
+        Ok(provider)
+    }
 
-        let proxy = IdProviderProxy {
-            config: config.clone(),
-            provider: Arc::new(provider),
+    async fn state(&self) -> CacheState {
+        match self {
+            Self::Oidc(p) => p.get_cachestate(None).await,
+            Self::Himmelblau(p) => p.get_cachestate(None).await,
+        }
+    }
+
+    async fn probe(&self, now: SystemTime) -> bool {
+        match self {
+            Self::Oidc(p) => p.probe_online(None, now).await,
+            Self::Himmelblau(p) => p.probe_online(None, now).await,
+        }
+    }
+
+    async fn check(&self, now: SystemTime) -> bool {
+        match self.state().await {
+            CacheState::Online => true,
+            CacheState::OfflineNextCheck(at) if now >= at => self.probe(now).await,
+            _ => false,
+        }
+    }
+}
+
+impl IdProviderProxy {
+    pub async fn new<D: KeyStoreTxn + Send>(
+        config_filename: &str,
+        keystore: &mut D,
+    ) -> Result<Self> {
+        let settings = HimmelblauConfig::new(Some(config_filename)).map_err(|e| anyhow!(e))?;
+        let report = settings.validate();
+        if !report.is_ok() {
+            return Err(anyhow!("{}", report.errors.join("; ")));
+        }
+        let definitions = settings
+            .parse_providers()
+            .map_err(|e| anyhow!("{}", e.join("; ")))?;
+        if definitions.is_empty() {
+            return Err(anyhow!("No provider was configured"));
+        }
+        let config = Arc::new(Mutex::new(settings.clone()));
+        let idmap = Arc::new(Mutex::new(Idmap::new().map_err(|e| anyhow!("{e:?}"))?));
+        let initialized = join_all(
+            definitions
+                .iter()
+                .map(|p| Providers::new(&config, p, &idmap)),
+        )
+        .await;
+        let mut providers = HashMap::new();
+        for (definition, result) in definitions.into_iter().zip(initialized) {
+            let provider = match result {
+                Ok(provider) => provider,
+                Err(error) => {
+                    error!(provider = %definition.label, domain = %definition.domain, ?error, "Skipping provider that failed initialization");
+                    continue;
+                }
+            };
+            if let Providers::Himmelblau(p) = &provider {
+                let mut client = p.client().lock().await;
+                if let Ok(key) = p.fetch_loadable_transport_key_from_keystore(keystore) {
+                    client.set_transport_key(key);
+                }
+                if let Ok(key) = p.fetch_loadable_cert_key_from_keystore(keystore) {
+                    client.set_cert_key(key);
+                }
+            }
+            providers.insert(definition.domain, Arc::new(provider));
+        }
+        if providers.is_empty() {
+            return Err(anyhow!("No configured provider could be initialized"));
+        }
+        let proxy = Self {
+            config,
+            settings,
+            providers,
         };
-
-        // Spawn periodic cookie clearing loop (Fixes bugs #591 and #491)
-        // FIXME: The client should spawn its own cookie clearing task
-        let providers_ref = proxy.provider.clone();
+        let providers_ref = proxy.providers.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(12 * 60 * 60)).await;
-                match providers_ref.as_ref() {
-                    Providers::Oidc(_) => {}
-                    Providers::Himmelblau(provider) => {
+                for provider in providers_ref.values() {
+                    if let Providers::Himmelblau(provider) = provider.as_ref() {
                         let app = provider.client().lock().await;
                         app.clear_cookies();
                     }
@@ -168,74 +202,149 @@ impl IdProviderProxy {
 
         Ok(proxy)
     }
-    async fn find_provider(&self, domain: Option<&str>) -> Result<&Providers, IdpError> {
-        let provider = self.provider.as_ref();
-        let found = match (domain, provider) {
-            (_, Providers::Oidc(_)) => true,
-            (Some(d), Providers::Himmelblau(h)) => {
-                /* NEVER introduce a new tenant here: Advisory GHSA-q746-m2wv-qh4v.
-                 * An alias is only accepted when it resolves to the domain of
-                 * the provider we already configured. */
-                d == h.domain()
-                    || self
-                        .config
-                        .lock()
-                        .await
-                        .get_primary_domain_from_alias(d)
-                        .await
-                        .is_some_and(|p| p.as_str() == h.domain())
+    async fn find_provider(&self, account: &str) -> Result<&Providers, IdpError> {
+        let mut selected = self.config.lock().await.provider_for_account(account);
+        if selected.is_none() {
+            if let Some((name, domain)) = split_username(account) {
+                if !name.is_empty() && !domain.is_empty() {
+                    // Discovery must not hold the shared config lock or create providers.
+                    let snapshot = self.config.lock().await.clone();
+                    selected = snapshot.discover_provider_for_domain(domain).await;
+                    if let Some(provider) = &selected {
+                        self.config
+                            .lock()
+                            .await
+                            .record_domain_alias(provider, domain);
+                    }
+                }
             }
-            (None, Providers::Himmelblau(_)) => false,
-        };
-        if found {
-            Ok(provider)
-        } else {
-            Err(IdpError::NotFound {
-                what: format!("domain: {}", domain.unwrap_or("<empty>")),
+        }
+        self.lookup_provider(selected.as_ref())
+    }
+
+    fn lookup_provider(&self, selected: Option<&ProviderConfig>) -> Result<&Providers, IdpError> {
+        selected
+            .and_then(|p| self.providers.get(&p.domain))
+            .map(Arc::as_ref)
+            .ok_or_else(|| IdpError::NotFound {
+                what: "configured provider".to_string(),
                 where_: "providers".to_string(),
             })
+    }
+
+    async fn find_provider_for_id(
+        &self,
+        id: &Id,
+        token: Option<&UserToken>,
+    ) -> Result<&Providers, IdpError> {
+        if let Some(token) = token {
+            return self.find_provider(&token.spn).await;
+        }
+        match id {
+            Id::Name(name) => self.find_provider(name).await,
+            Id::Gid(gid) => self.lookup_provider(self.settings.provider_for_gid(*gid).as_ref()),
         }
     }
-}
 
-fn upn_domain(account_id: &str) -> Option<&str> {
-    split_username(account_id).map(|(_, domain)| domain)
-}
-
-fn account_domain<'a>(id: &'a Id, old_token: Option<&'a UserToken>) -> Option<&'a str> {
-    match (old_token, id) {
-        (Some(token), _) => upn_domain(token.spn.as_str()),
-        (None, Id::Name(name)) => upn_domain(name),
-        (None, Id::Gid(_)) => None,
+    async fn validate_token_provider(
+        &self,
+        provider: &Providers,
+        token: &UserToken,
+    ) -> Result<(), IdpError> {
+        let owner = self.find_provider(&token.spn).await?;
+        if !std::ptr::eq(provider, owner) {
+            error!("Provider returned an account routed to another tenant");
+            return Err(IdpError::BadRequest);
+        }
+        Ok(())
     }
+}
+
+fn aggregate_state(states: impl IntoIterator<Item = CacheState>) -> CacheState {
+    let mut next = None;
+    for state in states {
+        match state {
+            CacheState::Online => return CacheState::Online,
+            CacheState::OfflineNextCheck(at) => {
+                next = Some(next.map_or(at, |old: SystemTime| old.min(at)))
+            }
+            CacheState::Offline => {}
+        }
+    }
+    next.map(CacheState::OfflineNextCheck)
+        .unwrap_or(CacheState::Offline)
 }
 
 #[async_trait]
 impl IdProvider for IdProviderProxy {
-    async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
-        match self.provider.as_ref() {
-            Providers::Oidc(provider) => provider.offline_break_glass(ttl).await,
-            Providers::Himmelblau(provider) => provider.offline_break_glass(ttl).await,
-        }
+    fn provider_config(&self) -> Option<&HimmelblauConfig> {
+        Some(&self.settings)
     }
 
-    async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
-        match self.provider.as_ref() {
-            Providers::Oidc(provider) => provider.check_online(tpm, now).await,
-            Providers::Himmelblau(provider) => provider.check_online(tpm, now).await,
+    async fn provider_for_account(&self, account: &str) -> Option<ProviderConfig> {
+        self.find_provider(account).await.ok()?;
+        self.config.lock().await.provider_for_account(account)
+    }
+
+    async fn provider_status(&self) -> Vec<(String, bool)> {
+        let definitions = self.settings.parse_providers().unwrap_or_default();
+        join_all(definitions.iter().map(|p| async {
+            let online = match self.providers.get(&p.domain) {
+                Some(provider) => provider.probe(SystemTime::now()).await,
+                None => false,
+            };
+            (p.domain.clone(), online)
+        }))
+        .await
+    }
+
+    async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
+        let results = join_all(self.providers.values().map(|p| async {
+            match p.as_ref() {
+                Providers::Oidc(provider) => provider.offline_break_glass(ttl).await,
+                Providers::Himmelblau(provider) => provider.offline_break_glass(ttl).await,
+            }
+        }))
+        .await;
+        for result in results {
+            result?;
+        }
+        Ok(())
+    }
+
+    async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
+        join_all(self.providers.values().map(|p| p.check(now)))
+            .await
+            .into_iter()
+            .any(|online| online)
+    }
+
+    async fn check_online_for_account(
+        &self,
+        account: &str,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        now: SystemTime,
+    ) -> bool {
+        match self.find_provider(account).await {
+            Ok(provider) => provider.check(now).await,
+            Err(_) => false,
         }
     }
 
     async fn probe_online(&self, account_id: Option<&str>, now: SystemTime) -> bool {
         let provider = match account_id {
             Some(id) => {
-                let domain = upn_domain(id);
-                let Ok(provider) = self.find_provider(domain).await else {
+                let Ok(provider) = self.find_provider(id).await else {
                     return false;
                 };
                 provider
             }
-            None => self.provider.as_ref(),
+            None => {
+                return join_all(self.providers.values().map(|p| p.probe(now)))
+                    .await
+                    .into_iter()
+                    .any(|online| online)
+            }
         };
         match provider {
             Providers::Oidc(provider) => provider.probe_online(account_id, now).await,
@@ -255,8 +364,7 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
-        let domain = account_domain(id, old_token);
-        let provider = self.find_provider(domain).await?;
+        let provider = self.find_provider_for_id(id, old_token).await?;
         match provider {
             Providers::Oidc(provider) => {
                 provider
@@ -304,8 +412,7 @@ impl IdProvider for IdProviderProxy {
         Option<String>,
         Option<String>,
     ) {
-        let domain = account_domain(id, old_token);
-        let Ok(provider) = self.find_provider(domain).await else {
+        let Ok(provider) = self.find_provider_for_id(id, old_token).await else {
             return (None, None, None, None);
         };
         match provider {
@@ -331,8 +438,7 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
-        let domain = account_domain(id, old_token);
-        let provider = self.find_provider(domain).await?;
+        let provider = self.find_provider_for_id(id, old_token).await?;
         match provider {
             Providers::Oidc(provider) => {
                 provider
@@ -356,8 +462,7 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
-        let domain = upn_domain(account_id);
-        let provider = self.find_provider(domain).await?;
+        let provider = self.find_provider(account_id).await?;
         match provider {
             Providers::Oidc(provider) => {
                 provider
@@ -381,9 +486,8 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
-        let domain = account_domain(id, old_token);
-        let provider = self.find_provider(domain).await?;
-        match provider {
+        let provider = self.find_provider_for_id(id, old_token).await?;
+        let result = match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_get(id, old_token, keystore, tpm, machine_key)
@@ -394,7 +498,11 @@ impl IdProvider for IdProviderProxy {
                     .unix_user_get(id, old_token, keystore, tpm, machine_key)
                     .await
             }
+        }?;
+        if let UserTokenState::Update(token) | UserTokenState::LookupOnly(token) = &result {
+            self.validate_token_provider(provider, token).await?;
         }
+        Ok(result)
     }
 
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
@@ -409,8 +517,9 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = upn_domain(account_id);
-        let provider = self.find_provider(domain).await?;
+        let provider = self
+            .find_provider(token.map_or(account_id, |t| t.spn.as_str()))
+            .await?;
         match provider {
             Providers::Oidc(provider) => {
                 provider
@@ -458,9 +567,8 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
-        let domain = upn_domain(account_id);
-        let provider = self.find_provider(domain).await?;
-        match provider {
+        let provider = self.find_provider(&old_token.spn).await?;
+        let result = match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_online_auth_step(
@@ -493,7 +601,11 @@ impl IdProvider for IdProviderProxy {
                     )
                     .await
             }
+        }?;
+        if let AuthResult::Success { token } = &result.0 {
+            self.validate_token_provider(provider, token).await?;
         }
+        Ok(result)
     }
 
     async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
@@ -504,8 +616,9 @@ impl IdProvider for IdProviderProxy {
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = upn_domain(account_id);
-        let provider = self.find_provider(domain).await?;
+        let provider = self
+            .find_provider(token.map_or(account_id, |t| t.spn.as_str()))
+            .await?;
         match provider {
             Providers::Oidc(provider) => {
                 provider
@@ -531,9 +644,8 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
-        let domain = upn_domain(account_id);
-        let provider = self.find_provider(domain).await?;
-        match provider {
+        let provider = self.find_provider(&token.spn).await?;
+        let result = match provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_offline_auth_step(
@@ -562,7 +674,11 @@ impl IdProvider for IdProviderProxy {
                     )
                     .await
             }
+        }?;
+        if let AuthResult::Success { token } = &result {
+            self.validate_token_provider(provider, token).await?;
         }
+        Ok(result)
     }
 
     async fn unix_user_try_unseal<D: KeyStoreTxn + Send>(
@@ -574,8 +690,7 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         online: bool,
     ) -> Result<bool, IdpError> {
-        let domain = upn_domain(account_id);
-        let provider = self.find_provider(domain).await?;
+        let provider = self.find_provider(account_id).await?;
         match provider {
             Providers::Oidc(provider) => {
                 provider
@@ -603,13 +718,14 @@ impl IdProvider for IdProviderProxy {
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
         let provider = match account_id {
             Some(id) => {
-                let domain = upn_domain(id);
-                let Ok(provider) = self.find_provider(domain).await else {
+                let Ok(provider) = self.find_provider(id).await else {
                     return CacheState::Offline;
                 };
                 provider
             }
-            None => self.provider.as_ref(),
+            None => {
+                return aggregate_state(join_all(self.providers.values().map(|p| p.state())).await)
+            }
         };
         match provider {
             Providers::Oidc(provider) => provider.get_cachestate(account_id).await,
@@ -619,20 +735,22 @@ impl IdProvider for IdProviderProxy {
 
     async fn export_broker_prts(&self) -> Result<Vec<u8>, serde_json::Error> {
         let mut all: HashMap<String, Vec<u8>> = HashMap::new();
-        if let Providers::Himmelblau(p) = self.provider.as_ref() {
-            let data = p.export_broker_prts().await?;
-            all.insert(p.domain().to_owned(), data);
+        for provider in self.providers.values() {
+            if let Providers::Himmelblau(p) = provider.as_ref() {
+                let data = p.export_broker_prts().await?;
+                all.insert(p.domain().to_owned(), data);
+            }
         }
         serde_json::to_vec(&all)
     }
 
     async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
         let all: HashMap<String, Vec<u8>> = serde_json::from_slice(data)?;
-        if let Providers::Himmelblau(provider) = self.provider.as_ref() {
-            for (domain, blob) in &all {
-                if domain == provider.domain() {
-                    if let Err(e) = provider.import_broker_prts(blob).await {
-                        tracing::warn!("Failed to import PRTs for domain {}: {:?}", domain, e);
+        for (domain, blob) in &all {
+            if let Some(provider) = self.providers.get(domain) {
+                if let Providers::Himmelblau(provider) = provider.as_ref() {
+                    if let Err(error) = provider.import_broker_prts(blob).await {
+                        warn!(domain, ?error, "Failed to import PRTs");
                     }
                 }
             }
@@ -645,19 +763,210 @@ impl IdProvider for IdProviderProxy {
 mod tests {
     use super::*;
 
-    #[test]
-    fn upn_domain_requires_a_single_at() {
-        assert_eq!(upn_domain("alice@example.com"), Some("example.com"));
-        assert_eq!(upn_domain("alice"), None);
-        assert_eq!(upn_domain("alice@example.com@evil.com"), None);
+    async fn test_proxy() -> IdProviderProxy {
+        let settings = HimmelblauConfig::from_test_config(
+            "[global]\napp_id=linux\n\
+             [tenant.a]\ntype=oidc\ndomain=a.example\ndomain_aliases=alias.example\ndefault=true\nidmap_range=200000-300000\noidc_issuer_url=https://a.example\n\
+             [tenant.b]\ntype=oidc\ndomain=b.example\nidmap_range=300001-400000\noidc_issuer_url=https://b.example\n"
+        );
+        assert!(settings.validate().is_ok());
+        let config = Arc::new(Mutex::new(settings.clone()));
+        let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
+        let mut providers = HashMap::new();
+        for (domain, state) in [
+            ("a.example", CacheState::Offline),
+            ("b.example", CacheState::Online),
+        ] {
+            providers.insert(
+                domain.to_string(),
+                Arc::new(Providers::Oidc(
+                    OidcRouter::for_test(&config, domain, &idmap, state).await,
+                )),
+            );
+        }
+        IdProviderProxy {
+            settings,
+            config,
+            providers,
+        }
+    }
+
+    fn token(spn: &str) -> UserToken {
+        UserToken {
+            name: spn.to_string(),
+            spn: spn.to_string(),
+            uuid: uuid::Uuid::nil(),
+            real_gidnumber: None,
+            gidnumber: 300001,
+            displayname: String::new(),
+            shell: None,
+            groups: Vec::new(),
+            tenant_id: None,
+            valid: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn routes_names_aliases_cached_tokens_and_numeric_ids() {
+        let proxy = test_proxy().await;
+        let a = proxy.find_provider("alice@a.example").await.unwrap();
+        let b = proxy.find_provider("bob@b.example").await.unwrap();
+        assert!(!std::ptr::eq(a, b));
+        for account in ["alice", "alice@ALIAS.EXAMPLE"] {
+            assert!(std::ptr::eq(a, proxy.find_provider(account).await.unwrap()));
+        }
+        assert!(std::ptr::eq(
+            b,
+            proxy
+                .find_provider_for_id(
+                    &Id::Name("wrong@a.example".to_string()),
+                    Some(&token("bob@b.example")),
+                )
+                .await
+                .unwrap()
+        ));
+        assert!(std::ptr::eq(
+            b,
+            proxy
+                .find_provider_for_id(&Id::Gid(300001), None)
+                .await
+                .unwrap()
+        ));
+        assert!(proxy
+            .find_provider_for_id(&Id::Gid(400001), None)
+            .await
+            .is_err());
+        for account in ["alice@unknown.example", "alice@a@b", ""] {
+            assert!(proxy.find_provider(account).await.is_err());
+        }
+        assert!(proxy
+            .validate_token_provider(a, &token("bob@b.example"))
+            .await
+            .is_err());
+        proxy
+            .config
+            .lock()
+            .await
+            .set("b.example", "domain_aliases", "discovered.example");
+        assert!(proxy
+            .settings
+            .provider_for_account("bob@discovered.example")
+            .is_none());
+        assert_eq!(
+            proxy
+                .provider_for_account("bob@discovered.example")
+                .await
+                .unwrap()
+                .domain,
+            "b.example"
+        );
+        assert!(std::ptr::eq(
+            b,
+            proxy.find_provider("bob@discovered.example").await.unwrap()
+        ));
+    }
+
+    #[tokio::test]
+    async fn offline_or_failed_provider_does_not_redirect_or_disable_another() {
+        let mut proxy = test_proxy().await;
+        assert!(matches!(
+            proxy.get_cachestate(Some("alice")).await,
+            CacheState::Offline
+        ));
+        assert!(matches!(
+            proxy.get_cachestate(Some("bob@b.example")).await,
+            CacheState::Online
+        ));
+        assert!(matches!(
+            proxy.get_cachestate(None).await,
+            CacheState::Online
+        ));
+        let mut tpm = tpm::provider::BoxedDynTpm::new(tpm::provider::SoftTpm::new());
+        assert!(
+            !proxy
+                .check_online_for_account("alice", &mut tpm, SystemTime::now())
+                .await
+        );
+        assert!(
+            proxy
+                .check_online_for_account("bob@b.example", &mut tpm, SystemTime::now())
+                .await
+        );
+        proxy.providers.remove("a.example");
+        assert!(proxy.find_provider("alice").await.is_err());
+        assert!(proxy.find_provider("bob@b.example").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn prt_roundtrip_keeps_all_configured_entra_domains() {
+        async fn entra_proxy() -> IdProviderProxy {
+            let settings = HimmelblauConfig::from_test_config(
+                "[tenant.a]\ndomain=a.example\ndefault=true\nidmap_range=200000-300000\n\
+                 [tenant.b]\ndomain=b.example\nidmap_range=300001-400000\n",
+            );
+            let config = Arc::new(Mutex::new(settings.clone()));
+            let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
+            let mut providers = HashMap::new();
+            for definition in settings.parse_providers().unwrap() {
+                let provider = Providers::new(&config, &definition, &idmap).await.unwrap();
+                providers.insert(definition.domain, Arc::new(provider));
+            }
+            IdProviderProxy {
+                settings,
+                config,
+                providers,
+            }
+        }
+        let proxy = entra_proxy().await;
+        let mut expected = HashMap::new();
+        for (domain, byte) in [("a.example", 1), ("b.example", 2)] {
+            let sealed = tpm::structures::SealedData::SoftV1 {
+                data: zeroize::Zeroizing::new(vec![byte]),
+                tag: [byte; 16],
+                iv: [byte; 16],
+            };
+            let entries = HashMap::from([(format!("alice@{domain}"), (sealed, 123_u64))]);
+            let blob = serde_json::to_vec(&entries).unwrap();
+            let Providers::Himmelblau(provider) = proxy.providers[domain].as_ref() else {
+                panic!("expected an Entra provider");
+            };
+            provider.import_broker_prts(&blob).await.unwrap();
+            expected.insert(domain.to_string(), blob);
+        }
+        let mut data: HashMap<String, Vec<u8>> =
+            serde_json::from_slice(&proxy.export_broker_prts().await.unwrap()).unwrap();
+        assert_eq!(data, expected);
+        data.insert("unconfigured.example".to_string(), b"invalid blob".to_vec());
+        let restored = entra_proxy().await;
+        restored
+            .import_broker_prts(&serde_json::to_vec(&data).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<HashMap<String, Vec<u8>>>(
+                &restored.export_broker_prts().await.unwrap()
+            )
+            .unwrap(),
+            expected
+        );
+        assert!(restored.import_broker_prts(b"invalid JSON").await.is_err());
     }
 
     #[test]
-    fn account_domain_from_id() {
-        let id = Id::Name("alice@example.com".to_string());
-        assert_eq!(account_domain(&id, None), Some("example.com"));
-        let id = Id::Name("alice".to_string());
-        assert_eq!(account_domain(&id, None), None);
-        assert_eq!(account_domain(&Id::Gid(1000), None), None);
+    fn aggregate_state_preserves_online_providers_and_earliest_retry() {
+        let now = SystemTime::now();
+        assert!(matches!(
+            aggregate_state([CacheState::Offline, CacheState::Online]),
+            CacheState::Online
+        ));
+        assert!(matches!(
+            aggregate_state([CacheState::Offline]),
+            CacheState::Offline
+        ));
+        assert!(matches!(aggregate_state([
+            CacheState::OfflineNextCheck(now + Duration::from_secs(60)),
+            CacheState::Offline,
+            CacheState::OfflineNextCheck(now),
+        ]), CacheState::OfflineNextCheck(at) if at == now));
     }
 }

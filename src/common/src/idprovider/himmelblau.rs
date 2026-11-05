@@ -391,7 +391,7 @@ impl HimmelblauProvider {
     }
 
     async fn domains_are_aliases(&self, domain1: &str, domain2: &str) -> bool {
-        let mut cfg = self.config.lock().await;
+        let cfg = self.config.lock().await.clone();
         cfg.domains_are_aliases(domain1, domain2).await
     }
 

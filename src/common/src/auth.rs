@@ -905,7 +905,13 @@ fn handle_pam_auth_response_password(
 
         let prompt = match prompt.filter(|prompt| !prompt.trim().is_empty()) {
             Some(prompt) => i18n::translate_external_message(prompt),
-            None if state.cfg.get_oidc_issuer_url().is_some() => tr("Cloud Password:"),
+            None if state
+                .cfg
+                .provider_for_account(&state.account_id)
+                .is_some_and(|p| p.kind == crate::config::ProviderKind::Oidc) =>
+            {
+                tr("Cloud Password:")
+            }
             None => {
                 let info =
                     i18n::translate_external_message(&state.cfg.get_entra_id_password_prompt());
@@ -1771,10 +1777,7 @@ mod tests {
         let path = create_temp_config(initial);
         let cfg = HimmelblauConfig::new(Some(&path)).unwrap();
         let account = "alice@alias.example.com";
-        assert_eq!(
-            cfg.get_authority_host_for_account(account),
-            Some("login.microsoftonline.com".to_string())
-        );
+        assert_eq!(cfg.get_authority_host_for_account(account), None);
         fs::write(
             &path,
             format!("{initial}domain_aliases = alias.example.com\n"),

@@ -24,7 +24,7 @@ will not be available to NSS.
 </description>
 <conf_description>Fallback group mapping when gidNumber is missing.</conf_description>
 <default></default>
-<example>rfc2307_group_fallback_map = &lt;name|uuid&gt;</example>
+<example>rfc2307_group_fallback_map = uuid</example>
 <enum_values>
   <value rust="IdAttr::Name">name</value>
   <value rust="IdAttr::Uuid">uuid</value>

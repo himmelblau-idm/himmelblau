@@ -487,6 +487,21 @@ fn load_config_hierarchy(
 }
 
 impl HimmelblauConfig {
+    #[cfg(test)]
+    pub(crate) fn from_test_config(input: &str) -> Self {
+        let mut config = Ini::new();
+        config
+            .read(input.to_string())
+            .expect("Invalid test configuration");
+        Self {
+            config,
+            cache: Ini::new(),
+            cache_path: PathBuf::new(),
+            filename: String::new(),
+            effective_config_paths: Vec::new(),
+        }
+    }
+
     pub fn new(config_path: Option<&str>) -> Result<HimmelblauConfig, String> {
         Self::load(config_path, Path::new(SERVER_CONFIG_PATH))
     }
@@ -534,8 +549,10 @@ impl HimmelblauConfig {
     /// Read `key` for `domain`. Discovered keys come from the server cache
     /// first, then from the admin section that configures `domain`.
     fn domain_value(&self, domain: &str, key: &str) -> Option<String> {
+        let provider = self.provider_for_domain(domain);
+        let canonical = provider.as_ref().map_or(domain, |p| p.domain.as_str());
         if SERVER_CACHE_KEYS.contains(&key) {
-            if let Some(val) = self.cache.get(domain, key) {
+            if let Some(val) = self.cache.get(canonical, key) {
                 return Some(val);
             }
         }
@@ -549,13 +566,7 @@ impl HimmelblauConfig {
     }
 
     fn section_for_domain(&self, domain: &str) -> String {
-        self.parse_providers()
-            .ok()
-            .and_then(|providers| {
-                providers
-                    .into_iter()
-                    .find(|p| p.domain.eq_ignore_ascii_case(domain))
-            })
+        self.provider_for_domain(domain)
             .map(|p| p.section)
             .unwrap_or_else(|| domain.to_string())
     }
@@ -642,7 +653,7 @@ impl HimmelblauConfig {
     }
 
     pub fn get_authority_host(&self, domain: &str) -> String {
-        match self.domain_value(domain, "authority_host") {
+        match self.domain_or_global_value(Some(domain), "authority_host") {
             Some(val) => val,
             None => {
                 debug!("authority_host unset, using defaults");
@@ -655,21 +666,21 @@ impl HimmelblauConfig {
     /// selecting its authority. OIDC accounts use the configured issuer host,
     /// regardless of whether their account-name claim contains a domain.
     pub fn get_authority_host_for_account(&self, account_id: &str) -> Option<String> {
-        if let Some(issuer) = self.get_oidc_issuer_url() {
+        let provider = self.provider_for_account(account_id)?;
+        if provider.kind == ProviderKind::Oidc {
+            let issuer = self.get_oidc_issuer_url(Some(&provider.domain))?;
             let issuer = url::Url::parse(&issuer).ok()?;
             return issuer.host_str().map(str::to_string);
         }
-        let (_, domain) = split_username(account_id)?;
-        let domain = self
-            .get_primary_domain_from_alias_simple(domain)
-            .unwrap_or_else(|| domain.to_string());
-        Some(self.get_authority_host(&domain))
+        Some(self.get_authority_host(&provider.domain))
     }
 
     /// Broker environments are endpoint authorities, so preserve an OIDC issuer's
     /// nondefault port. FIDO RP IDs continue to use the hostname-only accessor.
     pub fn get_broker_environment_for_account(&self, account_id: &str) -> Option<String> {
-        if let Some(issuer) = self.get_oidc_issuer_url() {
+        let provider = self.provider_for_account(account_id)?;
+        if provider.kind == ProviderKind::Oidc {
+            let issuer = self.get_oidc_issuer_url(Some(&provider.domain))?;
             let issuer = url::Url::parse(&issuer).ok()?;
             issuer.host_str()?;
             return Some(issuer[url::Position::BeforeHost..url::Position::AfterPort].to_string());
@@ -761,6 +772,15 @@ impl HimmelblauConfig {
 
     pub fn write(&self) -> Result<(), Error> {
         self.config.write(self.filename.clone())
+    }
+
+    pub fn reload_server_cache(&mut self) -> Result<(), String> {
+        let mut cache = Ini::new();
+        if self.cache_path.exists() {
+            load_config_file(&mut cache, &self.cache_path)?;
+        }
+        self.cache = cache;
+        Ok(())
     }
 
     pub fn write_server_config(&self) -> Result<(), Error> {
@@ -913,7 +933,7 @@ impl HimmelblauConfig {
                     continue;
                 }
             };
-            let domain = stanza.domain.trim().to_string();
+            let domain = stanza.domain.trim().to_lowercase();
             if domain.is_empty() {
                 errors.push(format!("[{}] requires a domain", section));
                 continue;
@@ -951,6 +971,115 @@ impl HimmelblauConfig {
         providers.into_iter().find(|p| p.default)
     }
 
+    /// Resolve only explicitly configured domains and their known aliases.
+    pub fn provider_for_domain(&self, domain: &str) -> Option<ProviderConfig> {
+        let providers = self.parse_providers().ok()?;
+        // An explicit primary domain always wins over a stale discovered alias.
+        if let Some(provider) = providers
+            .iter()
+            .find(|p| p.domain.eq_ignore_ascii_case(domain))
+        {
+            return Some(provider.clone());
+        }
+        let mut matches = providers.into_iter().filter(|p| {
+            self.domain_aliases_for(p)
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(domain))
+        });
+        let provider = matches.next()?;
+        matches.next().is_none().then_some(provider)
+    }
+
+    /// Names without a suffix belong to the default provider.
+    pub fn provider_for_account(&self, account: &str) -> Option<ProviderConfig> {
+        if account.is_empty() {
+            return None;
+        }
+        if let Some((name, domain)) = split_username(account) {
+            if name.is_empty() || domain.is_empty() {
+                return None;
+            }
+            if let Some(provider) = self.provider_for_domain(domain) {
+                return Some(provider);
+            }
+            // Legacy OIDC configurations accept the issuer's account-name claim.
+            return self
+                .default_provider()
+                .filter(|p| p.kind == ProviderKind::Oidc && p.section == "oidc");
+        }
+        if account.contains('@') {
+            return None;
+        }
+        self.default_provider()
+    }
+
+    pub fn provider_for_gid(&self, gid: u32) -> Option<ProviderConfig> {
+        self.parse_providers().ok()?.into_iter().find(|p| {
+            let (min, max) = self.get_idmap_range(&p.domain);
+            (min..=max).contains(&gid)
+        })
+    }
+
+    /// Discover an alias only when its tenant ID matches a configured Entra provider.
+    pub async fn discover_provider_for_domain(&self, alias: &str) -> Option<ProviderConfig> {
+        let providers: Vec<_> = self
+            .parse_providers()
+            .ok()?
+            .into_iter()
+            .filter(|p| p.kind == ProviderKind::Entra)
+            .collect();
+        if providers.is_empty() {
+            return None;
+        }
+        let (_, alias_tenant, _) =
+            request_federation_provider(DEFAULT_ODC_PROVIDER, alias, self.get_request_timeout())
+                .await
+                .ok()?;
+        let mut tenants = Vec::new();
+        for provider in providers {
+            let tenant = match self.get_tenant_id(&provider.domain) {
+                Some(tenant) => tenant,
+                None => {
+                    let Ok((_, tenant, _)) = request_federation_provider(
+                        &self.get_odc_provider(&provider.domain),
+                        &provider.domain,
+                        self.get_request_timeout(),
+                    )
+                    .await
+                    else {
+                        continue;
+                    };
+                    tenant
+                }
+            };
+            tenants.push((provider, tenant));
+        }
+        Self::match_discovered_tenant(tenants, &alias_tenant)
+    }
+
+    fn match_discovered_tenant(
+        tenants: impl IntoIterator<Item = (ProviderConfig, String)>,
+        tenant_id: &str,
+    ) -> Option<ProviderConfig> {
+        let mut matches = tenants.into_iter().filter_map(|(provider, tenant)| {
+            (provider.kind == ProviderKind::Entra && tenant.eq_ignore_ascii_case(tenant_id))
+                .then_some(provider)
+        });
+        let provider = matches.next()?;
+        matches.next().is_none().then_some(provider)
+    }
+
+    pub(crate) fn record_domain_alias(&mut self, provider: &ProviderConfig, alias: &str) {
+        let mut aliases = self.domain_aliases_for(provider);
+        if !aliases.iter().any(|a| a.eq_ignore_ascii_case(alias)) {
+            aliases.push(alias.to_lowercase());
+            self.set(&provider.domain, "domain_aliases", &aliases.join(","));
+            if let Err(error) = self.write_server_config() {
+                error!(?error, "Failed to write the server cache");
+            }
+        }
+    }
+
     /// Check the provider configuration. The daemon refuses to start when
     /// errors are reported.
     pub fn validate(&self) -> ValidationReport {
@@ -974,7 +1103,7 @@ impl HimmelblauConfig {
 
     fn validate_legacy(&self, report: &mut ValidationReport) {
         let domains = self.legacy_entra_domains();
-        if self.get_oidc_issuer_url().is_some() {
+        if self.get_oidc_issuer_url(None).is_some() {
             if let Some(domain) = domains.first() {
                 report.warnings.push(format!(
                     "Both oidc_issuer_url and Entra ID domain '{}' are configured, the domain is ignored",
@@ -994,13 +1123,10 @@ impl HimmelblauConfig {
     fn validate_tenants(&self, providers: &[ProviderConfig], report: &mut ValidationReport) {
         let mut names: BTreeMap<String, &str> = BTreeMap::new();
         let mut tenant_ids: BTreeMap<String, &str> = BTreeMap::new();
+        let mut issuers: BTreeMap<String, &str> = BTreeMap::new();
         for p in providers {
             let section = p.section.as_str();
-            let aliases = self
-                .config
-                .get(section, "domain_aliases")
-                .map(|v| split_list(&v).collect::<Vec<_>>())
-                .unwrap_or_default();
+            let aliases = self.domain_aliases_for(p);
             for name in std::iter::once(p.domain.clone()).chain(aliases) {
                 match names.insert(name.to_lowercase(), section) {
                     Some(other) if other != section => report.errors.push(format!(
@@ -1035,19 +1161,35 @@ impl HimmelblauConfig {
                     }
                 }
             }
+            if p.kind == ProviderKind::Oidc
+                && p.get_app_id(self).is_none_or(|id| id.trim().is_empty())
+            {
+                report
+                    .errors
+                    .push(format!("[{}] type = oidc requires app_id", section));
+            }
 
             match (p.kind, self.config.get(section, "oidc_issuer_url")) {
                 (ProviderKind::Oidc, None) => report.errors.push(format!(
                     "[{}] type = oidc requires oidc_issuer_url",
                     section
                 )),
-                (ProviderKind::Oidc, Some(url)) => {
-                    if let Err(e) = parse_issuer_url(&url)
-                        .and_then(|url| url.ok_or_else(|| "OIDC issuer URL is empty".to_string()))
-                    {
-                        report.errors.push(format!("[{}] {}", section, e));
+                (ProviderKind::Oidc, Some(url)) => match parse_issuer_url(&url) {
+                    Ok(Some(issuer)) => {
+                        if let Some(other) =
+                            issuers.insert(issuer.trim_end_matches('/').to_string(), section)
+                        {
+                            report.errors.push(format!(
+                                "[{}] and [{}] share the OIDC issuer {}",
+                                other, section, url
+                            ));
+                        }
                     }
-                }
+                    Ok(None) => report
+                        .errors
+                        .push(format!("[{}] OIDC issuer URL is empty", section)),
+                    Err(error) => report.errors.push(format!("[{}] {}", section, error)),
+                },
                 (ProviderKind::Entra, Some(_)) => report.errors.push(format!(
                     "[{}] oidc_issuer_url requires type = oidc",
                     section
@@ -1099,6 +1241,23 @@ impl HimmelblauConfig {
                 .errors
                 .push("id_attr_map = rfc2307 supports a single tenant only".to_string());
         }
+        for (index, provider) in providers.iter().enumerate() {
+            if provider.get_home_attr(self) == HomeAttr::Cn
+                || provider.get_home_alias(self) == Some(HomeAttr::Cn)
+            {
+                for other in &providers[index + 1..] {
+                    if provider.get_home_prefix(self) == other.get_home_prefix(self)
+                        && (other.get_home_attr(self) == HomeAttr::Cn
+                            || other.get_home_alias(self) == Some(HomeAttr::Cn))
+                    {
+                        report.errors.push(format!(
+                            "[{}] and [{}] require distinct home_prefix values for CN home names",
+                            provider.section, other.section
+                        ));
+                    }
+                }
+            }
+        }
     }
 
     fn validate_id_ranges(&self, providers: &[ProviderConfig], report: &mut ValidationReport) {
@@ -1130,12 +1289,8 @@ impl HimmelblauConfig {
         }
     }
 
-    /// Domains of all configured providers. Legacy configs list every
-    /// configured domain, although only the first one is served.
+    /// Primary domains of the providers served by this configuration.
     pub fn get_configured_domains(&self) -> Vec<String> {
-        if self.tenant_sections().is_empty() {
-            return self.legacy_domains();
-        }
         self.parse_providers()
             .unwrap_or_default()
             .into_iter()
@@ -1144,9 +1299,6 @@ impl HimmelblauConfig {
     }
 
     pub fn get_configured_entra_domains(&self) -> Vec<String> {
-        if self.tenant_sections().is_empty() {
-            return self.legacy_entra_domains();
-        }
         self.parse_providers()
             .unwrap_or_default()
             .into_iter()
@@ -1158,9 +1310,6 @@ impl HimmelblauConfig {
     /// The domain of the default provider when it is an Entra ID tenant.
     /// Legacy configs use the first configured domain.
     pub fn get_configured_entra_domain(&self) -> Option<String> {
-        if self.tenant_sections().is_empty() {
-            return self.legacy_entra_domains().into_iter().next();
-        }
         self.default_provider()
             .filter(|p| p.kind == ProviderKind::Entra)
             .map(|p| p.domain)
@@ -1226,12 +1375,10 @@ impl HimmelblauConfig {
 
     /// Aliases configured by the administrator merged with aliases discovered
     /// at runtime, lowercased.
-    fn domain_aliases(&self, domain: &str) -> Vec<String> {
+    fn domain_aliases_for(&self, provider: &ProviderConfig) -> Vec<String> {
         let mut aliases: Vec<String> = vec![];
-        let admin = self
-            .config
-            .get(&self.section_for_domain(domain), "domain_aliases");
-        let cached = self.cache.get(domain, "domain_aliases");
+        let admin = self.config.get(&provider.section, "domain_aliases");
+        let cached = self.cache.get(&provider.domain, "domain_aliases");
         for alias in admin
             .iter()
             .chain(cached.iter())
@@ -1246,106 +1393,19 @@ impl HimmelblauConfig {
     }
 
     pub fn get_primary_domain_from_alias_simple(&self, alias: &str) -> Option<String> {
-        let alias = alias.to_lowercase();
-        self.get_configured_domains().into_iter().find(|domain| {
-            domain.to_lowercase() == alias || self.domain_aliases(domain).contains(&alias)
-        })
+        self.provider_for_domain(alias).map(|p| p.domain)
     }
 
-    pub async fn domains_are_aliases(&mut self, domain1: &str, domain2: &str) -> bool {
-        if let Some(primary) = self.get_primary_domain_from_alias(domain1).await {
-            domain2 == primary
-        } else if let Some(primary) = self.get_primary_domain_from_alias(domain2).await {
-            domain1 == primary
-        } else {
-            false
-        }
-    }
-
-    pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
-        // Short-circuit the request if this is an OIDC provider domain.
-        if self.get_oidc_issuer_url().is_some() {
-            return None;
-        }
-
-        // Attempt to short-circut the request by checking if the alias is
-        // already configured.
-        if let Some(primary) = self.get_primary_domain_from_alias_simple(alias) {
-            return Some(primary);
-        }
-
-        let domains = self.get_configured_domains();
-        if domains.is_empty() {
-            info!("No domains are configured.");
-            return None;
-        }
-
-        let mut modified_config = false;
-
-        // We don't recognize this alias, so now we need to search for it the
-        // hard way by checking for matching tenant id's.
-        let (_, alias_tenant_id, _) = match request_federation_provider(
-            DEFAULT_ODC_PROVIDER,
-            alias,
-            self.get_request_timeout(),
-        )
-        .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
-                error!(
-                    "Failed matching alias '{}' to a configured tenant: {:?}",
-                    alias, e
-                );
-                return None;
-            }
+    pub async fn domains_are_aliases(&self, domain1: &str, domain2: &str) -> bool {
+        let first = match self.provider_for_domain(domain1) {
+            Some(provider) => Some(provider),
+            None => self.discover_provider_for_domain(domain1).await,
         };
-        for domain in domains {
-            let tenant_id = match self.get_tenant_id(&domain) {
-                Some(tenant_id) => tenant_id,
-                None => {
-                    let (authority_host, tenant_id, graph_url) = match request_federation_provider(
-                        &self.get_odc_provider(&domain),
-                        &domain,
-                        self.get_request_timeout(),
-                    )
-                    .await
-                    {
-                        Ok(resp) => resp,
-                        Err(e) => {
-                            error!("Failed sending federation provider request: {:?}", e);
-                            continue;
-                        }
-                    };
-                    self.set(&domain, "authority_host", &authority_host);
-                    self.set(&domain, "tenant_id", &tenant_id);
-                    self.set(&domain, "graph_url", &graph_url);
-                    modified_config = true;
-                    tenant_id
-                }
-            };
-            if tenant_id == alias_tenant_id {
-                let mut domain_aliases: Vec<String> = self
-                    .cache
-                    .get(&domain, "domain_aliases")
-                    .map(|v| split_list(&v).collect())
-                    .unwrap_or_default();
-                domain_aliases.push(alias.to_string());
-                self.set(&domain, "domain_aliases", &domain_aliases.join(","));
-                if let Err(e) = self.write_server_config() {
-                    error!(error = ?e, "Failed to write the server cache");
-                }
-                return Some(domain);
-            }
-        }
-
-        error!("Failed matching alias '{}' to a configured tenant", alias);
-        if modified_config {
-            if let Err(e) = self.write_server_config() {
-                error!(error = ?e, "Failed to write the server cache");
-            }
-        }
-        None
+        let second = match self.provider_for_domain(domain2) {
+            Some(provider) => Some(provider),
+            None => self.discover_provider_for_domain(domain2).await,
+        };
+        matches!((first, second), (Some(a), Some(b)) if a.domain == b.domain)
     }
 
     /// Convert a login name to a UPN, or `None` if it cannot be a directory user
@@ -1462,7 +1522,11 @@ impl HimmelblauConfig {
                     res = upn.to_string();
                 }
             // Only perform cn name mapping for the primary domain
-            } else if self.get_cn_name_mapping() && primary == domain.to_lowercase() {
+            } else if self.get_cn_name_mapping()
+                && self
+                    .provider_for_domain(domain)
+                    .is_some_and(|p| p.domain == primary)
+            {
                 res = name.to_string();
             } else {
                 res = upn.to_string();
@@ -1485,12 +1549,30 @@ impl HimmelblauConfig {
         sudo_groups
     }
 
-    pub fn get_oidc_issuer_url(&self) -> Option<String> {
-        let val = self.config.get("global", "oidc_issuer_url")?;
+    pub fn get_oidc_issuer_url(&self, domain: Option<&str>) -> Option<String> {
+        let val = self.domain_or_global_value(domain, "oidc_issuer_url")?;
         parse_issuer_url(&val).unwrap_or_else(|e| {
             error!(error = %e, "Ignoring oidc_issuer_url");
             None
         })
+    }
+
+    pub fn pam_allow_groups_for_provider(&self, provider: &ProviderConfig) -> Vec<String> {
+        if self.tenant_sections().is_empty() {
+            return self.get_pam_allow_groups();
+        }
+        self.domain_or_global_value(Some(&provider.domain), "pam_allow_groups")
+            .map(|v| split_list(&v).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn sudo_groups_for_provider(&self, provider: &ProviderConfig) -> Vec<String> {
+        if self.tenant_sections().is_empty() {
+            return self.get_sudo_groups();
+        }
+        self.domain_or_global_value(Some(&provider.domain), "sudo_groups")
+            .map(|v| split_list(&v).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -2165,23 +2247,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        let mut domains = config.get_configured_domains();
-        // The order from `domains` must always be preserved (specifically, we
-        // care about the placement of the first domain only).
-        assert_eq!(domains[..2], vec!["example.com", "test.com"]);
-
-        // The order of the remaining domains is irrelevant.
-        domains.sort();
-        assert_eq!(
-            domains,
-            vec![
-                "alpha.com",
-                "example.com",
-                "example2.com",
-                "test.com",
-                "test2.com"
-            ]
-        );
+        assert_eq!(config.get_configured_domains(), vec!["example.com"]);
     }
 
     #[test]
@@ -2227,7 +2293,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(config.get_configured_entra_domain(), None);
 
-        // Additional domains are listed, but only the first is used
+        // Only the served domain is returned.
         let temp_file = create_temp_config(
             r#"
         [global]
@@ -2235,10 +2301,7 @@ mod tests {
         "#,
         );
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert_eq!(
-            config.get_configured_entra_domains(),
-            vec!["example.com", "test.com"]
-        );
+        assert_eq!(config.get_configured_entra_domains(), vec!["example.com"]);
 
         // No configuration at all
         let temp_file = create_temp_config("[global]\n");
@@ -2369,7 +2432,10 @@ mod tests {
             config.get_authority_host_for_account("alice@alias.example.com"),
             Some("login.microsoftonline.us".to_string())
         );
-        assert_eq!(config.get_authority_host_for_account("alice"), None);
+        assert_eq!(
+            config.get_authority_host_for_account("alice"),
+            Some("login.microsoftonline.us".to_string())
+        );
     }
 
     #[test]
@@ -2427,7 +2493,10 @@ mod tests {
             config.get_broker_environment_for_account("alice@alias.example.com"),
             Some("login.microsoftonline.us".to_string())
         );
-        assert_eq!(config.get_broker_environment_for_account("alice"), None);
+        assert_eq!(
+            config.get_broker_environment_for_account("alice"),
+            Some("login.microsoftonline.us".to_string())
+        );
     }
 
     #[test]
@@ -2458,12 +2527,15 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(
-            config.get_oidc_device_authorization_endpoint(),
+            config.get_oidc_device_authorization_endpoint(None),
             Some("https://idp.example.com/device/code".to_string())
         );
 
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_oidc_device_authorization_endpoint(), None);
+        assert_eq!(
+            config_empty.get_oidc_device_authorization_endpoint(None),
+            None
+        );
     }
 
     #[test]
@@ -3391,6 +3463,7 @@ mod tests {
         type = OIDC
         domain = fabrikam.com
         oidc_issuer_url = https://login.fabrikam.com/.well-known/openid-configuration
+        app_id = linux-login
         idmap_range = 1000001-2000000
         "#;
 
@@ -3437,6 +3510,7 @@ mod tests {
         assert!(report.is_ok(), "{:?}", report);
         assert_eq!(report.warnings.len(), 1);
         assert!(report.warnings[0].contains("ignoring: fabrikam.com"));
+        assert!(config.provider_for_domain("fabrikam.com").is_none());
     }
 
     #[test]
@@ -3510,6 +3584,102 @@ mod tests {
         let config = load_with_cache("[tenant.contoso]\ndomain = contoso.com\n", "");
         assert!(config.validate().is_ok());
         assert_eq!(config.default_provider().unwrap().label, "contoso");
+    }
+
+    #[test]
+    fn provider_lookup_and_settings_are_scoped() {
+        let config = config_for_provider_test();
+        assert!(config.validate().is_ok());
+        let entra = config.provider_for_account("alice@CONTOSO.ORG").unwrap();
+        let oidc = config.provider_for_account("bob@fabrikam.com").unwrap();
+        assert_eq!(entra.label, "contoso");
+        assert_eq!(config.provider_for_account("alice").unwrap(), entra);
+        assert_eq!(entra.get_home_prefix(&config), "/home/contoso/");
+        assert_eq!(oidc.get_shell(&config), "/bin/zsh");
+        assert_eq!(oidc.get_oidc_account_id_claims(&config), vec!["email"]);
+        assert_eq!(oidc.get_pam_allow_groups(&config), vec!["engineers"]);
+        assert!(entra.get_pam_allow_groups(&config).is_empty());
+        assert_eq!(config.provider_for_gid(1000001).unwrap(), oidc);
+        assert!(config.provider_for_gid(2000001).is_none());
+        for account in [
+            "",
+            "@contoso.com",
+            "alice@",
+            "alice@a@b",
+            "alice@unknown.com",
+        ] {
+            assert!(config.provider_for_account(account).is_none(), "{account}");
+        }
+        assert_eq!(config.map_upn_to_name("alice@contoso.org"), "alice");
+        assert_eq!(
+            config.map_upn_to_name("alice@fabrikam.com"),
+            "alice@fabrikam.com"
+        );
+    }
+
+    fn config_for_provider_test() -> HimmelblauConfig {
+        HimmelblauConfig::from_test_config(&format!(
+            "[global]\nshell = /bin/bash\ncn_name_mapping = true\n{TWO_TENANTS}\nshell = /bin/zsh\noidc_account_id_claims = email\npam_allow_groups = engineers\n"
+        ))
+    }
+
+    #[test]
+    fn discovered_alias_requires_a_unique_configured_entra_tenant() {
+        let config = HimmelblauConfig::from_test_config(TWO_TENANTS);
+        let providers = config.parse_providers().unwrap();
+        let entra = providers[0].clone();
+        let oidc = providers[1].clone();
+        let tenants = vec![
+            (entra.clone(), "tenant-A".to_string()),
+            (oidc, "tenant-B".to_string()),
+        ];
+        assert_eq!(
+            HimmelblauConfig::match_discovered_tenant(tenants.clone(), "TENANT-a"),
+            Some(entra.clone())
+        );
+        for tenant_id in ["unconfigured", "tenant-B"] {
+            assert!(
+                HimmelblauConfig::match_discovered_tenant(tenants.clone(), tenant_id).is_none()
+            );
+        }
+        let duplicate = vec![
+            (entra.clone(), "tenant-A".to_string()),
+            (entra, "tenant-A".to_string()),
+        ];
+        assert!(HimmelblauConfig::match_discovered_tenant(duplicate, "tenant-A").is_none());
+    }
+
+    #[test]
+    fn oidc_stanzas_require_client_ids_and_distinct_normalized_issuers() {
+        let mut config = HimmelblauConfig::from_test_config(
+            "[tenant.a]\ntype=oidc\ndomain=a.example\noidc_issuer_url=https://id.example\n",
+        );
+        assert!(config
+            .validate()
+            .errors
+            .iter()
+            .any(|e| e.contains("requires app_id")));
+        config.set("global", "app_id", "linux");
+        assert!(config.validate().is_ok());
+
+        config.set("tenant.a", "default", "true");
+        config.set("tenant.a", "idmap_range", "200000-300000");
+        config.set("tenant.b", "type", "oidc");
+        config.set("tenant.b", "domain", "b.example");
+        config.set("tenant.b", "idmap_range", "300001-400000");
+        for issuer in [
+            "https://id.example/",
+            "https://id.example/.well-known/openid-configuration",
+        ] {
+            config.set("tenant.b", "oidc_issuer_url", issuer);
+            assert!(config
+                .validate()
+                .errors
+                .iter()
+                .any(|e| e.contains("share the OIDC issuer")));
+        }
+        config.set("tenant.b", "oidc_issuer_url", "https://other.example");
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -3750,5 +3920,34 @@ mod tests {
             reloaded.get_tenant_id("contoso.com"),
             Some("1111".to_string())
         );
+    }
+
+    #[test]
+    fn reload_server_cache_updates_aliases_without_changing_provider_settings() {
+        let mut config = HimmelblauConfig::from_test_config(TWO_TENANTS);
+        config.cache_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!(".test-server-cache-{}.ini", uuid::Uuid::new_v4()));
+        assert!(config
+            .provider_for_account("alice@discovered.example")
+            .is_none());
+        fs::write(
+            &config.cache_path,
+            "[contoso.com]\ndomain_aliases=discovered.example\nhome_prefix=/ignored/\n\
+             [stale.example]\ntenant_id=stale\n",
+        )
+        .unwrap();
+        config.reload_server_cache().unwrap();
+        let provider = config
+            .provider_for_account("alice@discovered.example")
+            .unwrap();
+        assert_eq!(provider.domain, "contoso.com");
+        assert_eq!(provider.get_home_prefix(&config), "/home/contoso/");
+        assert!(config.provider_for_domain("stale.example").is_none());
+
+        fs::remove_file(&config.cache_path).unwrap();
+        config.reload_server_cache().unwrap();
+        assert!(config
+            .provider_for_account("alice@discovered.example")
+            .is_none());
     }
 }
