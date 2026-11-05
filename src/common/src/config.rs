@@ -1906,9 +1906,9 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_apply_policy(), true);
+        assert!(config.get_apply_policy());
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_apply_policy(), false);
+        assert!(!config_empty.get_apply_policy());
     }
 
     #[test]
@@ -1921,12 +1921,12 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_intune_auth_resource(), true);
-        assert_eq!(config.get_apply_policy(), false);
-        assert_eq!(config.get_use_intune_auth_resource(), true);
+        assert!(config.get_intune_auth_resource());
+        assert!(!config.get_apply_policy());
+        assert!(config.get_use_intune_auth_resource());
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_intune_auth_resource(), false);
-        assert_eq!(config_empty.get_use_intune_auth_resource(), false);
+        assert!(!config_empty.get_intune_auth_resource());
+        assert!(!config_empty.get_use_intune_auth_resource());
 
         let apply_policy_data = r#"
         [global]
@@ -1936,8 +1936,8 @@ mod tests {
         let apply_policy_file = create_temp_config(apply_policy_data);
         let apply_policy = HimmelblauConfig::new(Some(&apply_policy_file)).unwrap();
 
-        assert_eq!(apply_policy.get_intune_auth_resource(), false);
-        assert_eq!(apply_policy.get_use_intune_auth_resource(), true);
+        assert!(!apply_policy.get_intune_auth_resource());
+        assert!(apply_policy.get_use_intune_auth_resource());
     }
 
     #[test]
@@ -2143,10 +2143,10 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_use_etc_skel(), true);
+        assert!(config.get_use_etc_skel());
 
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_use_etc_skel(), false);
+        assert!(!config_empty.get_use_etc_skel());
     }
 
     #[test]
@@ -2256,7 +2256,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_enable_hello(), false);
+        assert!(!config.get_enable_hello());
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_enable_hello(), DEFAULT_HELLO_ENABLED);
     }
@@ -2271,11 +2271,11 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_enable_passwordless(), false);
+        assert!(!config.get_enable_passwordless());
 
         // Test that default is true (backward compat)
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_enable_passwordless(), true);
+        assert!(config_empty.get_enable_passwordless());
     }
 
     #[test]
@@ -2288,9 +2288,9 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_enable_experimental_mfa(), false);
+        assert!(!config.get_enable_experimental_mfa());
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_enable_experimental_mfa(), true);
+        assert!(config_empty.get_enable_experimental_mfa());
     }
 
     #[test]
@@ -2304,14 +2304,11 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         // Test when explicitly set to true
-        assert_eq!(config.get_enable_experimental_passwordless_fido(), true);
+        assert!(config.get_enable_experimental_passwordless_fido());
 
         // Test fallback default (false) when config is missing
         let config_empty = create_empty_config();
-        assert_eq!(
-            config_empty.get_enable_experimental_passwordless_fido(),
-            false
-        );
+        assert!(!config_empty.get_enable_experimental_passwordless_fido());
     }
 
     #[test]
@@ -2324,9 +2321,9 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_debug(), true);
+        assert!(config.get_debug());
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_debug(), false);
+        assert!(!config_empty.get_debug());
     }
 
     #[test]
@@ -2339,7 +2336,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_cn_name_mapping(), false);
+        assert!(!config.get_cn_name_mapping());
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_cn_name_mapping(), CN_NAME_MAPPING);
     }
@@ -2479,7 +2476,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_selinux(), true);
+        assert!(config.get_selinux());
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_selinux(), DEFAULT_SELINUX);
     }
@@ -2983,7 +2980,7 @@ mod tests {
         "#;
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert_eq!(config.get_offline_breakglass_enabled(), false);
+        assert!(!config.get_offline_breakglass_enabled());
 
         // Explicitly enabled
         let config_data = r#"
@@ -2992,7 +2989,7 @@ mod tests {
         "#;
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert_eq!(config.get_offline_breakglass_enabled(), true);
+        assert!(config.get_offline_breakglass_enabled());
 
         // Missing value → default (false)
         let config_data = r#"
@@ -3000,7 +2997,7 @@ mod tests {
         "#;
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert_eq!(config.get_offline_breakglass_enabled(), false);
+        assert!(!config.get_offline_breakglass_enabled());
     }
 
     #[test]
