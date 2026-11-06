@@ -2213,14 +2213,23 @@ where
         account_id: &str,
     ) -> ResolverResult<Option<HomeDirectoryInfo>> {
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
-        Ok(token.as_ref().map(|tok| HomeDirectoryInfo {
-            uid: tok.gidnumber,
-            gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
-            name: self.token_homedirectory_attr(tok),
+        let Some(token) = token.as_ref() else {
+            return Ok(None);
+        };
+        let provider_domain = self
+            .client
+            .provider_for_account(account_id)
+            .await
+            .map(|provider| provider.domain);
+        Ok(Some(HomeDirectoryInfo {
+            uid: token.gidnumber,
+            gid: token.real_gidnumber.unwrap_or(token.gidnumber),
+            name: self.token_homedirectory_attr(token),
             aliases: self
-                .token_homedirectory_alias(tok)
+                .token_homedirectory_alias(token)
                 .map(|s| vec![s])
                 .unwrap_or_default(),
+            provider_domain,
         }))
     }
 

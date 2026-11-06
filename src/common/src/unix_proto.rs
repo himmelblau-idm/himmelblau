@@ -315,6 +315,8 @@ pub struct HomeDirectoryInfo {
     pub gid: u32,
     pub name: String,
     pub aliases: Vec<String>,
+    #[serde(default)]
+    pub provider_domain: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

@@ -733,6 +733,11 @@ impl PamHooks for PamKanidm {
             }
         };
 
+        let Some(provider) = cfg.provider_for_account(&account_id) else {
+            debug!(%account_id, "chauthtok: no configured provider, skipping");
+            return PamResultCode::PAM_IGNORE;
+        };
+
         if flags & PAM_PRELIM_CHECK != 0 {
             return PamResultCode::PAM_SUCCESS;
         }
@@ -858,9 +863,6 @@ impl PamHooks for PamKanidm {
             }
         };
 
-        let Some(provider) = cfg.provider_for_account(&account_id) else {
-            return PamResultCode::PAM_IGNORE;
-        };
         let domain = provider.domain.as_str();
         let tenant_id = match cfg.get_tenant_id(domain) {
             Some(tenant_id) => tenant_id,

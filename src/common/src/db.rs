@@ -598,7 +598,10 @@ impl<'a> CacheTxn for DbTxn<'a> {
             // Directory display names are not unique; identity and membership use UUIDs.
             self.conn
                 .execute_batch(
-                    "CREATE TABLE group_new (
+                    "CREATE TEMP TABLE memberof_migration_v3 AS
+                     SELECT g_uuid, a_uuid FROM memberof_t;
+                DELETE FROM memberof_t;
+                CREATE TABLE group_new (
                     uuid TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     spn TEXT NOT NULL,
@@ -610,7 +613,10 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 DROP TABLE group_t;
                 ALTER TABLE group_new RENAME TO group_t;
                 CREATE INDEX group_name_idx ON group_t(name);
-                CREATE INDEX group_spn_idx ON group_t(spn);",
+                CREATE INDEX group_spn_idx ON group_t(spn);
+                INSERT INTO memberof_t (g_uuid, a_uuid)
+                    SELECT g_uuid, a_uuid FROM memberof_migration_v3;
+                DROP TABLE memberof_migration_v3;",
                 )
                 .map_err(|e| self.sqlite_error("migrate group names", &e))?;
         }
@@ -1507,6 +1513,42 @@ mod tests {
         let accounts = dbtxn.get_unexpired_accounts(100).unwrap();
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].uuid, authenticated.uuid);
+        dbtxn.commit().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_migrate_preserves_memberships_with_foreign_keys() {
+        let db = Db::new("").expect("failed to create.");
+        db.conn
+            .lock()
+            .await
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
+
+        let group = GroupToken {
+            name: "testgroup".to_string(),
+            spn: "testgroup@example.com".to_string(),
+            gidnumber: 2001,
+            uuid: uuid::uuid!("b500be97-8552-42a5-aca0-668bc5625705"),
+        };
+        let mut account = test_account();
+        account.groups = vec![group.clone()];
+
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        dbtxn.update_group(&group, 300).unwrap();
+        dbtxn.update_account(&account, 300).unwrap();
+        dbtxn.commit().unwrap();
+
+        let dbtxn = db.write().await;
+        dbtxn.set_db_version(DBV_MAIN, 2).unwrap();
+        dbtxn.commit().unwrap();
+
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        let members = dbtxn.get_group_members(group.uuid).unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].spn, account.spn);
         dbtxn.commit().unwrap();
     }
 

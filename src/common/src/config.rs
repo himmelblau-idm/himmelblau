@@ -328,7 +328,7 @@ fn parse_range(val: &str) -> Option<(u32, u32)> {
         .collect::<Result<Vec<u32>, _>>()
     {
         Ok(vals) => match vals.as_slice() {
-            [min, max] => Some((*min, *max)),
+            [min, max] if min <= max => Some((*min, *max)),
             _ => None,
         },
         Err(_) => None,
@@ -1522,11 +1522,7 @@ impl HimmelblauConfig {
                     res = upn.to_string();
                 }
             // Only perform cn name mapping for the primary domain
-            } else if self.get_cn_name_mapping()
-                && self
-                    .provider_for_domain(domain)
-                    .is_some_and(|p| p.domain == primary)
-            {
+            } else if self.get_cn_name_mapping() && domain.eq_ignore_ascii_case(&primary) {
                 res = name.to_string();
             } else {
                 res = upn.to_string();
@@ -3610,7 +3606,11 @@ mod tests {
         ] {
             assert!(config.provider_for_account(account).is_none(), "{account}");
         }
-        assert_eq!(config.map_upn_to_name("alice@contoso.org"), "alice");
+        assert_eq!(config.map_upn_to_name("alice@contoso.com"), "alice");
+        assert_eq!(
+            config.map_upn_to_name("alice@contoso.org"),
+            "alice@contoso.org"
+        );
         assert_eq!(
             config.map_upn_to_name("alice@fabrikam.com"),
             "alice@fabrikam.com"
@@ -3754,6 +3754,11 @@ mod tests {
                 "[tenant.a]\ndomain = contoso.com\nidmap_range = 5-x\n".to_string(),
                 "",
                 "idmap_range = 5-x is invalid",
+            ),
+            (
+                "[tenant.a]\ndomain = contoso.com\nidmap_range = 400000-300000\n".to_string(),
+                "",
+                "idmap_range = 400000-300000 is invalid",
             ),
             (
                 tenants(

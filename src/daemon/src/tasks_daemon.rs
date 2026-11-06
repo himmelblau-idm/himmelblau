@@ -127,15 +127,24 @@ fn chown(path: &Path, uid: u32, gid: u32) -> Result<(), String> {
     Ok(())
 }
 
-fn home_prefix_for_uid(cfg: &HimmelblauConfig, uid: u32) -> Result<String, String> {
+fn home_prefix_for_provider(
+    cfg: &HimmelblauConfig,
+    provider_domain: Option<&str>,
+) -> Result<String, String> {
     let providers = cfg.parse_providers().map_err(|errors| errors.join("; "))?;
-    let provider = match providers.as_slice() {
-        [provider] => Some(provider.clone()),
-        _ => cfg.provider_for_gid(uid),
+    let provider = match provider_domain {
+        Some(domain) => cfg.provider_for_domain(domain),
+        None if providers.len() == 1 => providers.into_iter().next(),
+        None => None,
     };
     provider
         .map(|provider| provider.get_home_prefix(cfg))
-        .ok_or_else(|| format!("No configured provider for UID {uid}"))
+        .ok_or_else(|| {
+            provider_domain.map_or_else(
+                || "No provider selected for home directory".to_string(),
+                |domain| format!("No configured provider for domain {domain}"),
+            )
+        })
 }
 
 fn create_home_directory(
@@ -719,9 +728,15 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
         match next_req {
             Some(Ok(TaskRequest::HomeDirectory(info))) => {
                 debug!("Received task -> HomeDirectory(...)");
-                let result = home_prefix_for_uid(cfg, info.uid).and_then(|prefix| {
-                    create_home_directory(&info, &prefix, cfg.get_use_etc_skel(), cfg.get_selinux())
-                });
+                let result = home_prefix_for_provider(cfg, info.provider_domain.as_deref())
+                    .and_then(|prefix| {
+                        create_home_directory(
+                            &info,
+                            &prefix,
+                            cfg.get_use_etc_skel(),
+                            cfg.get_selinux(),
+                        )
+                    });
                 let resp = match result {
                     Ok(()) => TaskResponse::Success(0),
                     Err(msg) => TaskResponse::Error(msg),
@@ -1120,7 +1135,7 @@ mod tests {
     const TENANT_ID: &str = "11111111-2222-3333-4444-555555555555";
 
     #[test]
-    fn home_prefix_uses_uid_ranges_and_preserves_single_provider_rfc2307() {
+    fn home_prefix_uses_resolved_provider_and_preserves_single_provider_rfc2307() {
         let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
         let path = directory.path().join("himmelblau.conf");
         fs::write(
@@ -1130,9 +1145,16 @@ mod tests {
         )
         .unwrap();
         let cfg = HimmelblauConfig::new(path.to_str()).unwrap();
-        assert_eq!(home_prefix_for_uid(&cfg, 1000).unwrap(), "/home/a/");
-        assert_eq!(home_prefix_for_uid(&cfg, 2000).unwrap(), "/home/b/");
-        assert!(home_prefix_for_uid(&cfg, 3000).is_err());
+        assert_eq!(
+            home_prefix_for_provider(&cfg, Some("a.example")).unwrap(),
+            "/home/a/"
+        );
+        assert_eq!(
+            home_prefix_for_provider(&cfg, Some("b.example")).unwrap(),
+            "/home/b/"
+        );
+        assert!(home_prefix_for_provider(&cfg, Some("unknown.example")).is_err());
+        assert!(home_prefix_for_provider(&cfg, None).is_err());
 
         fs::write(
             &path,
@@ -1141,7 +1163,7 @@ mod tests {
         )
         .unwrap();
         let cfg = HimmelblauConfig::new(path.to_str()).unwrap();
-        assert_eq!(home_prefix_for_uid(&cfg, 3000).unwrap(), "/home/a/");
+        assert_eq!(home_prefix_for_provider(&cfg, None).unwrap(), "/home/a/");
     }
 
     #[test]
