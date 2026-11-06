@@ -20,6 +20,7 @@ use std::ops::DerefMut;
 use std::path::Path;
 use std::string::ToString;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
 use lru::LruCache;
@@ -27,7 +28,7 @@ use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::config::InitgroupsMode;
+use crate::config::{HimmelblauConfig, InitgroupsMode};
 use crate::constants::SERVER_CONFIG_PATH;
 use crate::db::{Cache, CacheTxn, Db};
 use crate::idprovider::interface::{
@@ -131,6 +132,33 @@ fn refresh_due(state: &CacheState) -> bool {
     }
 }
 
+/// Resolver settings that are replaced when the configuration is reloaded.
+struct ResolverSettings {
+    timeout_seconds: u64,
+    pam_allow_groups: BTreeSet<String>,
+    default_shell: String,
+    initgroups_mode: InitgroupsMode,
+}
+
+impl ResolverSettings {
+    fn new(
+        timeout_seconds: u64,
+        pam_allow_groups: Vec<String>,
+        default_shell: String,
+        initgroups_mode: InitgroupsMode,
+    ) -> Arc<Self> {
+        if pam_allow_groups.is_empty() {
+            warn!("pam_allow_groups config is not configured, all users will be authorized!");
+        }
+        Arc::new(ResolverSettings {
+            timeout_seconds,
+            pam_allow_groups: pam_allow_groups.into_iter().collect(),
+            default_shell,
+            initgroups_mode,
+        })
+    }
+}
+
 pub struct Resolver<I>
 where
     I: IdProvider + Sync,
@@ -141,16 +169,13 @@ where
     machine_key: MachineKey,
     hmac_key: HmacKey,
     client: I,
-    pam_allow_groups: BTreeSet<String>,
+    settings: RwLock<Arc<ResolverSettings>>,
     oidc_auth: bool,
-    timeout_seconds: u64,
-    default_shell: String,
     home_prefix: String,
     home_attr: HomeAttr,
     home_alias: Option<HomeAttr>,
     uid_attr_map: UidAttr,
     gid_attr_map: UidAttr,
-    initgroups_mode: InitgroupsMode,
     allow_id_overrides: HashSet<Id>,
     nxset: Mutex<HashSet<Id>>,
     nxcache: Mutex<LruCache<Id, SystemTime>>,
@@ -193,7 +218,7 @@ impl Display for Id {
 #[cfg(test)]
 mod tests {
     use super::{AuthSession, CacheUpdateResult, OnExpiry, Resolver};
-    use crate::config::InitgroupsMode;
+    use crate::config::{HimmelblauConfig, InitgroupsMode};
     use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{
         tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -1412,10 +1437,48 @@ mod tests {
         assert!(resolver.identity_refreshes.lock().await.queued.is_empty());
     }
 
+    fn clear_pam_allow_groups(resolver: &mut Resolver<OfflineFallbackProvider>) {
+        let settings = resolver.settings.get_mut().unwrap();
+        std::sync::Arc::get_mut(settings)
+            .unwrap()
+            .pam_allow_groups
+            .clear();
+    }
+
+    #[tokio::test]
+    async fn reload_config_replaces_the_allow_list() {
+        let resolver = setup_resolver().await;
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        let account_id = test_token().spn;
+        let mut cfg = HimmelblauConfig::new(Some("/dev/null")).unwrap();
+
+        cfg.set(
+            "global",
+            "pam_allow_groups",
+            "00000000-0000-0000-0000-000000000001",
+        );
+        resolver.reload_config(&cfg).await.unwrap();
+        assert_eq!(
+            resolver.pam_account_allowed(&account_id).await.unwrap(),
+            Some(false)
+        );
+
+        cfg.set(
+            "global",
+            "pam_allow_groups",
+            "9f8a7a5a-a8e8-5c57-9f4f-7dfe21126c23",
+        );
+        resolver.reload_config(&cfg).await.unwrap();
+        assert_eq!(
+            resolver.pam_account_allowed(&account_id).await.unwrap(),
+            Some(true)
+        );
+    }
+
     #[tokio::test]
     async fn account_authorization_without_allow_list_skips_refresh_for_cached_users() {
         let mut resolver = setup_resolver().await;
-        resolver.pam_allow_groups.clear();
+        clear_pam_allow_groups(&mut resolver);
         resolver.client.user_get_error.store(2, Ordering::Release);
 
         assert_eq!(
@@ -1432,7 +1495,7 @@ mod tests {
     #[tokio::test]
     async fn account_authorization_without_allow_list_allows_uncached_lookup_only_users() {
         let mut resolver = setup_resolver().await;
-        resolver.pam_allow_groups.clear();
+        clear_pam_allow_groups(&mut resolver);
         resolver
             .delete_cache_usertoken(test_token().uuid)
             .await
@@ -1453,7 +1516,7 @@ mod tests {
     async fn account_authorization_without_allow_list_reports_unresolved_users_as_unknown() {
         for user_get_error in [1, 2] {
             let mut resolver = setup_resolver().await;
-            resolver.pam_allow_groups.clear();
+            clear_pam_allow_groups(&mut resolver);
             resolver
                 .client
                 .user_get_error
@@ -2846,10 +2909,6 @@ where
 
         dbtxn.commit().map_err(|_| ())?;
 
-        if pam_allow_groups.is_empty() {
-            warn!("pam_allow_groups config is not configured, all users will be authorized!");
-        }
-
         // We assume we are offline at start up, and we mark the next "online check" as
         // being valid from "now".
         Ok(Resolver {
@@ -2858,16 +2917,18 @@ where
             machine_key,
             hmac_key,
             client,
-            timeout_seconds,
-            pam_allow_groups: pam_allow_groups.into_iter().collect(),
+            settings: RwLock::new(ResolverSettings::new(
+                timeout_seconds,
+                pam_allow_groups,
+                default_shell,
+                initgroups_mode,
+            )),
             oidc_auth,
-            default_shell,
             home_prefix,
             home_attr,
             home_alias,
             uid_attr_map,
             gid_attr_map,
-            initgroups_mode,
             allow_id_overrides: allow_id_overrides.into_iter().map(Id::Name).collect(),
             nxset: Mutex::new(HashSet::new()),
             nxcache: Mutex::new(LruCache::new(NXCACHE_SIZE)),
@@ -2887,6 +2948,29 @@ where
     /// Import broker PRTs previously exported by [`Self::export_broker_prts`].
     pub async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
         self.client.import_broker_prts(data).await
+    }
+
+    fn settings(&self) -> Arc<ResolverSettings> {
+        match self.settings.read() {
+            Ok(settings) => settings.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// Apply a reloaded configuration to the identity provider and then the resolver.
+    pub async fn reload_config(&self, cfg: &HimmelblauConfig) -> Result<(), String> {
+        self.client.reload_config(cfg.clone()).await?;
+        let settings = ResolverSettings::new(
+            cfg.get_cache_timeout(),
+            cfg.get_pam_allow_groups(),
+            cfg.get_shell(None),
+            cfg.get_initgroups_mode(),
+        );
+        match self.settings.write() {
+            Ok(mut current) => *current = settings,
+            Err(poisoned) => *poisoned.into_inner() = settings,
+        };
+        Ok(())
     }
 
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
@@ -2972,7 +3056,7 @@ where
             .retain(|_, next_allowed| now < *next_allowed);
         refreshes.next_allowed.insert(
             spn.to_string(),
-            now + Duration::from_secs(self.timeout_seconds),
+            now + Duration::from_secs(self.settings().timeout_seconds),
         );
         refreshes.queued.push(spn.to_string());
         drop(refreshes);
@@ -3069,7 +3153,7 @@ where
 
     async fn set_nxcache(&self, id: &Id) {
         let mut nxcache_txn = self.nxcache.lock().await;
-        let ex_time = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
+        let ex_time = SystemTime::now() + Duration::from_secs(self.settings().timeout_seconds);
         nxcache_txn.put(id.clone(), ex_time);
     }
 
@@ -3335,7 +3419,7 @@ where
         clear_password: bool,
     ) -> ResolverResult<()> {
         // Set an expiry
-        let ex_time = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
+        let ex_time = SystemTime::now() + Duration::from_secs(self.settings().timeout_seconds);
         let offset = ex_time
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| {
@@ -3362,7 +3446,7 @@ where
             });
 
         if !requested_shell_exists {
-            token.shell = Some(self.default_shell.clone())
+            token.shell = Some(self.settings().default_shell.clone())
         }
 
         // Filter out groups that are in the nxset
@@ -3406,7 +3490,7 @@ where
 
     async fn set_cache_grouptoken(&self, token: &GroupToken) -> ResolverResult<()> {
         // Set an expiry
-        let ex_time = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
+        let ex_time = SystemTime::now() + Duration::from_secs(self.settings().timeout_seconds);
         let offset = ex_time
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| {
@@ -4039,7 +4123,9 @@ where
             uid: tok.gidnumber,
             gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
             gecos: tok.displayname,
-            shell: tok.shell.unwrap_or_else(|| self.default_shell.clone()),
+            shell: tok
+                .shell
+                .unwrap_or_else(|| self.settings().default_shell.clone()),
             cacheable,
         }
     }
@@ -4119,7 +4205,7 @@ where
         let Some((tok, _)) = token else {
             return Ok(None);
         };
-        if self.initgroups_mode == InitgroupsMode::Full {
+        if self.settings().initgroups_mode == InitgroupsMode::Full {
             return Ok(Some(tok.groups.iter().map(|g| g.gidnumber).collect()));
         }
         let mut named = Vec::with_capacity(tok.groups.len());
@@ -4144,7 +4230,8 @@ where
     /// Without an allow list, a cached identity is allowed without a provider refresh, even if
     /// it has expired. An uncached account is resolved through the provider and allowed if found.
     pub async fn pam_account_allowed(&self, account_id: &str) -> ResolverResult<Option<bool>> {
-        if self.pam_allow_groups.is_empty() {
+        let settings = self.settings();
+        if settings.pam_allow_groups.is_empty() {
             if self.check_nxset(Some(account_id), None).await {
                 return Ok(None);
             }
@@ -4178,13 +4265,13 @@ where
 
             debug!(
                 "Checking if user is in allowed groups ({:?}) -> {:?}",
-                self.pam_allow_groups,
+                settings.pam_allow_groups,
                 user_set
                     .iter()
                     .filter(|s| s.as_str() != account_id)
                     .cloned(),
             );
-            let intersection_count = user_set.intersection(&self.pam_allow_groups).count();
+            let intersection_count = user_set.intersection(&settings.pam_allow_groups).count();
             debug!("Number of intersecting groups: {}", intersection_count);
             debug!("User has valid token: {}", tok.valid);
 

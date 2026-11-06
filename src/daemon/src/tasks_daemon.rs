@@ -51,6 +51,7 @@ use std::process::Command;
 use tempfile::NamedTempFile;
 use tokio::net::UnixStream;
 use tokio::sync::broadcast;
+use tokio::sync::watch;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
@@ -685,11 +686,16 @@ fn write_kerberos_config_snippet_to(
     Ok(())
 }
 
-async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
+async fn handle_tasks(
+    stream: UnixStream,
+    startup_cfg: &HimmelblauConfig,
+    cfg_rx: &watch::Receiver<HimmelblauConfig>,
+) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
 
     loop {
         let next_req = reqs.next().await;
+        let cfg = cfg_rx.borrow().clone();
         let span = span!(Level::INFO, "TaskRequest");
         let _ = span.enter();
         match next_req {
@@ -699,7 +705,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
 
                 let resp = match create_home_directory(
                     &info,
-                    &cfg.get_home_prefix(domain),
+                    &startup_cfg.get_home_prefix(domain),
                     cfg.get_use_etc_skel(),
                     cfg.get_selinux(),
                 ) {
@@ -832,7 +838,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 };
                 let noncompliant_rules = match apply_intune_policy(
                     &intune_device_id,
-                    cfg,
+                    &cfg,
                     &account_id,
                     &graph_token,
                     &intune_token,
@@ -907,6 +913,48 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     }
 }
 
+fn notify_reloading() -> io::Result<()> {
+    let monotonic_usec = NotifyState::monotonic_usec_now()?;
+    sd_notify::notify(&[NotifyState::Reloading, monotonic_usec])
+}
+
+/// Settings read only at startup that differ between `old` and `new`, with the services to restart.
+fn restart_required_changes(
+    old: &HimmelblauConfig,
+    new: &HimmelblauConfig,
+) -> Vec<(&'static str, &'static str)> {
+    let home_prefix = |c: &HimmelblauConfig| {
+        let domain = c.get_configured_entra_domain();
+        (
+            c.get_home_prefix(None),
+            c.get_home_prefix(domain.as_deref()),
+        )
+    };
+    let mut changed = Vec::new();
+    if old.get_task_socket_path() != new.get_task_socket_path() {
+        changed.push(("task_socket_path", "himmelblaud and himmelblaud-tasks"));
+    }
+    if old.get_debug() != new.get_debug() {
+        changed.push(("debug", "himmelblaud-tasks"));
+    }
+    if home_prefix(old) != home_prefix(new) {
+        changed.push(("home_prefix", "himmelblaud and himmelblaud-tasks"));
+    }
+    changed
+}
+
+fn reload_config(cfg_path: &str, cfg_tx: &watch::Sender<HimmelblauConfig>) -> Result<(), String> {
+    let cfg = HimmelblauConfig::new(Some(cfg_path))?;
+    if cfg.get_effective_config_paths().is_empty() {
+        return Err(format!("no configuration found at {}", cfg_path));
+    }
+    for (setting, services) in restart_required_changes(&cfg_tx.borrow(), &cfg) {
+        warn!("{} changed; restart {} to apply it", setting, services);
+    }
+    cfg_tx.send_replace(cfg);
+    Ok(())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     // let cuid = get_current_uid();
@@ -960,6 +1008,8 @@ async fn main() -> ExitCode {
 
             let task_sock_path = cfg.get_task_socket_path();
             debug!("Attempting to use {} ...", task_sock_path);
+            let startup_cfg = cfg.clone();
+            let (cfg_tx, cfg_rx) = watch::channel(cfg);
 
             let (broadcast_tx, mut broadcast_rx) = broadcast::channel(4);
             let mut d_broadcast_rx = broadcast_tx.subscribe();
@@ -982,7 +1032,7 @@ async fn main() -> ExitCode {
                                         _ = d_broadcast_rx.recv() => {
                                             break;
                                         }
-                                        _ = handle_tasks(stream, &cfg) => {
+                                        _ = handle_tasks(stream, &startup_cfg, &cfg_rx) => {
                                             continue;
                                         }
                                     }
@@ -998,6 +1048,17 @@ async fn main() -> ExitCode {
                     }
                 }
             });
+
+            // systemd checks for the reload signal handler when it receives READY=1.
+            let mut sighup = match tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::hangup(),
+            ) {
+                Ok(signal) => signal,
+                Err(e) => {
+                    error!("Failed to register SIGHUP handler: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
 
             info!("Server started ...");
 
@@ -1038,12 +1099,24 @@ async fn main() -> ExitCode {
                     } => {
                         // Ignore
                     }
-                    Some(()) = async move {
-                        let sigterm = tokio::signal::unix::SignalKind::hangup();
-                        #[allow(clippy::unwrap_used)]
-                        tokio::signal::unix::signal(sigterm).unwrap().recv().await
-                    } => {
-                        // Ignore
+                    Some(()) = sighup.recv() => {
+                        if systemd_booted {
+                            if let Err(e) = notify_reloading() {
+                                error!("Failed to notify systemd of reload: {}", e);
+                            }
+                        }
+                        match reload_config(config_path_str, &cfg_tx) {
+                            Ok(()) => info!("Reloaded configuration from {}", config_path_str),
+                            Err(e) => error!(
+                                "Failed to reload configuration from {}, keeping the previous configuration: {}",
+                                config_path_str, e
+                            ),
+                        }
+                        if systemd_booted {
+                            if let Err(e) = sd_notify::notify(&[NotifyState::Ready]) {
+                                error!("Failed to notify systemd of reload completion: {}", e);
+                            }
+                        }
                     }
                     Some(()) = async move {
                         let sigterm = tokio::signal::unix::SignalKind::user_defined1();
@@ -1280,5 +1353,24 @@ mod tests {
 
         assert!(err.contains("Failed to validate tenant ID"));
         assert!(!krb_conf_dir.exists());
+    }
+
+    #[test]
+    fn restart_required_changes_reports_startup_settings() {
+        let old = HimmelblauConfig::new(Some("/dev/null")).unwrap();
+        let mut new = old.clone();
+        new.set("global", "local_groups", "users");
+        new.set("global", "logon_script", "/usr/local/bin/logon.sh");
+        assert!(restart_required_changes(&old, &new).is_empty());
+
+        new.set("global", "debug", "true");
+        new.set("global", "home_prefix", "/srv/home/");
+        assert_eq!(
+            restart_required_changes(&old, &new),
+            vec![
+                ("debug", "himmelblaud-tasks"),
+                ("home_prefix", "himmelblaud and himmelblaud-tasks")
+            ]
+        );
     }
 }

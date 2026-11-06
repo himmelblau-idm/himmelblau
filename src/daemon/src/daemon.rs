@@ -66,6 +66,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tokio::sync::Mutex;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
@@ -427,10 +428,10 @@ async fn reconcile_local_groups_once(
 async fn reconcile_local_groups_periodically(
     cachelayer: Arc<Resolver<IdProviderProxy>>,
     task_channel_tx: Arc<Sender<AsyncTaskRequest>>,
-    cfg: HimmelblauConfig,
+    cfg_rx: watch::Receiver<HimmelblauConfig>,
     mut shutdown_rx: broadcast::Receiver<bool>,
 ) {
-    let interval_secs = cfg.get_local_groups_reconcile_interval();
+    let interval_secs = cfg_rx.borrow().get_local_groups_reconcile_interval();
     if interval_secs == 0 {
         info!("Periodic local group reconciliation disabled");
         return;
@@ -445,6 +446,7 @@ async fn reconcile_local_groups_periodically(
                 break;
             }
             _ = interval.tick() => {
+                let cfg = cfg_rx.borrow().clone();
                 reconcile_local_groups_once(&cachelayer, &task_channel_tx, &cfg).await;
             }
         }
@@ -1738,12 +1740,124 @@ mod tests {
     fn hello_pin_change_denies_unresolvable_account() {
         assert!(!peer_may_change_hello_pin(1000, None));
     }
+
+    #[test]
+    fn validate_config_rejects_overlapping_id_ranges() {
+        let mut cfg = HimmelblauConfig::new(Some("/dev/null")).unwrap();
+        cfg.set("global", "idmap_range", "1000000-2000000");
+        cfg.set("global", "subid_range", "3000000-4000000");
+        assert!(validate_config(&cfg).is_ok());
+
+        cfg.set("global", "subid_range", "1500000-2500000");
+        assert!(validate_config(&cfg).is_err());
+    }
+
+    #[test]
+    fn restart_required_changes_reports_startup_settings() {
+        let old = HimmelblauConfig::new(Some("/dev/null")).unwrap();
+        let mut new = old.clone();
+        new.set("global", "pam_allow_groups", "group-a");
+        new.set("global", "enable_hello", "false");
+        new.set("global", "local_groups", "users");
+        assert!(restart_required_changes(&old, &new).is_empty());
+
+        new.set("global", "db_path", "/tmp/himmelblau.cache.db");
+        new.set("global", "home_prefix", "/srv/home/");
+        assert_eq!(
+            restart_required_changes(&old, &new),
+            vec![("db_path", DAEMON), ("home_prefix", BOTH)]
+        );
+    }
 }
 
-fn notify_noop_reload() -> io::Result<()> {
+fn notify_reloading() -> io::Result<()> {
     let monotonic_usec = NotifyState::monotonic_usec_now()?;
-    sd_notify::notify(&[NotifyState::Reloading, monotonic_usec])?;
-    sd_notify::notify(&[NotifyState::Ready])
+    sd_notify::notify(&[NotifyState::Reloading, monotonic_usec])
+}
+
+fn validate_config(cfg: &HimmelblauConfig) -> Result<(), String> {
+    let subid_range = cfg.get_subid_range();
+    let idmap_range = cfg.get_idmap_range("_");
+
+    // Ranges overlap if one starts before the other ends
+    if idmap_range.0 <= subid_range.1 && subid_range.0 <= idmap_range.1 {
+        return Err(format!(
+            "idmap_range ({}-{}) overlaps with subid_range ({}-{}). \
+            These ranges must not overlap to prevent ID conflicts. \
+            Please adjust your configuration.",
+            idmap_range.0, idmap_range.1, subid_range.0, subid_range.1
+        ));
+    }
+    Ok(())
+}
+
+type ConfigGetter = fn(&HimmelblauConfig) -> String;
+
+const DAEMON: &str = "himmelblaud";
+const BOTH: &str = "himmelblaud and himmelblaud-tasks";
+
+/// Settings read only at startup, with the services that must be restarted to apply them.
+const RESTART_REQUIRED_SETTINGS: &[(&str, &str, ConfigGetter)] = &[
+    ("socket_path", DAEMON, |c| c.get_socket_path()),
+    ("task_socket_path", BOTH, |c| c.get_task_socket_path()),
+    ("broker_socket_path", DAEMON, |c| c.get_broker_socket_path()),
+    ("db_path", DAEMON, |c| c.get_db_path()),
+    ("hsm_type", DAEMON, |c| format!("{:?}", c.get_hsm_type())),
+    ("tpm_tcti_name", DAEMON, |c| c.get_tpm_tcti_name()),
+    ("hsm_pin_path", DAEMON, |c| c.get_hsm_pin_path()),
+    ("debug", BOTH, |c| c.get_debug().to_string()),
+    ("home_prefix", BOTH, |c| {
+        home_setting(c, HimmelblauConfig::get_home_prefix)
+    }),
+    ("home_attr", BOTH, |c| {
+        home_setting(c, HimmelblauConfig::get_home_attr)
+    }),
+    ("home_alias", BOTH, |c| {
+        home_setting(c, HimmelblauConfig::get_home_alias)
+    }),
+    ("user_map_file", DAEMON, |c| c.get_user_map_file()),
+    ("local_groups_reconcile_interval", DAEMON, |c| {
+        c.get_local_groups_reconcile_interval().to_string()
+    }),
+];
+
+fn home_setting<T: std::fmt::Debug>(
+    cfg: &HimmelblauConfig,
+    get: fn(&HimmelblauConfig, Option<&str>) -> T,
+) -> String {
+    let domain = cfg.get_configured_entra_domain();
+    format!("{:?}", (get(cfg, None), get(cfg, domain.as_deref())))
+}
+
+fn restart_required_changes(
+    old: &HimmelblauConfig,
+    new: &HimmelblauConfig,
+) -> Vec<(&'static str, &'static str)> {
+    RESTART_REQUIRED_SETTINGS
+        .iter()
+        .filter(|(_, _, get)| get(old) != get(new))
+        .map(|(name, services, _)| (*name, *services))
+        .collect()
+}
+
+async fn reload_config(
+    cfg_path: &str,
+    cfg_tx: &watch::Sender<HimmelblauConfig>,
+    cachelayer: &Resolver<IdProviderProxy>,
+) -> Result<(), String> {
+    let cfg = HimmelblauConfig::new(Some(cfg_path))?;
+    if cfg.get_effective_config_paths().is_empty() {
+        return Err(format!("no configuration found at {}", cfg_path));
+    }
+    validate_config(&cfg)?;
+    cachelayer.reload_config(&cfg).await?;
+
+    let changed = restart_required_changes(&cfg_tx.borrow(), &cfg);
+    for (setting, services) in changed {
+        warn!("{} changed; restart {} to apply it", setting, services);
+    }
+    cfg_tx.send_replace(cfg);
+    Ok(())
 }
 
 async fn process_etc_passwd_group(
@@ -1911,21 +2025,12 @@ async fn main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
 
-            // Validate that idmap_range and subid_range don't overlap
-            let subid_range = cfg.get_subid_range();
-            let idmap_range = cfg.get_idmap_range("_");
-
-            // Ranges overlap if one starts before the other ends
-            if idmap_range.0 <= subid_range.1 && subid_range.0 <= idmap_range.1 {
-                error!(
-                    "Configuration error: idmap_range ({}-{}) overlaps with subid_range ({}-{}). \
-                    These ranges must not overlap to prevent ID conflicts. \
-                    Please adjust your configuration.",
-                    idmap_range.0, idmap_range.1, subid_range.0, subid_range.1
-                );
+            if let Err(e) = validate_config(&cfg) {
+                error!("Configuration error: {}", e);
                 return ExitCode::FAILURE;
             }
 
+            let subid_range = cfg.get_subid_range();
             info!(
                 "Subordinate ID support enabled with range {}-{}",
                 subid_range.0, subid_range.1
@@ -2208,14 +2313,16 @@ async fn main() -> ExitCode {
             let local_groups_broadcast_rx = broadcast_tx.subscribe();
             let identity_refresh_broadcast_rx = broadcast_tx.subscribe();
 
+            let (cfg_tx, cfg_rx) = watch::channel(cfg.clone());
+
             let local_groups_cachelayer = cachelayer.clone();
             let local_groups_task_channel_tx = task_channel_tx.clone();
-            let local_groups_cfg = cfg.clone();
+            let local_groups_cfg_rx = cfg_rx.clone();
             let local_groups_reconciler = tokio::spawn(async move {
                 reconcile_local_groups_periodically(
                     local_groups_cachelayer,
                     local_groups_task_channel_tx,
-                    local_groups_cfg,
+                    local_groups_cfg_rx,
                     local_groups_broadcast_rx,
                 )
                 .await;
@@ -2392,12 +2499,12 @@ async fn main() -> ExitCode {
 
             // Keep a reference for PRT FD store persistence on service shutdown.
             let shutdown_cachelayer = cachelayer.clone();
+            let reload_cachelayer = cachelayer.clone();
             let intune_policy_throttle = Arc::new(Mutex::new(HashMap::new()));
 
             let task_a = tokio::spawn(async move {
                 loop {
                     let tc_tx = task_channel_tx_cln.clone();
-                    let cfg_h = cfg.clone();
                     let intune_policy_throttle = intune_policy_throttle.clone();
 
                     tokio::select! {
@@ -2407,6 +2514,7 @@ async fn main() -> ExitCode {
                         accept_res = listener.accept() => {
                             match accept_res {
                                 Ok((socket, _addr)) => {
+                                    let cfg_h = cfg_rx.borrow().clone();
                                     let cachelayer_ref = cachelayer.clone();
                                     tokio::spawn(async move {
                                         if let Err(e) = handle_client(socket, cachelayer_ref.clone(), &tc_tx, intune_policy_throttle, cfg_h).await
@@ -2476,8 +2584,20 @@ async fn main() -> ExitCode {
                     }
                     Some(()) = sighup.recv() => {
                         if systemd_booted {
-                            if let Err(e) = notify_noop_reload() {
-                                error!("Failed to acknowledge systemd reload: {}", e);
+                            if let Err(e) = notify_reloading() {
+                                error!("Failed to notify systemd of reload: {}", e);
+                            }
+                        }
+                        match reload_config(cfg_path_str, &cfg_tx, &reload_cachelayer).await {
+                            Ok(()) => info!("Reloaded configuration from {}", cfg_path_str),
+                            Err(e) => error!(
+                                "Failed to reload configuration from {}, keeping the previous configuration: {}",
+                                cfg_path_str, e
+                            ),
+                        }
+                        if systemd_booted {
+                            if let Err(e) = sd_notify::notify(&[NotifyState::Ready]) {
+                                error!("Failed to notify systemd of reload completion: {}", e);
                             }
                         }
                     }

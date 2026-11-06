@@ -11,6 +11,11 @@ The daemon operates as a background service and does not accept any command-line
 .SH USAGE
 The `himmelblaud-tasks` daemon must be run as the root user. If the daemon is started without root privileges, it will fail with an error. No user interaction is needed beyond ensuring the daemon is active and running correctly.
 
+.SH SIGNALS
+.TP
+.B SIGHUP
+Reload the configuration without restarting the daemon. With systemd 253 or later, \fBsystemctl reload himmelblaud\fR reloads both \fBhimmelblaud\fR and this daemon; with older systemd versions, use \fBsystemctl kill \-\-signal=HUP himmelblaud himmelblaud-tasks\fR. If the new configuration cannot be read, the error is logged and the previous configuration stays in effect. Changes to \fBtask_socket_path\fR, \fBdebug\fR and \fBhome_prefix\fR log a warning and take effect after a restart.
+
 .SH EXAMPLES
 .TP
 .B Start the daemon:
