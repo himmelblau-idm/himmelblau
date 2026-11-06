@@ -246,7 +246,7 @@ in
               };
               auth.himmelblau = {
                 order = authUnixOrder - 10;
-                control = "sufficient";
+                control = "[success=done new_authtok_reqd=done abort=die default=ignore]";
                 modulePath = "${cfg.pamPackage.lib}/lib/libpam_himmelblau.so";
                 settings.mfa_poll_prompt = cfg.mfaSshWorkaroundFlag && service == "sshd";
                 settings.debug = cfg.debugFlag;

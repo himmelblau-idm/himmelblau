@@ -3510,6 +3510,7 @@ dependencies = [
  "himmelblau_unix_common",
  "libc",
  "libnss",
+ "serde_json",
  "uuid",
 ]
 
