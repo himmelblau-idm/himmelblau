@@ -18,7 +18,6 @@
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::idprovider::interface::Id;
 use himmelblau_unix_common::idprovider::IdProviderProxy;
 use himmelblau_unix_common::resolver::Resolver;
@@ -111,13 +110,16 @@ fn build_req_cnf(pop_params: &Option<PopParamsReq>) -> Option<String> {
 #[derive(Clone)]
 pub(crate) struct Broker {
     pub(crate) cachelayer: Arc<Resolver<IdProviderProxy>>,
-    pub(crate) config_path: String,
 }
 
 impl Broker {
-    fn environment_for_account(&self, account_id: &str) -> Result<String, Box<dyn Error>> {
+    async fn environment_for_account(&self, account_id: &str) -> Result<String, Box<dyn Error>> {
         // Domain discovery can update the server-generated config after startup.
-        let config = HimmelblauConfig::new(Some(&self.config_path))?;
+        let config = self
+            .cachelayer
+            .current_config()
+            .await
+            .ok_or("No active configuration")?;
         config
             .get_broker_environment_for_account(account_id)
             .ok_or_else(|| "Unable to resolve account authority".into())
@@ -223,7 +225,7 @@ impl HimmelblauBroker for Broker {
             .await
             .map_err(|_| "Unable to load account")?
             .ok_or("Unable to find account")?;
-        let authority_host = self.environment_for_account(&user.spn)?;
+        let authority_host = self.environment_for_account(&user.spn).await?;
         let res = json!({
             "accounts": [
                 {
@@ -265,7 +267,7 @@ impl HimmelblauBroker for Broker {
             .await
             .map_err(|_| "Unable to load account")?
             .ok_or("Unable to find account")?;
-        let authority_host = self.environment_for_account(&user.spn)?;
+        let authority_host = self.environment_for_account(&user.spn).await?;
         let request: SsoCookieReq =
             serde_json::from_str(&request_json).map_err(|e| format!("{:?}", e))?;
         let account = request

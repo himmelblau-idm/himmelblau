@@ -40,7 +40,8 @@ NixOS-specific requirements and intentional deviations from the generated units:
 - Retain RequiresMountsFor on the HSM credential directory so initialization
   waits for the filesystem containing the encrypted credential.
 - Keep NixOS's nscd/nsncd NSS proxy running; do not add Conflicts=nscd.service.
-- Keep the daemon's Type=notify because it does not implement notify-reload.
+- Keep Type=notify for the daemon and tasks services, without reload
+  propagation, because the NixOS module does not wire up configuration reloads.
 - Retain the tasks service's BindsTo dependency instead of Requires, while
   ordering it after the daemon.
 - Use configurable Nix package/configuration paths and Nix-provided tools,
@@ -89,7 +90,7 @@ NIXOS_DIRECTIVE_DIFFERENCES = {
             "WantedBy": ("add", "accounts-daemon.service"),
         },
         "Service": {
-            # The daemon implements notify, not notify-reload.
+            # The NixOS module does not wire up configuration reloads.
             "Type": ("set", "notify"),
             # Explicit local TPM access in the default NixOS configuration.
             "DeviceAllow": ("set", "char-tpm rw"),
@@ -101,6 +102,10 @@ NIXOS_DIRECTIVE_DIFFERENCES = {
             "Requires": ("remove", "himmelblaud.service"),
             "BindsTo": ("add", "himmelblaud.service"),
             "Wants": ("add", "network-online.target"),
+            "ReloadPropagatedFrom": ("remove", "himmelblaud.service"),
+        },
+        "Service": {
+            "Type": ("set", "notify"),
         },
     },
     "himmelblau-hsm-pin-init.service": {
