@@ -68,6 +68,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio::sync::Mutex;
+use tokio::sync::Notify;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
@@ -2521,6 +2522,30 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let reload_requested = Arc::new(Notify::new());
+            let reload_task = {
+                let reload_requested = reload_requested.clone();
+                let startup_cfg = cfg.clone();
+                let cfg_path = cfg_path_str.to_string();
+                tokio::spawn(async move {
+                    loop {
+                        reload_requested.notified().await;
+                        match reload_config(&cfg_path, &startup_cfg, &cfg_tx, &reload_cachelayer).await {
+                            Ok(()) => info!("Reloaded configuration from {}", cfg_path),
+                            Err(e) => error!(
+                                "Failed to reload configuration from {}, keeping the previous configuration: {}",
+                                cfg_path, e
+                            ),
+                        }
+                        if systemd_booted {
+                            if let Err(e) = sd_notify::notify(&[NotifyState::Ready]) {
+                                error!("Failed to notify systemd of reload completion: {}", e);
+                            }
+                        }
+                    }
+                })
+            };
+
             info!("Server started ...");
 
             if systemd_booted {
@@ -2564,18 +2589,7 @@ async fn main() -> ExitCode {
                                 error!("Failed to notify systemd of reload: {}", e);
                             }
                         }
-                        match reload_config(cfg_path_str, &cfg, &cfg_tx, &reload_cachelayer).await {
-                            Ok(()) => info!("Reloaded configuration from {}", cfg_path_str),
-                            Err(e) => error!(
-                                "Failed to reload configuration from {}, keeping the previous configuration: {}",
-                                cfg_path_str, e
-                            ),
-                        }
-                        if systemd_booted {
-                            if let Err(e) = sd_notify::notify(&[NotifyState::Ready]) {
-                                error!("Failed to notify systemd of reload completion: {}", e);
-                            }
-                        }
+                        reload_requested.notify_one();
                     }
                     Some(()) = async move {
                         let sigterm = tokio::signal::unix::SignalKind::user_defined1();
@@ -2603,6 +2617,7 @@ async fn main() -> ExitCode {
             }
 
             info!("Signal received, sending down signal to tasks");
+            reload_task.abort();
 
             // Persist broker PRTs to systemd FileDescriptorStore so they
             // survive a daemon restart.  Always remove any previously stored

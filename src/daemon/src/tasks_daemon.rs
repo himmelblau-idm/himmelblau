@@ -1387,7 +1387,6 @@ mod tests {
         let startup = HimmelblauConfig::new(Some(&path)).unwrap();
         let (cfg_tx, cfg_rx) = watch::channel(startup.clone());
 
-        // himmelblaud rejects an app_id change, so the new local_groups must not apply here.
         fs::write(&path, config("app-b", "wheel")).unwrap();
         assert!(reload_config(&path, &startup, &cfg_tx).is_err());
         assert_eq!(cfg_rx.borrow().get_local_groups(), vec!["users"]);

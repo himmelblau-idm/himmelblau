@@ -35,9 +35,9 @@ Print the version of the `himmelblaud` daemon and exit.
 .SH SIGNALS
 .TP
 .B SIGHUP
-Reload the configuration without restarting the daemon. If the unit uses \fBType=notify-reload\fR, as the units generated for systemd 253 or later do, \fBsystemctl reload himmelblaud\fR sends this signal and also reloads \fBhimmelblaud-tasks\fR. Otherwise, for example with older systemd versions or the NixOS module, use \fBsystemctl kill \-\-signal=HUP himmelblaud himmelblaud-tasks\fR. The result of the reload is logged. If the new configuration cannot be read or is invalid, the error is logged and the previous configuration stays in effect.
+Reload the configuration without restarting the daemon. If the unit uses \fBType=notify-reload\fR, as the units generated for systemd 253 or later do, \fBsystemctl reload himmelblaud\fR sends this signal and also reloads \fBhimmelblaud-tasks\fR. Otherwise, for example with older systemd versions or the NixOS module, use \fBsystemctl kill \-\-kill-who=main \-\-signal=HUP himmelblaud himmelblaud-tasks\fR, which signals only the daemons and not the scripts they run. The result of the reload is logged. If the new configuration cannot be read or is invalid, the error is logged and the previous configuration stays in effect.
 
-A reload that changes \fBdomain\fR, \fBoidc_issuer_url\fR, \fBoidc_redirect_uri\fR, \fBapp_id\fR, \fBtenant_id\fR, \fBauthority_host\fR, \fBgraph_url\fR, \fBodc_provider\fR or \fBidmap_range\fR is rejected, and the previous configuration stays in effect. \fBhimmelblaud-tasks\fR rejects the same reloads. Restart both services to apply these settings.
+A reload that changes \fBdomain\fR, \fBoidc_issuer_url\fR, \fBoidc_redirect_uri\fR, \fBoidc_force_interaction_code\fR, \fBoidc_device_authorization_endpoint\fR, \fBapp_id\fR, \fBtenant_id\fR, \fBauthority_host\fR, \fBgraph_url\fR, \fBodc_provider\fR or \fBidmap_range\fR is rejected, and the previous configuration stays in effect. \fBhimmelblaud-tasks\fR rejects the same reloads. Restart both services to apply these settings.
 
 The following settings are read only at startup. A reload that changes them logs a warning, and they take effect after the listed services are restarted:
 .RS

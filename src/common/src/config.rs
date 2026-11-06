@@ -212,6 +212,7 @@ pub struct HimmelblauConfig {
     effective_config_paths: Vec<PathBuf>,
     /// Values from the admin's files only, without those the daemon writes to SERVER_CONFIG_PATH.
     admin_config: Ini,
+    runtime_values: Ini,
 }
 
 fn str_to_home_attr(attrib: &str) -> HomeAttr {
@@ -398,13 +399,14 @@ impl HimmelblauConfig {
             filename,
             effective_config_paths,
             admin_config,
+            runtime_values: Ini::new(),
         })
     }
 
     /// Check that `idmap_range` and `subid_range` do not overlap.
     pub fn validate(&self) -> Result<(), String> {
         let subid_range = self.get_subid_range();
-        let idmap_range = self.get_idmap_range("_");
+        let idmap_range = self.get_idmap_range(&self.provider_section());
 
         // Ranges overlap if one starts before the other ends
         if idmap_range.0 <= subid_range.1 && subid_range.0 <= idmap_range.1 {
@@ -441,6 +443,26 @@ impl HimmelblauConfig {
             filename: self.filename.clone(),
             effective_config_paths: self.effective_config_paths.clone(),
             admin_config: self.admin_config.clone(),
+            runtime_values: Ini::new(),
+        }
+    }
+
+    fn provider_section(&self) -> String {
+        if self.get_oidc_issuer_url().is_some() {
+            return "oidc".to_string();
+        }
+        self.get_configured_entra_domain()
+            .unwrap_or_else(|| "_".to_string())
+    }
+
+    /// Copy the values `current` set at runtime, such as discovered aliases, into this configuration.
+    pub fn keep_runtime_values(&mut self, current: &HimmelblauConfig) {
+        for (section, keys) in current.runtime_values.get_map_ref() {
+            for (key, value) in keys {
+                if let Some(value) = value {
+                    self.set(section, key, value);
+                }
+            }
         }
     }
 
@@ -750,6 +772,8 @@ impl HimmelblauConfig {
 
     pub fn set(&mut self, section: &str, key: &str, value: &str) {
         self.config.set(section, key, Some(value.to_string()));
+        self.runtime_values
+            .set(section, key, Some(value.to_string()));
     }
 
     pub fn get_configured_domains(&self) -> Vec<String> {
@@ -1134,9 +1158,10 @@ impl HimmelblauConfig {
 
 /// Names of the settings the identity provider is built from that differ between `old` and `new`.
 fn provider_settings_changed(old: &HimmelblauConfig, new: &HimmelblauConfig) -> Vec<&'static str> {
-    fn settings(cfg: &HimmelblauConfig) -> [(&'static str, String); 9] {
+    fn settings(cfg: &HimmelblauConfig) -> [(&'static str, String); 11] {
         let domain = cfg.get_configured_entra_domain();
-        let section = domain.clone().unwrap_or_else(|| "oidc".to_string());
+        let section = cfg.provider_section();
+        let oidc = cfg.get_oidc_issuer_url().is_some();
         let idmap_range = (
             cfg.get(&section, "idmap_range"),
             cfg.get("global", "idmap_range"),
@@ -1148,6 +1173,17 @@ fn provider_settings_changed(old: &HimmelblauConfig, new: &HimmelblauConfig) -> 
                 format!("{:?}", cfg.get_oidc_issuer_url()),
             ),
             ("oidc_redirect_uri", cfg.get_oidc_redirect_uri()),
+            (
+                "oidc_force_interaction_code",
+                format!("{:?}", oidc.then(|| cfg.get_oidc_force_interaction_code())),
+            ),
+            (
+                "oidc_device_authorization_endpoint",
+                format!(
+                    "{:?}",
+                    oidc.then(|| cfg.get_oidc_device_authorization_endpoint())
+                ),
+            ),
             ("app_id", format!("{:?}", cfg.get_app_id(&section))),
             ("tenant_id", format!("{:?}", cfg.get_tenant_id(&section))),
             ("authority_host", cfg.get_authority_host(&section)),
@@ -3073,6 +3109,57 @@ mod tests {
 
         fs::remove_file(&path).unwrap();
         assert!(startup.reload_from(&path).is_err());
+    }
+
+    #[test]
+    fn validate_checks_the_active_provider_range() {
+        let cfg = HimmelblauConfig::new(Some(&create_temp_config(
+            "[global]\ndomain = example.com\nsubid_range = 3000000-4000000\n\n\
+             [example.com]\nidmap_range = 3500000-3600000\n",
+        )))
+        .unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn reload_from_rejects_cached_oidc_settings_only_for_oidc() {
+        let oidc =
+            "[global]\noidc_issuer_url = https://idp.example.com\n\n[oidc]\napp_id = app-a\n";
+        let path = create_temp_config(oidc);
+        let startup = HimmelblauConfig::new(Some(&path)).unwrap();
+        for setting in [
+            "oidc_force_interaction_code = true",
+            "oidc_device_authorization_endpoint = https://idp.example.com/device",
+        ] {
+            let changed = oidc.replace("[global]\n", &format!("[global]\n{}\n", setting));
+            fs::write(&path, changed).unwrap();
+            let err = startup.reload_from(&path).unwrap_err();
+            assert!(err.contains(setting.split(' ').next().unwrap()), "{}", err);
+        }
+
+        let entra = "[global]\ndomain = example.com\n";
+        let path = create_temp_config(entra);
+        let startup = HimmelblauConfig::new(Some(&path)).unwrap();
+        fs::write(
+            &path,
+            format!("{}oidc_force_interaction_code = true\n", entra),
+        )
+        .unwrap();
+        assert!(startup.reload_from(&path).is_ok());
+    }
+
+    #[test]
+    fn keep_runtime_values_preserves_discoveries() {
+        let path = create_temp_config("[global]\ndomain = example.com\n");
+        let mut current = HimmelblauConfig::new(Some(&path)).unwrap();
+        current.set("example.com", "domain_aliases", "alias.example.com");
+        let mut new = HimmelblauConfig::new(Some(&path)).unwrap();
+        assert_eq!(new.get("example.com", "domain_aliases"), None);
+        new.keep_runtime_values(&current);
+        assert_eq!(
+            new.get("example.com", "domain_aliases").as_deref(),
+            Some("alias.example.com")
+        );
     }
 
     #[test]
