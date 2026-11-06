@@ -257,7 +257,7 @@ jobs:
       - name: Prepare exact locked dependencies in the fresh private Cargo cache
         if: steps.guard.outputs.proceed == 'true' && inputs.stage != 'dependencies'
         run: |
-          python3 tooling/.github/scripts/stable_maintenance.py \
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort \
             --repo-dir source --state-dir "$STATE_DIR" prepare --branch "$TARGET_BRANCH"
 
       - name: Initialize — snapshot trusted refs and backport cutoff
@@ -270,14 +270,14 @@ jobs:
       - name: Supply chain — refresh cargo-vet imports
         if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies'
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           refresh-vet-imports --branch "$TARGET_BRANCH"
 
       - name: Dependencies — audit and update crates
         if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies'
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           update-dependencies --branch "$TARGET_BRANCH"
 
@@ -289,7 +289,7 @@ jobs:
           AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
           AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT || 'gpt-5.5' }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           vet-dependencies --branch "$TARGET_BRANCH"
 
@@ -298,7 +298,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           import-dependabot --branch "$TARGET_BRANCH"
 
@@ -311,21 +311,21 @@ jobs:
           AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
           AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT || 'gpt-5.5' }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           backports --branch "$TARGET_BRANCH"
 
       - name: Release — increment the patch version
         if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'final'
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           release --branch "$TARGET_BRANCH"
 
       - name: Validate — run clean release gates
         if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'final'
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           validate --branch "$TARGET_BRANCH"
 
@@ -396,3 +396,4 @@ jobs:
             ${{ env.STATE_DIR }}/report.json
           if-no-files-found: warn
           retention-days: 30
+
