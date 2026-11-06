@@ -6487,6 +6487,18 @@ class RecoveryMaintenanceTests(unittest.TestCase):
             self.assertIn("phase_failures", sm.CHECKPOINT_KEYS)
             self.assertNotIn("secret", json.dumps(state.load()))
 
+    def test_workflow_attempts_recovery_and_publication_after_prior_step_failure(self):
+        workflow = STAGE_WORKFLOW.read_text()
+        for block in workflow.split("      - name: "):
+            if "--best-effort" in block or block.startswith(("Create scoped publication token", "Publish —", "Checkpoint —", "Preserve exact checkpoint")):
+                condition = next(line for line in block.splitlines() if line.strip().startswith("if:"))
+                self.assertIn("!cancelled()", condition)
+                self.assertIn("steps.guard.outputs.proceed", condition)
+        for line in BRANCH_WORKFLOW.read_text().splitlines():
+            if "if:" in line:
+                self.assertIn("!cancelled()", line)
+                self.assertIn(".outputs.head != ''", line)
+
     def test_recovery_does_not_catch_integrity_or_transport_failures(self):
         for phase in ("initialize", "resume", "checkpoint", "publish"):
             args = mock.Mock(command=phase)

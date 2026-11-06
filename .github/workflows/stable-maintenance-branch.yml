@@ -19,7 +19,7 @@ jobs:
 
   vet:
     needs: dependencies
-    if: needs.dependencies.outputs.proceed == 'true'
+    if: ${{ !cancelled() && needs.dependencies.outputs.proceed == 'true' && needs.dependencies.outputs.head != '' }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -33,7 +33,7 @@ jobs:
 
   backports-1:
     needs: vet
-    if: needs.vet.outputs.proceed == 'true'
+    if: ${{ !cancelled() && needs.vet.outputs.proceed == 'true' && needs.vet.outputs.head != '' }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -47,7 +47,7 @@ jobs:
 
   backports-2:
     needs: backports-1
-    if: needs.backports-1.outputs.proceed == 'true'
+    if: ${{ !cancelled() && needs.backports-1.outputs.proceed == 'true' && needs.backports-1.outputs.head != '' }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -61,7 +61,7 @@ jobs:
 
   backports-3:
     needs: backports-2
-    if: needs.backports-2.outputs.proceed == 'true'
+    if: ${{ !cancelled() && needs.backports-2.outputs.proceed == 'true' && needs.backports-2.outputs.head != '' }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -75,7 +75,7 @@ jobs:
 
   backports-4:
     needs: backports-3
-    if: needs.backports-3.outputs.proceed == 'true'
+    if: ${{ !cancelled() && needs.backports-3.outputs.proceed == 'true' && needs.backports-3.outputs.head != '' }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -89,7 +89,7 @@ jobs:
 
   final:
     needs: backports-4
-    if: needs.backports-4.outputs.proceed == 'true'
+    if: ${{ !cancelled() && needs.backports-4.outputs.proceed == 'true' && needs.backports-4.outputs.head != '' }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -100,3 +100,4 @@ jobs:
       checkpoint-ref: ${{ needs.backports-4.outputs.ref }}
       checkpoint-artifact: ${{ needs.backports-4.outputs.artifact }}
     secrets: inherit
+
