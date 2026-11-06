@@ -40,7 +40,7 @@ main() {
     done < <(make_profile_flags "$PROFILE_SLUG")
   fi
 
-  exec teams-for-linux --ssoInTuneEnabled=true "${EXTRA_ELECTRON_ARGS[@]}" "${PASSTHRU[@]}"
+  exec teams-for-linux --auth.intune.enabled=true "${EXTRA_ELECTRON_ARGS[@]}" "${PASSTHRU[@]}"
 }
 
 main
