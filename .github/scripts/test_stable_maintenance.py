@@ -1888,69 +1888,26 @@ sys.exit(int(sys.argv[1]))
                 self.assertEqual(calls[2].args[0], "https://api.github.com/graphql")
                 self.assertEqual(state.load()["pull_request"], 19)
 
-    def test_publish_recovers_ready_errors_and_cleans_up_failed_drafts(self):
-        ready = {"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": False}}}}
-        draft = {"state": "open", "draft": True}
-        closed = {"state": "closed", "draft": True, "number": 19,
-                  "head": {"ref": sm.AUTOMATION_PREFIX + "stable-4.x-test", "repo": {"full_name": "o/r"}},
-                  "labels": [{"name": sm.AUTOMATION_LABEL}], "user": {"login": "github-actions[bot]"}}
-        errors = {"errors": [{"message": "temporary error"}]}
-        for failure in (sm.HTTPStatusError(503), sm.MaintenanceError("invalid JSON"), errors, {}, None):
-            for recovery in ("retry", "already-ready", "cleanup", "cleanup-retry", "cleanup-fails"):
-                with self.subTest(failure=failure, recovery=recovery), tempfile.TemporaryDirectory() as tmp:
-                    state = sm.State(Path(tmp) / "state")
-                    state.save({"automation_branch": sm.AUTOMATION_PREFIX + "stable-4.x-test",
-                                "branch": "stable-4.x", "main_head": "a" * 40, "version": "4.0.6"})
-                    responses = [{"number": 19, "node_id": "PR_test"}, {}, failure]
-                    if recovery == "retry":
-                        responses.extend([draft, ready])
-                    elif recovery == "already-ready":
-                        responses.append({"state": "open", "draft": False})
-                    else:
-                        responses.extend([draft, failure, draft, failure, draft])
-                        if recovery == "cleanup":
-                            responses.append(closed)
-                        elif recovery == "cleanup-retry":
-                            responses.extend([sm.HTTPStatusError(503), closed])
-                        else:
-                            responses.extend([sm.HTTPStatusError(503)] * 3)
-                    with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test-token"}), \
-                         mock.patch.object(sm, "secure_github_push"), \
-                         mock.patch.object(sm, "http_json", side_effect=responses) as http, \
-                         mock.patch.object(sm.time, "sleep") as sleep:
-                        if recovery.startswith("cleanup"):
-                            expected = "close maintenance PR #19" if recovery == "cleanup-fails" else "bounded retries"
-                            with self.assertRaisesRegex(sm.MaintenanceError, expected):
-                                sm.phase_publish(mock.Mock(), state, mock.Mock())
-                        else:
-                            sm.phase_publish(mock.Mock(), state, mock.Mock())
-                    mutations = [call for call in http.call_args_list if call.args[0].endswith("graphql")]
-                    closes = [call for call in http.call_args_list if call.kwargs.get("method") == "PATCH"]
-                    self.assertEqual(len(mutations), 3 if recovery.startswith("cleanup") else 2 if recovery == "retry" else 1)
-                    self.assertEqual(len(closes), {"cleanup": 1, "cleanup-retry": 2, "cleanup-fails": 3}.get(recovery, 0))
-                    self.assertLessEqual(sleep.call_count, 4)
-                    for call in closes:
-                        self.assertEqual(call.kwargs["body"], {"state": "closed"})
-                    if recovery in ("cleanup", "cleanup-retry"):
-                        with mock.patch.object(sm, "github_repository", return_value="o/r"), \
-                             mock.patch.object(sm, "github_paginated", return_value=[closed]), \
-                             mock.patch.object(sm, "github_search_items", return_value=[]), \
-                             mock.patch.object(sm.sys, "stdout", io.StringIO()):
-                            sm.phase_guard(mock.Mock(branch="stable-4.x"), state, mock.Mock())
-                        self.assertFalse(state.load()["skip"])
-
-    def test_publish_cleans_up_invalid_node_and_label_failure(self):
-        for node, label in ((None, {}), ("PR_test", sm.HTTPStatusError(503))):
-            with self.subTest(node=node), tempfile.TemporaryDirectory() as tmp:
+    def test_publish_preserves_draft_when_label_or_readiness_fails(self):
+        for failure in ("label", "node", "ready"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
                 state = sm.State(Path(tmp) / "state")
                 state.save({"automation_branch": sm.AUTOMATION_PREFIX + "stable-4.x-test",
                             "branch": "stable-4.x", "main_head": "a" * 40, "version": "4.0.6"})
-                with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test-token"}), \
+                def http(url, **kwargs):
+                    self.assertNotEqual(kwargs.get("body"), {"state": "closed"})
+                    if url.endswith("/pulls"):
+                        return {"number": 19, "node_id": None if failure == "node" else "PR_test"}
+                    if failure == "label":
+                        raise sm.HTTPStatusError(503)
+                    return {}
+                with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test"}), \
                      mock.patch.object(sm, "secure_github_push"), \
-                     mock.patch.object(sm, "http_json", side_effect=[{"number": 19, "node_id": node}, label, {"state": "closed"}]) as http:
-                    with self.assertRaises(sm.MaintenanceError):
-                        sm.phase_publish(mock.Mock(), state, mock.Mock())
-                self.assertEqual(http.call_args.kwargs["body"], {"state": "closed"})
+                     mock.patch.object(sm, "http_json", side_effect=http), \
+                     mock.patch.object(sm, "mark_maintenance_pr_ready", side_effect=sm.MaintenanceError("failed")):
+                    sm.phase_publish(mock.Mock(), state, mock.Mock())
+                self.assertEqual(state.load()["pull_request"], 19)
+                self.assertIn("preserved", state.load()["events"][-1]["message"])
 
 
 class VersionPolicyTests(unittest.TestCase):
@@ -5706,11 +5663,15 @@ class ManualFinalAuditTests(unittest.TestCase):
                 with mock.patch.object(sm.sys, "stdout", io.StringIO()):
                     sm.phase_report(mock.Mock(), state, runner)
                 self.assertNotIn("Draft only", (state.directory / "report.md").read_text())
-                with self.assertRaisesRegex(sm.MaintenanceError, "stable branch advanced"), \
-                     mock.patch.object(sm, "secure_github_push") as push:
+                with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "test", "GITHUB_REPOSITORY": "o/r"}), \
+                     mock.patch.object(sm, "secure_github_push") as push, \
+                     mock.patch.object(sm, "mark_maintenance_pr_ready") as ready, \
+                     mock.patch.object(sm, "http_json", side_effect=[{"number": 100, "node_id": "PR_test"}, {}]) as http:
                     runner.git(["branch", "-f", "stable-4.x", "HEAD"])
                     sm.phase_publish(mock.Mock(), state, runner)
-                push.assert_not_called()
+                push.assert_called_once()
+                ready.assert_not_called()
+                self.assertIn("base-advanced", http.call_args_list[0].kwargs["body"]["body"])
 
     def test_non_audit_failures_remain_fatal_without_draft_approval(self):
         for gate in ("build", "tests", "fmt", "packaging", "metadata", "nix", "dirty"):
@@ -6469,7 +6430,151 @@ class InitializePhaseTests(unittest.TestCase):
             self.assertEqual(saved["cutoff"], cutoff)
 
 
+class RecoveryMaintenanceTests(unittest.TestCase):
+    repository = MaintenanceHistoryTests.repository
+    commit = MaintenanceHistoryTests.commit
+
+    def args(self, phase):
+        return sm.build_parser().parse_args(["--best-effort", phase, "--branch", "stable-4.x"])
+
+    def test_test_failure_preserves_completed_work_and_publishes_draft(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            original = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "completed.rs").write_text("accepted backport\n")
+            head = self.commit(runner, "Completed work")
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "original_head": original, "main_head": original,
+                        "checkpointed": True, "version": "4.0.9",
+                        "automation_branch": sm.AUTOMATION_PREFIX + "recovery-test"})
+            with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "locked_tests", return_value=sm.CommandResult(101, "", "")):
+                sm.run_best_effort_phase(self.args("validate"), state, runner)
+            self.assertEqual(state.load()["recovery_head"], head)
+            self.assertNotIn("validated_head", state.load())
+            self.assertEqual(state.load()["gate_results"], ["clean-build: passed"])
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "test", "GITHUB_REPOSITORY": "o/r"}), \
+                 mock.patch.object(sm, "secure_github_push") as push, \
+                 mock.patch.object(sm, "mark_maintenance_pr_ready") as ready, \
+                 mock.patch.object(sm, "http_json", side_effect=[{"number": 99, "node_id": "PR_test"}, {}]) as http:
+                sm.phase_publish(self.args("publish"), state, runner)
+            push.assert_called_once()
+            ready.assert_not_called()
+            payload = http.call_args_list[0].kwargs["body"]
+            self.assertTrue(payload["draft"])
+            self.assertIn("validate", payload["body"])
+            self.assertNotIn("all publication gates passed", payload["body"])
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), head)
+            (runner.root / "late.rs").write_text("late mutation\n")
+            with self.assertRaisesRegex(sm.MaintenanceError, "exact clean HEAD"):
+                sm.phase_publish(self.args("publish"), state, runner)
+
+    def test_failed_phase_rolls_back_only_its_own_mutation_and_records_checkpoint_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            state = sm.State(Path(tmp) / "state")
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state.save({"branch": "stable-4.x", "dependency_updates": [{"crate": "earlier"}]})
+            def fail(args, state, runner):
+                (runner.root / "value.rs").write_text("partial mutation\n")
+                state.save({"broken": True})
+                raise sm.MaintenanceError("secret raw failure")
+            with mock.patch.dict(sm.PHASES, {"import-dependabot": fail}):
+                sm.run_best_effort_phase(self.args("import-dependabot"), state, runner)
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), head)
+            self.assertEqual(state.load()["dependency_updates"], [{"crate": "earlier"}])
+            self.assertEqual(state.load()["last_phase"], "import-dependabot")
+            self.assertIn("phase_failures", sm.CHECKPOINT_KEYS)
+            self.assertNotIn("secret", json.dumps(state.load()))
+
+    def test_workflow_attempts_recovery_and_publication_after_prior_step_failure(self):
+        workflow = STAGE_WORKFLOW.read_text()
+        for block in workflow.split("      - name: "):
+            if "--best-effort" in block or block.startswith(("Create scoped publication token", "Publish —", "Checkpoint —", "Preserve exact checkpoint")):
+                condition = next(line for line in block.splitlines() if line.strip().startswith("if:"))
+                self.assertIn("!cancelled()", condition)
+                self.assertIn("steps.guard.outputs.proceed", condition)
+        for line in BRANCH_WORKFLOW.read_text().splitlines():
+            if "if:" in line:
+                self.assertIn("!cancelled()", line)
+                self.assertIn(".outputs.head != ''", line)
+
+    def test_recovery_does_not_catch_integrity_or_transport_failures(self):
+        for phase in ("initialize", "resume", "checkpoint", "publish"):
+            args = mock.Mock(command=phase)
+            with mock.patch.dict(sm.PHASES, {phase: mock.Mock(side_effect=sm.MaintenanceError("boundary"))}):
+                with self.assertRaisesRegex(sm.MaintenanceError, "boundary"):
+                    sm.run_best_effort_phase(args, mock.Mock(), mock.Mock())
+
+    def test_real_cargo_library_names_resolve_to_manifest_bindings(self):
+        registry = "registry+https://github.com/rust-lang/crates.io-index"
+        metadata = {"workspace_members": ["workspace"], "packages": [
+            {"id": "workspace", "manifest_path": "/checkout/Cargo.toml", "dependencies": [
+                {"name": "libhimmelblau", "source": registry, "req": "^0.8.40"},
+                {"name": "tokio-util", "source": registry, "req": "^0.7.18"},
+                {"name": "unicode-normalization", "source": registry, "req": "^0.1.0"}]},
+            *[{"id": name, "name": name, "version": version, "source": registry}
+              for name, version in (("libhimmelblau", "0.8.40"), ("tokio-util", "0.7.19"), ("unicode-normalization", "0.1.25"))]],
+            "resolve": {"nodes": [{"id": "workspace", "deps": [
+                {"name": "himmelblau", "pkg": "libhimmelblau"},
+                {"name": "tokio_util", "pkg": "tokio-util"},
+                {"name": "unicode_normalization", "pkg": "unicode-normalization"}]}]}}
+        targets = sm.direct_registry_packages(metadata)
+        self.assertEqual({t.name: t.bindings[0][1] for t in targets},
+                         {"libhimmelblau": "libhimmelblau", "tokio-util": "tokio-util", "unicode-normalization": "unicode-normalization"})
+
+    def test_interrupted_candidate_keeps_earlier_work_and_continues_to_later_fix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            commits = []
+            for name in ("earlier", "broken", "later"):
+                (runner.root / (name + ".rs")).write_text(name + "\n")
+                commits.append(self.commit(runner, "Fix " + name))
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": commits[-1]})
+            ai = mock.Mock(); ai.call.return_value = {"decision": True, "reason": "bug-fix"}
+            apply = sm.phase_apply_backports
+            def interrupted(args, current_state, current_runner, **kwargs):
+                if current_state.load()["backport_candidates"] == [commits[1]]:
+                    current_runner.git(["cherry-pick", "-x", commits[1]])
+                    raise RuntimeError("raw secret failure")
+                return apply(args, current_state, current_runner, **kwargs)
+            with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                 mock.patch.object(sm, "phase_apply_backports", side_effect=interrupted), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "format_backport"):
+                sm.phase_backports(self.args("backports"), state, runner)
+            value = state.load()
+            self.assertEqual(value["backports_applied"], [commits[0], commits[2]])
+            self.assertEqual(value["backports_deferred"], [commits[1]])
+            self.assertEqual([row["outcome"] for row in value["backport_outcomes"]], ["applied", "pending", "applied"])
+            self.assertNotIn("backport_inflight", value)
+            self.assertFalse((runner.root / "broken.rs").exists())
+            self.assertTrue((runner.root / "earlier.rs").exists())
+            self.assertTrue((runner.root / "later.rs").exists())
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+            self.assertNotIn("secret", json.dumps(value))
+
+    def test_repair_shares_context_budget_and_still_calls_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            for name in ("one.rs", "two.rs", "three.rs", "four.rs", "five.rs"):
+                (runner.root / name).write_text("long stable source line " * 3000)
+            head = self.commit(runner, "Large stable files")
+            record = {"paths": ["one.rs", "two.rs", "three.rs", "four.rs", "five.rs"], "subject": "Fix", "body": "Fix"}
+            ai = mock.Mock()
+            ai.call.return_value = {"decision": False, "patch": ""}
+            with mock.patch.object(sm, "_commit_record", return_value=record), \
+                 mock.patch.object(sm, "backport_patch", return_value="upstream patch\n" * 4000):
+                self.assertFalse(sm.repair_backport(runner, head, head, ai))
+            ai.call.assert_called_once()
+            self.assertLess(len(ai.call.call_args.args[1].encode()), sm.MAX_BACKPORT_INPUT_BYTES)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
 

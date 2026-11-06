@@ -67,22 +67,30 @@ neither a new process nor a fresh runner resets server-requested backoff.
 
 After four batches, unexamined commits are reported explicitly and retain the old
 cutoff along with failed/deferred candidates. Earlier accepted fixes can still
-produce a useful partial maintenance PR. Final build/test/fmt/NSS/available
-packaging, metadata/Nix regeneration and clean-tree failures still block it.
-Both final cargo-audit and locked, frozen cargo-vet checks run even when the first
-audit fails. Findings
-or audit execution failures become explicit manual work in the report and PR;
-the job can publish a **draft**, with unchecked remediation/rerun tasks, rather
-than discard the tested changes. This path does not claim a validated release
-or mark the PR ready for review. It creates no exemptions or audit approvals.
-Only a run passing both audits can use normal ready-for-review publication.
+be published when later maintenance or CI checks fail. The scheduled operational
+commands use `--best-effort`: a failed mutation rolls back to its clean entry
+commit and preserves earlier phases. Backport failures roll back only the current
+candidate, keep it pending, and continue with later independent candidates.
+Recovery removes only untracked files created since the clean phase entry.
 
-Publication checks that either the fully validated HEAD or the separately
-recorded draft-only HEAD is still the exact clean staged HEAD, and that stable
-has not advanced. A fresh validation clears both earlier outcomes before any
-checks run. Neither outcome is transferred in checkpoint artifacts. A checkpoint
-is never evidence that final gates passed. Maintainers must remediate the listed
-audit work and rerun full release validation before approving a draft for release.
+Final build, test, formatting, packaging, metadata and Nix failures produce a
+**draft recovery PR**, bound to the exact clean recovered HEAD, with the failed
+phase/gate and checks completed before failure. Later checks may not have run.
+The failed operation is not recorded as passing; no release approval is granted.
+Recovered failures travel as data-only checkpoint progress, never as validation
+approval. A moved stable base also produces a draft requiring reconciliation.
+Label/readiness failures preserve the already-created PR for human intervention.
+
+Both final cargo-audit and locked cargo-vet checks run when non-audit gates allow
+validation to reach them. Audit findings or execution failures retain the existing
+manual-audit draft behavior. Only complete passing validation without recovered
+phase failures can mark a PR ready for review. Maintainers must fix the listed
+work and rerun full release validation in a fresh state directory before release.
+
+Tooling-integrity, checkpoint-provenance, unsafe initial trees and Git/API transport
+errors remain explicit failures: recovery never substitutes an unverified tree.
+The durable checkpoint source parent remains available for manual recovery when
+runner failure or a GitHub outage makes publication impossible.
 
 Use Actions' **Re-run failed jobs** to resume a failed, pre-publication stage
 from its predecessor without repeating successful earlier stages. Reruns keep the original trusted
@@ -162,6 +170,7 @@ from pathlib import Path
 state = json.loads(Path(sys.argv[1]).read_text())
 if (state.get("validated_head") != sys.argv[2]
         or state.get("manual_audit_work") or state.get("manual_audit_head")
+        or state.get("phase_failures") or state.get("recovery_head")
         or state.get("failed_phase") or state.get("skip")):
     raise SystemExit("Release validation is incomplete; keep the PR in draft")
 print(f"All final gates passed for repaired HEAD {sys.argv[2]}")
@@ -177,3 +186,4 @@ its current remote HEAD still equals `EXPECTED_HEAD`, review the audit remediati
 and ensure its stable base is still appropriate. Any later source change requires
 fresh full validation. Keep the draft open if a gate fails; the next automated
 maintenance run may proceed only after the existing PR is merged or closed.
+

@@ -201,7 +201,7 @@ jobs:
           guard --branch "$TARGET_BRANCH"
 
       - name: Build pinned maintenance image without credentials
-        if: steps.guard.outputs.proceed == 'true'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' }}
         timeout-minutes: 45
         shell: bash
         run: |
@@ -214,7 +214,7 @@ jobs:
             "$image_context"
 
       - name: Smoke-test maintenance image Git tooling
-        if: steps.guard.outputs.proceed == 'true'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -247,7 +247,7 @@ jobs:
               crate2nix --version | grep -F "0.15.0"
             '
       - name: Smoke-test isolated asset generation
-        if: steps.guard.outputs.proceed == 'true'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' }}
         run: |
           MAINTENANCE_CONTAINER_TESTS=1 python3 tooling/.github/scripts/test_stable_maintenance.py \
             BranchAndCliTests.test_generated_assets_build_in_read_only_container \
@@ -255,55 +255,55 @@ jobs:
 
 
       - name: Prepare exact locked dependencies in the fresh private Cargo cache
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage != 'dependencies'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage != 'dependencies' }}
         run: |
-          python3 tooling/.github/scripts/stable_maintenance.py \
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort \
             --repo-dir source --state-dir "$STATE_DIR" prepare --branch "$TARGET_BRANCH"
 
       - name: Initialize — snapshot trusted refs and backport cutoff
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies' }}
         run: >-
           python3 tooling/.github/scripts/stable_maintenance.py
           --repo-dir source --state-dir "$STATE_DIR"
           initialize --branch "$TARGET_BRANCH"
 
       - name: Supply chain — refresh cargo-vet imports
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies' }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           refresh-vet-imports --branch "$TARGET_BRANCH"
 
       - name: Dependencies — audit and update crates
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies' }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           update-dependencies --branch "$TARGET_BRANCH"
 
       - name: Supply chain — review unvetted dependency deltas
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'vet'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'vet' }}
         env:
           AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
           AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
           AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
           AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT || 'gpt-5.5' }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           vet-dependencies --branch "$TARGET_BRANCH"
 
       - name: Dependabot — import non-Cargo updates
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'vet'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'vet' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           import-dependabot --branch "$TARGET_BRANCH"
 
       - name: Backports — classify, adapt, build and format each commit in order
-        if: steps.guard.outputs.proceed == 'true' && startsWith(inputs.stage, 'backports-')
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && startsWith(inputs.stage, 'backports-') }}
         env:
           MAINTENANCE_BACKPORT_CACHE: '1'
           AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
@@ -311,27 +311,27 @@ jobs:
           AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
           AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT || 'gpt-5.5' }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           backports --branch "$TARGET_BRANCH"
 
       - name: Release — increment the patch version
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'final'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'final' }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           release --branch "$TARGET_BRANCH"
 
       - name: Validate — run clean release gates
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'final'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'final' }}
         run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
+          python3 tooling/.github/scripts/stable_maintenance.py --best-effort
           --repo-dir source --state-dir "$STATE_DIR"
           validate --branch "$TARGET_BRANCH"
 
       - name: Create scoped publication token
         id: publish-token
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'final'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'final' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.STABLE_MAINTENANCE_APP_CLIENT_ID }}
@@ -341,7 +341,7 @@ jobs:
           permission-workflows: write
 
       - name: Publish — push branch and open pull request
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'final'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'final' }}
         env:
           GITHUB_TOKEN: ${{ steps.publish-token.outputs.token }}
         run: >-
@@ -352,7 +352,7 @@ jobs:
 
       - name: Create scoped checkpoint token
         id: checkpoint-token
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage != 'final'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage != 'final' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.STABLE_MAINTENANCE_APP_CLIENT_ID }}
@@ -362,7 +362,7 @@ jobs:
 
       - name: Checkpoint — stage only the clean completed tree and data-only progress
         id: checkpoint
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage != 'final'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage != 'final' }}
         env:
           GITHUB_TOKEN: ${{ steps.checkpoint-token.outputs.token }}
         run: |
@@ -371,7 +371,7 @@ jobs:
             --branch "$TARGET_BRANCH" --stage "$MAINTENANCE_STAGE"
 
       - name: Preserve exact checkpoint state for the next job
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage != 'final'
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage != 'final' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.checkpoint.outputs.artifact }}
@@ -396,3 +396,4 @@ jobs:
             ${{ env.STATE_DIR }}/report.json
           if-no-files-found: warn
           retention-days: 30
+

@@ -106,7 +106,7 @@ CHECKPOINT_KEYS = {
     "backport_review_required", "backports_applied", "backports_conflict_skipped", "backports_build_failed",
     "backports_deferred", "backports_adapted", "backports_repair_failed", "backports_conflict_details",
     "backport_summaries", "backport_outcomes", "backport_cursor", "backport_remaining",
-    "network_not_before",
+    "network_not_before", "phase_failures",
 }
 
 
@@ -1224,7 +1224,19 @@ def direct_registry_packages(metadata: Mapping[str, Any]) -> list[DirectTarget]:
             if package and package.get("source") == "registry+https://github.com/rust-lang/crates.io-index":
                 manifest, alias, pkg = manifests.get(node.get("id")), dep.get("name"), dep.get("pkg")
                 if all(isinstance(x, str) for x in (manifest, alias, pkg)):
-                    bindings.setdefault(pkg, set()).add((manifest, alias))
+                    declared = packages[node["id"]].get("dependencies", [])
+                    names = {d.get("rename") or d["name"] for d in declared
+                             if isinstance(d, dict) and d.get("name") == package["name"]
+                             and d.get("source") == package["source"]}
+                    matched = {name for name in names if name.replace("-", "_") == alias}
+                    # A library target can differ from its package name (e.g.
+                    # libhimmelblau -> himmelblau). Only use an unambiguous binding.
+                    if not matched and len(names) == 1:
+                        matched = names
+                    if not declared:
+                        matched = {alias}  # Older/minimal metadata without declarations.
+                    for name in matched:
+                        bindings.setdefault(pkg, set()).add((manifest, name))
     result: list[DirectTarget] = []
     for pkg, locations in bindings.items():
         package = packages[pkg]
@@ -3263,10 +3275,12 @@ def source_excerpt(text: str, patch: str, budget: int) -> str:
     return "".join(result)
 
 
-def backport_stable_context(runner: Runner, record: Mapping[str, Any], patch: str) -> str:
+def backport_stable_context(runner: Runner, record: Mapping[str, Any], patch: str, *, max_bytes: int | None = None) -> str:
     paths = [path for path in record["paths"] if path not in {"Cargo.nix", "Cargo.lock", "supply-chain/imports.lock"}]
     tracked = set(runner.git(["ls-files", "-z"]).stdout.rstrip("\0").split("\0"))
-    budget = min(24 * 1024, (MAX_BACKPORT_INPUT_BYTES // 2 - 4096) // max(1, len(paths)))
+    budget = min(24 * 1024, ((max_bytes or MAX_BACKPORT_INPUT_BYTES // 2) - 4096) // max(1, len(paths)))
+    if budget < 1024:
+        raise MaintenanceError("combined relevance context exceeds budget")
     parts = ["UNTRUSTED CURRENT STABLE CODE (after earlier accepted backports):\n"]
     for name in paths:
         if name not in tracked:
@@ -3289,10 +3303,13 @@ def repair_backport(runner: Runner, sha: str, pre_head: str, ai: AzureAI) -> boo
     if any(is_ci_only([path]) for path in record["paths"]):
         return False
     upstream = backport_patch(runner, record)
-    conflict_context = backport_stable_context(runner, record, upstream)
+    # The original patch is already bounded. Reserve its bytes once, then
+    # divide the remaining request between conflicted and clean stable code.
+    context_budget = (MAX_BACKPORT_INPUT_BYTES - len(upstream.encode()) - 16 * 1024) // 2
+    conflict_context = backport_stable_context(runner, record, upstream, max_bytes=context_budget)
     runner.git(["cherry-pick", "--abort"], check=False)
     runner.git(["reset", "--hard", pre_head])
-    stable = backport_stable_context(runner, record, upstream)
+    stable = backport_stable_context(runner, record, upstream, max_bytes=context_budget)
     data = json.dumps({"subject": record["subject"], "description": record["body"], "paths": record["paths"]})
     data += "\nORIGINAL PATCH:\n" + upstream + "\nCONFLICTED ATTEMPT:\n" + conflict_context + "\nCLEAN BASE:\n" + stable
     if len(data.encode()) > MAX_BACKPORT_INPUT_BYTES:
@@ -3831,10 +3848,20 @@ def _phase_backport_batch_cached(
             state.save(previous_value)
             state.event("backports", "batch time budget reached; remaining fixes retained", remaining=len(inventory) - next_index)
             return
-        except Exception:
-            value = state.load(); value.update(aggregate)
-            value["backport_inflight"] = sha; state.save(value)
-            raise
+        except Exception as exc:
+            if getattr(args, "best_effort", False) is not True:
+                value = state.load(); value.update(aggregate)
+                value["backport_inflight"] = sha; state.save(value)
+                raise
+            runner.git(["cherry-pick", "--abort"], check=False)
+            runner.git(["reset", "--hard", pre_head])
+            runner.git(["clean", "-fd"])
+            if runner.git(["status", "--porcelain"]).stdout:
+                raise MaintenanceError("backport recovery left an unclean tree") from exc
+            state.save(previous_value)
+            decision = {"backport_review_required": [{"sha": sha, "reason": diagnostic_reason(exc)}],
+                        "backports_deferred": [sha]}
+            print(f"backport-warning: sha={sha} recovered=true manual_review_required=true", file=sys.stderr)
         for key in keys:
             aggregate[key].extend(decision.get(key, []))
         if sha in decision.get("backports_applied", []):
@@ -3844,7 +3871,7 @@ def _phase_backport_batch_cached(
             for key in ("backport_review_required", "backports_build_failed", "backports_repair_failed"):
                 if decision.get(key):
                     reason = decision[key][0].get("reason", reason); break
-            if sha in decision.get("backports_conflict_skipped", []):
+            if sha in decision.get("backports_conflict_skipped", []) and not decision.get("backports_repair_failed"):
                 reason = "conflict could not be safely adapted"
         else:
             outcome = "intentional-skip"
@@ -3936,15 +3963,20 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
     for key in ("gate_results", "validated_head", "manual_audit_head", "manual_audit_work"):
         value.pop(key, None)
     state.save(value)
+    def begin_gate(name: str) -> None:
+        value = state.load(); value["validation_gate"] = name; state.save(value)
+    begin_gate("clean-build")
     clean_target = state.directory / "clean-target"
     result = locked_build(runner, target_dir=clean_target)
     if result.returncode:
         raise MaintenanceError("clean locked-down build failed")
     value = state.load(); value.setdefault("gate_results", []).append("clean-build: passed"); state.save(value)
+    begin_gate("workspace-tests")
     tests = locked_tests(runner)
     if tests.returncode:
         raise MaintenanceError("locked-down test gate failed")
     value = state.load(); value.setdefault("gate_results", []).append("workspace-tests: passed"); state.save(value)
+    begin_gate("rustfmt")
     contained_repo_command(runner, ["cargo", "fmt", "--all", "--check"], network=False, source_rw=False, cache_rw=False)
     value = state.load(); value.setdefault("gate_results", []).append("rustfmt: passed"); state.save(value)
     for relative, command in (
@@ -3952,6 +3984,7 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
         ("scripts/test_gen_dockerfiles.py", ["python3", "scripts/test_gen_dockerfiles.py"]),
     ):
         if (runner.root / relative).is_file():
+            begin_gate(relative)
             checkout_regular_file(runner.root, relative)
             contained_repo_command(runner, command, network=False, source_rw=False, cache_rw=False)
             value = state.load(); value.setdefault("gate_results", []).append(relative + ": passed"); state.save(value)
@@ -3974,13 +4007,16 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
         state.save(value)
         if failed:
             state.event("validate", "final audit requires manual work", gate=gate, reason=reason)
+    begin_gate("locked-metadata")
     contained_repo_command(runner, ["cargo", "metadata", "--locked", "--format-version", "1"], network=True, source_rw=False, cache_rw=True, timeout=300)
     if (runner.root / "Cargo.nix").is_file():
+        begin_gate("nix-regeneration")
         before = hashlib.sha256((runner.root / "Cargo.nix").read_bytes()).digest()
         contained_repo_command(runner, crate2nix_command(), network=False, source_rw=True, cache_rw=False, timeout=1800)
         after = hashlib.sha256((runner.root / "Cargo.nix").read_bytes()).digest()
         if before != after:
             raise MaintenanceError("Cargo.nix is not regeneration-clean")
+    begin_gate("repository-clean")
     if runner.git(["status", "--porcelain"]).stdout:
         raise MaintenanceError("final validation left repository changes")
     value = state.load(); value.setdefault("gate_results", []).append("repository-clean: passed"); state.save(value)
@@ -4076,7 +4112,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
         "already_covered", "vet_accepted", "vet_rejected", "dependabot_imported", "dependabot_skipped",
         "backport_candidates", "backport_skipped", "backports_applied", "backports_conflict_skipped", "gate_results",
         "backports_deferred", "backport_remaining",
-        "backports_build_failed", "manual_audit_work",
+        "backports_build_failed", "manual_audit_work", "phase_failures",
     )
     lines: list[str] = []
     for key in keys:
@@ -4094,8 +4130,32 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
     return lines
 
 
+def build_recovery_pr_body(value: Mapping[str, Any]) -> str:
+    failures = value.get("phase_failures", [])
+    lines = ["## Summary", "", "DRAFT: recovered partial maintenance; human intervention required.",
+             "Completed commits are preserved. Release validation is incomplete; never auto-merge.",
+             "", "## What Changed", "",
+             f"- Dependency updates: {len(value.get('dependency_updates', []))}",
+             f"- Bug fixes backported: {len(value.get('backports_applied', []))}",
+             "", "## Manual work", ""]
+    for phase in sorted({row["phase"] for row in failures}):
+        gates = sorted({row["gate"] for row in failures if row["phase"] == phase and row.get("gate")})
+        detail = " (" + ", ".join(gates) + ")" if gates else ""
+        lines.append(f"- [ ] Investigate `{phase}`{detail} failure and rerun; see run diagnostics.")
+    lines += ["- [ ] Review recovered changes and run every release gate before release.",
+              "", "## Testing", "", "Checks recorded before failure:"]
+    lines += ["- " + result for result in value.get("gate_results", [])[:12]]
+    lines += ["Later checks may not have run. No claim of release readiness is made."]
+    repo, run = os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_RUN_ID", "")
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) and run.isdigit():
+        lines += ["", f"[Full report and logs](https://github.com/{repo}/actions/runs/{run})"]
+    return "\n".join(lines)
+
+
 def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
     manual = manual_audit_work(value)
+    if value.get("phase_failures"):
+        return build_recovery_pr_body(value)
     through = maintenance_main_through(value)
     marker = f"{MARKER} {require_sha(str(through))}"
     run_id = os.environ.get("GITHUB_RUN_ID", "")
@@ -4193,36 +4253,26 @@ def mark_maintenance_pr_ready(repo: str, number: int, node_id: str, state: State
     raise MaintenanceError("maintenance PR could not be marked ready after bounded retries")
 
 
-def close_failed_maintenance_pr(repo: str, number: int, state: State) -> None:
-    for attempt in range(3):
-        try:
-            closed = http_json(
-                f"https://api.github.com/repos/{repo}/pulls/{number}", method="PATCH", headers=github_headers(),
-                body={"state": "closed"},
-            )
-            if isinstance(closed, dict) and closed.get("state") == "closed":
-                state.event("publish", "closed PR after publication failure", number=number)
-                return
-        except MaintenanceError:
-            pass
-        if attempt < 2:
-            time.sleep(attempt + 1)
-    raise MaintenanceError(f"publication cleanup failed; close maintenance PR #{number} before retrying")
-
-
 def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> None:
     value = state.load()
     if value.get("no_changes"):
         state.event("publish", "no changes; no PR created"); return
     manual = manual_audit_work(value)
-    if value.get("checkpointed") or manual:
+    recovery = bool(value.get("phase_failures"))
+    if value.get("checkpointed") or manual or recovery:
         head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
-        approval = "manual_audit_head" if manual else "validated_head"
+        approval = "recovery_head" if recovery else "manual_audit_head" if manual else "validated_head"
         if value.get(approval) != head or runner.git(["status", "--porcelain"]).stdout:
             raise MaintenanceError("checkpoint publication requires final gates for the exact clean HEAD")
         stable = runner.git(["ls-remote", "--exit-code", "origin", f"refs/heads/{require_branch(value['branch'])}"]).stdout.split()
-        if len(stable) != 2 or stable[0] != value["original_head"]:
-            raise MaintenanceError("stable branch advanced before publication")
+        if len(stable) != 2:
+            raise MaintenanceError("unable to resolve stable branch before publication")
+        if stable[0] != value["original_head"]:
+            value.setdefault("phase_failures", []).append({"phase": "base-advanced", "reason": "rebase-required"})
+            value["recovery_head"] = head
+            value.pop("validated_head", None)
+            state.save(value)
+            recovery = True
     branch = value["automation_branch"]
     if not branch.startswith(AUTOMATION_PREFIX):
         raise MaintenanceError("unsafe automation branch name")
@@ -4235,13 +4285,15 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
         raise MaintenanceError("GITHUB_TOKEN is required for publishing")
     secure_github_push(runner, state.directory, github_repository(), branch, token)
     payload = {
-        "title": f"Refresh {value['branch']} supply-chain metadata" if value.get("metadata_only") else f"Version {value['version']}",
+        "title": f"Refresh {value['branch']} supply-chain metadata" if value.get("metadata_only") else f"Version {value.get('version', 'pending')}",
         "head": branch, "base": value["branch"],
         # Stable branches may still run the older slop policy. Label the draft
         # before ready_for_review so even that policy sees its exemption.
         "body": body, "draft": True,
     }
-    if manual:
+    if recovery:
+        payload["title"] = f"Recovery requires review: {value['branch']} maintenance"
+    elif manual:
         payload["title"] = f"Manual audit work required: {value['branch']} maintenance"
     repo = github_repository()
     pr = http_json(f"https://api.github.com/repos/{repo}/pulls", method="POST", headers=github_headers(), body=payload)
@@ -4257,12 +4309,14 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
         node_id = pr.get("node_id")
         if not isinstance(node_id, str) or not re.fullmatch(r"[A-Za-z0-9_=-]{1,200}", node_id):
             raise MaintenanceError("GitHub did not return a valid PR node id")
-        if not manual:
+        if not manual and not recovery:
             mark_maintenance_pr_ready(repo, number, node_id, state)
     except MaintenanceError:
-        close_failed_maintenance_pr(repo, number, state)
-        raise
-    state.event("publish", "draft pull request requires manual audit work" if manual else "labeled pull request ready for review", number=number)
+        state.event("publish", "pull request preserved for manual labeling/readiness", number=number)
+        print("publication-warning: PR preserved for human intervention", file=sys.stderr)
+        return
+    state.event("publish", "draft pull request requires recovery work" if recovery else
+                "draft pull request requires manual audit work" if manual else "labeled pull request ready for review", number=number)
 
 
 def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None:
@@ -4272,6 +4326,8 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
         lines.extend([f"Failed phase: `{value['failed_phase']}` — {value.get('failure', 'failed closed')}", ""])
     if manual_audit_work(value) and value.get("manual_audit_head"):
         lines.extend(["**Final audits require manual work. Draft only; release validation incomplete.**", ""])
+    if value.get("phase_failures"):
+        lines.extend(["**Recovered partial maintenance. Draft only; resolve failed phases and rerun validation.**", ""])
     if value.get("skip"):
         numbers = ", ".join(f"#{number}" for number in value.get("blocking_pull_requests", []))
         lines.extend([f"Run skipped because an existing maintenance PR is open: {numbers or 'unknown' }.", ""])
@@ -4284,7 +4340,7 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
         # sequential outcome table. Count each deferred commit only once.
         pending = len({row["sha"] for row in value.get("backport_review_required", [])}
                       | set(value.get("backports_deferred", [])))
-    pending += len(value.get("backport_remaining", []))
+    pending += len(value.get("backport_remaining", [])) + len(value.get("phase_failures", []))
     lines.extend(["", f"Unexamined backports retained for retry: {len(value.get('backport_remaining', []))}.",
                   f"Maintenance completion: **{'pending work remains' if pending or value.get('backport_inflight') else 'examined backlog accounted for'}**.",
                   "Publication gates and maintenance completion are separate results."])
@@ -4415,7 +4471,7 @@ def phase_checkpoint(args: argparse.Namespace, state: State, runner: Runner) -> 
         raise MaintenanceError("checkpoint exceeds state budget")
     ref = f"{AUTOMATION_PREFIX}checkpoints/{run}/{attempt}/{branch}/{stage}"
     token = os.environ.get("GITHUB_TOKEN", "")
-    # No force push, no stable/main ref update, and no PR before final gates.
+    # No force push, no stable/main ref update; PRs belong to the final stage.
     secure_github_push(runner, state.directory, github_repository(), ref, token, source_sha=transport)
     (state.directory / "checkpoint.json").write_bytes(payload)
     checkpoint_output(head=head, digest=hashlib.sha256(payload).hexdigest(), ref=ref,
@@ -4522,6 +4578,7 @@ def verify_tooling_integrity(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", default=os.environ.get("MAINTENANCE_STATE_DIR"))
+    parser.add_argument("--best-effort", action="store_true", help="Recover operational failures as draft maintenance work")
     parser.add_argument("--repo-dir", type=Path, default=os.environ.get("MAINTENANCE_REPO_DIR"))
     sub = parser.add_subparsers(dest="command", required=True)
     for name in PHASES:
@@ -4537,6 +4594,51 @@ def build_parser() -> argparse.ArgumentParser:
             phase.add_argument("--expected-digest", required=True)
             phase.add_argument("--checkpoint-ref", required=True)
     return parser
+
+
+RECOVERABLE_PHASES = {"prepare", "refresh-vet-imports", "update-dependencies", "vet-dependencies",
+                      "import-dependabot", "backports", "release", "validate"}
+
+
+def run_best_effort_phase(args: argparse.Namespace, state: State, runner: Runner) -> None:
+    """Roll back only an unsuccessful phase; integrity and transport stay strict."""
+    if args.command not in RECOVERABLE_PHASES:
+        PHASES[args.command](args, state, runner)
+        return
+    before = state.load()
+    head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
+    if runner.git(["status", "--porcelain"]).stdout:
+        raise MaintenanceError("recovery requires a clean starting tree")
+    try:
+        PHASES[args.command](args, state, runner)
+    except Exception as exc:
+        # Backports recover per item below, so this fallback only handles errors
+        # before the batch starts. Never retain an incomplete mutation or approval.
+        runner.git(["cherry-pick", "--abort"], check=False)
+        runner.git(["reset", "--hard", head])
+        # Entry was clean: untracked files now belong only to the failed phase.
+        runner.git(["clean", "-fd"])
+        if runner.git(["status", "--porcelain"]).stdout:
+            raise MaintenanceError("recovery rollback left an unclean tree") from exc
+        progress = state.load()
+        if args.command == "validate":
+            before["gate_results"] = progress.get("gate_results", [])
+            before["manual_audit_work"] = progress.get("manual_audit_work", [])
+        before["network_not_before"] = snapshot_network_deadline(progress)
+        failure = {"phase": args.command, "reason": diagnostic_reason(exc)}
+        if args.command == "validate":
+            failure["gate"] = progress.get("validation_gate", "unknown")
+        before.setdefault("phase_failures", []).append(failure)
+        for key in ("validated_head", "manual_audit_head", "recovery_head"):
+            before.pop(key, None)
+        state.save(before)
+        state.event(args.command, "phase failed; previous completed work preserved for draft publication")
+        print(f"maintenance-warning: phase={args.command} recovered=true manual_work_required=true", file=sys.stderr)
+    if args.command == "validate" and state.load().get("phase_failures"):
+        value = state.load()
+        value.pop("validated_head", None)
+        value["recovery_head"] = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
+        state.save(value)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -4558,7 +4660,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             # still allowed so the reason remains visible in the Actions summary.
             if state.load().get("skip") and args.command not in {"select", "guard", "report"}:
                 return 0
-            PHASES[args.command](args, state, runner)
+            if args.best_effort:
+                run_best_effort_phase(args, state, runner)
+            else:
+                PHASES[args.command](args, state, runner)
         finally:
             primary_error = sys.exc_info()[0] is not None
             try:
@@ -4588,5 +4693,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
