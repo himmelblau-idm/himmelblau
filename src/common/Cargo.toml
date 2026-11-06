@@ -69,3 +69,4 @@ ignored = ["libhimmelblau"]
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
+tempfile = "3.27.0"
