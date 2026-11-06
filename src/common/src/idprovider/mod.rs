@@ -55,32 +55,6 @@ pub struct IdProviderProxy {
     provider: Arc<Providers>,
 }
 
-/// Names of the settings the provider is built from that differ between `old` and `new`.
-fn provider_settings_changed(old: &HimmelblauConfig, new: &HimmelblauConfig) -> Vec<&'static str> {
-    fn settings(cfg: &HimmelblauConfig) -> [(&'static str, String); 7] {
-        let domain = cfg.get_configured_entra_domain();
-        let section = domain.clone().unwrap_or_else(|| "oidc".to_string());
-        [
-            ("domain", format!("{:?}", domain)),
-            (
-                "oidc_issuer_url",
-                format!("{:?}", cfg.get_oidc_issuer_url()),
-            ),
-            ("app_id", format!("{:?}", cfg.get_app_id(&section))),
-            ("tenant_id", format!("{:?}", cfg.get_tenant_id(&section))),
-            ("authority_host", cfg.get_authority_host(&section)),
-            ("graph_url", format!("{:?}", cfg.get_graph_url(&section))),
-            ("odc_provider", cfg.get_odc_provider(&section)),
-        ]
-    }
-    settings(old)
-        .into_iter()
-        .zip(settings(new))
-        .filter(|((_, old), (_, new))| old != new)
-        .map(|((name, _), _)| name)
-        .collect()
-}
-
 impl IdProviderProxy {
     pub async fn new<D: KeyStoreTxn + Send>(
         config_filename: &str,
@@ -688,17 +662,8 @@ impl IdProvider for IdProviderProxy {
         Ok(())
     }
 
-    async fn reload_config(&self, config: HimmelblauConfig) -> Result<(), String> {
-        let mut current = self.config.lock().await;
-        let changed = provider_settings_changed(&current, &config);
-        if !changed.is_empty() {
-            return Err(format!(
-                "{} changed and requires a restart",
-                changed.join(", ")
-            ));
-        }
-        *current = config;
-        Ok(())
+    async fn reload_config(&self, config: HimmelblauConfig) {
+        *self.config.lock().await = config;
     }
 }
 
@@ -720,25 +685,5 @@ mod tests {
         let id = Id::Name("alice".to_string());
         assert_eq!(account_domain(&id, None), None);
         assert_eq!(account_domain(&Id::Gid(1000), None), None);
-    }
-
-    #[test]
-    fn provider_settings_changes_are_detected() {
-        let mut old = HimmelblauConfig::new(Some("/dev/null")).unwrap();
-        old.set("global", "domain", "example.com");
-        old.set("example.com", "tenant_id", "tenant-a");
-        let mut new = old.clone();
-        new.set("global", "pam_allow_groups", "group-a");
-        assert!(provider_settings_changed(&old, &new).is_empty());
-
-        new.set("example.com", "tenant_id", "tenant-b");
-        new.set("example.com", "app_id", "app-b");
-        assert_eq!(
-            provider_settings_changed(&old, &new),
-            vec!["app_id", "tenant_id"]
-        );
-
-        new.set("global", "domain", "example.org");
-        assert!(provider_settings_changed(&old, &new).contains(&"domain"));
     }
 }

@@ -468,7 +468,5 @@ pub trait IdProvider {
     }
 
     /// Replace the configuration the provider reads at runtime.
-    async fn reload_config(&self, _config: HimmelblauConfig) -> Result<(), String> {
-        Ok(())
-    }
+    async fn reload_config(&self, _config: HimmelblauConfig) {}
 }

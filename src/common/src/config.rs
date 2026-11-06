@@ -210,6 +210,8 @@ pub struct HimmelblauConfig {
     config: Ini,
     filename: String,
     effective_config_paths: Vec<PathBuf>,
+    /// Values from the admin's files only, without those the daemon writes to SERVER_CONFIG_PATH.
+    admin_config: Ini,
 }
 
 fn str_to_home_attr(attrib: &str) -> HomeAttr {
@@ -379,6 +381,7 @@ impl HimmelblauConfig {
             vec![cfg_path]
         };
         let effective_config_paths = load_config_hierarchy(&mut sconfig, &config_paths)?;
+        let admin_config = sconfig.clone();
 
         // Apply server generated config (generated during domain join)
         let srv_cfg_path: PathBuf = PathBuf::from(SERVER_CONFIG_PATH.to_string());
@@ -394,7 +397,51 @@ impl HimmelblauConfig {
             config: sconfig,
             filename,
             effective_config_paths,
+            admin_config,
         })
+    }
+
+    /// Check that `idmap_range` and `subid_range` do not overlap.
+    pub fn validate(&self) -> Result<(), String> {
+        let subid_range = self.get_subid_range();
+        let idmap_range = self.get_idmap_range("_");
+
+        // Ranges overlap if one starts before the other ends
+        if idmap_range.0 <= subid_range.1 && subid_range.0 <= idmap_range.1 {
+            return Err(format!(
+                "idmap_range ({}-{}) overlaps with subid_range ({}-{}). \
+                These ranges must not overlap to prevent ID conflicts. \
+                Please adjust your configuration.",
+                idmap_range.0, idmap_range.1, subid_range.0, subid_range.1
+            ));
+        }
+        Ok(())
+    }
+
+    /// Load `path` to replace this startup configuration; both daemons share this reload check.
+    pub fn reload_from(&self, path: &str) -> Result<HimmelblauConfig, String> {
+        let new = HimmelblauConfig::new(Some(path))?;
+        if new.get_effective_config_paths().is_empty() {
+            return Err(format!("no configuration found at {}", path));
+        }
+        new.validate()?;
+        let changed = provider_settings_changed(&self.admin_view(), &new.admin_view());
+        if !changed.is_empty() {
+            return Err(format!(
+                "{} changed and requires a restart",
+                changed.join(", ")
+            ));
+        }
+        Ok(new)
+    }
+
+    fn admin_view(&self) -> HimmelblauConfig {
+        HimmelblauConfig {
+            config: self.admin_config.clone(),
+            filename: self.filename.clone(),
+            effective_config_paths: self.effective_config_paths.clone(),
+            admin_config: self.admin_config.clone(),
+        }
     }
 
     pub fn get(&self, section: &str, option: &str) -> Option<String> {
@@ -1083,6 +1130,38 @@ impl HimmelblauConfig {
             IpVersionSelection::Both => vec![IpVersion::V4, IpVersion::V6],
         }
     }
+}
+
+/// Names of the settings the identity provider is built from that differ between `old` and `new`.
+fn provider_settings_changed(old: &HimmelblauConfig, new: &HimmelblauConfig) -> Vec<&'static str> {
+    fn settings(cfg: &HimmelblauConfig) -> [(&'static str, String); 9] {
+        let domain = cfg.get_configured_entra_domain();
+        let section = domain.clone().unwrap_or_else(|| "oidc".to_string());
+        let idmap_range = (
+            cfg.get(&section, "idmap_range"),
+            cfg.get("global", "idmap_range"),
+        );
+        [
+            ("domain", format!("{:?}", domain)),
+            (
+                "oidc_issuer_url",
+                format!("{:?}", cfg.get_oidc_issuer_url()),
+            ),
+            ("oidc_redirect_uri", cfg.get_oidc_redirect_uri()),
+            ("app_id", format!("{:?}", cfg.get_app_id(&section))),
+            ("tenant_id", format!("{:?}", cfg.get_tenant_id(&section))),
+            ("authority_host", cfg.get_authority_host(&section)),
+            ("graph_url", format!("{:?}", cfg.get_graph_url(&section))),
+            ("odc_provider", cfg.get_odc_provider(&section)),
+            ("idmap_range", format!("{:?}", idmap_range)),
+        ]
+    }
+    settings(old)
+        .into_iter()
+        .zip(settings(new))
+        .filter(|((_, old), (_, new))| old != new)
+        .map(|((name, _), _)| name)
+        .collect()
 }
 
 impl fmt::Debug for HimmelblauConfig {
@@ -2938,5 +3017,69 @@ mod tests {
         assert_eq!(split_username("user@"), Some(("user", "")));
         // Just @ sign
         assert_eq!(split_username("@"), Some(("", "")));
+    }
+
+    #[test]
+    fn validate_rejects_overlapping_id_ranges() {
+        let cfg = HimmelblauConfig::new(Some(&create_temp_config(
+            "[global]\nidmap_range = 1000000-2000000\nsubid_range = 3000000-4000000\n",
+        )))
+        .unwrap();
+        assert!(cfg.validate().is_ok());
+
+        let cfg = HimmelblauConfig::new(Some(&create_temp_config(
+            "[global]\nidmap_range = 1000000-2000000\nsubid_range = 1500000-2500000\n",
+        )))
+        .unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn reload_from_rejects_settings_that_need_a_restart() {
+        let base = "[global]\ndomain = example.com\nidmap_range = 1000000-2000000\n\
+                    subid_range = 3000000-4000000\n\n[example.com]\napp_id = app-a\n";
+        let path = create_temp_config(base);
+        let startup = HimmelblauConfig::new(Some(&path)).unwrap();
+
+        fs::write(&path, format!("{}pam_allow_groups = group-a\n", base)).unwrap();
+        assert!(startup.reload_from(&path).is_ok());
+
+        fs::write(&path, base.replace("app-a", "app-b")).unwrap();
+        assert!(startup.reload_from(&path).unwrap_err().contains("app_id"));
+
+        fs::write(
+            &path,
+            base.replace(
+                "[global]\n",
+                "[global]\noidc_redirect_uri = https://example.com/cb\n",
+            ),
+        )
+        .unwrap();
+        assert!(startup
+            .reload_from(&path)
+            .unwrap_err()
+            .contains("oidc_redirect_uri"));
+
+        fs::write(
+            &path,
+            base.replace("1000000-2000000", "5000000-6000000")
+                .replace("3000000-4000000", "1000000-2000000"),
+        )
+        .unwrap();
+        assert!(startup
+            .reload_from(&path)
+            .unwrap_err()
+            .contains("idmap_range"));
+
+        fs::remove_file(&path).unwrap();
+        assert!(startup.reload_from(&path).is_err());
+    }
+
+    #[test]
+    fn reload_from_ignores_values_discovered_at_runtime() {
+        let path = create_temp_config("[global]\ndomain = example.com\n");
+        let mut startup = HimmelblauConfig::new(Some(&path)).unwrap();
+        startup.set("example.com", "tenant_id", "discovered-tenant");
+        assert!(startup.reload_from(&path).is_ok());
     }
 }

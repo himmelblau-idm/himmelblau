@@ -943,12 +943,13 @@ fn restart_required_changes(
     changed
 }
 
-fn reload_config(cfg_path: &str, cfg_tx: &watch::Sender<HimmelblauConfig>) -> Result<(), String> {
-    let cfg = HimmelblauConfig::new(Some(cfg_path))?;
-    if cfg.get_effective_config_paths().is_empty() {
-        return Err(format!("no configuration found at {}", cfg_path));
-    }
-    for (setting, services) in restart_required_changes(&cfg_tx.borrow(), &cfg) {
+fn reload_config(
+    cfg_path: &str,
+    startup_cfg: &HimmelblauConfig,
+    cfg_tx: &watch::Sender<HimmelblauConfig>,
+) -> Result<(), String> {
+    let cfg = startup_cfg.reload_from(cfg_path)?;
+    for (setting, services) in restart_required_changes(startup_cfg, &cfg) {
         warn!("{} changed; restart {} to apply it", setting, services);
     }
     cfg_tx.send_replace(cfg);
@@ -1009,6 +1010,7 @@ async fn main() -> ExitCode {
             let task_sock_path = cfg.get_task_socket_path();
             debug!("Attempting to use {} ...", task_sock_path);
             let startup_cfg = cfg.clone();
+            let server_startup_cfg = cfg.clone();
             let (cfg_tx, cfg_rx) = watch::channel(cfg);
 
             let (broadcast_tx, mut broadcast_rx) = broadcast::channel(4);
@@ -1032,7 +1034,7 @@ async fn main() -> ExitCode {
                                         _ = d_broadcast_rx.recv() => {
                                             break;
                                         }
-                                        _ = handle_tasks(stream, &startup_cfg, &cfg_rx) => {
+                                        _ = handle_tasks(stream, &server_startup_cfg, &cfg_rx) => {
                                             continue;
                                         }
                                     }
@@ -1105,7 +1107,7 @@ async fn main() -> ExitCode {
                                 error!("Failed to notify systemd of reload: {}", e);
                             }
                         }
-                        match reload_config(config_path_str, &cfg_tx) {
+                        match reload_config(config_path_str, &startup_cfg, &cfg_tx) {
                             Ok(()) => info!("Reloaded configuration from {}", config_path_str),
                             Err(e) => error!(
                                 "Failed to reload configuration from {}, keeping the previous configuration: {}",
@@ -1372,5 +1374,34 @@ mod tests {
                 ("home_prefix", "himmelblaud and himmelblaud-tasks")
             ]
         );
+    }
+
+    #[test]
+    fn rejected_reload_keeps_the_previous_configuration() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap().to_string();
+        let config = |app_id: &str, group: &str| {
+            format!("[global]\ndomain = example.com\nlocal_groups = {group}\n\n[example.com]\napp_id = {app_id}\n")
+        };
+        fs::write(&path, config("app-a", "users")).unwrap();
+        let startup = HimmelblauConfig::new(Some(&path)).unwrap();
+        let (cfg_tx, cfg_rx) = watch::channel(startup.clone());
+
+        // himmelblaud rejects an app_id change, so the new local_groups must not apply here.
+        fs::write(&path, config("app-b", "wheel")).unwrap();
+        assert!(reload_config(&path, &startup, &cfg_tx).is_err());
+        assert_eq!(cfg_rx.borrow().get_local_groups(), vec!["users"]);
+
+        let overlapping = config("app-a", "wheel").replace(
+            "[global]\n",
+            "[global]\nidmap_range = 1000000-2000000\nsubid_range = 1500000-2500000\n",
+        );
+        fs::write(&path, overlapping).unwrap();
+        assert!(reload_config(&path, &startup, &cfg_tx).is_err());
+        assert_eq!(cfg_rx.borrow().get_local_groups(), vec!["users"]);
+
+        fs::write(&path, config("app-a", "wheel")).unwrap();
+        assert!(reload_config(&path, &startup, &cfg_tx).is_ok());
+        assert_eq!(cfg_rx.borrow().get_local_groups(), vec!["wheel"]);
     }
 }

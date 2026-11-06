@@ -1457,7 +1457,7 @@ mod tests {
             "pam_allow_groups",
             "00000000-0000-0000-0000-000000000001",
         );
-        resolver.reload_config(&cfg).await.unwrap();
+        resolver.reload_config(&cfg).await;
         assert_eq!(
             resolver.pam_account_allowed(&account_id).await.unwrap(),
             Some(false)
@@ -1468,7 +1468,7 @@ mod tests {
             "pam_allow_groups",
             "9f8a7a5a-a8e8-5c57-9f4f-7dfe21126c23",
         );
-        resolver.reload_config(&cfg).await.unwrap();
+        resolver.reload_config(&cfg).await;
         assert_eq!(
             resolver.pam_account_allowed(&account_id).await.unwrap(),
             Some(true)
@@ -2958,8 +2958,8 @@ where
     }
 
     /// Apply a reloaded configuration to the identity provider and then the resolver.
-    pub async fn reload_config(&self, cfg: &HimmelblauConfig) -> Result<(), String> {
-        self.client.reload_config(cfg.clone()).await?;
+    pub async fn reload_config(&self, cfg: &HimmelblauConfig) {
+        self.client.reload_config(cfg.clone()).await;
         let settings = ResolverSettings::new(
             cfg.get_cache_timeout(),
             cfg.get_pam_allow_groups(),
@@ -2970,7 +2970,6 @@ where
             Ok(mut current) => *current = settings,
             Err(poisoned) => *poisoned.into_inner() = settings,
         };
-        Ok(())
     }
 
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {

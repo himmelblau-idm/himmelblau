@@ -1742,17 +1742,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_config_rejects_overlapping_id_ranges() {
-        let mut cfg = HimmelblauConfig::new(Some("/dev/null")).unwrap();
-        cfg.set("global", "idmap_range", "1000000-2000000");
-        cfg.set("global", "subid_range", "3000000-4000000");
-        assert!(validate_config(&cfg).is_ok());
-
-        cfg.set("global", "subid_range", "1500000-2500000");
-        assert!(validate_config(&cfg).is_err());
-    }
-
-    #[test]
     fn restart_required_changes_reports_startup_settings() {
         let old = HimmelblauConfig::new(Some("/dev/null")).unwrap();
         let mut new = old.clone();
@@ -1775,22 +1764,6 @@ fn notify_reloading() -> io::Result<()> {
     sd_notify::notify(&[NotifyState::Reloading, monotonic_usec])
 }
 
-fn validate_config(cfg: &HimmelblauConfig) -> Result<(), String> {
-    let subid_range = cfg.get_subid_range();
-    let idmap_range = cfg.get_idmap_range("_");
-
-    // Ranges overlap if one starts before the other ends
-    if idmap_range.0 <= subid_range.1 && subid_range.0 <= idmap_range.1 {
-        return Err(format!(
-            "idmap_range ({}-{}) overlaps with subid_range ({}-{}). \
-            These ranges must not overlap to prevent ID conflicts. \
-            Please adjust your configuration.",
-            idmap_range.0, idmap_range.1, subid_range.0, subid_range.1
-        ));
-    }
-    Ok(())
-}
-
 type ConfigGetter = fn(&HimmelblauConfig) -> String;
 
 const DAEMON: &str = "himmelblaud";
@@ -1802,7 +1775,9 @@ const RESTART_REQUIRED_SETTINGS: &[(&str, &str, ConfigGetter)] = &[
     ("task_socket_path", BOTH, |c| c.get_task_socket_path()),
     ("broker_socket_path", DAEMON, |c| c.get_broker_socket_path()),
     ("db_path", DAEMON, |c| c.get_db_path()),
-    ("hsm_type", DAEMON, |c| format!("{:?}", c.get_hsm_type())),
+    ("hsm_type", DAEMON, |c| {
+        format!("{:?}", c.get("global", "hsm_type"))
+    }),
     ("tpm_tcti_name", DAEMON, |c| c.get_tpm_tcti_name()),
     ("hsm_pin_path", DAEMON, |c| c.get_hsm_pin_path()),
     ("debug", BOTH, |c| c.get_debug().to_string()),
@@ -1818,6 +1793,12 @@ const RESTART_REQUIRED_SETTINGS: &[(&str, &str, ConfigGetter)] = &[
     ("user_map_file", DAEMON, |c| c.get_user_map_file()),
     ("local_groups_reconcile_interval", DAEMON, |c| {
         c.get_local_groups_reconcile_interval().to_string()
+    }),
+    ("request_timeout", DAEMON, |c| {
+        c.get_request_timeout().to_string()
+    }),
+    ("ip_version", DAEMON, |c| {
+        format!("{:?}", c.get_ip_version())
     }),
 ];
 
@@ -1842,20 +1823,15 @@ fn restart_required_changes(
 
 async fn reload_config(
     cfg_path: &str,
+    startup_cfg: &HimmelblauConfig,
     cfg_tx: &watch::Sender<HimmelblauConfig>,
     cachelayer: &Resolver<IdProviderProxy>,
 ) -> Result<(), String> {
-    let cfg = HimmelblauConfig::new(Some(cfg_path))?;
-    if cfg.get_effective_config_paths().is_empty() {
-        return Err(format!("no configuration found at {}", cfg_path));
-    }
-    validate_config(&cfg)?;
-    cachelayer.reload_config(&cfg).await?;
-
-    let changed = restart_required_changes(&cfg_tx.borrow(), &cfg);
-    for (setting, services) in changed {
+    let cfg = startup_cfg.reload_from(cfg_path)?;
+    for (setting, services) in restart_required_changes(startup_cfg, &cfg) {
         warn!("{} changed; restart {} to apply it", setting, services);
     }
+    cachelayer.reload_config(&cfg).await;
     cfg_tx.send_replace(cfg);
     Ok(())
 }
@@ -2025,7 +2001,7 @@ async fn main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
 
-            if let Err(e) = validate_config(&cfg) {
+            if let Err(e) = cfg.validate() {
                 error!("Configuration error: {}", e);
                 return ExitCode::FAILURE;
             }
@@ -2588,7 +2564,7 @@ async fn main() -> ExitCode {
                                 error!("Failed to notify systemd of reload: {}", e);
                             }
                         }
-                        match reload_config(cfg_path_str, &cfg_tx, &reload_cachelayer).await {
+                        match reload_config(cfg_path_str, &cfg, &cfg_tx, &reload_cachelayer).await {
                             Ok(()) => info!("Reloaded configuration from {}", cfg_path_str),
                             Err(e) => error!(
                                 "Failed to reload configuration from {}, keeping the previous configuration: {}",

@@ -14,7 +14,7 @@ The `himmelblaud-tasks` daemon must be run as the root user. If the daemon is st
 .SH SIGNALS
 .TP
 .B SIGHUP
-Reload the configuration without restarting the daemon. With systemd 253 or later, \fBsystemctl reload himmelblaud\fR reloads both \fBhimmelblaud\fR and this daemon; with older systemd versions, use \fBsystemctl kill \-\-signal=HUP himmelblaud himmelblaud-tasks\fR. If the new configuration cannot be read, the error is logged and the previous configuration stays in effect. Changes to \fBtask_socket_path\fR, \fBdebug\fR and \fBhome_prefix\fR log a warning and take effect after a restart.
+Reload the configuration without restarting the daemon. If the units use \fBType=notify-reload\fR, as the units generated for systemd 253 or later do, \fBsystemctl reload himmelblaud\fR reloads both \fBhimmelblaud\fR and this daemon. Otherwise, for example with older systemd versions or the NixOS module, use \fBsystemctl kill \-\-signal=HUP himmelblaud himmelblaud-tasks\fR. This daemon accepts and rejects the same reloads as \fBhimmelblaud\fR(8), keeping the previous configuration when a reload is rejected. Changes to \fBtask_socket_path\fR, \fBdebug\fR and \fBhome_prefix\fR log a warning and take effect after a restart.
 
 .SH EXAMPLES
 .TP
