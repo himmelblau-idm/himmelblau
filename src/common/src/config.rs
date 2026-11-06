@@ -428,7 +428,7 @@ impl HimmelblauConfig {
         }
         if let Some(value) = new.get("global", "subid_range") {
             let parsed: Result<Vec<u32>, _> = value.split('-').map(|m| m.parse()).collect();
-            if !matches!(parsed.as_deref(), Ok([_, _])) {
+            if !matches!(parsed.as_deref(), Ok([min, max]) if min < max) {
                 return Err(format!("subid_range = {} is not a valid range", value));
             }
         }
@@ -3136,6 +3136,12 @@ mod tests {
 
         fs::write(&path, base.replace("3000000-4000000", "5500000-6500000")).unwrap();
         assert!(startup.reload_from(&path).unwrap_err().contains("overlaps"));
+
+        fs::write(&path, base.replace("3000000-4000000", "4000000-3000000")).unwrap();
+        assert!(startup
+            .reload_from(&path)
+            .unwrap_err()
+            .contains("subid_range"));
 
         fs::write(&path, base.replace("3000000-4000000", "invalid")).unwrap();
         assert!(startup
