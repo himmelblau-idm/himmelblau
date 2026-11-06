@@ -1289,13 +1289,7 @@ impl IdProvider for HimmelblauProvider {
                         info!(?url, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                        return Ok((
-                            AuthRequest::InitDenied {
-                                msg: "Network outage detected."
-                                    .to_string(),
-                            },
-                            AuthCredHandler::None,
-                        ));
+                        return Err(IdpError::Transport);
                     },
                     $($pat => $result),*
                 }
@@ -1344,12 +1338,7 @@ impl IdProvider for HimmelblauProvider {
                 info!("Network down detected");
                 let mut state = self.state.lock().await;
                 *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                return Ok((
-                    AuthRequest::InitDenied {
-                        msg: tr("Network outage detected."),
-                    },
-                    AuthCredHandler::None,
-                ));
+                return Err(IdpError::Transport);
             }
             // For remote connections (SSH), force MFA to ensure security.
             // For local terminal authentication (GDM, etc.), don't force MFA
@@ -1449,12 +1438,7 @@ impl IdProvider for HimmelblauProvider {
                     );
                     // Check if the network is up before prompting for password
                     if !self.attempt_online(SystemTime::now()).await {
-                        return Ok((
-                            AuthRequest::InitDenied {
-                                msg: tr("Network outage detected."),
-                            },
-                            AuthCredHandler::None,
-                        ));
+                        return Err(IdpError::Transport);
                     }
                     let is_domain_joined = self.is_domain_joined(keystore).await;
                     return Ok((
@@ -1473,12 +1457,7 @@ impl IdProvider for HimmelblauProvider {
                     // Check if the network is even up prior to sending a
                     // password prompt.
                     if !self.attempt_online(SystemTime::now()).await {
-                        return Ok((
-                            AuthRequest::InitDenied {
-                                msg: tr("Network outage detected."),
-                            },
-                            AuthCredHandler::None,
-                        ));
+                        return Err(IdpError::Transport);
                     }
                     Ok((
                         AuthRequest::Password {
@@ -1598,8 +1577,8 @@ impl IdProvider for HimmelblauProvider {
                         info!(?url, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                        // Report the network outage to the user via PAM INFO.
-                        return Ok((AuthResult::Denied(tr("Network outage detected.")), AuthCacheAction::None));
+                        // Let the resolver enter the offline method without a credential denial.
+                        return Err(IdpError::Transport);
                     },
                     Err(MsalError::AcquireTokenFailed(e)) => {
                         check_new_device_enrollment_required!(e, self, keystore)
@@ -1615,11 +1594,8 @@ impl IdProvider for HimmelblauProvider {
             info!("Network down detected");
             let mut state = self.state.lock().await;
             *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-            // Report the network outage to the user via PAM INFO.
-            return Ok((
-                AuthResult::Denied(tr("Network outage detected.")),
-                AuthCacheAction::None,
-            ));
+            // Let the resolver enter the offline method without a credential denial.
+            return Err(IdpError::Transport);
         }
 
         let remote_services = self
@@ -2008,10 +1984,7 @@ impl IdProvider for HimmelblauProvider {
                             *state = CacheState::OfflineNextCheck(
                                 SystemTime::now() + OFFLINE_NEXT_CHECK,
                             );
-                            return Ok((
-                                AuthResult::Denied(tr("Network outage detected.")),
-                                AuthCacheAction::None,
-                            ));
+                            return Err(IdpError::Transport);
                         }
                         Err(MsalError::PasswordRequired) => {
                             // Azure requires a password for this flow. Prompt for
@@ -2109,10 +2082,7 @@ impl IdProvider for HimmelblauProvider {
                             *state = CacheState::OfflineNextCheck(
                                 SystemTime::now() + OFFLINE_NEXT_CHECK,
                             );
-                            return Ok((
-                                AuthResult::Denied(tr("Network outage detected.")),
-                                AuthCacheAction::None,
-                            ));
+                            return Err(IdpError::Transport);
                         }
                         Err(e) => {
                             error!("Failed to initiate reauth device flow: {:?}", e);
@@ -3343,6 +3313,15 @@ impl IdProvider for HimmelblauProvider {
                             aadsts_err.code
                         );
                         mfa_confirmed_required = false;
+                    }
+                    Some(Err(MsalError::RequestFailed(msg))) => {
+                        let url = extract_base_url!(msg);
+                        info!(?url, "Network down detected");
+                        let mut state = self.state.lock().await;
+                        *state =
+                            CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                        // Let the resolver enter the offline method without a credential denial.
+                        return Err(IdpError::Transport);
                     }
                     Some(Err(e)) => {
                         // ROPC failed - this could be a bad password or other error

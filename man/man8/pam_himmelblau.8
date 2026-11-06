@@ -6,7 +6,7 @@
 Himmelblau
 .SH SYNOPSIS
 \f[B]pam_himmelblau.so\f[R] [debug] [use_first_pass]
-[ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin] [no_info_prompt] [try_unseal]
+[ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin] [no_info_prompt] [try_unseal] [max_tries=N]
 .SH DESCRIPTION
 \f[B]pam_himmelblau\f[R] is a PAM module that authenticates users
 against Microsoft Azure Entra ID using the Himmelblau daemon
@@ -62,6 +62,18 @@ a single \f[CR]PAM_PROMPT_ECHO_OFF\f[R] instead of sending a separate
 \f[CR]PAM_TEXT_INFO\f[R] message first.
 Required for PAM consumers that cannot carry a standalone info message during
 authentication, such as the MariaDB \f[CR]auth_pam\f[R] dialog relay.
+.IP \(bu 2
+\f[B]max_tries=N\f[R]
+.PD 0
+.P
+.PD
+Ends authentication with \f[CR]PAM_MAXTRIES\f[R] after N denied
+attempts, so the rest of the stack (for example
+\f[CR]pam_faillock\f[R]) sees the failure.
+The default, 0, asks again after every denial.
+Set \f[CR]max_tries=1\f[R] for display managers such as SDDM that
+answer prompts without the user and would otherwise resubmit the same
+password indefinitely. Network transport failures switch to the configured offline authentication method without counting as a denial. Invalid limits are ignored. If repeated options conflict, the smallest positive limit wins; zero does not override a positive limit.
 .IP \(bu 2
 \f[B]try_unseal\f[R]
 .PD 0
