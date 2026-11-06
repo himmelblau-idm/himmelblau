@@ -426,6 +426,12 @@ impl HimmelblauConfig {
         if new.get_effective_config_paths().is_empty() {
             return Err(format!("no configuration found at {}", path));
         }
+        if let Some(value) = new.get("global", "subid_range") {
+            let parsed: Result<Vec<u32>, _> = value.split('-').map(|m| m.parse()).collect();
+            if !matches!(parsed.as_deref(), Ok([_, _])) {
+                return Err(format!("subid_range = {} is not a valid range", value));
+            }
+        }
         new.validate()?;
         let changed = provider_settings_changed(&self.admin_view(), &new.admin_view());
         if !changed.is_empty() {
@@ -3119,6 +3125,27 @@ mod tests {
         )))
         .unwrap();
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn reload_from_rejects_invalid_or_overlapping_subid_ranges() {
+        let base = "[global]\ndomain = example.com\nsubid_range = 3000000-4000000\n\n\
+                    [example.com]\nidmap_range = 5000000-6000000\n";
+        let path = create_temp_config(base);
+        let startup = HimmelblauConfig::new(Some(&path)).unwrap();
+
+        fs::write(&path, base.replace("3000000-4000000", "5500000-6500000")).unwrap();
+        assert!(startup.reload_from(&path).unwrap_err().contains("overlaps"));
+
+        fs::write(&path, base.replace("3000000-4000000", "invalid")).unwrap();
+        assert!(startup
+            .reload_from(&path)
+            .unwrap_err()
+            .contains("subid_range"));
+        assert!(HimmelblauConfig::new(Some(&path))
+            .unwrap()
+            .validate()
+            .is_ok());
     }
 
     #[test]
