@@ -20,6 +20,11 @@
 # compatibility symlink target (if present)
 /var/cache/himmelblaud(/.*)?            gen_context(system_u:object_r:himmelblau_var_cache_t,s0)
 
+# server configuration (SERVER_CONFIG_PATH): readable by client domains,
+# unlike the token cache database in the same directory
+/var/cache/private/himmelblaud/himmelblau\.conf  --  gen_context(system_u:object_r:himmelblau_server_conf_t,s0)
+/var/cache/himmelblaud/himmelblau\.conf          --  gen_context(system_u:object_r:himmelblau_server_conf_t,s0)
+
 # Intune policy cache (policies_db_path, written by himmelblaud_tasks).
 /var/cache/himmelblau-policies(/.*)?    gen_context(system_u:object_r:himmelblau_var_cache_t,s0)
 
