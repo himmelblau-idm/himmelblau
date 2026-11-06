@@ -434,6 +434,11 @@ who = "Codex (automated via Azure OpenAI)"
 criteria = "safe-to-deploy"
 delta = "1.5.0 -> 1.5.1"
 
+[[audits.libc]]
+who = "Codex (automated via Azure OpenAI)"
+criteria = "safe-to-deploy"
+delta = "0.2.190 -> 0.2.191"
+
 [[audits.libhimmelblau]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -463,6 +468,11 @@ delta = "0.16.2 -> 0.16.3"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.18.2 -> 0.18.3"
+
+[[audits.lru]]
+who = "Codex (automated via Azure OpenAI)"
+criteria = "safe-to-deploy"
+delta = "0.18.3 -> 0.18.5"
 
 [[audits.markup5ever]]
 who = "David Mulder <dmulder@samba.org>"
@@ -678,6 +688,11 @@ delta = "1.0.226 -> 1.0.228"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.0.224 -> 1.0.226"
+
+[[audits.serde_json]]
+who = "Codex (automated via Azure OpenAI)"
+criteria = "safe-to-deploy"
+delta = "1.0.151 -> 1.0.154"
 
 [[audits.serde_with]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1108,13 +1123,13 @@ end = "2026-09-11"
 
 [[trusted.async-stream]]
 criteria = "safe-to-deploy"
-user-id = 10
+user-id = 10 # Carl Lerche (carllerche)
 start = "2019-06-07"
 end = "2026-09-11"
 
 [[trusted.async-stream-impl]]
 criteria = "safe-to-deploy"
-user-id = 10
+user-id = 10 # Carl Lerche (carllerche)
 start = "2019-08-13"
 end = "2026-09-11"
 
@@ -2140,7 +2155,7 @@ end = "2026-09-11"
 
 [[trusted.tower-layer]]
 criteria = "safe-to-deploy"
-user-id = 10
+user-id = 10 # Carl Lerche (carllerche)
 start = "2019-04-27"
 end = "2026-09-11"
 

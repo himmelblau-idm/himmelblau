@@ -656,63 +656,74 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
-            Some(Ok(TaskRequest::LoadProfilePhoto(mut account_id, access_token))) => {
+            Some(Ok(TaskRequest::LoadProfilePhoto(account_id, access_token))) => {
                 debug!("Received task -> LoadProfilePhoto(...)");
-                let icons_dir = "/var/lib/AccountsService/icons/";
-                if !Path::new(icons_dir).exists() {
-                    info!("Profile photo directory '{}' doesn't exist.", icons_dir);
-                } else {
-                    let upn = account_id.clone();
-                    let domain = split_username(&upn).map(|(_, domain)| domain);
-                    account_id = cfg.map_upn_to_name(&account_id);
-                    // Set the profile picture
-                    if let Some(domain) = domain {
-                        let filename = format!("/var/lib/AccountsService/icons/{}", account_id);
-                        match File::create(&filename) {
-                            Ok(file) => {
-                                let authority_host = cfg.get_authority_host(domain);
-                                let tenant_id = cfg.get_tenant_id(domain);
-                                let graph_url = cfg.get_graph_url(domain);
-                                let request_timeout = cfg.get_request_timeout();
-                                if let Ok(graph) = Graph::new(
-                                    &cfg.get_odc_provider(domain),
-                                    domain,
-                                    Some(&authority_host),
-                                    tenant_id.as_deref(),
-                                    graph_url.as_deref(),
-                                    Duration::from_secs(request_timeout),
-                                )
-                                .await
-                                {
-                                    if let Err(e) =
-                                        graph.fetch_user_profile_photo(&access_token, file).await
+
+                // Reply before Graph runs. This socket also serves HomeDirectory,
+                // and that request gives up after one second.
+                let cfg = cfg.clone();
+                tokio::spawn(async move {
+                    let icons_dir = "/var/lib/AccountsService/icons/";
+                    if !Path::new(icons_dir).exists() {
+                        info!("Profile photo directory '{}' doesn't exist.", icons_dir);
+                    } else {
+                        let upn = account_id.clone();
+                        let domain = split_username(&upn).map(|(_, domain)| domain);
+                        let account_id = cfg.map_upn_to_name(&account_id);
+                        // Set the profile picture
+                        if let Some(domain) = domain {
+                            let filename = format!("/var/lib/AccountsService/icons/{}", account_id);
+                            match File::create(&filename) {
+                                Ok(file) => {
+                                    let authority_host = cfg.get_authority_host(domain);
+                                    let tenant_id = cfg.get_tenant_id(domain);
+                                    let graph_url = cfg.get_graph_url(domain);
+                                    let request_timeout = cfg.get_request_timeout();
+                                    if let Ok(graph) = Graph::new(
+                                        &cfg.get_odc_provider(domain),
+                                        domain,
+                                        Some(&authority_host),
+                                        tenant_id.as_deref(),
+                                        graph_url.as_deref(),
+                                        Duration::from_secs(request_timeout),
+                                    )
+                                    .await
                                     {
-                                        error!("Failed fetching user profile photo: {:?}", e);
+                                        if let Err(e) = graph
+                                            .fetch_user_profile_photo(&access_token, file)
+                                            .await
+                                        {
+                                            error!("Failed fetching user profile photo: {:?}", e);
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                error!("Failed creating file for user profile photo: {:?}", e)
-                            }
-                        }
-                        let user_file = format!("/var/lib/AccountsService/users/{}", account_id);
-                        match File::create(&user_file) {
-                            Ok(mut file) => {
-                                let contents =
-                                    format!("[User]\nIcon={}\nSystemAccount=false\n", filename);
-
-                                if let Err(e) = file.write_all(contents.as_bytes()) {
-                                    error!("Failed writing to user profile settings: {:?}", e);
+                                Err(e) => {
+                                    error!("Failed creating file for user profile photo: {:?}", e)
                                 }
                             }
-                            Err(e) => {
-                                error!("Failed creating file for user profile settings: {:?}", e)
+                            let user_file =
+                                format!("/var/lib/AccountsService/users/{}", account_id);
+                            match File::create(&user_file) {
+                                Ok(mut file) => {
+                                    let contents =
+                                        format!("[User]\nIcon={}\nSystemAccount=false\n", filename);
+
+                                    if let Err(e) = file.write_all(contents.as_bytes()) {
+                                        error!("Failed writing to user profile settings: {:?}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Failed creating file for user profile settings: {:?}",
+                                        e
+                                    )
+                                }
                             }
+                        } else {
+                            error!("Couldn't parse domain from name");
                         }
-                    } else {
-                        error!("Couldn't parse domain from name");
                     }
-                }
+                });
 
                 // Always indicate success here
                 if let Err(e) = reqs.send(TaskResponse::Success(0)).await {
