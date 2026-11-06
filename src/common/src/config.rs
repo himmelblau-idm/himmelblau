@@ -24,9 +24,9 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::{self, File};
-use std::io::Error;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::io::{self, Error};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, error};
 
@@ -333,6 +333,49 @@ fn parse_range(val: &str) -> Option<(u32, u32)> {
         },
         Err(_) => None,
     }
+}
+
+fn resolve_home_prefix(path: &Path) -> io::Result<PathBuf> {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()?.join(path)
+    };
+    let mut resolved = PathBuf::new();
+    let mut has_missing_component = false;
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(name) if has_missing_component => resolved.push(name),
+            Component::Normal(name) => {
+                let candidate = resolved.join(name);
+                match fs::canonicalize(&candidate) {
+                    Ok(canonical) => resolved = canonical,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        match fs::symlink_metadata(&candidate) {
+                            Ok(_) => return Err(error),
+                            Err(metadata_error)
+                                if metadata_error.kind() == io::ErrorKind::NotFound =>
+                            {
+                                resolved = candidate;
+                                has_missing_component = true;
+                            }
+                            Err(metadata_error) => return Err(metadata_error),
+                        }
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+
+    Ok(resolved)
 }
 
 fn ranges_overlap(a: (u32, u32), b: (u32, u32)) -> bool {
@@ -933,7 +976,7 @@ impl HimmelblauConfig {
                     continue;
                 }
             };
-            let domain = stanza.domain.trim().to_lowercase();
+            let domain = stanza.domain.trim().to_string();
             if domain.is_empty() {
                 errors.push(format!("[{}] requires a domain", section));
                 continue;
@@ -1241,23 +1284,42 @@ impl HimmelblauConfig {
                 .errors
                 .push("id_attr_map = rfc2307 supports a single tenant only".to_string());
         }
-        for (index, provider) in providers.iter().enumerate() {
-            if provider.get_home_attr(self) == HomeAttr::Cn
-                || provider.get_home_alias(self) == Some(HomeAttr::Cn)
-            {
-                for other in &providers[index + 1..] {
-                    if provider.get_home_prefix(self) == other.get_home_prefix(self)
-                        && (other.get_home_attr(self) == HomeAttr::Cn
-                            || other.get_home_alias(self) == Some(HomeAttr::Cn))
-                    {
-                        report.errors.push(format!(
-                            "[{}] and [{}] require distinct home_prefix values for CN home names",
-                            provider.section, other.section
-                        ));
-                    }
+        let mut cn_home_prefixes = Vec::new();
+        for provider in providers {
+            if !self.provider_uses_cn_home_name(provider) {
+                continue;
+            }
+            let prefix = provider.get_home_prefix(self);
+            match resolve_home_prefix(Path::new(&prefix)) {
+                Ok(path) => cn_home_prefixes.push((provider, path)),
+                Err(error) => report.errors.push(format!(
+                    "[{}] cannot resolve home_prefix {:?}: {}",
+                    provider.section, prefix, error
+                )),
+            }
+        }
+        for (index, (provider, prefix)) in cn_home_prefixes.iter().enumerate() {
+            for (other, other_prefix) in &cn_home_prefixes[index + 1..] {
+                if prefix == other_prefix {
+                    report.errors.push(format!(
+                        "[{}] and [{}] require distinct home_prefix values for CN home names",
+                        provider.section, other.section
+                    ));
                 }
             }
         }
+    }
+
+    fn provider_uses_cn_home_name(&self, provider: &ProviderConfig) -> bool {
+        let home_attr = provider.get_home_attr(self);
+        let home_alias = provider.get_home_alias(self);
+        let oidc_strips_spn_suffix = provider.kind == ProviderKind::Oidc
+            && provider.get_oidc_account_id_strip_at_suffix(self);
+
+        home_attr == HomeAttr::Cn
+            || home_alias == Some(HomeAttr::Cn)
+            || (oidc_strips_spn_suffix
+                && (home_attr == HomeAttr::Spn || home_alias == Some(HomeAttr::Spn)))
     }
 
     fn validate_id_ranges(&self, providers: &[ProviderConfig], report: &mut ValidationReport) {
@@ -3576,6 +3638,20 @@ mod tests {
     }
 
     #[test]
+    fn tenant_domain_spelling_is_preserved_for_cache_keys() {
+        let mut config =
+            HimmelblauConfig::from_test_config("[tenant.contoso]\ndomain = Contoso.COM\n");
+        let provider = config.parse_providers().unwrap().remove(0);
+
+        assert_eq!(provider.domain, "Contoso.COM");
+        config.set(&provider.domain, "tenant_id", "tenant-id");
+        assert_eq!(
+            config.get_tenant_id("contoso.com"),
+            Some("tenant-id".to_string())
+        );
+    }
+
+    #[test]
     fn test_single_tenant_section_is_the_default() {
         let config = load_with_cache("[tenant.contoso]\ndomain = contoso.com\n", "");
         assert!(config.validate().is_ok());
@@ -3851,6 +3927,72 @@ mod tests {
         ] {
             assert_rejected(&config, cache, expected);
         }
+    }
+
+    #[test]
+    fn cn_home_prefix_collisions_include_stripped_oidc_spn_aliases() {
+        let config = HimmelblauConfig::from_test_config(
+            "[tenant.oidc]\ntype = oidc\ndomain = oidc.example\ndefault = true\n\
+             oidc_issuer_url = https://issuer.example\napp_id = linux\n\
+             oidc_account_id_strip_at_suffix = true\nidmap_range = 200000-300000\n\
+             home_prefix = /home/\n\
+             [tenant.entra]\ndomain = entra.example\nidmap_range = 300001-400000\n\
+             home_attr = cn\nhome_prefix = /home/\n",
+        );
+
+        let report = config.validate();
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("require distinct home_prefix")),
+            "{:?}",
+            report.errors
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cn_home_prefix_collisions_use_resolved_paths_and_report_resolution_errors() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!(".test-home-prefix-{}", uuid::Uuid::new_v4()));
+        let shared = root.join("shared");
+        let alias = root.join("alias");
+        let broken = root.join("broken");
+        fs::create_dir_all(&shared).unwrap();
+        symlink(&shared, &alias).unwrap();
+        symlink(root.join("missing"), &broken).unwrap();
+
+        let config_for = |first: &Path, second: &Path| {
+            HimmelblauConfig::from_test_config(&format!(
+                "[tenant.a]\ndomain = a.example\ndefault = true\n\
+                 idmap_range = 200000-300000\nhome_attr = cn\nhome_prefix = {}/\n\
+                 [tenant.b]\ndomain = b.example\nidmap_range = 300001-400000\n\
+                 home_attr = cn\nhome_prefix = {}/\n",
+                first.display(),
+                second.display()
+            ))
+        };
+        let normalized_paths_rejected = config_for(&shared, &shared.join("."))
+            .validate()
+            .errors
+            .iter()
+            .any(|error| error.contains("require distinct home_prefix"));
+        let symlinked_paths_rejected = config_for(&shared, &alias)
+            .validate()
+            .errors
+            .iter()
+            .any(|error| error.contains("require distinct home_prefix"));
+        let broken_symlink_rejected = config_for(&broken, &shared)
+            .validate()
+            .errors
+            .iter()
+            .any(|error| error.contains("cannot resolve home_prefix"));
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(normalized_paths_rejected);
+        assert!(symlinked_paths_rejected);
+        assert!(broken_symlink_rejected);
     }
 
     #[test]
