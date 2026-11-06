@@ -582,6 +582,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
     Some(token)
 }
 
+/// Retrieves a confidential-client access token for the selected account or domain.
 #[instrument(skip(client_id, account_id, domain))]
 async fn confidential_client_access_token(
     client_id: Option<String>,
@@ -633,9 +634,8 @@ async fn confidential_client_access_token(
     let loadable_machine_key = tpm_loadable_machine_key!(db, tpm, auth_value, false, return None);
     let machine_key = tpm_machine_key!(tpm, auth_value, loadable_machine_key, cfg, return None);
 
-    let mut keystore = db.write().await;
     if let Ok(Some((cred_client_id, client_creds))) =
-        confidential_client_creds(&mut tpm, &mut keystore, &machine_key, &domain)
+        confidential_client_creds(&mut tpm, &db, &machine_key, &domain).await
     {
         if let Some(client_id) = client_id {
             if client_id.to_lowercase() != cred_client_id.to_lowercase() {

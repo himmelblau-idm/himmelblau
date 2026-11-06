@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::config::{split_username, HimmelblauConfig};
-use crate::db::KeyStoreTxn;
+use crate::db::{KeyStore, KeyStoreTxn};
 use crate::idprovider::himmelblau::HimmelblauProvider;
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -394,11 +394,12 @@ impl IdProvider for IdProviderProxy {
         }
     }
 
-    async fn unix_user_get<D: KeyStoreTxn + Send>(
+    /// Routes a user lookup to the provider selected for the account.
+    async fn unix_user_get<D: KeyStore + Sync>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        keystore: &mut D,
+        keystore: &D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {

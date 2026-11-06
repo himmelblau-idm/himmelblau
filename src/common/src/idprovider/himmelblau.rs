@@ -26,7 +26,7 @@ use crate::config::IdAttr;
 use crate::constants::DEFAULT_APP_ID;
 use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::constants::ID_MAP_CACHE;
-use crate::db::KeyStoreTxn;
+use crate::db::{KeyStore, KeyStoreTxn};
 use crate::i18n::{tr, tr_fmt};
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::build_online_probe_client;
@@ -765,12 +765,13 @@ impl IdProvider for HimmelblauProvider {
         )
     }
 
+    /// Resolves an Entra identity or returns a cache-preserving result when refresh cannot complete.
     #[instrument(skip_all)]
-    async fn unix_user_get<D: KeyStoreTxn + Send>(
+    async fn unix_user_get<D: KeyStore + Sync>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        keystore: &mut D,
+        keystore: &D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
@@ -898,7 +899,7 @@ impl IdProvider for HimmelblauProvider {
 
         // If we have ConfidentialClient creds, use those
         if let Ok(Some((client_id, creds))) =
-            confidential_client_creds(tpm, keystore, machine_key, &self.domain)
+            confidential_client_creds(tpm, keystore, machine_key, &self.domain).await
         {
             fetch_user_confidential_client!(&client_id, creds)
         }
