@@ -710,13 +710,11 @@ async fn handle_client(
                                                                 ))
                                                                 .await
                                                         {
-                                                            let authority_host = match HimmelblauConfig::new(Some(&cfg.get_config_file())) {
-                                                                Ok(current) => current.get_authority_host_for_account(&account_id),
-                                                                Err(err) => {
-                                                                    error!("Failed to reload authority configuration: {}", err);
-                                                                    None
-                                                                }
-                                                            };
+                                                            let authority_host = cachelayer
+                                                                .current_config()
+                                                                .await
+                                                                .unwrap_or_else(|| cfg.clone())
+                                                                .get_authority_host_for_account(&account_id);
                                                             let (tx, rx) = oneshot::channel();
                                                             match task_channel_tx
                                                                 .send_timeout(
@@ -1420,16 +1418,13 @@ async fn apply_intune_policy_for_account(
     task_channel_tx: &Sender<AsyncTaskRequest>,
     account_id: &str,
 ) -> Result<(), ApplyPolicyError> {
+    let current = cachelayer
+        .current_config()
+        .await
+        .unwrap_or_else(|| cfg.clone());
     let intune_device_id = split_username(account_id)
         .map(|(_, domain)| domain)
-        .and_then(|domain| {
-            // The intune_device_id may have been written after startup,
-            // so we re-read the config here.
-            HimmelblauConfig::new(Some(&cfg.get_config_file()))
-                .ok()
-                .map(|cfg| cfg.get_intune_device_id(domain))
-        })
-        .flatten();
+        .and_then(|domain| current.get_intune_device_id(domain));
 
     let graph_token = cachelayer
         .get_user_accesstoken(
@@ -2429,7 +2424,7 @@ async fn main() -> ExitCode {
             let dbus_cachelayer = cachelayer.clone();
             let e_broadcast_rx = broadcast_tx.subscribe();
             let task_d = match himmelblau_broker_serve_with_listener::<Broker>(
-                Broker { cachelayer: dbus_cachelayer, config_path: cfg.get_config_file() },
+                Broker { cachelayer: dbus_cachelayer },
                 if broker_listener.is_some() { None } else { Some(broker_socket_path.as_str()) },
                 e_broadcast_rx,
                 broker_listener,

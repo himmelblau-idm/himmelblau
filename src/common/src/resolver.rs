@@ -2957,6 +2957,10 @@ where
         }
     }
 
+    pub async fn current_config(&self) -> Option<HimmelblauConfig> {
+        self.client.current_config().await
+    }
+
     /// Apply a reloaded configuration to the identity provider and then the resolver.
     pub async fn reload_config(&self, cfg: &HimmelblauConfig) {
         self.client.reload_config(cfg.clone()).await;

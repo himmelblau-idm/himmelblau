@@ -3148,10 +3148,12 @@ mod tests {
             .reload_from(&path)
             .unwrap_err()
             .contains("subid_range"));
-        assert!(HimmelblauConfig::new(Some(&path))
-            .unwrap()
-            .validate()
-            .is_ok());
+        let malformed_startup = HimmelblauConfig::new(Some(&path)).unwrap();
+        assert!(malformed_startup.validate().is_ok());
+        assert!(malformed_startup
+            .reload_from(&path)
+            .unwrap_err()
+            .contains("subid_range"));
     }
 
     #[test]

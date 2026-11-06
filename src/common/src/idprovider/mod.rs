@@ -667,6 +667,10 @@ impl IdProvider for IdProviderProxy {
         config.keep_runtime_values(&current);
         *current = config;
     }
+
+    async fn current_config(&self) -> Option<HimmelblauConfig> {
+        Some(self.config.lock().await.clone())
+    }
 }
 
 #[cfg(test)]
