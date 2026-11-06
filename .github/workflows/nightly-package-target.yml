@@ -62,6 +62,10 @@ jobs:
           ref: ${{ fromJSON(inputs.spec).source_sha }}
           path: source
           persist-credentials: false
+      - name: Isolate registry credentials from the default Docker configuration
+        run: |
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/himmelblau-registry-auth" >> "$GITHUB_ENV"
+          mkdir -p -m 0700 "$RUNNER_TEMP/himmelblau-registry-auth"
       - name: Log in to the build-container cache registry
         id: cache-login
         continue-on-error: true
@@ -91,6 +95,9 @@ jobs:
             BUILD_ARGS+=(--refresh-build-container)
           fi
           python3 tooling/.github/scripts/nightly_packages.py build "${BUILD_ARGS[@]}"
+      - name: Remove build-cache registry credentials
+        if: always()
+        run: rm -rf -- "$DOCKER_CONFIG"
       - name: Retain validated nightly package set
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
