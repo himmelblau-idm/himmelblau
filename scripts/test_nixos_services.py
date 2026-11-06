@@ -613,6 +613,21 @@ class NixosServiceTests(unittest.TestCase):
         ]
         self.assertEqual(actual, expected)
 
+    def test_chromium_policies_force_install_the_sso_extension(self):
+        for path, text in self.evaluated["chromiumPolicies"].items():
+            with self.subTest(path=path):
+                self.assertIsNotNone(text, f"/etc/{path} is not generated")
+                self.assertIn(
+                    "jlnfnnolkbjieggibinobhkjdfbpcohn",
+                    json.loads(text)["ExtensionInstallForcelist"],
+                )
+
+    def test_chromium_policies_can_be_disabled_by_the_host(self):
+        evaluated = evaluate(chromiumEnable=False)
+        for path, text in evaluated["chromiumPolicies"].items():
+            with self.subTest(path=path):
+                self.assertIsNone(text, f"/etc/{path} is still generated")
+
     def test_nixos_nss_proxy_is_not_stopped(self):
         self.assertTrue(self.evaluated["nscdEnabled"])
         daemon = self.units["himmelblaud.service"]["Unit"]

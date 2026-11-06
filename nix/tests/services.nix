@@ -1,6 +1,7 @@
 # Evaluation fixture consumed by scripts/test_nixos_services.py; no packages are built.
 {
   nixpkgs ? <nixpkgs>,
+  chromiumEnable ? null,
   tpmEnabled ? true,
   tcti ? "device:/dev/tpmrm0",
   tssGroup ? "tss",
@@ -30,6 +31,9 @@ let
           enable = tpmEnabled;
           inherit tssGroup;
         };
+        programs.chromium = pkgs.lib.mkIf (chromiumEnable != null) {
+          enable = chromiumEnable;
+        };
       }
     ];
   };
@@ -46,6 +50,10 @@ in
   nscdEnabled = cfg.services.nscd.enable;
   hsmPinPath = cfg.services.himmelblau.settings.hsm_pin_path;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
+  chromiumPolicies = pkgs.lib.genAttrs [
+    "chromium/policies/managed/default.json"
+    "opt/chrome/policies/managed/default.json"
+  ] (path: cfg.environment.etc.${path}.text or null);
   warnings = cfg.warnings;
   assertions = map (assertion: assertion.message) (
     builtins.filter (assertion: !assertion.assertion) cfg.assertions
