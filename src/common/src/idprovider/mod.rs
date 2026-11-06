@@ -286,6 +286,11 @@ impl IdProvider for IdProviderProxy {
         self.config.lock().await.provider_for_account(account)
     }
 
+    async fn provider_for_token(&self, token: &UserToken) -> Option<ProviderConfig> {
+        // Runtime-discovered aliases exist only in the live configuration.
+        self.config.lock().await.provider_for_account(&token.spn)
+    }
+
     async fn provider_status(&self) -> Vec<(String, bool)> {
         let definitions = self.settings.parse_providers().unwrap_or_default();
         join_all(definitions.iter().map(|p| async {
@@ -864,6 +869,29 @@ mod tests {
             b,
             proxy.find_provider("bob@discovered.example").await.unwrap()
         ));
+        proxy
+            .config
+            .lock()
+            .await
+            .set("a.example", "domain_aliases", "late.example");
+        // Ownership follows the live alias, not the identity's ID range.
+        let late = token("alice@late.example");
+        assert_eq!(
+            proxy
+                .settings
+                .provider_for_gid(late.gidnumber)
+                .unwrap()
+                .domain,
+            "b.example"
+        );
+        assert_eq!(
+            proxy.provider_for_token(&late).await.unwrap().domain,
+            "a.example"
+        );
+        assert!(proxy
+            .provider_for_token(&token("alice@unknown.example"))
+            .await
+            .is_none());
     }
 
     #[tokio::test]

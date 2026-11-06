@@ -613,6 +613,24 @@ fn select_entra_provider(
         .ok_or("An Entra provider is required")
 }
 
+/// First broker account matching `account_id` that belongs to the selected Entra provider.
+fn select_broker_account(
+    cfg: &HimmelblauConfig,
+    accounts: Vec<Value>,
+    account_id: Option<&str>,
+    domain: Option<&str>,
+) -> Option<(Value, String)> {
+    let account_id = account_id.map(str::to_lowercase);
+    accounts.into_iter().find_map(|account| {
+        let Account { username } = serde_json::from_value(account.clone()).ok()?;
+        let requested = account_id
+            .as_ref()
+            .is_none_or(|id| *id == username.to_lowercase());
+        (requested && select_entra_provider(cfg, Some(&username), domain).is_ok())
+            .then_some((account, username))
+    })
+}
+
 #[instrument(skip(client_id, account_id, domain))]
 async fn confidential_client_access_token(
     client_id: Option<String>,
@@ -1026,7 +1044,10 @@ async fn main() -> ExitCode {
             // 2. Try SSO Broker
             if result.is_none() && unsafe { libc::geteuid() } != 0 {
                 debug!("Attempting SSO Broker auth ...");
-                if let Ok(broker) = BrokerClient::new().await {
+                if let (Ok(broker), Ok(cfg)) = (
+                    BrokerClient::new().await,
+                    HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)),
+                ) {
                     let session_id = Uuid::new_v4().to_string();
                     let client_ids_to_try: Vec<String> = match &$client_id {
                         Some(cid) => vec![cid.clone()],
@@ -1042,33 +1063,29 @@ async fn main() -> ExitCode {
                             &json!({"clientId": client_id.clone(), "redirectUri": session_id.clone()})
                         ).await {
                             if let Ok(accounts) = serde_json::from_value::<Accounts>(account_val) {
-                                if let Some(account) = accounts.accounts.into_iter().next() {
-                                    if let Ok(Account { username, .. }) = serde_json::from_value::<Account>(account.clone()) {
-                                        if $account_id.is_none() || $account_id.clone().map(|s| s.to_lowercase()).as_ref().unwrap_or(&"".to_string()) == &username.to_lowercase() {
-                                            if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                                                let (graph, domain, authority) = init!(cfg, Some(username), None);
-                                                let sso_url = format!("https://{}/", cfg.get_authority_host(&domain));
-                                                if let Ok(token_val) = broker.acquire_token_silently(
-                                                    "0.0", &session_id,
-                                                    &json!({
-                                                        "account": account,
-                                                        "authParameters": {
-                                                            "account": account,
-                                                            "additionalQueryParametersForAuthorization": {},
-                                                            "authority": authority,
-                                                            "authorizationType": 8,
-                                                            "clientId": client_id,
-                                                            "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
-                                                            "requestedScopes": $scopes,
-                                                            "ssoUrl": sso_url
-                                                        }
-                                                    })
-                                                ).await {
-                                                    if let Ok(token) = serde_json::from_value::<Token>(token_val) {
-                                                        result = Some((graph, token.response.access_token));
-                                                    }
-                                                }
+                                if let Some((account, username)) = select_broker_account(
+                                    &cfg, accounts.accounts, $account_id.as_deref(), selected_domain.as_deref()
+                                ) {
+                                    let (graph, domain, authority) = init!(cfg, Some(username), None);
+                                    let sso_url = format!("https://{}/", cfg.get_authority_host(&domain));
+                                    if let Ok(token_val) = broker.acquire_token_silently(
+                                        "0.0", &session_id,
+                                        &json!({
+                                            "account": account,
+                                            "authParameters": {
+                                                "account": account,
+                                                "additionalQueryParametersForAuthorization": {},
+                                                "authority": authority,
+                                                "authorizationType": 8,
+                                                "clientId": client_id,
+                                                "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
+                                                "requestedScopes": $scopes,
+                                                "ssoUrl": sso_url
                                             }
+                                        })
+                                    ).await {
+                                        if let Ok(token) = serde_json::from_value::<Token>(token_val) {
+                                            result = Some((graph, token.response.access_token));
                                         }
                                     }
                                 }
@@ -2623,6 +2640,24 @@ mod tests {
         );
         assert!(select_entra_provider(&cfg, Some("bob@b.example"), Some("a.example")).is_err());
         assert!(select_entra_provider(&cfg, None, Some("unknown.example")).is_err());
+
+        let accounts = vec![
+            serde_json::json!({}),
+            serde_json::json!({"username": "alice@a.example"}),
+            serde_json::json!({"username": "bob@b.example"}),
+            serde_json::json!({"username": "Carol@b.example"}),
+        ];
+        let select = |account, domain| {
+            super::select_broker_account(&cfg, accounts.clone(), account, domain)
+                .map(|(_, username)| username)
+        };
+        assert_eq!(select(None, None).unwrap(), "alice@a.example");
+        assert_eq!(select(None, Some("b.example")).unwrap(), "bob@b.example");
+        assert_eq!(
+            select(Some("CAROL@B.EXAMPLE"), Some("b.example")).unwrap(),
+            "Carol@b.example"
+        );
+        assert!(select(Some("alice@a.example"), Some("b.example")).is_none());
     }
 
     const ACCOUNT_LINE: &str =

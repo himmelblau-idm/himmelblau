@@ -132,6 +132,37 @@ fn refresh_due(state: &CacheState) -> bool {
     }
 }
 
+/// Home directory settings of the provider that owns a token.
+struct HomeSettings {
+    prefix: String,
+    attr: HomeAttr,
+    alias: Option<HomeAttr>,
+}
+
+impl HomeSettings {
+    fn value(attr: HomeAttr, token: &UserToken) -> String {
+        match attr {
+            HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
+            HomeAttr::Spn => token.spn.clone(),
+            HomeAttr::Name => token.name.clone(),
+            HomeAttr::Cn => token.spn.split('@').next().unwrap_or_default().to_string(),
+        }
+    }
+
+    fn name(&self, token: &UserToken) -> String {
+        Self::value(self.attr, token)
+    }
+
+    fn alias(&self, token: &UserToken) -> Option<String> {
+        self.alias.map(|attr| Self::value(attr, token))
+    }
+
+    fn absolute(&self, token: &UserToken) -> String {
+        let dir = self.alias(token).unwrap_or_else(|| self.name(token));
+        format!("{}{}", self.prefix, dir)
+    }
+}
+
 pub struct Resolver<I>
 where
     I: IdProvider + Sync,
@@ -316,12 +347,35 @@ where
         self.client.provider_for_account(account).await
     }
 
-    fn token_provider(&self, token: &UserToken) -> Option<(&HimmelblauConfig, ProviderConfig)> {
+    async fn token_provider(
+        &self,
+        token: &UserToken,
+    ) -> Option<(&HimmelblauConfig, ProviderConfig)> {
         let cfg = self.client.provider_config()?;
-        let provider = cfg
-            .provider_for_account(&token.spn)
-            .or_else(|| cfg.provider_for_gid(token.gidnumber))?;
+        let provider = self.client.provider_for_token(token).await?;
         Some((cfg, provider))
+    }
+
+    fn home_settings(
+        &self,
+        provider: Option<&(&HimmelblauConfig, ProviderConfig)>,
+    ) -> HomeSettings {
+        match provider {
+            Some((cfg, p)) => HomeSettings {
+                prefix: p.get_home_prefix(cfg),
+                attr: p.get_home_attr(cfg),
+                alias: p.get_home_alias(cfg),
+            },
+            None => HomeSettings {
+                prefix: self.home_prefix.clone(),
+                attr: self.home_attr,
+                alias: self.home_alias,
+            },
+        }
+    }
+
+    async fn token_home_settings(&self, token: &UserToken) -> HomeSettings {
+        self.home_settings(self.token_provider(token).await.as_ref())
     }
 
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
@@ -817,11 +871,16 @@ where
                 .is_some_and(|(cached, _)| {
                     cached.uuid == token.uuid && cached.tenant_id != token.tenant_id
                 });
-        token
-            .groups
-            .iter()
-            // We need to add the groups first
-            .try_for_each(|g| dbtxn.update_group(g, offset.as_secs()))
+        dbtxn
+            // Replaced accounts free their synthetic primary groups before the new ones are added.
+            .delete_replaced_accounts(token)
+            .and_then(|_| {
+                token
+                    .groups
+                    .iter()
+                    // We need to add the groups first
+                    .try_for_each(|g| dbtxn.update_group(g, offset.as_secs()))
+            })
             .and_then(|_|
                 // So that when we add the account it can make the relationships.
                 dbtxn
@@ -1404,48 +1463,6 @@ where
     }
 
     #[inline(always)]
-    fn token_homedirectory_alias(&self, token: &UserToken) -> Option<String> {
-        let alias = self
-            .token_provider(token)
-            .map_or(self.home_alias, |(cfg, p)| p.get_home_alias(cfg));
-        alias.map(|t| match t {
-            // If we have an alias. use it.
-            HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
-            HomeAttr::Spn => token.spn.as_str().to_string(),
-            HomeAttr::Name => token.name.as_str().to_string(),
-            HomeAttr::Cn => token.spn.split('@').collect::<Vec<&str>>()[0].to_string(),
-        })
-    }
-
-    #[inline(always)]
-    fn token_homedirectory_attr(&self, token: &UserToken) -> String {
-        let attr = self
-            .token_provider(token)
-            .map_or(self.home_attr, |(cfg, p)| p.get_home_attr(cfg));
-        match attr {
-            HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
-            HomeAttr::Spn => token.spn.as_str().to_string(),
-            HomeAttr::Name => token.name.as_str().to_string(),
-            HomeAttr::Cn => token.spn.split('@').collect::<Vec<&str>>()[0].to_string(),
-        }
-    }
-
-    #[inline(always)]
-    fn token_homedirectory(&self, token: &UserToken) -> String {
-        self.token_homedirectory_alias(token)
-            .unwrap_or_else(|| self.token_homedirectory_attr(token))
-    }
-
-    #[inline(always)]
-    fn token_abs_homedirectory(&self, token: &UserToken) -> String {
-        let prefix = self.token_provider(token).map_or_else(
-            || self.home_prefix.clone(),
-            |(cfg, p)| p.get_home_prefix(cfg),
-        );
-        format!("{}{}", prefix, self.token_homedirectory(token))
-    }
-
-    #[inline(always)]
     fn token_uidattr(&self, token: &UserToken) -> String {
         match self.uid_attr_map {
             UidAttr::Spn => token.spn.as_str(),
@@ -1463,15 +1480,17 @@ where
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| ResolverError)?
             .as_secs();
-        let mut dbtxn = self.db.read().await;
-        dbtxn
+        let tokens = self
+            .db
+            .read()
+            .await
             .get_unexpired_accounts(now)
-            .map(|l| {
-                l.into_iter()
-                    .map(|tok| self.nss_user_from_token(tok, true))
-                    .collect()
-            })
-            .map_err(|_| ResolverError)
+            .map_err(|_| ResolverError)?;
+        let mut users = Vec::with_capacity(tokens.len());
+        for tok in tokens {
+            users.push(self.nss_user_from_token(tok, true).await);
+        }
+        Ok(users)
     }
 
     async fn get_nssaccount(
@@ -1479,14 +1498,18 @@ where
         account_id: Id,
         on_expiry: OnExpiry,
     ) -> ResolverResult<Option<NssUser>> {
-        self.get_usertoken_with_cacheability(account_id, on_expiry)
-            .await
-            .map(|result| result.map(|(tok, cacheable)| self.nss_user_from_token(tok, cacheable)))
+        let result = self
+            .get_usertoken_with_cacheability(account_id, on_expiry)
+            .await?;
+        Ok(match result {
+            Some((tok, cacheable)) => Some(self.nss_user_from_token(tok, cacheable).await),
+            None => None,
+        })
     }
 
-    fn nss_user_from_token(&self, tok: UserToken, cacheable: bool) -> NssUser {
+    async fn nss_user_from_token(&self, tok: UserToken, cacheable: bool) -> NssUser {
         NssUser {
-            homedir: self.token_abs_homedirectory(&tok),
+            homedir: self.token_home_settings(&tok).await.absolute(&tok),
             name: self.token_uidattr(&tok),
             uid: tok.gidnumber,
             gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
@@ -1601,8 +1624,12 @@ where
         }
         let id = Id::Name(account_id.to_string());
         let (_, cached) = self.lookup_cached_usertoken(&id).await?;
-        let provider = match cached.as_ref().and_then(|token| self.token_provider(token)) {
-            Some((_, provider)) => Some(provider),
+        let provider = match cached.as_ref() {
+            Some(token) => self.client.provider_for_token(token).await,
+            None => None,
+        };
+        let provider = match provider {
+            Some(provider) => Some(provider),
             None => self.client.provider_for_account(account_id).await,
         };
         let (allowed, oidc_auth) = match self.client.provider_config().zip(provider) {
@@ -2216,20 +2243,14 @@ where
         let Some(token) = token.as_ref() else {
             return Ok(None);
         };
-        let provider_domain = self
-            .client
-            .provider_for_account(account_id)
-            .await
-            .map(|provider| provider.domain);
+        let provider = self.token_provider(token).await;
+        let home = self.home_settings(provider.as_ref());
         Ok(Some(HomeDirectoryInfo {
             uid: token.gidnumber,
             gid: token.real_gidnumber.unwrap_or(token.gidnumber),
-            name: self.token_homedirectory_attr(token),
-            aliases: self
-                .token_homedirectory_alias(token)
-                .map(|s| vec![s])
-                .unwrap_or_default(),
-            provider_domain,
+            name: home.name(token),
+            aliases: home.alias(token).map(|s| vec![s]).unwrap_or_default(),
+            provider_domain: provider.map(|(_, provider)| provider.domain),
         }))
     }
 
@@ -3527,7 +3548,10 @@ mod tests {
                 Some(allowed)
             );
             assert_eq!(
-                resolver.token_abs_homedirectory(&test_token()),
+                resolver
+                    .token_home_settings(&test_token())
+                    .await
+                    .absolute(&test_token()),
                 "/home/a/testuser@example.com"
             );
         }

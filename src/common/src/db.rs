@@ -95,6 +95,10 @@ pub trait CacheTxn {
 
     fn update_account(&mut self, account: &UserToken, expire: u64) -> Result<(), CacheError>;
 
+    /// Delete accounts that `account` replaces because they share its name, SPN or UID.
+    fn delete_replaced_accounts(&mut self, account: &UserToken) -> Result<(), CacheError>;
+
+    /// Delete an account together with its synthetic primary group.
     fn delete_account(&mut self, a_uuid: Uuid) -> Result<(), CacheError>;
 
     fn clear_account_password(&mut self, a_uuid: Uuid) -> Result<(), CacheError>;
@@ -311,6 +315,30 @@ impl<'a> DbTxn<'a> {
         );
         // TODO: one day figure out if there's an easy way to dump the transaction without the token...
         CacheError::Sqlite
+    }
+
+    /// Delete an account, its memberships and its synthetic primary group, which
+    /// shares the account UUID.
+    fn delete_account_rows(&self, account_uuid: &str) -> Result<(), CacheError> {
+        self.conn
+            .execute(
+                "DELETE FROM memberof_t WHERE a_uuid = :uuid OR g_uuid = :uuid",
+                named_params! { ":uuid": account_uuid },
+            )
+            .map_err(|e| self.sqlite_error("account_t memberof_t cascade delete", &e))?;
+        self.conn
+            .execute(
+                "DELETE FROM group_t WHERE uuid = :uuid",
+                named_params! { ":uuid": account_uuid },
+            )
+            .map_err(|e| self.sqlite_error("account_t primary group delete", &e))?;
+        self.conn
+            .execute(
+                "DELETE FROM account_t WHERE uuid = :uuid",
+                named_params! { ":uuid": account_uuid },
+            )
+            .map(|_| ())
+            .map_err(|e| self.sqlite_error("account_t delete", &e))
     }
 
     fn get_db_version(&self, key: &str) -> i64 {
@@ -880,19 +908,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
         // to manually manage the update or insert :( :(
         let account_uuid = account.uuid.as_hyphenated().to_string();
 
-        // Find anything conflicting and purge it.
-        self.conn.execute("DELETE FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)",
-            named_params!{
-                ":uuid": &account_uuid,
-                ":name": &account.name,
-                ":spn": &account.spn,
-                ":gidnumber": &account.gidnumber,
-            }
-            )
-            .map_err(|e| {
-                self.sqlite_error("delete account_t duplicate", &e)
-            })
-            .map(|_| ())?;
+        self.delete_replaced_accounts(account)?;
 
         let updated = self.conn.execute(
                 "UPDATE account_t SET name=:name, spn=:spn, gidnumber=:gidnumber, token=:token, expiry=:expiry WHERE uuid = :uuid",
@@ -961,24 +977,35 @@ impl<'a> CacheTxn for DbTxn<'a> {
         })
     }
 
+    fn delete_replaced_accounts(&mut self, account: &UserToken) -> Result<(), CacheError> {
+        let replaced: Vec<String> = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT uuid FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)",
+                )
+                .map_err(|e| self.sqlite_error("select prepare", &e))?;
+            let rows = stmt
+                .query_map(
+                    named_params! {
+                        ":uuid": &account.uuid.as_hyphenated().to_string(),
+                        ":name": &account.name,
+                        ":spn": &account.spn,
+                        ":gidnumber": &account.gidnumber,
+                    },
+                    |row| row.get(0),
+                )
+                .map_err(|e| self.sqlite_error("query_map", &e))?;
+            rows.collect::<Result<_, _>>()
+                .map_err(|e| self.sqlite_error("map", &e))?
+        };
+        replaced
+            .iter()
+            .try_for_each(|uuid| self.delete_account_rows(uuid))
+    }
+
     fn delete_account(&mut self, a_uuid: Uuid) -> Result<(), CacheError> {
-        let account_uuid = a_uuid.as_hyphenated().to_string();
-
-        self.conn
-            .execute(
-                "DELETE FROM memberof_t WHERE a_uuid = :a_uuid",
-                params![&account_uuid],
-            )
-            .map(|_| ())
-            .map_err(|e| self.sqlite_error("account_t memberof_t cascade delete", &e))?;
-
-        self.conn
-            .execute(
-                "DELETE FROM account_t WHERE uuid = :a_uuid",
-                params![&account_uuid],
-            )
-            .map(|_| ())
-            .map_err(|e| self.sqlite_error("account_t delete", &e))
+        self.delete_account_rows(&a_uuid.as_hyphenated().to_string())
     }
 
     fn clear_account_password(&mut self, a_uuid: Uuid) -> Result<(), CacheError> {
@@ -2028,6 +2055,59 @@ mod tests {
         let r5 = dbtxn.get_account(&id_name2).unwrap();
         assert!(r5.unwrap().0.uuid == uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"));
 
+        assert!(dbtxn.commit().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_account_replacement_removes_synthetic_primary_group() {
+        let db = Db::new("").expect("failed to create.");
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+
+        let primary = |account: &UserToken| GroupToken {
+            name: account.spn.clone(),
+            spn: account.spn.clone(),
+            uuid: account.uuid,
+            gidnumber: account.gidnumber,
+        };
+        fn replace(dbtxn: &mut super::DbTxn<'_>, account: &UserToken) -> Result<(), CacheError> {
+            dbtxn.delete_replaced_accounts(account)?;
+            account
+                .groups
+                .iter()
+                .try_for_each(|g| dbtxn.update_group(g, 0))?;
+            dbtxn.update_account(account, 0)
+        }
+        let mut old = test_account();
+        old.groups = vec![primary(&old)];
+        replace(&mut dbtxn, &old).unwrap();
+
+        let mut recreated = old.clone();
+        recreated.uuid = uuid::uuid!("6f1c2a14-3b8e-4d0a-9f6e-2c7b5d1e8a90");
+        recreated.groups = vec![primary(&recreated)];
+        replace(&mut dbtxn, &recreated).unwrap();
+
+        let (account, _) = dbtxn
+            .get_account(&Id::Name(old.spn.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(account.uuid, recreated.uuid);
+        let (group, _) = dbtxn.get_group(&Id::Gid(old.gidnumber)).unwrap().unwrap();
+        assert_eq!(group.uuid, recreated.uuid);
+        assert!(dbtxn.get_group_members(old.uuid).unwrap().is_empty());
+
+        let unrelated = GroupToken {
+            name: "unrelated".to_string(),
+            spn: "unrelated@example.com".to_string(),
+            uuid: uuid::uuid!("a3d5e7f9-1b2c-4d6e-8f0a-1b3c5d7e9f01"),
+            gidnumber: recreated.gidnumber,
+        };
+        assert!(dbtxn.update_group(&unrelated, 0).is_err());
+        let (group, _) = dbtxn.get_group(&Id::Gid(old.gidnumber)).unwrap().unwrap();
+        assert_eq!(group.uuid, recreated.uuid);
+
+        dbtxn.delete_account(recreated.uuid).unwrap();
+        assert!(dbtxn.get_group(&Id::Gid(old.gidnumber)).unwrap().is_none());
         assert!(dbtxn.commit().is_ok());
     }
 }
