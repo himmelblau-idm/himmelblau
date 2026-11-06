@@ -367,7 +367,10 @@ def generate_example_tests(params: List[Parameter], sections: Dict[str, Section]
             lines.extend([
                 '    #[test]',
                 f'    fn {param.section}_{param.name}_{index}() {{',
-                f'        let cfg = HimmelblauConfig::from_test_config({rust_string(text)});',
+                f'        let mut cfg = HimmelblauConfig::from_test_config({rust_string(text)});',
+                '        if cfg.parse_providers().is_ok_and(|p| p.is_empty()) {',
+                '            cfg.set("global", "domain", "example.com");',
+                '        }',
                 f'        let value = cfg.config.get("{section}", "{param.name}").expect("Example must set its parameter");',
             ])
             if param.param_type == 'bool':

@@ -309,6 +309,11 @@ pub trait IdProvider {
         self.provider_config()?.provider_for_account(account)
     }
 
+    /// Provider that owns a cached token, resolved without network access.
+    async fn provider_for_token(&self, token: &UserToken) -> Option<crate::config::ProviderConfig> {
+        self.provider_config()?.provider_for_account(&token.spn)
+    }
+
     async fn provider_status(&self) -> Vec<(String, bool)> {
         Vec::new()
     }

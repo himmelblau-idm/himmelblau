@@ -1063,6 +1063,17 @@ impl HimmelblauConfig {
         })
     }
 
+    /// Another Entra provider already bound to `tenant_id`.
+    pub fn provider_sharing_tenant(&self, domain: &str, tenant_id: &str) -> Option<ProviderConfig> {
+        self.parse_providers().ok()?.into_iter().find(|p| {
+            p.kind == ProviderKind::Entra
+                && !p.domain.eq_ignore_ascii_case(domain)
+                && self
+                    .get_tenant_id(&p.domain)
+                    .is_some_and(|id| id.eq_ignore_ascii_case(tenant_id))
+        })
+    }
+
     /// Discover an alias only when its tenant ID matches a configured Entra provider.
     pub async fn discover_provider_for_domain(&self, alias: &str) -> Option<ProviderConfig> {
         let providers: Vec<_> = self
@@ -1128,6 +1139,13 @@ impl HimmelblauConfig {
     pub fn validate(&self) -> ValidationReport {
         let mut report = ValidationReport::default();
         let providers = match self.parse_providers() {
+            Ok(providers) if providers.is_empty() => {
+                report.errors.push(format!(
+                    "No provider is configured, set [global] domain or add a [{}<label>] section",
+                    TENANT_SECTION_PREFIX
+                ));
+                return report;
+            }
             Ok(providers) => providers,
             Err(errors) => {
                 report.errors = errors;
@@ -1323,14 +1341,10 @@ impl HimmelblauConfig {
     }
 
     fn validate_id_ranges(&self, providers: &[ProviderConfig], report: &mut ValidationReport) {
-        let ranges: Vec<(String, (u32, u32))> = if providers.is_empty() {
-            vec![("[global]".to_string(), self.get_idmap_range("global"))]
-        } else {
-            providers
-                .iter()
-                .map(|p| (p.domain.clone(), self.get_idmap_range(&p.domain)))
-                .collect()
-        };
+        let ranges: Vec<(String, (u32, u32))> = providers
+            .iter()
+            .map(|p| (p.domain.clone(), self.get_idmap_range(&p.domain)))
+            .collect();
 
         let subid_range = self.get_subid_range();
         for (idx, (name, range)) in ranges.iter().enumerate() {
@@ -3920,13 +3934,40 @@ mod tests {
                 "of contoso.com overlaps with subid_range",
             ),
             (
-                "[global]\nidmap_range = 2100000000-2100000100\n".to_string(),
+                "[global]\ndomain = contoso.com\nidmap_range = 2100000000-2100000100\n"
+                    .to_string(),
                 "",
-                "of [global] overlaps with subid_range",
+                "of contoso.com overlaps with subid_range",
             ),
+            ("[global]\ndebug = true\n".to_string(), "", "No provider is configured"),
         ] {
             assert_rejected(&config, cache, expected);
         }
+    }
+
+    #[test]
+    fn provider_sharing_tenant_finds_other_entra_providers() {
+        let mut config = HimmelblauConfig::from_test_config(
+            "[tenant.a]\ndomain = contoso.com\ndefault = true\nidmap_range = 200000-300000\n\
+             [tenant.b]\ndomain = fabrikam.com\nidmap_range = 300001-400000\n",
+        );
+        assert!(config
+            .provider_sharing_tenant("fabrikam.com", "1111")
+            .is_none());
+        config.set("contoso.com", "tenant_id", "AAAA");
+        assert_eq!(
+            config
+                .provider_sharing_tenant("FABRIKAM.com", "aaaa")
+                .unwrap()
+                .section,
+            "tenant.a"
+        );
+        assert!(config
+            .provider_sharing_tenant("contoso.com", "aaaa")
+            .is_none());
+        assert!(config
+            .provider_sharing_tenant("fabrikam.com", "bbbb")
+            .is_none());
     }
 
     #[test]
