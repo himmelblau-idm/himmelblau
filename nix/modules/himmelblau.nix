@@ -192,17 +192,18 @@ in
     ];
 
     programs.firefox = {
-      policies = {
-        Extensions.Install = [
-          "https://github.com/siemens/linux-entra-sso/releases/download/v1.7.1/linux_entra_sso-1.7.1.xpi"
-        ];
-      };
+      # The policy himmelblau-sso-policies ships as an example, so both use one release.
+      policies = (lib.importJSON ../../src/sso-policies/src/firefox/policies.json).policies;
       nativeMessagingHosts.packages = [ cfg.ssoPackage ];
     };
 
-    programs.chromium.extensions = [
-      "jlnfnnolkbjieggibinobhkjdfbpcohn"
-    ];
+    # programs.chromium only writes /etc policy files and installs no package.
+    programs.chromium = {
+      enable = lib.mkDefault true;
+      extensions = [
+        "jlnfnnolkbjieggibinobhkjdfbpcohn"
+      ];
+    };
     environment.etc."chromium/native-messaging-hosts/linux_entra_sso.json".source =
       "${cfg.ssoPackage}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
     environment.etc."opt/chrome/native-messaging-hosts/linux_entra_sso.json".source =
