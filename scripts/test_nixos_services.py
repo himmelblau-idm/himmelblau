@@ -636,6 +636,25 @@ class NixosServiceTests(unittest.TestCase):
             ]
         )
 
+    def test_firefox_policy_force_installs_the_packaged_release(self):
+        postinst = (ROOT / "src/sso-policies/scripts/postinst").read_text()
+        url = next(
+            line.split('"')[1]
+            for line in postinst.splitlines()
+            if line.startswith('FIREFOX_EXTENSION_URL="')
+        )
+        policies = self.evaluated["firefoxPolicies"]
+        self.assertIsNone(policies["extensions"])
+        self.assertEqual(
+            policies["extensionSettings"],
+            {
+                "linux-entra-sso@example.com": {
+                    "installation_mode": "force_installed",
+                    "install_url": url,
+                }
+            },
+        )
+
     def test_hsm_initializer_stays_inactive_after_success(self):
         self.assertNotIn(
             "RemainAfterExit", self.units["himmelblau-hsm-pin-init.service"]["Service"]
