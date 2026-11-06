@@ -621,13 +621,16 @@ fn select_broker_account(
     domain: Option<&str>,
 ) -> Option<(Value, String)> {
     let account_id = account_id.map(str::to_lowercase);
+    let provider = select_entra_provider(cfg, account_id.as_deref(), domain).ok()?;
     accounts.into_iter().find_map(|account| {
         let Account { username } = serde_json::from_value(account.clone()).ok()?;
         let requested = account_id
             .as_ref()
             .is_none_or(|id| *id == username.to_lowercase());
-        (requested && select_entra_provider(cfg, Some(&username), domain).is_ok())
-            .then_some((account, username))
+        let matches_provider = cfg
+            .provider_for_account(&username)
+            .is_some_and(|account_provider| account_provider == provider);
+        (requested && matches_provider).then_some((account, username))
     })
 }
 
@@ -2642,9 +2645,9 @@ mod tests {
         assert!(select_entra_provider(&cfg, None, Some("unknown.example")).is_err());
 
         let accounts = vec![
+            serde_json::json!({"username": "bob@b.example"}),
             serde_json::json!({}),
             serde_json::json!({"username": "alice@a.example"}),
-            serde_json::json!({"username": "bob@b.example"}),
             serde_json::json!({"username": "Carol@b.example"}),
         ];
         let select = |account, domain| {
