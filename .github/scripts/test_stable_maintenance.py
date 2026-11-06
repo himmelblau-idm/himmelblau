@@ -5113,10 +5113,14 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         branch = BRANCH_WORKFLOW.read_text()
         stage = STAGE_WORKFLOW.read_text()
         stages = (*sm.CHECKPOINT_STAGES, "final")
-        for previous, current in zip(stages, stages[1:]):
+        for index, (previous, current) in enumerate(zip(stages, stages[1:]), 1):
             block = branch.split(f"\n  {current}:\n", 1)[1].split("\n\n", 1)[0]
-            self.assertIn(f"needs: {previous}", block)
-            self.assertIn(f"previous-stage: {previous}", block)
+            self.assertIn(f"needs: [{', '.join(stages[:index])}]", block)
+            self.assertIn("always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false')", block)
+            self.assertIn(f"needs.{previous}.outputs.artifact != '' && '{previous}'", block)
+            for field in ("head", "digest", "ref", "artifact"):
+                fallback = " || ".join(f"needs.{name}.outputs.{field}" for name in reversed(stages[:index]))
+                self.assertIn(f"checkpoint-{field}: ${{{{ {fallback} || '' }}}}", block)
             for field in ("head", "digest", "ref", "artifact"):
                 self.assertIn(f"needs.{previous}.outputs.{field}", block)
         self.assertEqual(branch.count("uses: ./.github/workflows/stable-maintenance-stage.yml"), 7)
@@ -5132,6 +5136,57 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", stage)
         self.assertIn("ref: ${{ github.sha }}", stage)
         self.assertNotIn("ref: ${{ inputs.checkpoint-ref }}", stage)
+
+    def test_recovery_workflow_requires_uploaded_checkpoint_and_initializes_without_one(self):
+        stage = STAGE_WORKFLOW.read_text()
+        for field in ("head", "digest", "ref", "artifact"):
+            self.assertIn(f"{field}: ${{{{ steps.available.outputs.{field} }}}}", stage)
+        available = stage.split("      - name: Expose only successfully uploaded", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: steps.checkpoint-upload.outcome == 'success'", available)
+        for name in ("Download this run", "Resume —"):
+            block = stage.split("      - name: " + name, 1)[1].split("      - name:", 1)[0]
+            self.assertIn("if: inputs.checkpoint-artifact != ''", block)
+        initialize = stage.split("      - name: Initialize —", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("inputs.checkpoint-artifact == ''", initialize)
+        self.assertLess(stage.index("      - name: Initialize —"), stage.index("      - name: Prepare exact locked"))
+        tests = stage.split("      - name: Test trusted automation", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("MAINTENANCE_INCOMPLETE_STAGES: ''", tests)
+
+    def test_empty_incomplete_run_has_manual_handoff_without_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state = sm.State(root / "state")
+            state.save({"branch": "stable-4.x", "original_head": head, "cutoff": head, "main_head": head})
+            with mock.patch.dict(os.environ, {"MAINTENANCE_INCOMPLETE_STAGES": "dependencies,backports-1,"}), \
+                 mock.patch.object(sm, "locked_build") as build, mock.patch.object(sm, "http_json") as http:
+                sm.phase_release(mock.Mock(), state, runner)
+                sm.phase_validate(mock.Mock(), state, runner)
+                sm.phase_publish(mock.Mock(), state, runner)
+                sm.phase_report(mock.Mock(branch="stable-4.x"), state, runner)
+            build.assert_not_called(); http.assert_not_called()
+            self.assertEqual(state.load()["incomplete_stages"], ["dependencies", "backports-1"])
+            report = (state.directory / "report.md").read_text()
+            self.assertIn("No publishable changes survived", report)
+            self.assertIn("- [ ] Re-run and review `backports-1`", report)
+
+    def test_missing_backport_checkpoint_preserves_previous_cutoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            cutoff = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "fix.rs").write_text("fix\n")
+            main = self.commit(runner, "Fix on main")
+            runner.git(["checkout", "stable-4.x"])
+            (runner.root / "supply-chain").mkdir()
+            (runner.root / "supply-chain/imports.lock").write_text("audits\n")
+            self.commit(runner, "Refresh audits")
+            state = sm.State(root / "state")
+            state.save({"branch": "stable-4.x", "original_head": cutoff, "cutoff": cutoff, "main_head": main})
+            with mock.patch.dict(os.environ, {"MAINTENANCE_INCOMPLETE_STAGES": "backports-1,backports-2,"}):
+                sm.phase_release(mock.Mock(), state, runner)
+            self.assertEqual(state.load()["main_through"], cutoff)
+            self.assertEqual(sm.marker_sha(runner.git(["log", "-1", "--format=%B"]).stdout), cutoff)
+            self.assertEqual(sm.marker_sha(sm.build_pr_body(state.load())), cutoff)
 
     def test_checkpoint_reports_the_failed_local_git_operation_without_publishing(self):
         operations = {"status": "status", "branch": "branch", "rev-parse": "head",

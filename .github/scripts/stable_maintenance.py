@@ -106,7 +106,7 @@ CHECKPOINT_KEYS = {
     "backport_review_required", "backports_applied", "backports_conflict_skipped", "backports_build_failed",
     "backports_deferred", "backports_adapted", "backports_repair_failed", "backports_conflict_details",
     "backport_summaries", "backport_outcomes", "backport_cursor", "backport_remaining",
-    "network_not_before",
+    "network_not_before", "incomplete_stages",
 }
 
 
@@ -3889,10 +3889,22 @@ def crate2nix_command() -> list[str]:
 def maintenance_main_through(value: Mapping[str, Any]) -> str:
     """Keep unresolved backports eligible regardless of publication type."""
     pending = value.get("backport_review_required") or value.get("backports_deferred") or value.get("backport_inflight") or value.get("backport_remaining")
-    return require_sha(str(value["cutoff"] if pending else value["main_head"]))
+    missing_backports = any(stage.startswith("backports-") for stage in value.get("incomplete_stages", []))
+    return require_sha(str(value["cutoff"] if pending or missing_backports else value["main_head"]))
+
+
+def record_incomplete_stages(state: State) -> None:
+    incomplete = [s for s in os.environ.get("MAINTENANCE_INCOMPLETE_STAGES", "").split(",") if s]
+    if len(incomplete) != len(set(incomplete)) or any(s not in CHECKPOINT_STAGES for s in incomplete):
+        raise MaintenanceError("invalid incomplete maintenance stages")
+    if incomplete:
+        value = state.load()
+        value["incomplete_stages"] = incomplete
+        state.save(value)
 
 
 def phase_release(args: argparse.Namespace, state: State, runner: Runner) -> None:
+    record_incomplete_stages(state)
     value = state.load()
     if runner.git(["rev-parse", "HEAD"]).stdout.strip() == value["original_head"] and not runner.git(["status", "--porcelain"]).stdout:
         value["no_changes"] = True; state.save(value); state.event("release", "no maintenance changes; release skipped"); return
@@ -3930,6 +3942,7 @@ def phase_release(args: argparse.Namespace, state: State, runner: Runner) -> Non
 
 
 def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> None:
+    record_incomplete_stages(state)
     if state.load().get("no_changes"):
         state.event("validate", "validation skipped for empty run"); return
     value = state.load()
@@ -3985,7 +3998,7 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
         raise MaintenanceError("final validation left repository changes")
     value = state.load(); value.setdefault("gate_results", []).append("repository-clean: passed"); state.save(value)
     value = state.load()
-    manual = bool(manual_audit_work(value))
+    manual = bool(manual_audit_work(value) or value.get("incomplete_stages"))
     value["manual_audit_head" if manual else "validated_head"] = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
     state.save(value)
     state.event("validate", "final audits require manual work; draft publication only" if manual else "all final gates passed")
@@ -4076,7 +4089,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
         "already_covered", "vet_accepted", "vet_rejected", "dependabot_imported", "dependabot_skipped",
         "backport_candidates", "backport_skipped", "backports_applied", "backports_conflict_skipped", "gate_results",
         "backports_deferred", "backport_remaining",
-        "backports_build_failed", "manual_audit_work",
+        "backports_build_failed", "manual_audit_work", "incomplete_stages",
     )
     lines: list[str] = []
     for key in keys:
@@ -4096,6 +4109,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
 
 def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
     manual = manual_audit_work(value)
+    incomplete = value.get("incomplete_stages", [])
     through = maintenance_main_through(value)
     marker = f"{MARKER} {require_sha(str(through))}"
     run_id = os.environ.get("GITHUB_RUN_ID", "")
@@ -4106,8 +4120,9 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         else "Full details are in the maintenance run summary and logs."
     )
     summary = "Refresh supply-chain metadata; no version bump." if value.get("metadata_only") else "Validated stable maintenance release."
-    if manual:
-        summary = "DRAFT: final audits need manual work; release validation is incomplete."
+    if manual or incomplete:
+        summary = "DRAFT: incomplete maintenance stages or audits require manual work."
+
     lines = [
         "## Summary", "", summary + " Human review required; never auto-merged.", "",
         "## What Changed", "",
@@ -4119,7 +4134,7 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         f"- Backports requiring manual review: {len(value.get('backport_review_required', [])) + len(value.get('backports_deferred', []))}",
         f"- Dependabot PRs excluded: {len(value.get('dependabot_skipped', []))}; intentional quarantine: {len(value.get('quarantine_exclusions', []))}",
         f"- Unexamined fixes retained for retry: {len(value.get('backport_remaining', []))}",
-        f"- Maintenance backlog: {'pending items remain' if value.get('backport_review_required') or value.get('backports_deferred') or value.get('backport_remaining') else 'all examined items accounted for'}",
+        f"- Maintenance backlog: {'pending items remain' if value.get('backport_review_required') or value.get('backports_deferred') or value.get('backport_remaining') or incomplete else 'all examined items accounted for'}",
     ]
     ending = [
         "", run_link, "", "## Testing", "",
@@ -4136,6 +4151,9 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         "- [ ] Resolve final audit work and rerun all release validation." if manual else "- [x] Automated validation completed.",
         "- [ ] Maintainer review of backports and integration impact.", "", marker,
     ]
+    if incomplete:
+        lines.extend(["", "### Incomplete stages (manual action required)", ""])
+        lines.extend(f"- [ ] Re-run and review `{stage}`; checkpoint was not produced." for stage in incomplete)
     if manual:
         lines.extend(["", "### Manual audit work", ""])
         for row in manual:
@@ -4215,9 +4233,10 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
     if value.get("no_changes"):
         state.event("publish", "no changes; no PR created"); return
     manual = manual_audit_work(value)
-    if value.get("checkpointed") or manual:
+    incomplete = value.get("incomplete_stages", [])
+    if value.get("checkpointed") or manual or incomplete:
         head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
-        approval = "manual_audit_head" if manual else "validated_head"
+        approval = "manual_audit_head" if manual or incomplete else "validated_head"
         if value.get(approval) != head or runner.git(["status", "--porcelain"]).stdout:
             raise MaintenanceError("checkpoint publication requires final gates for the exact clean HEAD")
         stable = runner.git(["ls-remote", "--exit-code", "origin", f"refs/heads/{require_branch(value['branch'])}"]).stdout.split()
@@ -4241,8 +4260,10 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
         # before ready_for_review so even that policy sees its exemption.
         "body": body, "draft": True,
     }
-    if manual:
+    if manual and not incomplete:
         payload["title"] = f"Manual audit work required: {value['branch']} maintenance"
+    elif incomplete:
+        payload["title"] = f"Manual work required: {value['branch']} maintenance"
     repo = github_repository()
     pr = http_json(f"https://api.github.com/repos/{repo}/pulls", method="POST", headers=github_headers(), body=payload)
     number = pr.get("number") if isinstance(pr, dict) else None
@@ -4257,7 +4278,7 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
         node_id = pr.get("node_id")
         if not isinstance(node_id, str) or not re.fullmatch(r"[A-Za-z0-9_=-]{1,200}", node_id):
             raise MaintenanceError("GitHub did not return a valid PR node id")
-        if not manual:
+        if not (manual or incomplete):
             mark_maintenance_pr_ready(repo, number, node_id, state)
     except MaintenanceError:
         close_failed_maintenance_pr(repo, number, state)
@@ -4270,8 +4291,15 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
     lines = ["# Stable maintenance report", "", f"Last phase: `{value.get('last_phase', 'not started')}`", ""]
     if value.get("failed_phase"):
         lines.extend([f"Failed phase: `{value['failed_phase']}` — {value.get('failure', 'failed closed')}", ""])
-    if manual_audit_work(value) and value.get("manual_audit_head"):
+    if (manual_audit_work(value) or value.get("incomplete_stages")) and value.get("manual_audit_head"):
         lines.extend(["**Final audits require manual work. Draft only; release validation incomplete.**", ""])
+    if value.get("incomplete_stages"):
+        lines.extend(["## Manual maintenance handoff", ""])
+        if value.get("no_changes"):
+            lines.extend(["No publishable changes survived; no PR was created. Complete the checklist manually or rerun maintenance.", ""])
+        lines.extend(f"- [ ] Re-run and review `{stage}`; checkpoint was not produced."
+                     for stage in value["incomplete_stages"])
+        lines.append("")
     if value.get("skip"):
         numbers = ", ".join(f"#{number}" for number in value.get("blocking_pull_requests", []))
         lines.extend([f"Run skipped because an existing maintenance PR is open: {numbers or 'unknown' }.", ""])
@@ -4286,7 +4314,7 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
                       | set(value.get("backports_deferred", [])))
     pending += len(value.get("backport_remaining", []))
     lines.extend(["", f"Unexamined backports retained for retry: {len(value.get('backport_remaining', []))}.",
-                  f"Maintenance completion: **{'pending work remains' if pending or value.get('backport_inflight') else 'examined backlog accounted for'}**.",
+                  f"Maintenance completion: **{'pending work remains' if pending or value.get('backport_inflight') or value.get('incomplete_stages') else 'examined backlog accounted for'}**.",
                   "Publication gates and maintenance completion are separate results."])
     if value.get("backport_inflight"):
         lines.append(f"Interrupted commit: `{require_sha(value['backport_inflight'])}`; retry required.")
@@ -4306,6 +4334,7 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
         "branch": require_branch(args.branch) if isinstance(args.branch, str) else value.get("branch"),
         "outcomes": outcomes, "details": sanitized_state_details(value, max_items=1000),
         "pending": pending, "interrupted": bool(value.get("backport_inflight")),
+        "incomplete_stages": value.get("incomplete_stages", []),
     }, indent=2) + "\n", encoding="utf-8")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

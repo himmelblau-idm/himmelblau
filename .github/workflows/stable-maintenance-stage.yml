@@ -9,6 +9,9 @@ on:
       stage:
         type: string
         required: true
+      incomplete-stages:
+        type: string
+        default: ''
       previous-stage:
         type: string
         default: ''
@@ -52,14 +55,15 @@ jobs:
       pull-requests: read
     outputs:
       proceed: ${{ steps.guard.outputs.proceed }}
-      head: ${{ steps.checkpoint.outputs.head }}
-      digest: ${{ steps.checkpoint.outputs.digest }}
-      ref: ${{ steps.checkpoint.outputs.ref }}
-      artifact: ${{ steps.checkpoint.outputs.artifact }}
+      head: ${{ steps.available.outputs.head }}
+      digest: ${{ steps.available.outputs.digest }}
+      ref: ${{ steps.available.outputs.ref }}
+      artifact: ${{ steps.available.outputs.artifact }}
     env:
       MAINTENANCE_BUILD_IMAGE: himmelblau-stable-maintenance:local
       TARGET_BRANCH: ${{ inputs.branch }}
       MAINTENANCE_STAGE: ${{ inputs.stage }}
+      MAINTENANCE_INCOMPLETE_STAGES: ${{ inputs.incomplete-stages }}
       MAINTENANCE_TOOLING_COMMIT: ${{ github.sha }}
     steps:
       - name: Harden the runner (block unapproved outbound calls)
@@ -132,6 +136,8 @@ jobs:
       - name: Test trusted automation before repository mutation
         # Temporary Git fixtures own their main refs; the job's immutable
         # snapshot applies to real maintenance phases, not fixture repositories.
+        env:
+          MAINTENANCE_INCOMPLETE_STAGES: ''
         run: env -u MAINTENANCE_TOOLING_COMMIT python3 tooling/.github/scripts/test_stable_maintenance.py
 
       - name: Initialize hardened Git configuration and exact refs
@@ -172,14 +178,14 @@ jobs:
 
 
       - name: Download this run's exact previous-stage progress
-        if: inputs.stage != 'dependencies'
+        if: inputs.checkpoint-artifact != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ inputs.checkpoint-artifact }}
           path: ${{ env.STATE_DIR }}
 
       - name: Resume — verify state digest, trusted snapshot and exact staged commit
-        if: inputs.stage != 'dependencies'
+        if: inputs.checkpoint-artifact != ''
         env:
           PREVIOUS_STAGE: ${{ inputs.previous-stage }}
           CHECKPOINT_HEAD: ${{ inputs.checkpoint-head }}
@@ -254,18 +260,18 @@ jobs:
             BranchAndCliTests.test_backport_cache_reuses_artifacts_and_assets_then_final_build_is_clean
 
 
+      - name: Initialize — snapshot trusted refs and backport cutoff
+        if: steps.guard.outputs.proceed == 'true' && inputs.checkpoint-artifact == ''
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          initialize --branch "$TARGET_BRANCH"
+
       - name: Prepare exact locked dependencies in the fresh private Cargo cache
         if: steps.guard.outputs.proceed == 'true' && inputs.stage != 'dependencies'
         run: |
           python3 tooling/.github/scripts/stable_maintenance.py \
             --repo-dir source --state-dir "$STATE_DIR" prepare --branch "$TARGET_BRANCH"
-
-      - name: Initialize — snapshot trusted refs and backport cutoff
-        if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies'
-        run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
-          --repo-dir source --state-dir "$STATE_DIR"
-          initialize --branch "$TARGET_BRANCH"
 
       - name: Supply chain — refresh cargo-vet imports
         if: steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies'
@@ -371,6 +377,7 @@ jobs:
             --branch "$TARGET_BRANCH" --stage "$MAINTENANCE_STAGE"
 
       - name: Preserve exact checkpoint state for the next job
+        id: checkpoint-upload
         if: steps.guard.outputs.proceed == 'true' && inputs.stage != 'final'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -378,6 +385,18 @@ jobs:
           path: ${{ env.STATE_DIR }}/checkpoint.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Expose only successfully uploaded checkpoint metadata
+        id: available
+        if: steps.checkpoint-upload.outcome == 'success'
+        env:
+          CHECKPOINT_HEAD: ${{ steps.checkpoint.outputs.head }}
+          CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
+          CHECKPOINT_REF: ${{ steps.checkpoint.outputs.ref }}
+          CHECKPOINT_ARTIFACT: ${{ steps.checkpoint.outputs.artifact }}
+        run: |
+          printf 'head=%s\ndigest=%s\nref=%s\nartifact=%s\n' \
+            "$CHECKPOINT_HEAD" "$CHECKPOINT_DIGEST" "$CHECKPOINT_REF" "$CHECKPOINT_ARTIFACT" >> "$GITHUB_OUTPUT"
 
       - name: Report — summarize results and failures
         if: always()
