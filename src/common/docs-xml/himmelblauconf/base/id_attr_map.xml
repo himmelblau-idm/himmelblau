@@ -13,7 +13,7 @@ Specify whether to map uid/gid based on the object name, the object uuid, or bas
 <conf_description>ID mapping mode: name, uuid, or rfc2307.</conf_description>
 <default>name</default>
 <default_const>DEFAULT_ID_ATTR_MAP</default_const>
-<example>id_attr_map = &lt;name|uuid|rfc2307&gt;</example>
+<example>id_attr_map = uuid</example>
 <enum_values>
   <value rust="IdAttr::Name">name</value>
   <value rust="IdAttr::Uuid">uuid</value>

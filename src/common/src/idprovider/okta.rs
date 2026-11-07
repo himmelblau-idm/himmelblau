@@ -106,175 +106,6 @@ enum LocalPhase {
     },
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn success() -> AuthResult {
-        AuthResult::Success {
-            token: UserToken {
-                name: "user@example.com".into(),
-                spn: "user@example.com".into(),
-                uuid: Uuid::nil(),
-                real_gidnumber: None,
-                gidnumber: 1000,
-                displayname: "Test User".into(),
-                shell: None,
-                groups: vec![],
-                tenant_id: None,
-                valid: true,
-            },
-        }
-    }
-
-    #[test]
-    fn password_cache_waits_for_totp_and_emits_only_once() {
-        for prompt in [
-            "Enter your Hello TOTP code",
-            "Enroll and confirm your Hello TOTP code",
-        ] {
-            let mut password = Some(Zeroizing::new("accepted password".into()));
-            let (result, action) = with_password_cache_action(
-                AuthResult::Next(AuthRequest::HelloTOTP { msg: prompt.into() }),
-                &mut password,
-                true,
-            );
-            assert!(matches!(
-                result,
-                AuthResult::Next(AuthRequest::HelloTOTP { .. })
-            ));
-            assert!(matches!(action, AuthCacheAction::None));
-            assert!(password.is_some());
-
-            let (result, action) = with_password_cache_action(success(), &mut password, true);
-            assert!(matches!(result, AuthResult::Success { .. }));
-            assert!(
-                matches!(action, AuthCacheAction::PasswordHashUpdate { cred } if cred == "accepted password")
-            );
-            assert!(password.is_none());
-            let (_, action) = with_password_cache_action(success(), &mut password, true);
-            assert!(matches!(action, AuthCacheAction::None));
-        }
-    }
-
-    #[test]
-    fn denied_totp_discards_password_without_caching() {
-        let mut password = Some(Zeroizing::new("accepted password".into()));
-        let (result, action) = with_password_cache_action(
-            AuthResult::Denied("Invalid TOTP".into()),
-            &mut password,
-            true,
-        );
-        assert!(matches!(result, AuthResult::Denied(_)));
-        assert!(matches!(action, AuthCacheAction::None));
-        assert!(password.is_none());
-    }
-
-    #[test]
-    fn disabled_breakglass_does_not_cache_after_totp() {
-        let mut password = Some(Zeroizing::new("accepted password".into()));
-        let (_, action) = with_password_cache_action(success(), &mut password, false);
-        assert!(matches!(action, AuthCacheAction::None));
-        assert!(password.is_none());
-    }
-
-    #[test]
-    fn setup_pin_keeps_existing_password_cache_behavior() {
-        let mut password = Some(Zeroizing::new("accepted password".into()));
-        let (_, action) = with_password_cache_action(
-            AuthResult::Next(AuthRequest::SetupPin {
-                msg: "Set up a PIN".into(),
-            }),
-            &mut password,
-            true,
-        );
-        assert!(matches!(action, AuthCacheAction::PasswordHashUpdate { .. }));
-        assert!(password.is_none());
-        let (_, action) = with_password_cache_action(success(), &mut password, true);
-        assert!(matches!(action, AuthCacheAction::None));
-    }
-    struct EmptyKeyStore;
-    impl KeyStoreTxn for EmptyKeyStore {
-        fn get_tagged_hsm_key<K: serde::de::DeserializeOwned>(
-            &mut self,
-            _: &str,
-        ) -> Result<Option<K>, crate::db::CacheError> {
-            Ok(None)
-        }
-        fn insert_tagged_hsm_key<K: serde::Serialize>(
-            &mut self,
-            _: &str,
-            _: &K,
-        ) -> Result<(), crate::db::CacheError> {
-            panic!("offline init must not write credentials")
-        }
-        fn delete_tagged_hsm_key(&mut self, _: &str) -> Result<(), crate::db::CacheError> {
-            panic!("offline init must not delete credentials")
-        }
-    }
-
-    async fn offline_prompt(breakglass: bool, sfa: bool, no_hello_pin: bool) -> AuthRequest {
-        let mut cfg = HimmelblauConfig::new(Some("/dev/null")).unwrap();
-        cfg.set(
-            "global",
-            "oidc_issuer_url",
-            "https://example.okta.com/oauth2/default",
-        );
-        cfg.set("oidc", "app_id", "fixture-client");
-        cfg.set(
-            "offline_breakglass",
-            "enabled",
-            if breakglass { "true" } else { "false" },
-        );
-        cfg.set(
-            "global",
-            "enable_sfa_fallback",
-            if sfa { "true" } else { "false" },
-        );
-        let cfg = Arc::new(Mutex::new(cfg));
-        let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
-        let standard = OidcProvider::new(&cfg, "oidc", &idmap).unwrap();
-        let native = OktaProvider::new(&cfg, "oidc", &idmap, &standard)
-            .await
-            .unwrap();
-        native
-            .unix_user_offline_auth_init(
-                "user@example.com",
-                None,
-                "login",
-                no_hello_pin,
-                &mut EmptyKeyStore,
-            )
-            .await
-            .unwrap()
-            .0
-    }
-
-    #[tokio::test]
-    async fn enabled_breakglass_offers_password_without_a_pin() {
-        assert!(matches!(
-            offline_prompt(true, false, false).await,
-            AuthRequest::Password { .. }
-        ));
-    }
-
-    #[tokio::test]
-    async fn enabled_breakglass_respects_no_hello_pin() {
-        assert!(matches!(
-            offline_prompt(true, false, true).await,
-            AuthRequest::Password { .. }
-        ));
-    }
-
-    #[tokio::test]
-    async fn sfa_alone_does_not_enable_native_offline_passwords() {
-        assert!(matches!(
-            offline_prompt(false, true, true).await,
-            AuthRequest::InitDenied { .. }
-        ));
-    }
-}
-
 impl std::fmt::Debug for NativeAuthSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("NativeAuthSession { .. }")
@@ -333,9 +164,11 @@ impl OktaProvider {
         standard: &OidcProvider,
     ) -> Result<Self, OktaError> {
         let cfg = config.lock().await;
-        let issuer = cfg.get_oidc_issuer_url().ok_or(OktaError::Configuration)?;
+        let issuer = cfg
+            .get_oidc_issuer_url(Some(domain))
+            .ok_or(OktaError::Configuration)?;
         let client_id = cfg.get_app_id(domain).ok_or(OktaError::Configuration)?;
-        let redirect_uri = cfg.get_oidc_redirect_uri();
+        let redirect_uri = cfg.get_oidc_redirect_uri(Some(domain));
         let origin = reqwest::Url::parse(&issuer)
             .map_err(|_| OktaError::Configuration)?
             .origin()
@@ -476,9 +309,9 @@ impl OktaProvider {
         }
         let cfg = self.config.lock().await;
         let (shell, account_claims, strip) = (
-            cfg.get_shell(None),
-            cfg.get_oidc_account_id_claims(),
-            cfg.get_oidc_account_id_strip_at_suffix(),
+            cfg.get_shell(Some(&self.domain)),
+            cfg.get_oidc_account_id_claims(Some(&self.domain)),
+            cfg.get_oidc_account_id_strip_at_suffix(Some(&self.domain)),
         );
         drop(cfg);
         let identity = oidc_user_token_from_claims(
@@ -1212,7 +1045,7 @@ impl IdProvider for OktaProvider {
             real_gidnumber: Some(uid),
             gidnumber: gid,
             displayname: flip_displayname_comma(""),
-            shell: Some(self.config.lock().await.get_shell(None)),
+            shell: Some(self.config.lock().await.get_shell(Some(&self.domain))),
             groups: vec![GroupToken {
                 name: account.into(),
                 spn: account.into(),
@@ -1800,5 +1633,174 @@ impl IdProvider for OktaProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
         Err(IdpError::BadRequest)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn success() -> AuthResult {
+        AuthResult::Success {
+            token: UserToken {
+                name: "user@example.com".into(),
+                spn: "user@example.com".into(),
+                uuid: Uuid::nil(),
+                real_gidnumber: None,
+                gidnumber: 1000,
+                displayname: "Test User".into(),
+                shell: None,
+                groups: vec![],
+                tenant_id: None,
+                valid: true,
+            },
+        }
+    }
+
+    #[test]
+    fn password_cache_waits_for_totp_and_emits_only_once() {
+        for prompt in [
+            "Enter your Hello TOTP code",
+            "Enroll and confirm your Hello TOTP code",
+        ] {
+            let mut password = Some(Zeroizing::new("accepted password".into()));
+            let (result, action) = with_password_cache_action(
+                AuthResult::Next(AuthRequest::HelloTOTP { msg: prompt.into() }),
+                &mut password,
+                true,
+            );
+            assert!(matches!(
+                result,
+                AuthResult::Next(AuthRequest::HelloTOTP { .. })
+            ));
+            assert!(matches!(action, AuthCacheAction::None));
+            assert!(password.is_some());
+
+            let (result, action) = with_password_cache_action(success(), &mut password, true);
+            assert!(matches!(result, AuthResult::Success { .. }));
+            assert!(
+                matches!(action, AuthCacheAction::PasswordHashUpdate { cred } if cred == "accepted password")
+            );
+            assert!(password.is_none());
+            let (_, action) = with_password_cache_action(success(), &mut password, true);
+            assert!(matches!(action, AuthCacheAction::None));
+        }
+    }
+
+    #[test]
+    fn denied_totp_discards_password_without_caching() {
+        let mut password = Some(Zeroizing::new("accepted password".into()));
+        let (result, action) = with_password_cache_action(
+            AuthResult::Denied("Invalid TOTP".into()),
+            &mut password,
+            true,
+        );
+        assert!(matches!(result, AuthResult::Denied(_)));
+        assert!(matches!(action, AuthCacheAction::None));
+        assert!(password.is_none());
+    }
+
+    #[test]
+    fn disabled_breakglass_does_not_cache_after_totp() {
+        let mut password = Some(Zeroizing::new("accepted password".into()));
+        let (_, action) = with_password_cache_action(success(), &mut password, false);
+        assert!(matches!(action, AuthCacheAction::None));
+        assert!(password.is_none());
+    }
+
+    #[test]
+    fn setup_pin_keeps_existing_password_cache_behavior() {
+        let mut password = Some(Zeroizing::new("accepted password".into()));
+        let (_, action) = with_password_cache_action(
+            AuthResult::Next(AuthRequest::SetupPin {
+                msg: "Set up a PIN".into(),
+            }),
+            &mut password,
+            true,
+        );
+        assert!(matches!(action, AuthCacheAction::PasswordHashUpdate { .. }));
+        assert!(password.is_none());
+        let (_, action) = with_password_cache_action(success(), &mut password, true);
+        assert!(matches!(action, AuthCacheAction::None));
+    }
+    struct EmptyKeyStore;
+    impl KeyStoreTxn for EmptyKeyStore {
+        fn get_tagged_hsm_key<K: serde::de::DeserializeOwned>(
+            &mut self,
+            _: &str,
+        ) -> Result<Option<K>, crate::db::CacheError> {
+            Ok(None)
+        }
+        fn insert_tagged_hsm_key<K: serde::Serialize>(
+            &mut self,
+            _: &str,
+            _: &K,
+        ) -> Result<(), crate::db::CacheError> {
+            panic!("offline init must not write credentials")
+        }
+        fn delete_tagged_hsm_key(&mut self, _: &str) -> Result<(), crate::db::CacheError> {
+            panic!("offline init must not delete credentials")
+        }
+    }
+
+    async fn offline_prompt(breakglass: bool, sfa: bool, no_hello_pin: bool) -> AuthRequest {
+        let mut cfg = HimmelblauConfig::new(Some("/dev/null")).unwrap();
+        cfg.set(
+            "global",
+            "oidc_issuer_url",
+            "https://example.okta.com/oauth2/default",
+        );
+        cfg.set("oidc", "app_id", "fixture-client");
+        cfg.set(
+            "offline_breakglass",
+            "enabled",
+            if breakglass { "true" } else { "false" },
+        );
+        cfg.set(
+            "global",
+            "enable_sfa_fallback",
+            if sfa { "true" } else { "false" },
+        );
+        let cfg = Arc::new(Mutex::new(cfg));
+        let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
+        let standard = OidcProvider::new(&cfg, "oidc", &idmap).unwrap();
+        let native = OktaProvider::new(&cfg, "oidc", &idmap, &standard)
+            .await
+            .unwrap();
+        native
+            .unix_user_offline_auth_init(
+                "user@example.com",
+                None,
+                "login",
+                no_hello_pin,
+                &mut EmptyKeyStore,
+            )
+            .await
+            .unwrap()
+            .0
+    }
+
+    #[tokio::test]
+    async fn enabled_breakglass_offers_password_without_a_pin() {
+        assert!(matches!(
+            offline_prompt(true, false, false).await,
+            AuthRequest::Password { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn enabled_breakglass_respects_no_hello_pin() {
+        assert!(matches!(
+            offline_prompt(true, false, true).await,
+            AuthRequest::Password { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn sfa_alone_does_not_enable_native_offline_passwords() {
+        assert!(matches!(
+            offline_prompt(false, true, true).await,
+            AuthRequest::InitDenied { .. }
+        ));
     }
 }

@@ -24,9 +24,9 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::{self, File};
-use std::io::Error;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::io::{self, Error};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, error};
 
@@ -51,7 +51,8 @@ use himmelblau::auth::IpVersion;
 use himmelblau::error::MsalError;
 use idmap::{DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE};
 use reqwest::Url;
-use serde::Deserialize;
+use serde::de::{self, IntoDeserializer};
+use serde::{Deserialize, Deserializer};
 use std::env;
 use std::time::Duration;
 
@@ -93,6 +94,66 @@ impl From<JoinType> for u32 {
             JoinType::Join => 0,     // Device Join
             JoinType::Register => 4, // Device Registration
         }
+    }
+}
+
+/// Keys discovered at runtime and persisted in the server cache.
+const SERVER_CACHE_KEYS: [&str; 6] = [
+    "authority_host",
+    "tenant_id",
+    "graph_url",
+    "domain_aliases",
+    "device_id",
+    "intune_device_id",
+];
+
+/// Section name prefix of a `[tenant.<label>]` provider stanza.
+pub const TENANT_SECTION_PREFIX: &str = "tenant.";
+
+/// Global keys that define a provider in configs without tenant stanzas.
+const LEGACY_PROVIDER_KEYS: [&str; 3] = ["domain", "domains", "oidc_issuer_url"];
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderKind {
+    #[default]
+    Entra,
+    Oidc,
+}
+
+/// Provider keys of a `[tenant.<label>]` section. Other keys are
+/// domain-specific options read through the getters.
+#[derive(Deserialize)]
+struct TenantStanza {
+    #[serde(rename = "type", default, deserialize_with = "de_lowercase")]
+    kind: ProviderKind,
+    domain: String,
+    #[serde(default, deserialize_with = "de_bool")]
+    default: bool,
+}
+
+/// An identity provider served by the daemon.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderConfig {
+    /// The `<label>` of `[tenant.<label>]`, or the domain in legacy configs.
+    pub label: String,
+    /// The section holding the provider's admin settings.
+    pub section: String,
+    pub kind: ProviderKind,
+    /// Primary domain. Keys the server cache, keystore and idmap state.
+    pub domain: String,
+    pub default: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct ValidationReport {
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl ValidationReport {
+    pub fn is_ok(&self) -> bool {
+        self.errors.is_empty()
     }
 }
 
@@ -207,7 +268,11 @@ async fn request_federation_provider(
 
 #[derive(Clone)]
 pub struct HimmelblauConfig {
+    /// Admin configuration from the config hierarchy and drop-ins.
     config: Ini,
+    /// Values discovered at runtime, see `SERVER_CACHE_KEYS`.
+    cache: Ini,
+    cache_path: PathBuf,
     filename: String,
     effective_config_paths: Vec<PathBuf>,
 }
@@ -223,19 +288,122 @@ fn str_to_home_attr(attrib: &str) -> HomeAttr {
     HomeAttr::Uuid // Default to Uuid if the attrib can't be parsed
 }
 
-fn match_bool(val: Option<String>, default: bool) -> bool {
+fn parse_bool(val: &str) -> Option<bool> {
+    match val.trim().to_lowercase().as_str() {
+        "true" | "yes" | "on" | "t" | "y" | "1" => Some(true),
+        "false" | "no" | "off" | "f" | "n" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+fn match_bool(key: &str, val: Option<String>, default: bool) -> bool {
     match val {
-        Some(val) => match val.to_lowercase().as_str() {
-            "true" => true,
-            "false" => false,
-            "1" => true,
-            "0" => false,
-            _ => {
-                error!("Unrecognized response for apply_policy '{}'", val);
-                default
-            }
-        },
+        Some(val) => parse_bool(&val).unwrap_or_else(|| {
+            error!(key, value = %val, default, "Unrecognized boolean value, using default");
+            default
+        }),
         None => default,
+    }
+}
+
+fn de_bool<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    let val = String::deserialize(deserializer)?;
+    parse_bool(&val)
+        .ok_or_else(|| de::Error::invalid_value(de::Unexpected::Str(&val), &"a boolean"))
+}
+
+fn de_lowercase<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let val = String::deserialize(deserializer)?;
+    T::deserialize(val.to_lowercase().into_deserializer())
+}
+
+fn parse_range(val: &str) -> Option<(u32, u32)> {
+    match val
+        .split('-')
+        .map(|m| m.trim().parse())
+        .collect::<Result<Vec<u32>, _>>()
+    {
+        Ok(vals) => match vals.as_slice() {
+            [min, max] if min <= max => Some((*min, *max)),
+            _ => None,
+        },
+        Err(_) => None,
+    }
+}
+
+fn resolve_home_prefix(path: &Path) -> io::Result<PathBuf> {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()?.join(path)
+    };
+    let mut resolved = PathBuf::new();
+    let mut has_missing_component = false;
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(name) if has_missing_component => resolved.push(name),
+            Component::Normal(name) => {
+                let candidate = resolved.join(name);
+                match fs::canonicalize(&candidate) {
+                    Ok(canonical) => resolved = canonical,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        match fs::symlink_metadata(&candidate) {
+                            Ok(_) => return Err(error),
+                            Err(metadata_error)
+                                if metadata_error.kind() == io::ErrorKind::NotFound =>
+                            {
+                                resolved = candidate;
+                                has_missing_component = true;
+                            }
+                            Err(metadata_error) => return Err(metadata_error),
+                        }
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+fn ranges_overlap(a: (u32, u32), b: (u32, u32)) -> bool {
+    a.0 <= b.1 && b.0 <= a.1
+}
+
+fn split_list(val: &str) -> impl Iterator<Item = String> + '_ {
+    val.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Normalize an OIDC issuer URL, rejecting values that are not plain https URLs.
+fn parse_issuer_url(val: &str) -> Result<Option<String>, String> {
+    let s = val.trim();
+    let s = s
+        .strip_suffix("/.well-known/openid-configuration")
+        .unwrap_or(s);
+    if s.is_empty() {
+        Ok(None)
+    } else if !s.starts_with("https://") {
+        Err("OIDC issuer URL must use https://".to_string())
+    } else if s.contains('?') || s.contains('#') {
+        Err("OIDC issuer URL must not contain query or fragment".to_string())
+    } else if url::Url::parse(s).is_err() {
+        Err("OIDC issuer URL is not a valid URL".to_string())
+    } else {
+        Ok(Some(s.to_string()))
     }
 }
 
@@ -362,7 +530,26 @@ fn load_config_hierarchy(
 }
 
 impl HimmelblauConfig {
+    #[cfg(test)]
+    pub(crate) fn from_test_config(input: &str) -> Self {
+        let mut config = Ini::new();
+        config
+            .read(input.to_string())
+            .expect("Invalid test configuration");
+        Self {
+            config,
+            cache: Ini::new(),
+            cache_path: PathBuf::new(),
+            filename: String::new(),
+            effective_config_paths: Vec::new(),
+        }
+    }
+
     pub fn new(config_path: Option<&str>) -> Result<HimmelblauConfig, String> {
+        Self::load(config_path, Path::new(SERVER_CONFIG_PATH))
+    }
+
+    fn load(config_path: Option<&str>, cache_path: &Path) -> Result<HimmelblauConfig, String> {
         let mut sconfig = Ini::new();
         let mut filename: String = DEFAULT_CONFIG_PATH.to_string();
         if let Some(config_path) = config_path {
@@ -380,142 +567,105 @@ impl HimmelblauConfig {
         };
         let effective_config_paths = load_config_hierarchy(&mut sconfig, &config_paths)?;
 
-        // Apply server generated config (generated during domain join)
-        let srv_cfg_path: PathBuf = PathBuf::from(SERVER_CONFIG_PATH.to_string());
-        if srv_cfg_path.exists() {
-            if let Err(e) = sconfig.load_and_append(SERVER_CONFIG_PATH) {
-                return Err(format!(
-                    "failed to read config from {} - cannot start up: {} Quitting.",
-                    SERVER_CONFIG_PATH, e
-                ));
-            }
+        let mut cache = Ini::new();
+        if cache_path.exists() {
+            load_config_file(&mut cache, cache_path)?;
         }
         Ok(HimmelblauConfig {
             config: sconfig,
+            cache,
+            cache_path: cache_path.to_path_buf(),
             filename,
             effective_config_paths,
         })
     }
 
     pub fn get(&self, section: &str, option: &str) -> Option<String> {
+        if SERVER_CACHE_KEYS.contains(&option) {
+            if let Some(val) = self.cache.get(section, option) {
+                return Some(val);
+            }
+        }
         self.config.get(section, option)
     }
 
-    pub fn get_home_prefix(&self, domain: Option<&str>) -> String {
-        match domain {
-            Some(domain) => match self.config.get(domain, "home_prefix") {
-                Some(val) => val,
-                None => match self.config.get("global", "home_prefix") {
-                    Some(val) => val,
-                    None => String::from(DEFAULT_HOME_PREFIX),
-                },
-            },
-            None => match self.config.get("global", "home_prefix") {
-                Some(val) => val,
-                None => String::from(DEFAULT_HOME_PREFIX),
-            },
+    /// Read `key` for `domain`. Discovered keys come from the server cache
+    /// first, then from the admin section that configures `domain`.
+    fn domain_value(&self, domain: &str, key: &str) -> Option<String> {
+        let provider = self.provider_for_domain(domain);
+        let canonical = provider.as_ref().map_or(domain, |p| p.domain.as_str());
+        if SERVER_CACHE_KEYS.contains(&key) {
+            if let Some(val) = self.cache.get(canonical, key) {
+                return Some(val);
+            }
         }
+        self.config.get(&self.section_for_domain(domain), key)
+    }
+
+    fn domain_or_global_value(&self, domain: Option<&str>, key: &str) -> Option<String> {
+        domain
+            .and_then(|domain| self.domain_value(domain, key))
+            .or_else(|| self.config.get("global", key))
+    }
+
+    fn section_for_domain(&self, domain: &str) -> String {
+        self.provider_for_domain(domain)
+            .map(|p| p.section)
+            .unwrap_or_else(|| domain.to_string())
+    }
+
+    pub fn get_home_prefix(&self, domain: Option<&str>) -> String {
+        self.domain_or_global_value(domain, "home_prefix")
+            .unwrap_or_else(|| String::from(DEFAULT_HOME_PREFIX))
     }
 
     pub fn get_home_attr(&self, domain: Option<&str>) -> HomeAttr {
-        match domain {
-            Some(domain) => match self.config.get(domain, "home_attr") {
-                Some(val) => str_to_home_attr(&val),
-                None => match self.config.get("global", "home_attr") {
-                    Some(val) => str_to_home_attr(&val),
-                    None => DEFAULT_HOME_ATTR,
-                },
-            },
-            None => match self.config.get("global", "home_attr") {
-                Some(val) => str_to_home_attr(&val),
-                None => DEFAULT_HOME_ATTR,
-            },
+        match self.domain_or_global_value(domain, "home_attr") {
+            Some(val) => str_to_home_attr(&val),
+            None => DEFAULT_HOME_ATTR,
         }
     }
 
     pub fn get_home_alias(&self, domain: Option<&str>) -> Option<HomeAttr> {
-        match domain {
-            Some(domain) => match self.config.get(domain, "home_alias") {
-                Some(val) => Some(str_to_home_attr(&val)),
-                None => match self.config.get("global", "home_alias") {
-                    Some(val) => Some(str_to_home_attr(&val)),
-                    None => DEFAULT_HOME_ALIAS,
-                },
-            },
-            None => match self.config.get("global", "home_alias") {
-                Some(val) => Some(str_to_home_attr(&val)),
-                None => DEFAULT_HOME_ALIAS,
-            },
+        match self.domain_or_global_value(domain, "home_alias") {
+            Some(val) => Some(str_to_home_attr(&val)),
+            None => DEFAULT_HOME_ALIAS,
         }
     }
 
     pub fn get_shell(&self, domain: Option<&str>) -> String {
-        match domain {
-            Some(domain) => match self.config.get(domain, "shell") {
-                Some(val) => val,
-                None => match self.config.get("global", "shell") {
-                    Some(val) => val,
-                    None => String::from(DEFAULT_SHELL),
-                },
-            },
-            None => match self.config.get("global", "shell") {
-                Some(val) => val,
-                None => String::from(DEFAULT_SHELL),
-            },
-        }
+        self.domain_or_global_value(domain, "shell")
+            .unwrap_or_else(|| String::from(DEFAULT_SHELL))
     }
 
     pub fn get_odc_provider(&self, domain: &str) -> String {
-        match self.config.get(domain, "odc_provider") {
-            Some(val) => val,
-            None => match self.config.get("global", "odc_provider") {
-                Some(val) => val,
-                None => String::from(DEFAULT_ODC_PROVIDER),
-            },
-        }
+        self.domain_or_global_value(Some(domain), "odc_provider")
+            .unwrap_or_else(|| String::from(DEFAULT_ODC_PROVIDER))
     }
 
     pub fn get_idmap_range(&self, domain: &str) -> (u32, u32) {
-        let default_range = DEFAULT_IDMAP_RANGE;
-        match self.config.get(domain, "idmap_range") {
-            Some(val) => {
-                let vals: Vec<u32> = val
-                    .split('-')
-                    .map(|m| m.parse())
-                    .collect::<Result<Vec<u32>, _>>()
-                    .unwrap_or_else(|_| vec![default_range.0, default_range.1]);
-                match vals.as_slice() {
-                    [min, max] => (*min, *max),
-                    _ => {
-                        error!("Invalid range specified [{}] idmap_range = {}", domain, val);
-                        default_range
-                    }
-                }
-            }
+        let (source, val) = match self.domain_value(domain, "idmap_range") {
+            Some(val) => (domain, val),
             None => match self.config.get("global", "idmap_range") {
-                Some(val) => {
-                    let vals: Vec<u32> = val
-                        .split('-')
-                        .map(|m| m.parse())
-                        .collect::<Result<Vec<u32>, _>>()
-                        .unwrap_or_else(|_| vec![default_range.0, default_range.1]);
-                    match vals.as_slice() {
-                        [min, max] => (*min, *max),
-                        _ => {
-                            error!("Invalid range specified [global] idmap_range = {}", val);
-                            default_range
-                        }
-                    }
-                }
+                Some(val) => ("global", val),
                 None => {
                     warn!(
-                        "No idmap_range range specified in config, using {}-{}!",
-                        DEFAULT_IDMAP_RANGE.0, DEFAULT_IDMAP_RANGE.1
+                        min = DEFAULT_IDMAP_RANGE.0,
+                        max = DEFAULT_IDMAP_RANGE.1,
+                        "No idmap_range configured, using the default"
                     );
-                    default_range
+                    return DEFAULT_IDMAP_RANGE;
                 }
             },
-        }
+        };
+        parse_range(&val).unwrap_or_else(|| {
+            error!(
+                section = source,
+                value = %val,
+                "Invalid idmap_range, using the default"
+            );
+            DEFAULT_IDMAP_RANGE
+        })
     }
 
     pub fn get_unix_sock_timeout(&self) -> u64 {
@@ -546,7 +696,7 @@ impl HimmelblauConfig {
     }
 
     pub fn get_authority_host(&self, domain: &str) -> String {
-        match self.config.get(domain, "authority_host") {
+        match self.domain_or_global_value(Some(domain), "authority_host") {
             Some(val) => val,
             None => {
                 debug!("authority_host unset, using defaults");
@@ -558,23 +708,22 @@ impl HimmelblauConfig {
     /// Resolve a user's configured domain (including a known alias) before
     /// selecting its authority. OIDC accounts use the configured issuer host,
     /// regardless of whether their account-name claim contains a domain.
-    /// The server-generated config is already merged into this configuration by `new`.
     pub fn get_authority_host_for_account(&self, account_id: &str) -> Option<String> {
-        if let Some(issuer) = self.get_oidc_issuer_url() {
+        let provider = self.provider_for_account(account_id)?;
+        if provider.kind == ProviderKind::Oidc {
+            let issuer = self.get_oidc_issuer_url(Some(&provider.domain))?;
             let issuer = url::Url::parse(&issuer).ok()?;
             return issuer.host_str().map(str::to_string);
         }
-        let (_, domain) = split_username(account_id)?;
-        let domain = self
-            .get_primary_domain_from_alias_simple(domain)
-            .unwrap_or_else(|| domain.to_string());
-        Some(self.get_authority_host(&domain))
+        Some(self.get_authority_host(&provider.domain))
     }
 
     /// Broker environments are endpoint authorities, so preserve an OIDC issuer's
     /// nondefault port. FIDO RP IDs continue to use the hostname-only accessor.
     pub fn get_broker_environment_for_account(&self, account_id: &str) -> Option<String> {
-        if let Some(issuer) = self.get_oidc_issuer_url() {
+        let provider = self.provider_for_account(account_id)?;
+        if provider.kind == ProviderKind::Oidc {
+            let issuer = self.get_oidc_issuer_url(Some(&provider.domain))?;
             let issuer = url::Url::parse(&issuer).ok()?;
             issuer.host_str()?;
             return Some(issuer[url::Position::BeforeHost..url::Position::AfterPort].to_string());
@@ -583,25 +732,19 @@ impl HimmelblauConfig {
     }
 
     pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
-        self.config.get(domain, "tenant_id")
+        self.domain_value(domain, "tenant_id")
     }
 
     pub fn get_graph_url(&self, domain: &str) -> Option<String> {
-        self.config.get(domain, "graph_url")
+        self.domain_value(domain, "graph_url")
     }
 
     pub fn get_app_id(&self, domain: &str) -> Option<String> {
-        match self.config.get(domain, "app_id") {
-            Some(val) => Some(val),
-            None => self.config.get("global", "app_id"),
-        }
+        self.domain_or_global_value(Some(domain), "app_id")
     }
 
     pub fn get_logon_token_app_id(&self, domain: &str) -> Option<String> {
-        match self.config.get(domain, "logon_token_app_id") {
-            Some(val) => Some(val),
-            None => self.config.get("global", "logon_token_app_id"),
-        }
+        self.domain_or_global_value(Some(domain), "logon_token_app_id")
     }
 
     pub fn get_policies_db_path(&self) -> String {
@@ -674,22 +817,23 @@ impl HimmelblauConfig {
         self.config.write(self.filename.clone())
     }
 
+    pub fn reload_server_cache(&mut self) -> Result<(), String> {
+        let mut cache = Ini::new();
+        if self.cache_path.exists() {
+            load_config_file(&mut cache, &self.cache_path)?;
+        }
+        self.cache = cache;
+        Ok(())
+    }
+
     pub fn write_server_config(&self) -> Result<(), Error> {
-        let mut srv_conf = self.config.clone();
+        let mut srv_conf = self.cache.clone();
         srv_conf.remove_section("global");
 
-        let permitted_keys = [
-            "authority_host",
-            "tenant_id",
-            "graph_url",
-            "domain_aliases",
-            "device_id",
-            "intune_device_id",
-        ];
         let mut keys_to_remove = Vec::new();
         for (section, keys) in srv_conf.get_map_ref() {
             for key in keys.keys() {
-                if !permitted_keys.contains(&key.as_str()) {
+                if !SERVER_CACHE_KEYS.contains(&key.as_str()) {
                     keys_to_remove.push((section.to_string(), key.clone()));
                 }
             }
@@ -698,26 +842,47 @@ impl HimmelblauConfig {
             srv_conf.remove_key(&section, &key);
         }
 
-        srv_conf.write(SERVER_CONFIG_PATH)
+        srv_conf.write(&self.cache_path)
     }
 
+    /// Discovered keys go to the server cache, everything else to the admin
+    /// configuration held in memory.
     pub fn set(&mut self, section: &str, key: &str, value: &str) {
-        self.config.set(section, key, Some(value.to_string()));
+        if SERVER_CACHE_KEYS.contains(&key) {
+            self.cache.set(section, key, Some(value.to_string()));
+        } else {
+            self.config.set(section, key, Some(value.to_string()));
+        }
     }
 
-    pub fn get_configured_domains(&self) -> Vec<String> {
-        let mut domains = match self.config.get("global", "domains") {
-            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
-            None => vec![],
-        };
-        let domain = match self.config.get("global", "domain") {
-            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
-            None => vec![],
-        };
-        domains.extend(domain);
-        let mut sections = self.config.sections();
-        sections.retain(|s| s != "global" && s != "offline_breakglass");
-        for section in sections {
+    fn tenant_sections(&self) -> Vec<String> {
+        let mut sections: Vec<String> = self
+            .config
+            .sections()
+            .into_iter()
+            .filter(|s| s.starts_with(TENANT_SECTION_PREFIX))
+            .collect();
+        sections.sort();
+        sections
+    }
+
+    fn legacy_sections(&self) -> Vec<String> {
+        self.config
+            .sections()
+            .into_iter()
+            .filter(|s| {
+                s != "global" && s != "offline_breakglass" && !s.starts_with(TENANT_SECTION_PREFIX)
+            })
+            .collect()
+    }
+
+    fn legacy_domains(&self) -> Vec<String> {
+        let mut domains: Vec<String> = ["domains", "domain"]
+            .iter()
+            .filter_map(|key| self.config.get("global", key))
+            .flat_map(|val| split_list(&val).collect::<Vec<_>>())
+            .collect();
+        for section in self.legacy_sections() {
             if !domains.contains(&section) {
                 domains.push(section);
             }
@@ -725,19 +890,505 @@ impl HimmelblauConfig {
         domains
     }
 
-    pub fn get_configured_entra_domains(&self) -> Vec<String> {
-        // The array returned by get_configured_domains() might include the
-        // "oidc" section, or an empty entry from a blank `domain =` option.
-        self.get_configured_domains()
+    fn legacy_entra_domains(&self) -> Vec<String> {
+        self.legacy_domains()
             .into_iter()
-            .filter(|x| !x.is_empty() && x != "oidc")
+            .filter(|d| d != "oidc")
             .collect()
     }
 
-    /// Himmelblau supports a single Entra ID domain. If several are
-    /// configured the first one is used.
+    fn legacy_providers(&self) -> Vec<ProviderConfig> {
+        let issuer = self.config.get("global", "oidc_issuer_url");
+        if matches!(issuer.as_deref().map(parse_issuer_url), Some(Ok(Some(_)))) {
+            return vec![ProviderConfig {
+                label: "oidc".to_string(),
+                section: "oidc".to_string(),
+                kind: ProviderKind::Oidc,
+                domain: "oidc".to_string(),
+                default: true,
+            }];
+        }
+        self.legacy_entra_domains()
+            .into_iter()
+            .take(1)
+            .map(|domain| ProviderConfig {
+                label: domain.clone(),
+                section: domain.clone(),
+                kind: ProviderKind::Entra,
+                domain,
+                default: true,
+            })
+            .collect()
+    }
+
+    fn tenant_stanza(&self, section: &str) -> Result<TenantStanza, de::value::Error> {
+        let entries = self
+            .config
+            .get_map_ref()
+            .get(section)
+            .into_iter()
+            .flatten()
+            .filter_map(|(key, val)| val.clone().map(|val| (key.clone(), val)));
+        TenantStanza::deserialize(de::value::MapDeserializer::new(entries))
+    }
+
+    /// Parse the configured identity providers.
+    ///
+    /// Each `[tenant.<label>]` section defines one provider. Configs without
+    /// tenant sections define at most one provider through `[global] domain`
+    /// or `[global] oidc_issuer_url`.
+    pub fn parse_providers(&self) -> Result<Vec<ProviderConfig>, Vec<String>> {
+        let tenant_sections = self.tenant_sections();
+        if tenant_sections.is_empty() {
+            return Ok(self.legacy_providers());
+        }
+
+        let mut errors = vec![];
+        let mut legacy: Vec<String> = LEGACY_PROVIDER_KEYS
+            .iter()
+            .filter(|key| {
+                self.config
+                    .get("global", key)
+                    .is_some_and(|v| !v.trim().is_empty())
+            })
+            .map(|key| format!("[global] {}", key))
+            .collect();
+        legacy.extend(self.legacy_sections().iter().map(|s| format!("[{}]", s)));
+        if !legacy.is_empty() {
+            errors.push(format!(
+                "{} cannot be combined with [{}<label>] sections",
+                legacy.join(", "),
+                TENANT_SECTION_PREFIX
+            ));
+        }
+
+        let mut providers = vec![];
+        for section in tenant_sections {
+            let label = section[TENANT_SECTION_PREFIX.len()..].to_string();
+            if label.is_empty() {
+                errors.push(format!("[{}] requires a label", section));
+                continue;
+            }
+            let stanza = match self.tenant_stanza(&section) {
+                Ok(stanza) => stanza,
+                Err(e) => {
+                    errors.push(format!("[{}] {}", section, e));
+                    continue;
+                }
+            };
+            let domain = stanza.domain.trim().to_string();
+            if domain.is_empty() {
+                errors.push(format!("[{}] requires a domain", section));
+                continue;
+            }
+            if domain.contains(',') {
+                errors.push(format!(
+                    "[{}] domain must be a single domain, list others in domain_aliases",
+                    section
+                ));
+                continue;
+            }
+            providers.push(ProviderConfig {
+                label,
+                section,
+                kind: stanza.kind,
+                domain,
+                default: stanza.default,
+            });
+        }
+
+        if errors.is_empty() {
+            Ok(providers)
+        } else {
+            Err(errors)
+        }
+    }
+
+    /// The provider serving names without a domain: the only provider, or
+    /// the one marked `default = true`.
+    pub fn default_provider(&self) -> Option<ProviderConfig> {
+        let providers = self.parse_providers().ok()?;
+        if providers.len() == 1 {
+            return providers.into_iter().next();
+        }
+        providers.into_iter().find(|p| p.default)
+    }
+
+    /// Resolve only explicitly configured domains and their known aliases.
+    pub fn provider_for_domain(&self, domain: &str) -> Option<ProviderConfig> {
+        let providers = self.parse_providers().ok()?;
+        // An explicit primary domain always wins over a stale discovered alias.
+        if let Some(provider) = providers
+            .iter()
+            .find(|p| p.domain.eq_ignore_ascii_case(domain))
+        {
+            return Some(provider.clone());
+        }
+        let mut matches = providers.into_iter().filter(|p| {
+            self.domain_aliases_for(p)
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(domain))
+        });
+        let provider = matches.next()?;
+        matches.next().is_none().then_some(provider)
+    }
+
+    /// Names without a suffix belong to the default provider.
+    pub fn provider_for_account(&self, account: &str) -> Option<ProviderConfig> {
+        if account.is_empty() {
+            return None;
+        }
+        if let Some((name, domain)) = split_username(account) {
+            if name.is_empty() || domain.is_empty() {
+                return None;
+            }
+            if let Some(provider) = self.provider_for_domain(domain) {
+                return Some(provider);
+            }
+            // Legacy OIDC configurations accept the issuer's account-name claim.
+            return self
+                .default_provider()
+                .filter(|p| p.kind == ProviderKind::Oidc && p.section == "oidc");
+        }
+        if account.contains('@') {
+            return None;
+        }
+        self.default_provider()
+    }
+
+    pub fn provider_for_gid(&self, gid: u32) -> Option<ProviderConfig> {
+        self.parse_providers().ok()?.into_iter().find(|p| {
+            let (min, max) = self.get_idmap_range(&p.domain);
+            (min..=max).contains(&gid)
+        })
+    }
+
+    /// Another Entra provider already bound to `tenant_id`.
+    pub fn provider_sharing_tenant(&self, domain: &str, tenant_id: &str) -> Option<ProviderConfig> {
+        self.parse_providers().ok()?.into_iter().find(|p| {
+            p.kind == ProviderKind::Entra
+                && !p.domain.eq_ignore_ascii_case(domain)
+                && self
+                    .get_tenant_id(&p.domain)
+                    .is_some_and(|id| id.eq_ignore_ascii_case(tenant_id))
+        })
+    }
+
+    /// Discover an alias only when its tenant ID matches a configured Entra provider.
+    pub async fn discover_provider_for_domain(&self, alias: &str) -> Option<ProviderConfig> {
+        let providers: Vec<_> = self
+            .parse_providers()
+            .ok()?
+            .into_iter()
+            .filter(|p| p.kind == ProviderKind::Entra)
+            .collect();
+        if providers.is_empty() {
+            return None;
+        }
+        let (_, alias_tenant, _) =
+            request_federation_provider(DEFAULT_ODC_PROVIDER, alias, self.get_request_timeout())
+                .await
+                .ok()?;
+        let mut tenants = Vec::new();
+        for provider in providers {
+            let tenant = match self.get_tenant_id(&provider.domain) {
+                Some(tenant) => tenant,
+                None => {
+                    let Ok((_, tenant, _)) = request_federation_provider(
+                        &self.get_odc_provider(&provider.domain),
+                        &provider.domain,
+                        self.get_request_timeout(),
+                    )
+                    .await
+                    else {
+                        continue;
+                    };
+                    tenant
+                }
+            };
+            tenants.push((provider, tenant));
+        }
+        Self::match_discovered_tenant(tenants, &alias_tenant)
+    }
+
+    fn match_discovered_tenant(
+        tenants: impl IntoIterator<Item = (ProviderConfig, String)>,
+        tenant_id: &str,
+    ) -> Option<ProviderConfig> {
+        let mut matches = tenants.into_iter().filter_map(|(provider, tenant)| {
+            (provider.kind == ProviderKind::Entra && tenant.eq_ignore_ascii_case(tenant_id))
+                .then_some(provider)
+        });
+        let provider = matches.next()?;
+        matches.next().is_none().then_some(provider)
+    }
+
+    pub(crate) fn record_domain_alias(&mut self, provider: &ProviderConfig, alias: &str) {
+        let mut aliases = self.domain_aliases_for(provider);
+        if !aliases.iter().any(|a| a.eq_ignore_ascii_case(alias)) {
+            aliases.push(alias.to_lowercase());
+            self.set(&provider.domain, "domain_aliases", &aliases.join(","));
+            if let Err(error) = self.write_server_config() {
+                error!(?error, "Failed to write the server cache");
+            }
+        }
+    }
+
+    /// Check the provider configuration. The daemon refuses to start when
+    /// errors are reported.
+    pub fn validate(&self) -> ValidationReport {
+        let mut report = ValidationReport::default();
+        let providers = match self.parse_providers() {
+            Ok(providers) if providers.is_empty() => {
+                report.errors.push(format!(
+                    "No provider is configured, set [global] domain or add a [{}<label>] section",
+                    TENANT_SECTION_PREFIX
+                ));
+                return report;
+            }
+            Ok(providers) => providers,
+            Err(errors) => {
+                report.errors = errors;
+                return report;
+            }
+        };
+
+        if self.tenant_sections().is_empty() {
+            self.validate_legacy(&mut report);
+        } else {
+            self.validate_tenants(&providers, &mut report);
+        }
+        self.validate_id_ranges(&providers, &mut report);
+        report
+    }
+
+    fn validate_legacy(&self, report: &mut ValidationReport) {
+        let domains = self.legacy_entra_domains();
+        if self.get_oidc_issuer_url(None).is_some() {
+            if let Some(domain) = domains.first() {
+                report.warnings.push(format!(
+                    "Both oidc_issuer_url and Entra ID domain '{}' are configured, the domain is ignored",
+                    domain
+                ));
+            }
+        } else if domains.len() > 1 {
+            report.warnings.push(format!(
+                "Only one domain is supported in [global], using '{}' and ignoring: {}. Configure a [{}<label>] section per tenant instead",
+                domains[0],
+                domains[1..].join(", "),
+                TENANT_SECTION_PREFIX
+            ));
+        }
+    }
+
+    fn validate_tenants(&self, providers: &[ProviderConfig], report: &mut ValidationReport) {
+        let mut names: BTreeMap<String, &str> = BTreeMap::new();
+        let mut tenant_ids: BTreeMap<String, &str> = BTreeMap::new();
+        let mut issuers: BTreeMap<String, &str> = BTreeMap::new();
+        for p in providers {
+            let section = p.section.as_str();
+            let aliases = self.domain_aliases_for(p);
+            for name in std::iter::once(p.domain.clone()).chain(aliases) {
+                match names.insert(name.to_lowercase(), section) {
+                    Some(other) if other != section => report.errors.push(format!(
+                        "[{}] and [{}] both claim the domain {}",
+                        other, section, name
+                    )),
+                    _ => {}
+                }
+            }
+
+            if providers.len() > 1 && self.config.get(section, "idmap_range").is_none() {
+                report.errors.push(format!(
+                    "[{}] requires an idmap_range when several tenants are configured",
+                    section
+                ));
+            }
+            if let Some(val) = self.config.get(section, "idmap_range") {
+                if parse_range(&val).is_none() {
+                    report
+                        .errors
+                        .push(format!("[{}] idmap_range = {} is invalid", section, val));
+                }
+            }
+
+            if p.kind == ProviderKind::Entra {
+                if let Some(tenant_id) = self.get_tenant_id(&p.domain) {
+                    if let Some(other) = tenant_ids.insert(tenant_id.to_lowercase(), section) {
+                        report.errors.push(format!(
+                            "[{}] and [{}] share the tenant {}, use domain_aliases instead",
+                            other, section, tenant_id
+                        ));
+                    }
+                }
+            }
+            if p.kind == ProviderKind::Oidc
+                && p.get_app_id(self).is_none_or(|id| id.trim().is_empty())
+            {
+                report
+                    .errors
+                    .push(format!("[{}] type = oidc requires app_id", section));
+            }
+
+            match (p.kind, self.config.get(section, "oidc_issuer_url")) {
+                (ProviderKind::Oidc, None) => report.errors.push(format!(
+                    "[{}] type = oidc requires oidc_issuer_url",
+                    section
+                )),
+                (ProviderKind::Oidc, Some(url)) => match parse_issuer_url(&url) {
+                    Ok(Some(issuer)) => {
+                        if let Some(other) =
+                            issuers.insert(issuer.trim_end_matches('/').to_string(), section)
+                        {
+                            report.errors.push(format!(
+                                "[{}] and [{}] share the OIDC issuer {}",
+                                other, section, url
+                            ));
+                        }
+                    }
+                    Ok(None) => report
+                        .errors
+                        .push(format!("[{}] OIDC issuer URL is empty", section)),
+                    Err(error) => report.errors.push(format!("[{}] {}", section, error)),
+                },
+                (ProviderKind::Entra, Some(_)) => report.errors.push(format!(
+                    "[{}] oidc_issuer_url requires type = oidc",
+                    section
+                )),
+                (ProviderKind::Entra, None) => {}
+            }
+
+            let strip_suffix = self.config.get(section, "oidc_account_id_strip_at_suffix");
+            if !p.default
+                && match_bool("oidc_account_id_strip_at_suffix", strip_suffix, false)
+                && providers.len() > 1
+            {
+                report.errors.push(format!(
+                    "[{}] oidc_account_id_strip_at_suffix is only allowed on the default tenant",
+                    section
+                ));
+            }
+        }
+
+        if match_bool(
+            "oidc_account_id_strip_at_suffix",
+            self.config.get("global", "oidc_account_id_strip_at_suffix"),
+            false,
+        ) {
+            report.errors.push(format!(
+                "[global] oidc_account_id_strip_at_suffix must be set in the default [{}<label>] section",
+                TENANT_SECTION_PREFIX
+            ));
+        }
+
+        let defaults: Vec<&str> = providers
+            .iter()
+            .filter(|p| p.default)
+            .map(|p| p.section.as_str())
+            .collect();
+        if defaults.len() > 1 {
+            report.errors.push(format!(
+                "Only one tenant can set default = true, found: {}",
+                defaults.join(", ")
+            ));
+        } else if defaults.is_empty() && providers.len() > 1 {
+            report
+                .errors
+                .push("One tenant must set default = true when several are configured".to_string());
+        }
+
+        if providers.len() > 1 && self.get_id_attr_map() == IdAttr::Rfc2307 {
+            report
+                .errors
+                .push("id_attr_map = rfc2307 supports a single tenant only".to_string());
+        }
+        let mut cn_home_prefixes = Vec::new();
+        for provider in providers {
+            if !self.provider_uses_cn_home_name(provider) {
+                continue;
+            }
+            let prefix = provider.get_home_prefix(self);
+            match resolve_home_prefix(Path::new(&prefix)) {
+                Ok(path) => cn_home_prefixes.push((provider, path)),
+                Err(error) => report.errors.push(format!(
+                    "[{}] cannot resolve home_prefix {:?}: {}",
+                    provider.section, prefix, error
+                )),
+            }
+        }
+        for (index, (provider, prefix)) in cn_home_prefixes.iter().enumerate() {
+            for (other, other_prefix) in &cn_home_prefixes[index + 1..] {
+                if prefix == other_prefix {
+                    report.errors.push(format!(
+                        "[{}] and [{}] require distinct home_prefix values for CN home names",
+                        provider.section, other.section
+                    ));
+                }
+            }
+        }
+    }
+
+    fn provider_uses_cn_home_name(&self, provider: &ProviderConfig) -> bool {
+        let home_attr = provider.get_home_attr(self);
+        let home_alias = provider.get_home_alias(self);
+        let oidc_strips_spn_suffix = provider.kind == ProviderKind::Oidc
+            && provider.get_oidc_account_id_strip_at_suffix(self);
+
+        home_attr == HomeAttr::Cn
+            || home_alias == Some(HomeAttr::Cn)
+            || (oidc_strips_spn_suffix
+                && (home_attr == HomeAttr::Spn || home_alias == Some(HomeAttr::Spn)))
+    }
+
+    fn validate_id_ranges(&self, providers: &[ProviderConfig], report: &mut ValidationReport) {
+        let ranges: Vec<(String, (u32, u32))> = providers
+            .iter()
+            .map(|p| (p.domain.clone(), self.get_idmap_range(&p.domain)))
+            .collect();
+
+        let subid_range = self.get_subid_range();
+        for (idx, (name, range)) in ranges.iter().enumerate() {
+            if ranges_overlap(*range, subid_range) {
+                report.errors.push(format!(
+                    "idmap_range ({}-{}) of {} overlaps with subid_range ({}-{})",
+                    range.0, range.1, name, subid_range.0, subid_range.1
+                ));
+            }
+            for (other_name, other_range) in &ranges[idx + 1..] {
+                if ranges_overlap(*range, *other_range) {
+                    report.errors.push(format!(
+                        "idmap_range ({}-{}) of {} overlaps with idmap_range ({}-{}) of {}",
+                        range.0, range.1, name, other_range.0, other_range.1, other_name
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Primary domains of the providers served by this configuration.
+    pub fn get_configured_domains(&self) -> Vec<String> {
+        self.parse_providers()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.domain)
+            .collect()
+    }
+
+    pub fn get_configured_entra_domains(&self) -> Vec<String> {
+        self.parse_providers()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| p.kind == ProviderKind::Entra)
+            .map(|p| p.domain)
+            .collect()
+    }
+
+    /// The domain of the default provider when it is an Entra ID tenant.
+    /// Legacy configs use the first configured domain.
     pub fn get_configured_entra_domain(&self) -> Option<String> {
-        self.get_configured_entra_domains().into_iter().next()
+        self.default_provider()
+            .filter(|p| p.kind == ProviderKind::Entra)
+            .map(|p| p.domain)
     }
 
     pub fn get_config_file(&self) -> String {
@@ -795,119 +1446,42 @@ impl HimmelblauConfig {
         let domain = self
             .get_primary_domain_from_alias_simple(domain)
             .unwrap_or(domain.to_string());
-        self.config.get(&domain, "intune_device_id")
+        self.domain_value(&domain, "intune_device_id")
+    }
+
+    /// Aliases configured by the administrator merged with aliases discovered
+    /// at runtime, lowercased.
+    fn domain_aliases_for(&self, provider: &ProviderConfig) -> Vec<String> {
+        let mut aliases: Vec<String> = vec![];
+        let admin = self.config.get(&provider.section, "domain_aliases");
+        let cached = self.cache.get(&provider.domain, "domain_aliases");
+        for alias in admin
+            .iter()
+            .chain(cached.iter())
+            .flat_map(|v| split_list(v).collect::<Vec<_>>())
+            .map(|a| a.to_lowercase())
+        {
+            if !aliases.contains(&alias) {
+                aliases.push(alias);
+            }
+        }
+        aliases
     }
 
     pub fn get_primary_domain_from_alias_simple(&self, alias: &str) -> Option<String> {
-        let domains = self.get_configured_domains();
-
-        for domain in &domains {
-            if domain.to_lowercase() == alias.to_lowercase() {
-                return Some(domain.to_string());
-            }
-            let domain_aliases = match self.config.get(domain, "domain_aliases") {
-                Some(aliases) => aliases
-                    .split(",")
-                    .map(|s| s.trim().to_lowercase())
-                    .collect(),
-                None => vec![],
-            };
-            if domain_aliases.contains(&alias.to_string().to_lowercase()) {
-                return Some(domain.to_string());
-            }
-        }
-        None
+        self.provider_for_domain(alias).map(|p| p.domain)
     }
 
-    pub async fn domains_are_aliases(&mut self, domain1: &str, domain2: &str) -> bool {
-        if let Some(primary) = self.get_primary_domain_from_alias(domain1).await {
-            domain2 == primary
-        } else if let Some(primary) = self.get_primary_domain_from_alias(domain2).await {
-            domain1 == primary
-        } else {
-            false
-        }
-    }
-
-    pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
-        // Short-circuit the request if this is an OIDC provider domain.
-        if self.get_oidc_issuer_url().is_some() {
-            return None;
-        }
-
-        // Attempt to short-circut the request by checking if the alias is
-        // already configured.
-        if let Some(primary) = self.get_primary_domain_from_alias_simple(alias) {
-            return Some(primary);
-        }
-
-        let domains = self.get_configured_domains();
-        if domains.is_empty() {
-            info!("No domains are configured.");
-            return None;
-        }
-
-        let mut modified_config = false;
-
-        // We don't recognize this alias, so now we need to search for it the
-        // hard way by checking for matching tenant id's.
-        let (_, alias_tenant_id, _) = match request_federation_provider(
-            DEFAULT_ODC_PROVIDER,
-            alias,
-            self.get_request_timeout(),
-        )
-        .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
-                error!(
-                    "Failed matching alias '{}' to a configured tenant: {:?}",
-                    alias, e
-                );
-                return None;
-            }
+    pub async fn domains_are_aliases(&self, domain1: &str, domain2: &str) -> bool {
+        let first = match self.provider_for_domain(domain1) {
+            Some(provider) => Some(provider),
+            None => self.discover_provider_for_domain(domain1).await,
         };
-        for domain in domains {
-            let tenant_id = match self.get_tenant_id(&domain) {
-                Some(tenant_id) => tenant_id,
-                None => {
-                    let (authority_host, tenant_id, graph_url) = match request_federation_provider(
-                        &self.get_odc_provider(&domain),
-                        &domain,
-                        self.get_request_timeout(),
-                    )
-                    .await
-                    {
-                        Ok(resp) => resp,
-                        Err(e) => {
-                            error!("Failed sending federation provider request: {:?}", e);
-                            continue;
-                        }
-                    };
-                    self.set(&domain, "authority_host", &authority_host);
-                    self.set(&domain, "tenant_id", &tenant_id);
-                    self.set(&domain, "graph_url", &graph_url);
-                    modified_config = true;
-                    tenant_id
-                }
-            };
-            if tenant_id == alias_tenant_id {
-                let mut domain_aliases = match self.config.get(&domain, "domain_aliases") {
-                    Some(aliases) => aliases.split(",").map(|s| s.to_string()).collect(),
-                    None => vec![],
-                };
-                domain_aliases.push(alias.to_string());
-                self.set(&domain, "domain_aliases", &domain_aliases.join(","));
-                let _ = self.write_server_config();
-                return Some(domain);
-            }
-        }
-
-        error!("Failed matching alias '{}' to a configured tenant", alias);
-        if modified_config {
-            let _ = self.write_server_config();
-        }
-        None
+        let second = match self.provider_for_domain(domain2) {
+            Some(provider) => Some(provider),
+            None => self.discover_provider_for_domain(domain2).await,
+        };
+        matches!((first, second), (Some(a), Some(b)) if a.domain == b.domain)
     }
 
     /// Convert a login name to a UPN, or `None` if it cannot be a directory user
@@ -1024,7 +1598,7 @@ impl HimmelblauConfig {
                     res = upn.to_string();
                 }
             // Only perform cn name mapping for the primary domain
-            } else if self.get_cn_name_mapping() && primary == domain.to_lowercase() {
+            } else if self.get_cn_name_mapping() && domain.eq_ignore_ascii_case(&primary) {
                 res = name.to_string();
             } else {
                 res = upn.to_string();
@@ -1047,28 +1621,30 @@ impl HimmelblauConfig {
         sudo_groups
     }
 
-    pub fn get_oidc_issuer_url(&self) -> Option<String> {
-        let res = self.config.get("global", "oidc_issuer_url").map(|s| {
-            s.trim()
-                .strip_suffix("/.well-known/openid-configuration")
-                .unwrap_or(s.trim())
-                .to_string()
-        });
-        if let Some(ref s) = res {
-            if s.is_empty() {
-                return None;
-            } else if !s.starts_with("https://") {
-                error!("OIDC issuer URL must use https://");
-                return None;
-            } else if s.contains('?') || s.contains('#') {
-                warn!("OIDC issuer URL must not contain query or fragment");
-                return None;
-            } else if url::Url::parse(s).is_err() {
-                error!("OIDC issuer URL is not a valid URL");
-                return None;
-            }
+    pub fn get_oidc_issuer_url(&self, domain: Option<&str>) -> Option<String> {
+        let val = self.domain_or_global_value(domain, "oidc_issuer_url")?;
+        parse_issuer_url(&val).unwrap_or_else(|e| {
+            error!(error = %e, "Ignoring oidc_issuer_url");
+            None
+        })
+    }
+
+    pub fn pam_allow_groups_for_provider(&self, provider: &ProviderConfig) -> Vec<String> {
+        if self.tenant_sections().is_empty() {
+            return self.get_pam_allow_groups();
         }
-        res
+        self.domain_or_global_value(Some(&provider.domain), "pam_allow_groups")
+            .map(|v| split_list(&v).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn sudo_groups_for_provider(&self, provider: &ProviderConfig) -> Vec<String> {
+        if self.tenant_sections().is_empty() {
+            return self.get_sudo_groups();
+        }
+        self.domain_or_global_value(Some(&provider.domain), "sudo_groups")
+            .map(|v| split_list(&v).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -1087,7 +1663,10 @@ impl HimmelblauConfig {
 
 impl fmt::Debug for HimmelblauConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self.config)
+        f.debug_struct("HimmelblauConfig")
+            .field("config", &self.config)
+            .field("cache", &self.cache)
+            .finish()
     }
 }
 
@@ -1481,9 +2060,9 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_apply_policy(), true);
+        assert!(config.get_apply_policy());
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_apply_policy(), false);
+        assert!(!config_empty.get_apply_policy());
     }
 
     #[test]
@@ -1496,12 +2075,12 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_intune_auth_resource(), true);
-        assert_eq!(config.get_apply_policy(), false);
-        assert_eq!(config.get_use_intune_auth_resource(), true);
+        assert!(config.get_intune_auth_resource());
+        assert!(!config.get_apply_policy());
+        assert!(config.get_use_intune_auth_resource());
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_intune_auth_resource(), false);
-        assert_eq!(config_empty.get_use_intune_auth_resource(), false);
+        assert!(!config_empty.get_intune_auth_resource());
+        assert!(!config_empty.get_use_intune_auth_resource());
 
         let apply_policy_data = r#"
         [global]
@@ -1511,8 +2090,8 @@ mod tests {
         let apply_policy_file = create_temp_config(apply_policy_data);
         let apply_policy = HimmelblauConfig::new(Some(&apply_policy_file)).unwrap();
 
-        assert_eq!(apply_policy.get_intune_auth_resource(), false);
-        assert_eq!(apply_policy.get_use_intune_auth_resource(), true);
+        assert!(!apply_policy.get_intune_auth_resource());
+        assert!(apply_policy.get_use_intune_auth_resource());
     }
 
     #[test]
@@ -1718,10 +2297,10 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_use_etc_skel(), true);
+        assert!(config.get_use_etc_skel());
 
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_use_etc_skel(), false);
+        assert!(!config_empty.get_use_etc_skel());
     }
 
     #[test]
@@ -1740,23 +2319,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        let mut domains = config.get_configured_domains();
-        // The order from `domains` must always be preserved (specifically, we
-        // care about the placement of the first domain only).
-        assert_eq!(domains[..2], vec!["example.com", "test.com"]);
-
-        // The order of the remaining domains is irrelevant.
-        domains.sort();
-        assert_eq!(
-            domains,
-            vec![
-                "alpha.com",
-                "example.com",
-                "example2.com",
-                "test.com",
-                "test2.com"
-            ]
-        );
+        assert_eq!(config.get_configured_domains(), vec!["example.com"]);
     }
 
     #[test]
@@ -1802,7 +2365,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(config.get_configured_entra_domain(), None);
 
-        // Additional domains are listed, but only the first is used
+        // Only the served domain is returned.
         let temp_file = create_temp_config(
             r#"
         [global]
@@ -1810,10 +2373,7 @@ mod tests {
         "#,
         );
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert_eq!(
-            config.get_configured_entra_domains(),
-            vec!["example.com", "test.com"]
-        );
+        assert_eq!(config.get_configured_entra_domains(), vec!["example.com"]);
 
         // No configuration at all
         let temp_file = create_temp_config("[global]\n");
@@ -1831,7 +2391,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_enable_hello(), false);
+        assert!(!config.get_enable_hello());
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_enable_hello(), DEFAULT_HELLO_ENABLED);
     }
@@ -1846,11 +2406,11 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_enable_passwordless(), false);
+        assert!(!config.get_enable_passwordless());
 
         // Test that default is true (backward compat)
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_enable_passwordless(), true);
+        assert!(config_empty.get_enable_passwordless());
     }
 
     #[test]
@@ -1863,9 +2423,9 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_enable_experimental_mfa(), false);
+        assert!(!config.get_enable_experimental_mfa());
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_enable_experimental_mfa(), true);
+        assert!(config_empty.get_enable_experimental_mfa());
     }
 
     #[test]
@@ -1879,14 +2439,11 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         // Test when explicitly set to true
-        assert_eq!(config.get_enable_experimental_passwordless_fido(), true);
+        assert!(config.get_enable_experimental_passwordless_fido());
 
         // Test fallback default (false) when config is missing
         let config_empty = create_empty_config();
-        assert_eq!(
-            config_empty.get_enable_experimental_passwordless_fido(),
-            false
-        );
+        assert!(!config_empty.get_enable_experimental_passwordless_fido());
     }
 
     #[test]
@@ -1899,9 +2456,9 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_debug(), true);
+        assert!(config.get_debug());
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_debug(), false);
+        assert!(!config_empty.get_debug());
     }
 
     #[test]
@@ -1914,7 +2471,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_cn_name_mapping(), false);
+        assert!(!config.get_cn_name_mapping());
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_cn_name_mapping(), CN_NAME_MAPPING);
     }
@@ -1947,7 +2504,10 @@ mod tests {
             config.get_authority_host_for_account("alice@alias.example.com"),
             Some("login.microsoftonline.us".to_string())
         );
-        assert_eq!(config.get_authority_host_for_account("alice"), None);
+        assert_eq!(
+            config.get_authority_host_for_account("alice"),
+            Some("login.microsoftonline.us".to_string())
+        );
     }
 
     #[test]
@@ -2005,7 +2565,10 @@ mod tests {
             config.get_broker_environment_for_account("alice@alias.example.com"),
             Some("login.microsoftonline.us".to_string())
         );
-        assert_eq!(config.get_broker_environment_for_account("alice"), None);
+        assert_eq!(
+            config.get_broker_environment_for_account("alice"),
+            Some("login.microsoftonline.us".to_string())
+        );
     }
 
     #[test]
@@ -2036,12 +2599,15 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(
-            config.get_oidc_device_authorization_endpoint(),
+            config.get_oidc_device_authorization_endpoint(None),
             Some("https://idp.example.com/device/code".to_string())
         );
 
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_oidc_device_authorization_endpoint(), None);
+        assert_eq!(
+            config_empty.get_oidc_device_authorization_endpoint(None),
+            None
+        );
     }
 
     #[test]
@@ -2054,7 +2620,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_selinux(), true);
+        assert!(config.get_selinux());
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_selinux(), DEFAULT_SELINUX);
     }
@@ -2558,7 +3124,7 @@ mod tests {
         "#;
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert_eq!(config.get_offline_breakglass_enabled(), false);
+        assert!(!config.get_offline_breakglass_enabled());
 
         // Explicitly enabled
         let config_data = r#"
@@ -2567,7 +3133,7 @@ mod tests {
         "#;
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert_eq!(config.get_offline_breakglass_enabled(), true);
+        assert!(config.get_offline_breakglass_enabled());
 
         // Missing value → default (false)
         let config_data = r#"
@@ -2575,7 +3141,7 @@ mod tests {
         "#;
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert_eq!(config.get_offline_breakglass_enabled(), false);
+        assert!(!config.get_offline_breakglass_enabled());
     }
 
     #[test]
@@ -2938,5 +3504,638 @@ mod tests {
         assert_eq!(split_username("user@"), Some(("user", "")));
         // Just @ sign
         assert_eq!(split_username("@"), Some(("", "")));
+    }
+
+    fn load_with_cache(config: &str, cache: &str) -> HimmelblauConfig {
+        let config_file = create_temp_config(config);
+        let cache_file = create_temp_config(cache);
+        HimmelblauConfig::load(Some(&config_file), Path::new(&cache_file)).unwrap()
+    }
+
+    fn assert_rejected(config: &str, cache: &str, expected: &str) {
+        let report = load_with_cache(config, cache).validate();
+        assert!(
+            report.errors.iter().any(|e| e.contains(expected)),
+            "expected an error containing {:?} for {:?}, got {:?}",
+            expected,
+            config,
+            report.errors
+        );
+    }
+
+    const TWO_TENANTS: &str = r#"
+        [tenant.contoso]
+        domain = contoso.com
+        domain_aliases = contoso.org
+        default = yes
+        idmap_range = 200000-1000000
+        home_prefix = /home/contoso/
+
+        [tenant.fabrikam]
+        type = OIDC
+        domain = fabrikam.com
+        oidc_issuer_url = https://login.fabrikam.com/.well-known/openid-configuration
+        app_id = linux-login
+        idmap_range = 1000001-2000000
+        "#;
+
+    #[test]
+    fn test_parse_bool() {
+        for val in ["true", "Yes", "ON", "t", "y", "1", " true "] {
+            assert_eq!(parse_bool(val), Some(true), "{}", val);
+        }
+        for val in ["false", "No", "OFF", "f", "n", "0"] {
+            assert_eq!(parse_bool(val), Some(false), "{}", val);
+        }
+        for val in ["", "maybe", "2", "enabled"] {
+            assert_eq!(parse_bool(val), None, "{}", val);
+        }
+        assert!(match_bool("apply_policy", Some("maybe".to_string()), true));
+        assert!(!match_bool("apply_policy", Some("off".to_string()), true));
+    }
+
+    #[test]
+    fn test_legacy_domain_is_the_single_provider() {
+        let config = load_with_cache("[global]\ndomain = contoso.com\n", "");
+        assert_eq!(
+            config.parse_providers().unwrap(),
+            vec![ProviderConfig {
+                label: "contoso.com".to_string(),
+                section: "contoso.com".to_string(),
+                kind: ProviderKind::Entra,
+                domain: "contoso.com".to_string(),
+                default: true,
+            }]
+        );
+        let report = config.validate();
+        assert!(report.is_ok() && report.warnings.is_empty(), "{:?}", report);
+    }
+
+    #[test]
+    fn test_legacy_multiple_domains_use_the_first() {
+        let config = load_with_cache("[global]\ndomains = contoso.com,fabrikam.com\n", "");
+        assert_eq!(
+            config.default_provider().map(|p| p.domain),
+            Some("contoso.com".to_string())
+        );
+        let report = config.validate();
+        assert!(report.is_ok(), "{:?}", report);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("ignoring: fabrikam.com"));
+        assert!(config.provider_for_domain("fabrikam.com").is_none());
+    }
+
+    #[test]
+    fn test_legacy_oidc_takes_precedence_over_domain() {
+        let config = load_with_cache(
+            "[global]\ndomain = contoso.com\noidc_issuer_url = https://issuer.example.com\n",
+            "",
+        );
+        let provider = config.default_provider().unwrap();
+        assert_eq!(provider.kind, ProviderKind::Oidc);
+        assert_eq!(provider.domain, "oidc");
+        let report = config.validate();
+        assert!(report.is_ok(), "{:?}", report);
+        assert!(report.warnings[0].contains("'contoso.com'"));
+
+        // An invalid issuer leaves the domain as the provider
+        let config = load_with_cache(
+            "[global]\ndomain = contoso.com\noidc_issuer_url = http://issuer.example.com\n",
+            "",
+        );
+        assert_eq!(
+            config.default_provider().map(|p| p.kind),
+            Some(ProviderKind::Entra)
+        );
+    }
+
+    #[test]
+    fn test_tenant_sections_define_providers() {
+        let config = load_with_cache(TWO_TENANTS, "");
+        let report = config.validate();
+        assert!(report.is_ok() && report.warnings.is_empty(), "{:?}", report);
+
+        let providers = config.parse_providers().unwrap();
+        assert_eq!(providers.len(), 2);
+        assert_eq!(providers[0].label, "contoso");
+        assert_eq!(providers[0].section, "tenant.contoso");
+        assert_eq!(providers[0].kind, ProviderKind::Entra);
+        assert!(providers[0].default);
+        assert_eq!(providers[1].kind, ProviderKind::Oidc);
+        assert!(!providers[1].default);
+
+        assert_eq!(config.default_provider().unwrap().label, "contoso");
+        assert_eq!(
+            config.get_configured_domains(),
+            vec!["contoso.com", "fabrikam.com"]
+        );
+        assert_eq!(config.get_configured_entra_domains(), vec!["contoso.com"]);
+        assert_eq!(
+            config.get_configured_entra_domain(),
+            Some("contoso.com".to_string())
+        );
+
+        // Domain-specific options resolve through the tenant section
+        assert_eq!(
+            config.get_home_prefix(Some("CONTOSO.com")),
+            "/home/contoso/"
+        );
+        assert_eq!(
+            config.get_home_prefix(Some("fabrikam.com")),
+            DEFAULT_HOME_PREFIX
+        );
+        assert_eq!(config.get_idmap_range("fabrikam.com"), (1000001, 2000000));
+        assert_eq!(
+            config.get_primary_domain_from_alias_simple("Contoso.org"),
+            Some("contoso.com".to_string())
+        );
+    }
+
+    #[test]
+    fn tenant_domain_spelling_is_preserved_for_cache_keys() {
+        let mut config =
+            HimmelblauConfig::from_test_config("[tenant.contoso]\ndomain = Contoso.COM\n");
+        let provider = config.parse_providers().unwrap().remove(0);
+
+        assert_eq!(provider.domain, "Contoso.COM");
+        config.set(&provider.domain, "tenant_id", "tenant-id");
+        assert_eq!(
+            config.get_tenant_id("contoso.com"),
+            Some("tenant-id".to_string())
+        );
+    }
+
+    #[test]
+    fn test_single_tenant_section_is_the_default() {
+        let config = load_with_cache("[tenant.contoso]\ndomain = contoso.com\n", "");
+        assert!(config.validate().is_ok());
+        assert_eq!(config.default_provider().unwrap().label, "contoso");
+    }
+
+    #[test]
+    fn provider_lookup_and_settings_are_scoped() {
+        let config = config_for_provider_test();
+        assert!(config.validate().is_ok());
+        let entra = config.provider_for_account("alice@CONTOSO.ORG").unwrap();
+        let oidc = config.provider_for_account("bob@fabrikam.com").unwrap();
+        assert_eq!(entra.label, "contoso");
+        assert_eq!(config.provider_for_account("alice").unwrap(), entra);
+        assert_eq!(entra.get_home_prefix(&config), "/home/contoso/");
+        assert_eq!(oidc.get_shell(&config), "/bin/zsh");
+        assert_eq!(oidc.get_oidc_account_id_claims(&config), vec!["email"]);
+        assert_eq!(oidc.get_pam_allow_groups(&config), vec!["engineers"]);
+        assert!(entra.get_pam_allow_groups(&config).is_empty());
+        assert_eq!(config.provider_for_gid(1000001).unwrap(), oidc);
+        assert!(config.provider_for_gid(2000001).is_none());
+        for account in [
+            "",
+            "@contoso.com",
+            "alice@",
+            "alice@a@b",
+            "alice@unknown.com",
+        ] {
+            assert!(config.provider_for_account(account).is_none(), "{account}");
+        }
+        assert_eq!(config.map_upn_to_name("alice@contoso.com"), "alice");
+        assert_eq!(
+            config.map_upn_to_name("alice@contoso.org"),
+            "alice@contoso.org"
+        );
+        assert_eq!(
+            config.map_upn_to_name("alice@fabrikam.com"),
+            "alice@fabrikam.com"
+        );
+    }
+
+    fn config_for_provider_test() -> HimmelblauConfig {
+        HimmelblauConfig::from_test_config(&format!(
+            "[global]\nshell = /bin/bash\ncn_name_mapping = true\n{TWO_TENANTS}\nshell = /bin/zsh\noidc_account_id_claims = email\npam_allow_groups = engineers\n"
+        ))
+    }
+
+    #[test]
+    fn discovered_alias_requires_a_unique_configured_entra_tenant() {
+        let config = HimmelblauConfig::from_test_config(TWO_TENANTS);
+        let providers = config.parse_providers().unwrap();
+        let entra = providers[0].clone();
+        let oidc = providers[1].clone();
+        let tenants = vec![
+            (entra.clone(), "tenant-A".to_string()),
+            (oidc, "tenant-B".to_string()),
+        ];
+        assert_eq!(
+            HimmelblauConfig::match_discovered_tenant(tenants.clone(), "TENANT-a"),
+            Some(entra.clone())
+        );
+        for tenant_id in ["unconfigured", "tenant-B"] {
+            assert!(
+                HimmelblauConfig::match_discovered_tenant(tenants.clone(), tenant_id).is_none()
+            );
+        }
+        let duplicate = vec![
+            (entra.clone(), "tenant-A".to_string()),
+            (entra, "tenant-A".to_string()),
+        ];
+        assert!(HimmelblauConfig::match_discovered_tenant(duplicate, "tenant-A").is_none());
+    }
+
+    #[test]
+    fn oidc_stanzas_require_client_ids_and_distinct_normalized_issuers() {
+        let mut config = HimmelblauConfig::from_test_config(
+            "[tenant.a]\ntype=oidc\ndomain=a.example\noidc_issuer_url=https://id.example\n",
+        );
+        assert!(config
+            .validate()
+            .errors
+            .iter()
+            .any(|e| e.contains("requires app_id")));
+        config.set("global", "app_id", "linux");
+        assert!(config.validate().is_ok());
+
+        config.set("tenant.a", "default", "true");
+        config.set("tenant.a", "idmap_range", "200000-300000");
+        config.set("tenant.b", "type", "oidc");
+        config.set("tenant.b", "domain", "b.example");
+        config.set("tenant.b", "idmap_range", "300001-400000");
+        for issuer in [
+            "https://id.example/",
+            "https://id.example/.well-known/openid-configuration",
+        ] {
+            config.set("tenant.b", "oidc_issuer_url", issuer);
+            assert!(config
+                .validate()
+                .errors
+                .iter()
+                .any(|e| e.contains("share the OIDC issuer")));
+        }
+        config.set("tenant.b", "oidc_issuer_url", "https://other.example");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_tenant_section_parse_errors() {
+        for (config, expected) in [
+            ("[tenant.]\ndomain = contoso.com\n", "requires a label"),
+            (
+                "[tenant.contoso]\ntype = saml\ndomain = contoso.com\n",
+                "unknown variant `saml`",
+            ),
+            ("[tenant.contoso]\ntype = entra\n", "missing field `domain`"),
+            ("[tenant.contoso]\ndomain =\n", "requires a domain"),
+            (
+                "[tenant.contoso]\ndomain = contoso.com,contoso.org\n",
+                "list others in domain_aliases",
+            ),
+            (
+                "[tenant.contoso]\ndomain = contoso.com\ndefault = maybe\n",
+                "expected a boolean",
+            ),
+            (
+                "[global]\ndomain = contoso.com\n[tenant.contoso]\ndomain = contoso.com\n",
+                "[global] domain cannot be combined",
+            ),
+            (
+                "[contoso.com]\n[tenant.contoso]\ndomain = contoso.com\n",
+                "[contoso.com] cannot be combined",
+            ),
+        ] {
+            assert!(load_with_cache(config, "").parse_providers().is_err());
+            assert_rejected(config, "", expected);
+        }
+    }
+
+    #[test]
+    fn test_tenant_section_validation_errors() {
+        let tenants = |a: &str, b: &str| {
+            format!(
+                "[tenant.a]\ndefault = true\n{}\n[tenant.b]\n{}\n",
+                a.replace(';', "\n"),
+                b.replace(';', "\n")
+            )
+        };
+        let range_a = "idmap_range = 200000-300000";
+        let range_b = "idmap_range = 300001-400000";
+        for (config, cache, expected) in [
+            (
+                tenants(
+                    &format!("domain = contoso.com;{}", range_a),
+                    &format!("domain = CONTOSO.com;{}", range_b),
+                ),
+                "",
+                "both claim the domain",
+            ),
+            (
+                tenants(
+                    &format!("domain = contoso.com;domain_aliases = fabrikam.com;{}", range_a),
+                    &format!("domain = fabrikam.com;{}", range_b),
+                ),
+                "",
+                "both claim the domain fabrikam.com",
+            ),
+            (
+                tenants(
+                    &format!("domain = contoso.com;{}", range_a),
+                    "domain = fabrikam.com",
+                ),
+                "",
+                "[tenant.b] requires an idmap_range",
+            ),
+            (
+                "[tenant.a]\ndomain = contoso.com\nidmap_range = 5-x\n".to_string(),
+                "",
+                "idmap_range = 5-x is invalid",
+            ),
+            (
+                "[tenant.a]\ndomain = contoso.com\nidmap_range = 400000-300000\n".to_string(),
+                "",
+                "idmap_range = 400000-300000 is invalid",
+            ),
+            (
+                tenants(
+                    &format!("domain = contoso.com;{}", range_a),
+                    &format!("domain = fabrikam.com;default = true;{}", range_b),
+                ),
+                "",
+                "Only one tenant can set default = true",
+            ),
+            (
+                format!(
+                    "[tenant.a]\ndomain = contoso.com\n{}\n[tenant.b]\ndomain = fabrikam.com\n{}\n",
+                    range_a, range_b
+                ),
+                "",
+                "One tenant must set default = true",
+            ),
+            (
+                tenants(
+                    &format!("domain = contoso.com;{}", range_a),
+                    &format!("domain = fabrikam.com;{}", range_b),
+                ),
+                "[contoso.com]\ntenant_id = 1111\n[fabrikam.com]\ntenant_id = 1111\n",
+                "share the tenant 1111",
+            ),
+            (
+                format!(
+                    "[global]\nid_attr_map = rfc2307\n{}",
+                    tenants(
+                        &format!("domain = contoso.com;{}", range_a),
+                        &format!("domain = fabrikam.com;{}", range_b),
+                    )
+                ),
+                "",
+                "rfc2307 supports a single tenant",
+            ),
+            (
+                tenants(
+                    &format!("domain = contoso.com;{}", range_a),
+                    &format!(
+                        "domain = fabrikam.com;oidc_account_id_strip_at_suffix = true;{}",
+                        range_b
+                    ),
+                ),
+                "",
+                "only allowed on the default tenant",
+            ),
+            (
+                "[global]\noidc_account_id_strip_at_suffix = true\n[tenant.a]\ndomain = contoso.com\n"
+                    .to_string(),
+                "",
+                "must be set in the default",
+            ),
+            (
+                "[tenant.a]\ntype = oidc\ndomain = contoso.com\n".to_string(),
+                "",
+                "type = oidc requires oidc_issuer_url",
+            ),
+            (
+                "[tenant.a]\ntype = oidc\ndomain = contoso.com\noidc_issuer_url = http://issuer.example.com\n"
+                    .to_string(),
+                "",
+                "must use https://",
+            ),
+            (
+                "[tenant.a]\ndomain = contoso.com\noidc_issuer_url = https://issuer.example.com\n"
+                    .to_string(),
+                "",
+                "oidc_issuer_url requires type = oidc",
+            ),
+            (
+                tenants(
+                    &format!("domain = contoso.com;{}", range_a),
+                    "domain = fabrikam.com;idmap_range = 250000-350000",
+                ),
+                "",
+                "of contoso.com overlaps with idmap_range (250000-350000) of fabrikam.com",
+            ),
+            (
+                "[tenant.a]\ndomain = contoso.com\nidmap_range = 2100000000-2100000100\n"
+                    .to_string(),
+                "",
+                "of contoso.com overlaps with subid_range",
+            ),
+            (
+                "[global]\ndomain = contoso.com\nidmap_range = 2100000000-2100000100\n"
+                    .to_string(),
+                "",
+                "of contoso.com overlaps with subid_range",
+            ),
+            ("[global]\ndebug = true\n".to_string(), "", "No provider is configured"),
+        ] {
+            assert_rejected(&config, cache, expected);
+        }
+    }
+
+    #[test]
+    fn provider_sharing_tenant_finds_other_entra_providers() {
+        let mut config = HimmelblauConfig::from_test_config(
+            "[tenant.a]\ndomain = contoso.com\ndefault = true\nidmap_range = 200000-300000\n\
+             [tenant.b]\ndomain = fabrikam.com\nidmap_range = 300001-400000\n",
+        );
+        assert!(config
+            .provider_sharing_tenant("fabrikam.com", "1111")
+            .is_none());
+        config.set("contoso.com", "tenant_id", "AAAA");
+        assert_eq!(
+            config
+                .provider_sharing_tenant("FABRIKAM.com", "aaaa")
+                .unwrap()
+                .section,
+            "tenant.a"
+        );
+        assert!(config
+            .provider_sharing_tenant("contoso.com", "aaaa")
+            .is_none());
+        assert!(config
+            .provider_sharing_tenant("fabrikam.com", "bbbb")
+            .is_none());
+    }
+
+    #[test]
+    fn cn_home_prefix_collisions_include_stripped_oidc_spn_aliases() {
+        let config = HimmelblauConfig::from_test_config(
+            "[tenant.oidc]\ntype = oidc\ndomain = oidc.example\ndefault = true\n\
+             oidc_issuer_url = https://issuer.example\napp_id = linux\n\
+             oidc_account_id_strip_at_suffix = true\nidmap_range = 200000-300000\n\
+             home_prefix = /home/\n\
+             [tenant.entra]\ndomain = entra.example\nidmap_range = 300001-400000\n\
+             home_attr = cn\nhome_prefix = /home/\n",
+        );
+
+        let report = config.validate();
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|error| error.contains("require distinct home_prefix")),
+            "{:?}",
+            report.errors
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cn_home_prefix_collisions_use_resolved_paths_and_report_resolution_errors() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!(".test-home-prefix-{}", uuid::Uuid::new_v4()));
+        let shared = root.join("shared");
+        let alias = root.join("alias");
+        let broken = root.join("broken");
+        fs::create_dir_all(&shared).unwrap();
+        symlink(&shared, &alias).unwrap();
+        symlink(root.join("missing"), &broken).unwrap();
+
+        let config_for = |first: &Path, second: &Path| {
+            HimmelblauConfig::from_test_config(&format!(
+                "[tenant.a]\ndomain = a.example\ndefault = true\n\
+                 idmap_range = 200000-300000\nhome_attr = cn\nhome_prefix = {}/\n\
+                 [tenant.b]\ndomain = b.example\nidmap_range = 300001-400000\n\
+                 home_attr = cn\nhome_prefix = {}/\n",
+                first.display(),
+                second.display()
+            ))
+        };
+        let normalized_paths_rejected = config_for(&shared, &shared.join("."))
+            .validate()
+            .errors
+            .iter()
+            .any(|error| error.contains("require distinct home_prefix"));
+        let symlinked_paths_rejected = config_for(&shared, &alias)
+            .validate()
+            .errors
+            .iter()
+            .any(|error| error.contains("require distinct home_prefix"));
+        let broken_symlink_rejected = config_for(&broken, &shared)
+            .validate()
+            .errors
+            .iter()
+            .any(|error| error.contains("cannot resolve home_prefix"));
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(normalized_paths_rejected);
+        assert!(symlinked_paths_rejected);
+        assert!(broken_symlink_rejected);
+    }
+
+    #[test]
+    fn test_server_cache_layer() {
+        let config = load_with_cache(
+            r#"
+            [global]
+            domain = contoso.com
+
+            [contoso.com]
+            authority_host = admin.example.com
+            domain_aliases = contoso.org
+            "#,
+            r#"
+            [contoso.com]
+            authority_host = cache.example.com
+            domain_aliases = contoso.net
+
+            [stale.com]
+            tenant_id = 2222
+            "#,
+        );
+        // Cache sections never define providers
+        assert_eq!(config.get_configured_domains(), vec!["contoso.com"]);
+        assert_eq!(
+            config.get_primary_domain_from_alias_simple("stale.com"),
+            None
+        );
+        // Discovered values take precedence
+        assert_eq!(
+            config.get_authority_host("contoso.com"),
+            "cache.example.com"
+        );
+        // Admin and discovered aliases both resolve
+        for alias in ["contoso.org", "CONTOSO.net"] {
+            assert_eq!(
+                config.get_primary_domain_from_alias_simple(alias),
+                Some("contoso.com".to_string())
+            );
+        }
+
+        // Tenant sections read the cache through their domain
+        let config = load_with_cache(
+            "[tenant.contoso]\ndomain = contoso.com\n",
+            "[contoso.com]\ntenant_id = 1111\n",
+        );
+        assert_eq!(
+            config.get_tenant_id("contoso.com"),
+            Some("1111".to_string())
+        );
+    }
+
+    #[test]
+    fn test_write_server_config_only_writes_discovered_keys() {
+        let config_file =
+            create_temp_config("[global]\ndomain = contoso.com\n[contoso.com]\nshell = /bin/zsh\n");
+        let cache_file = create_temp_config("");
+        let mut config =
+            HimmelblauConfig::load(Some(&config_file), Path::new(&cache_file)).unwrap();
+        config.set("contoso.com", "tenant_id", "1111");
+        config.set("contoso.com", "home_prefix", "/srv/home/");
+        config.write_server_config().unwrap();
+
+        let written = fs::read_to_string(&cache_file).unwrap();
+        assert!(written.contains("tenant_id"));
+        assert!(!written.contains("shell"));
+        assert!(!written.contains("home_prefix"));
+        assert_eq!(config.get_home_prefix(Some("contoso.com")), "/srv/home/");
+
+        let reloaded = HimmelblauConfig::load(Some(&config_file), Path::new(&cache_file)).unwrap();
+        assert_eq!(
+            reloaded.get_tenant_id("contoso.com"),
+            Some("1111".to_string())
+        );
+    }
+
+    #[test]
+    fn reload_server_cache_updates_aliases_without_changing_provider_settings() {
+        let mut config = HimmelblauConfig::from_test_config(TWO_TENANTS);
+        config.cache_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!(".test-server-cache-{}.ini", uuid::Uuid::new_v4()));
+        assert!(config
+            .provider_for_account("alice@discovered.example")
+            .is_none());
+        fs::write(
+            &config.cache_path,
+            "[contoso.com]\ndomain_aliases=discovered.example\nhome_prefix=/ignored/\n\
+             [stale.example]\ntenant_id=stale\n",
+        )
+        .unwrap();
+        config.reload_server_cache().unwrap();
+        let provider = config
+            .provider_for_account("alice@discovered.example")
+            .unwrap();
+        assert_eq!(provider.domain, "contoso.com");
+        assert_eq!(provider.get_home_prefix(&config), "/home/contoso/");
+        assert!(config.provider_for_domain("stale.example").is_none());
+
+        fs::remove_file(&config.cache_path).unwrap();
+        config.reload_server_cache().unwrap();
+        assert!(config
+            .provider_for_account("alice@discovered.example")
+            .is_none());
     }
 }

@@ -4,7 +4,7 @@
            type="string"
            rust_type="Option&lt;String&gt;"
            documented="true"
-           domain_specific="false"
+           domain_specific="true"
            order="203">
 <description>
 Optional device authorization endpoint for generic OIDC providers that omit

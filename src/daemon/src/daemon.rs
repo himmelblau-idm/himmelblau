@@ -36,7 +36,7 @@ use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
 use himmelblau::intune::NoncompliantRule;
 use himmelblau::{ClientInfo, IdToken, UserToken as UnixUserToken};
-use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
+use himmelblau_unix_common::config::{HimmelblauConfig, ProviderKind};
 use himmelblau_unix_common::constants::{
     DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, INTUNE_POLICY_TASK_TIMEOUT_SECS,
 };
@@ -315,7 +315,10 @@ async fn is_account_sudoer(
     cfg: &HimmelblauConfig,
     account_id: &str,
 ) -> bool {
-    for sudo_group in cfg.get_sudo_groups() {
+    let Some(provider) = cachelayer.provider_for_account(account_id).await else {
+        return false;
+    };
+    for sudo_group in provider.get_sudo_groups(cfg) {
         let sudo_group_uuid = match Uuid::parse_str(&sudo_group) {
             Ok(uuid) => uuid,
             Err(e) => {
@@ -365,17 +368,6 @@ async fn reconcile_local_groups_once(
         return;
     }
 
-    let sudo_group_ids: HashSet<Uuid> = sudo_groups
-        .iter()
-        .filter_map(|sudo_group| match Uuid::parse_str(sudo_group) {
-            Ok(uuid) => Some(uuid),
-            Err(e) => {
-                debug!("Failed to parse a sudo group: {}", e);
-                None
-            }
-        })
-        .collect();
-
     let accounts = match cachelayer.get_unexpired_nssaccounts().await {
         Ok(accounts) => accounts,
         Err(_) => {
@@ -385,6 +377,14 @@ async fn reconcile_local_groups_once(
     };
 
     for account in accounts {
+        let sudo_group_ids: HashSet<Uuid> = cachelayer
+            .provider_for_account(&account.name)
+            .await
+            .map(|p| p.get_sudo_groups(cfg))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|group| Uuid::parse_str(group).ok())
+            .collect();
         let is_sudoer = if sudo_group_ids.is_empty() {
             false
         } else {
@@ -603,16 +603,14 @@ async fn handle_client(
                                             let account_id = account_id.to_lowercase();
                                             match resp {
                                                 PamAuthResponse::Success => {
-                                                    let is_oidc_auth =
-                                                        cfg.get_oidc_issuer_url().is_some();
+                                                    let provider = cachelayer.provider_for_account(&account_id).await;
+                                                    let is_oidc_auth = provider.as_ref()
+                                                        .is_some_and(|p| p.kind == ProviderKind::Oidc);
 
                                                     if cfg.get_logon_script().is_some() {
                                                         let scopes = cfg.get_logon_token_scopes();
-                                                        let domain = split_username(&account_id)
-                                                            .map(|(_, domain)| domain);
-                                                        let client_id = domain.and_then(|d| {
-                                                            cfg.get_logon_token_app_id(d)
-                                                        });
+                                                        let client_id = provider.as_ref()
+                                                            .and_then(|p| p.get_logon_token_app_id(&cfg));
                                                         let access_token = match cachelayer
                                                             .get_user_accesstoken(
                                                                 Id::Name(account_id.to_string()),
@@ -1078,12 +1076,15 @@ async fn handle_client(
                     ClientResponse::Error
                 }
             }
+            ClientRequest::ProviderStatus => {
+                ClientResponse::ProviderStatus(cachelayer.provider_status().await)
+            }
             ClientRequest::ComplianceCheck => {
                 let span = span!(Level::INFO, "compliance check");
                 async {
                     trace!("compliance check requested");
 
-                    if !cfg.get_apply_policy() || cfg.get_oidc_issuer_url().is_some() {
+                    if !cfg.get_apply_policy() {
                         warn!("compliance check: unavailable for current configuration");
                         return ClientResponse::Error;
                     }
@@ -1417,16 +1418,14 @@ async fn apply_intune_policy_for_account(
     task_channel_tx: &Sender<AsyncTaskRequest>,
     account_id: &str,
 ) -> Result<(), ApplyPolicyError> {
-    let intune_device_id = split_username(account_id)
-        .map(|(_, domain)| domain)
-        .and_then(|domain| {
-            // The intune_device_id may have been written after startup,
-            // so we re-read the config here.
-            HimmelblauConfig::new(Some(&cfg.get_config_file()))
-                .ok()
-                .map(|cfg| cfg.get_intune_device_id(domain))
-        })
-        .flatten();
+    let intune_device_id = HimmelblauConfig::new(Some(&cfg.get_config_file()))
+        .ok()
+        .and_then(|current| {
+            let provider = current.provider_for_account(account_id)?;
+            (provider.kind == ProviderKind::Entra)
+                .then(|| current.get_intune_device_id(&provider.domain))
+                .flatten()
+        });
 
     let graph_token = cachelayer
         .get_user_accesstoken(
@@ -1902,30 +1901,32 @@ async fn main() -> ExitCode {
                 }
             }
 
+            let report = cfg.validate();
+            for warning in &report.warnings {
+                warn!(warning = %warning, "Configuration warning");
+            }
+            for error in &report.errors {
+                error!(error = %error, "Configuration error");
+            }
+
             if clap_args.get_flag("configtest") {
                 eprintln!("###################################");
                 eprintln!("Dumping configs:\n###################################");
                 eprintln!("###################################");
                 eprintln!("Config (from {:#?})", cfg.get_effective_config_paths());
                 eprintln!("{:?}", cfg);
-                return ExitCode::SUCCESS;
+                return if report.is_ok() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                };
             }
 
-            // Validate that idmap_range and subid_range don't overlap
-            let subid_range = cfg.get_subid_range();
-            let idmap_range = cfg.get_idmap_range("_");
-
-            // Ranges overlap if one starts before the other ends
-            if idmap_range.0 <= subid_range.1 && subid_range.0 <= idmap_range.1 {
-                error!(
-                    "Configuration error: idmap_range ({}-{}) overlaps with subid_range ({}-{}). \
-                    These ranges must not overlap to prevent ID conflicts. \
-                    Please adjust your configuration.",
-                    idmap_range.0, idmap_range.1, subid_range.0, subid_range.1
-                );
+            if !report.is_ok() {
                 return ExitCode::FAILURE;
             }
 
+            let subid_range = cfg.get_subid_range();
             info!(
                 "Subordinate ID support enabled with range {}-{}",
                 subid_range.0, subid_range.1
@@ -2141,7 +2142,7 @@ async fn main() -> ExitCode {
                 machine_key,
                 cfg.get_cache_timeout(),
                 cfg.get_pam_allow_groups(),
-                cfg.get_oidc_issuer_url().is_some(),
+                cfg.get_oidc_issuer_url(None).is_some(),
                 cfg.get_shell(None),
                 cfg.get_home_prefix(None),
                 cfg.get_home_attr(None),

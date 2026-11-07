@@ -391,7 +391,7 @@ impl HimmelblauProvider {
     }
 
     async fn domains_are_aliases(&self, domain1: &str, domain2: &str) -> bool {
-        let mut cfg = self.config.lock().await;
+        let cfg = self.config.lock().await.clone();
         cfg.domains_are_aliases(domain1, domain2).await
     }
 
@@ -4088,6 +4088,21 @@ impl HimmelblauProvider {
                     error!("Failed discovering the tenant_id: {}", e);
                     IdpError::BadRequest
                 })?;
+                {
+                    // Claim the tenant under one lock so concurrent providers cannot share it.
+                    let mut cfg = self.config.lock().await;
+                    if let Some(other) = cfg.provider_sharing_tenant(&self.domain, &tenant_id) {
+                        error!(
+                            domain = %self.domain,
+                            other_section = %other.section,
+                            tenant_id = %tenant_id,
+                            "Provider shares its Entra tenant with another provider, use domain_aliases instead"
+                        );
+                        return Err(IdpError::BadRequest);
+                    }
+                    cfg.set(&self.domain, "tenant_id", &tenant_id);
+                    debug!(domain = %self.domain, tenant_id = %tenant_id, "Set tenant_id");
+                }
                 let authority_host = self.graph.authority_host().await.map_err(|e| {
                     error!("Failed discovering the authority_host: {}", e);
                     IdpError::BadRequest
@@ -4122,11 +4137,6 @@ impl HimmelblauProvider {
 
                 // Cache the federation provider responses
                 let mut cfg = self.config.lock().await;
-                cfg.set(&self.domain, "tenant_id", &tenant_id);
-                debug!(
-                    "Setting domain {} config tenant_id to {}",
-                    self.domain, tenant_id
-                );
                 cfg.set(&self.domain, "authority_host", &authority_host);
                 debug!(
                     "Setting domain {} config authority_host to {}",
@@ -5263,7 +5273,8 @@ mod tests {
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = [0; 4096];
-                socket.read(&mut request).await.unwrap();
+                let read = socket.read(&mut request).await.unwrap();
+                assert!(read > 0, "expected an HTTP request");
                 // Following the redirect would fail like the blocked host in #1733.
                 let response = format!(
                     "HTTP/1.1 {status}\r\nLocation: http://127.0.0.1:0/blocked\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"

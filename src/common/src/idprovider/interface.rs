@@ -301,6 +301,32 @@ pub trait IdProvider {
 
     async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, _now: SystemTime) -> bool;
 
+    fn provider_config(&self) -> Option<&crate::config::HimmelblauConfig> {
+        None
+    }
+
+    async fn provider_for_account(&self, account: &str) -> Option<crate::config::ProviderConfig> {
+        self.provider_config()?.provider_for_account(account)
+    }
+
+    /// Provider that owns a cached token, resolved without network access.
+    async fn provider_for_token(&self, token: &UserToken) -> Option<crate::config::ProviderConfig> {
+        self.provider_config()?.provider_for_account(&token.spn)
+    }
+
+    async fn provider_status(&self) -> Vec<(String, bool)> {
+        Vec::new()
+    }
+
+    async fn check_online_for_account(
+        &self,
+        _account: &str,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        now: SystemTime,
+    ) -> bool {
+        self.check_online(tpm, now).await
+    }
+
     /// Like `check_online`, but needs no HSM and re-verifies an `Online` state, which
     /// can be stale after resume. Providers without a probe report true.
     async fn probe_online(&self, _account_id: Option<&str>, _now: SystemTime) -> bool {
