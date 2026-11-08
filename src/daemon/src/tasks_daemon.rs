@@ -33,6 +33,7 @@ use bytes::{BufMut, BytesMut};
 use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
 use himmelblau_policies::policies::apply_intune_policy;
+use himmelblau_policies::scripts_ext::restore_configuration_policies;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
@@ -965,6 +966,14 @@ async fn main() -> ExitCode {
             let mut d_broadcast_rx = broadcast_tx.subscribe();
 
             let server = tokio::spawn(async move {
+                tokio::select! {
+                    _ = broadcast_rx.recv() => return,
+                    result = restore_configuration_policies(&cfg) => {
+                        if let Err(e) = result {
+                            error!("Failed to restore configuration policy units: {e:#}");
+                        }
+                    }
+                }
                 loop {
                     info!("Attempting to connect to himmelblaud ...");
 

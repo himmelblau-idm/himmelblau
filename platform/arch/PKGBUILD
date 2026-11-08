@@ -59,7 +59,6 @@ makedepends=(
 optdepends=(
   'apparmor: AppArmor profile snippets in /etc/apparmor.d'
   'chromium: browser SSO via native messaging'
-  'cronie: Intune policy scripts'
   'dconf: enables the QR greeter extension at install time'
   'firefox: browser SSO via native messaging'
   'gnome-shell: QR greeter extension'
