@@ -7,7 +7,7 @@ registration or repository secret requirement.
 
 Each job builds packages from the PR merge checkout using that checkout's
 packaging generator. Older stable branches without these distro entries reuse
-their Ubuntu 24.04/Fedora 44 recipe with the requested image substituted in
+their Ubuntu 24.04/Fedora 43 recipe with the requested image substituted in
 memory. No source packaging files are changed. The built daemon and NSS packages
 are installed with the native package manager in a clean runtime container.
 

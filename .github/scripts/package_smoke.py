@@ -13,7 +13,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 TARGETS = {
     "ubuntu26.04": ("ubuntu24.04", "docker.io/ubuntu:26.04", "deb"),
-    "fedora44": ("fedora44", "docker.io/fedora:44", "rpm"),
+    "fedora44": ("fedora43", "docker.io/fedora:44", "rpm"),
 }
 PACKAGES = {"himmelblau", "nss-himmelblau"}
 
