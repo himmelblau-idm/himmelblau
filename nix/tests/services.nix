@@ -8,6 +8,7 @@
   pinPath ? "/var/lib/himmelblaud/hsm-pin",
   tryUnseal ? false,
   dropInTarget ? "himmelblau/himmelblau.conf.d/90-test.conf",
+  shell ? null,
 }:
 let
   pkgs = import nixpkgs { };
@@ -24,8 +25,10 @@ let
           brokerPackage = pkgs.emptyDirectory;
           pamPackage = pkgs.emptyDirectory // { lib = pkgs.emptyDirectory; };
           nssPackage = pkgs.emptyDirectory;
-          settings.tpm_tcti_name = tcti;
-          settings.hsm_pin_path = pinPath;
+          settings = {
+            tpm_tcti_name = tcti;
+            hsm_pin_path = pinPath;
+          } // pkgs.lib.optionalAttrs (shell != null) { inherit shell; };
           tryUnsealFlag = tryUnseal;
         };
         security.tpm2 = {
@@ -61,6 +64,7 @@ in
     daemon = map toString cfg.systemd.services.himmelblaud.restartTriggers;
     tasks = map toString cfg.systemd.services.himmelblaud-tasks.restartTriggers;
   };
+  defaultShell = cfg.services.himmelblau.settings.shell;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
   chromiumPolicies = pkgs.lib.genAttrs [
     "chromium/policies/managed/default.json"
