@@ -11,7 +11,7 @@ mod forms;
 use super::common::{
     flip_displayname_comma, oidc_issuer_matches, oidc_user_token_from_claims,
     should_block_hello_pin_attempts, BadPinCounter, KeyType, RefreshCache, RefreshCacheEntry,
-    TotpEnrollmentRecord,
+    TaskChannel, TotpEnrollmentRecord,
 };
 use super::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -233,7 +233,7 @@ mod tests {
         );
         let cfg = Arc::new(Mutex::new(cfg));
         let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
-        let standard = OidcProvider::new(&cfg, "oidc", &idmap).unwrap();
+        let standard = OidcProvider::new(&cfg, "oidc", &idmap, &TaskChannel::new()).unwrap();
         let native = OktaProvider::new(&cfg, "oidc", &idmap, &standard)
             .await
             .unwrap();
@@ -296,6 +296,7 @@ pub struct OktaProvider {
     pub(crate) state: Arc<Mutex<CacheState>>,
     refresh_cache: Arc<RefreshCache>,
     bad_pin_counter: Arc<BadPinCounter>,
+    pub(crate) task_channel: TaskChannel,
     client: Arc<PublicClientApplication>,
     client_id: String,
     issuer: String,
@@ -356,6 +357,7 @@ impl OktaProvider {
             state: standard.state.clone(),
             refresh_cache: standard.refresh_cache.clone(),
             bad_pin_counter: standard.bad_pin_counter.clone(),
+            task_channel: standard.task_channel.clone(),
             client,
             client_id,
             redirect_uri,
@@ -475,10 +477,11 @@ impl OktaProvider {
             return Err(diagnostics::invalid("subject_mismatch"));
         }
         let cfg = self.config.lock().await;
-        let (shell, account_claims, strip) = (
+        let (shell, account_claims, strip, idmap_script) = (
             cfg.get_shell(None),
             cfg.get_oidc_account_id_claims(),
             cfg.get_oidc_account_id_strip_at_suffix(),
+            cfg.get_idmap_script(),
         );
         drop(cfg);
         let identity = oidc_user_token_from_claims(
@@ -488,10 +491,12 @@ impl OktaProvider {
             &self.tenant_id,
             &account_claims,
             strip,
+            idmap_script.as_ref().map(|_| &self.task_channel),
+            token.access_token(),
         )
         .await
         .inspect_err(|error| diagnostics::local_error("identity_mapping", error))?;
-        if !identity.name.eq_ignore_ascii_case(account) {
+        if !identity.spn.eq_ignore_ascii_case(account) {
             return Err(diagnostics::invalid("account_mismatch"));
         }
         if previous.is_some_and(|previous| previous.uuid != identity.uuid) {
@@ -1025,7 +1030,7 @@ impl OktaProvider {
                 self,
                 account_id,
                 keystore,
-                identity,
+                None,
                 pin,
                 tpm,
                 machine_key,
@@ -1038,6 +1043,7 @@ impl OktaProvider {
             *handler = AuthCredHandler::HelloTOTP {
                 cred: pin,
                 pending_sealed_totp: None,
+                validated_token: None,
             };
             AuthResult::Next(AuthRequest::HelloTOTP {
                 msg: tr("Enter your Hello TOTP code: "),
@@ -1046,6 +1052,7 @@ impl OktaProvider {
         if let AuthCredHandler::HelloTOTP {
             cred,
             pending_sealed_totp,
+            ..
         } = local_handler
         {
             session.phase = LocalPhase::Totp {
@@ -1076,7 +1083,7 @@ impl OktaProvider {
                 self,
                 account_id,
                 keystore,
-                identity,
+                None,
                 pin,
                 tpm,
                 machine_key,
@@ -1089,6 +1096,7 @@ impl OktaProvider {
             *handler = AuthCredHandler::HelloTOTP {
                 cred: pin,
                 pending_sealed_totp: None,
+                validated_token: None,
             };
             AuthResult::Next(AuthRequest::HelloTOTP {
                 msg: tr("Enter your Hello TOTP code: "),
@@ -1097,6 +1105,7 @@ impl OktaProvider {
         if let AuthCredHandler::HelloTOTP {
             cred,
             pending_sealed_totp,
+            ..
         } = local_handler
         {
             *cred_handler = AuthCredHandler::OidcPinTotp {
@@ -1163,10 +1172,8 @@ impl IdProvider for OktaProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
         self.delayed_init().await?;
-        let account = match (id, old) {
-            (_, Some(old)) => old.name.as_str(),
-            (Id::Name(name), None) => name.as_str(),
-            _ => return Ok(UserTokenState::UseCached),
+        let Some(account) = id.refresh_account_id(old) else {
+            return Ok(UserTokenState::UseCached);
         };
         if let Some(old) = old {
             let lock = self.refresh_lock(account).await;
@@ -1423,13 +1430,16 @@ impl IdProvider for OktaProvider {
                         };
                         let hello_pin = pin.to_string();
                         let pending_sealed_totp = pending.clone();
-                        let identity = session.pending.clone().ok_or(IdpError::BadRequest)?;
-                        let cache_password = self.config.lock().await.get_offline_breakglass_enabled();
+                        let identity = session.pending.as_ref().ok_or(IdpError::BadRequest)?;
+                        let validated = identity.clone();
+                        let cache_password =
+                            self.config.lock().await.get_offline_breakglass_enabled();
                         return impl_handle_hello_pin_totp_auth!(
                             self,
                             account_id,
                             keystore,
                             identity,
+                            Some(validated),
                             cred,
                             hello_pin,
                             tpm,
@@ -1665,12 +1675,13 @@ impl IdProvider for OktaProvider {
                 };
                 let hello_pin = pin.to_string();
                 let pending_sealed_totp = pending.clone();
-                let identity = token.as_ref().clone();
+                let validated = token.as_ref().clone();
                 return impl_handle_hello_pin_totp_auth!(
                     self,
                     account_id,
                     keystore,
-                    identity,
+                    token.as_ref(),
+                    Some(validated),
                     cred,
                     hello_pin,
                     tpm,
@@ -1718,6 +1729,12 @@ impl IdProvider for OktaProvider {
             online,
             load_cached_prt_for_try_unseal_no_op
         )
+    }
+
+    async fn validate_offline_token(&self, token: UserToken) -> Result<UserToken, IdpError> {
+        self.task_channel
+            .validate_offline_token(&self.config, token, false)
+            .await
     }
 
     async fn change_auth_token<D: KeyStoreTxn + Send>(

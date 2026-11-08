@@ -1956,8 +1956,12 @@ async fn main() -> ExitCode {
                     }
                     let cache_user = StaticUser {
                         name: user.upn.clone(),
+                        username: None,
                         uid,
                         gid,
+                        script_uid: None,
+                        script_gid: None,
+                        script_ran: false,
                     };
 
                     if let Err(e) = cache.insert_user(&cache_user) {
@@ -2156,8 +2160,12 @@ async fn main() -> ExitCode {
 
                     let user = StaticUser {
                         name: account_id,
+                        username: None,
                         uid,
                         gid,
+                        script_uid: None,
+                        script_gid: None,
+                        script_ran: false,
                     };
 
                     if let Err(e) = cache.insert_user(&user) {

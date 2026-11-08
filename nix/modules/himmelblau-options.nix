@@ -750,6 +750,30 @@ in
       example = "/path/to/mapping_script.sh";
     };
 
+    idmap_script = mkOption {
+      type = types.nullOr (types.str);
+      default = null;
+      description = ''
+        Path to an executable identity-mapping script run on every login.  The first
+        successful result is cached; later runs must match the cache or login is
+        rejected.  The script receives USERNAME, ACCESS_TOKEN, OBJECT_ID, TENANT_ID,
+        and DOMAIN.  ACCESS_TOKEN is empty when offline.  Print one stdout line of
+        comma-separated key=value pairs:
+        uid=<number>   (mapped UID)
+        gid=<number>   (mapped GID)
+        username=<string>  (optional — overrides the session username)
+        Only uid, gid, and username are accepted; any other key rejects the login.
+        
+        Exit 0 with no output to use the default UID/GID mapping.  A non-zero exit
+        code rejects the login.  Script execution and output collection share a
+        single 20-second deadline.
+        A timeout rejects the login and terminates the script's process group,
+        including ordinary descendant processes.  Collection of standard output
+        and standard error is bounded.
+      '';
+      example = "/etc/himmelblau/idmap.sh";
+    };
+
     apply_policy = mkOption {
       type = types.nullOr (types.bool);
       default = false;

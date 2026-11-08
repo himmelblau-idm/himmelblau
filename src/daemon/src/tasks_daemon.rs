@@ -34,7 +34,11 @@ use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
 use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR};
+use himmelblau_unix_common::constants::{
+    DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR, ID_MAP_CACHE,
+};
+use himmelblau_unix_common::idmap_cache::StaticIdCache;
+use himmelblau_unix_common::idprovider::common::run_idmap_script;
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use himmelblau_unix_common::user_map::UserMap;
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
@@ -895,6 +899,65 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
+            Some(Ok(TaskRequest::IdmapScript(
+                username,
+                access_token,
+                object_id,
+                tenant_id,
+                domain,
+                default_ids,
+            ))) => {
+                debug!("Received task -> IdmapScript({})", username);
+                let Some(script) = cfg.get_idmap_script() else {
+                    if let Err(e) = reqs
+                        .send(TaskResponse::Error(
+                            "idmap_script is not configured".to_string(),
+                        ))
+                        .await
+                    {
+                        error!("Error -> {:?}", e);
+                        return;
+                    }
+                    continue;
+                };
+
+                let resp = match run_idmap_script(
+                    &script,
+                    &username,
+                    &access_token,
+                    &object_id,
+                    &tenant_id,
+                    &domain,
+                )
+                .await
+                {
+                    Ok(result) => match StaticIdCache::new(ID_MAP_CACHE, true) {
+                        Ok(idmap_cache) => {
+                            match idmap_cache.apply_idmap_script(
+                                &username,
+                                result.as_ref(),
+                                default_ids,
+                            ) {
+                                Ok(()) => TaskResponse::Success(0),
+                                Err(msg) => TaskResponse::Error(msg),
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to open idmap cache: {:?}", e);
+                            TaskResponse::Error(format!("Failed to open idmap cache: {:?}", e))
+                        }
+                    },
+                    Err(e) => {
+                        error!("idmap script failed for {}: {:?}", username, e);
+                        TaskResponse::Error(format!("idmap script failed: {:?}", e))
+                    }
+                };
+
+                if let Err(e) = reqs.send(resp).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
             Some(Err(e)) => {
                 error!("Error -> {:?}", e);
                 return;
@@ -1098,6 +1161,140 @@ mod tests {
     /// The exact payload from GHSA-x259-23ph-65m5.
     const ADVISORY_PAYLOAD: &str = "padding:100000:65536\nattacker:0:65536\npadding";
     const TENANT_ID: &str = "11111111-2222-3333-4444-555555555555";
+
+    #[tokio::test]
+    async fn idmap_task_uses_only_configured_script() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let config_path = tempdir.path().join("himmelblau.conf");
+        let observed_path = tempdir.path().join("observed");
+        let injected_path = tempdir.path().join("injected");
+        let username = format!("$(touch '{}')", injected_path.display());
+        let script_path = tempdir.path().join("idmap.sh");
+        fs::write(
+            &script_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$USERNAME\" \"$ACCESS_TOKEN\" \"$OBJECT_ID\" \"$TENANT_ID\" \"$DOMAIN\" > '{}'\nexit 1\n",
+                observed_path.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700)).unwrap();
+
+        for configured in [false, true] {
+            let contents = if configured {
+                format!("[global]\nidmap_script = {}\n", script_path.display())
+            } else {
+                "[global]\n".to_string()
+            };
+            fs::write(&config_path, contents).unwrap();
+            let cfg = HimmelblauConfig::new(Some(config_path.to_str().unwrap())).unwrap();
+            let (mut client, server) = UnixStream::pair().unwrap();
+            let request = TaskRequest::IdmapScript(
+                username.clone(),
+                "access-token".into(),
+                "object-id".into(),
+                "tenant-id".into(),
+                "example.com".into(),
+                None,
+            );
+            let exchange = async {
+                client
+                    .write_all(&serde_json::to_vec(&request).unwrap())
+                    .await
+                    .unwrap();
+                client.shutdown().await.unwrap();
+                let mut response = Vec::new();
+                client.read_to_end(&mut response).await.unwrap();
+                serde_json::from_slice::<TaskResponse>(&response).unwrap()
+            };
+            let (response, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(exchange, handle_tasks(server, &cfg))
+            })
+            .await
+            .unwrap();
+            match response {
+                TaskResponse::Error(message) if configured => {
+                    assert!(message.starts_with("idmap script failed:"), "{message}");
+                    assert_eq!(
+                        fs::read_to_string(&observed_path).unwrap(),
+                        format!("{username}\naccess-token\nobject-id\ntenant-id\nexample.com\n")
+                    );
+                }
+                TaskResponse::Error(message) => {
+                    assert_eq!(message, "idmap_script is not configured");
+                    assert!(!observed_path.exists());
+                }
+                response => panic!("expected task error, got {response:?}"),
+            }
+            assert!(!injected_path.exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn idmap_script_timeout_does_not_block_next_task() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let config_path = tempdir.path().join("himmelblau.conf");
+        let script_path = tempdir.path().join("idmap.sh");
+        let observed_path = tempdir.path().join("observed");
+        fs::write(
+            &script_path,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$USERNAME\" >> '{}'\nif [ \"$USERNAME\" = hang ]; then\n    exec sleep 60\nfi\nexit 1\n",
+                observed_path.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(
+            &config_path,
+            format!("[global]\nidmap_script = {}\n", script_path.display()),
+        )
+        .unwrap();
+        let cfg = HimmelblauConfig::new(Some(config_path.to_str().unwrap())).unwrap();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let exchange = async {
+            for username in ["hang", "next"] {
+                let request = TaskRequest::IdmapScript(
+                    username.into(),
+                    String::new(),
+                    "object-id".into(),
+                    "tenant-id".into(),
+                    "example.com".into(),
+                    None,
+                );
+                client
+                    .write_all(&serde_json::to_vec(&request).unwrap())
+                    .await
+                    .unwrap();
+                let mut response = Vec::new();
+                let response = loop {
+                    assert_ne!(client.read_buf(&mut response).await.unwrap(), 0);
+                    match serde_json::from_slice::<TaskResponse>(&response) {
+                        Ok(response) => break response,
+                        Err(e) if e.is_eof() => continue,
+                        Err(e) => panic!("invalid task response: {e}"),
+                    }
+                };
+                match response {
+                    TaskResponse::Error(message) => {
+                        assert!(message.starts_with("idmap script failed:"), "{message}");
+                    }
+                    response => panic!("expected task error, got {response:?}"),
+                }
+            }
+            client.shutdown().await.unwrap();
+        };
+        tokio::time::timeout(Duration::from_secs(25), async {
+            tokio::join!(exchange, handle_tasks(server, &cfg))
+        })
+        .await
+        .unwrap();
+        assert_eq!(fs::read_to_string(observed_path).unwrap(), "hang\nnext\n");
+    }
 
     #[test]
     fn validate_subid_username_accepts_legitimate_names() {

@@ -228,6 +228,8 @@ mod tests {
         user_get_release: Notify,
         user_get_goes_offline: AtomicBool,
         auth_token: RwLock<UserToken>,
+        offline_token_error: AtomicBool,
+        offline_token_override: RwLock<Option<(String, u32, u32)>>,
     }
 
     impl OfflineFallbackProvider {
@@ -250,6 +252,8 @@ mod tests {
                 user_get_release: Notify::new(),
                 user_get_goes_offline: AtomicBool::new(false),
                 auth_token: RwLock::new(test_token()),
+                offline_token_error: AtomicBool::new(false),
+                offline_token_override: RwLock::new(None),
             }
         }
 
@@ -573,6 +577,26 @@ mod tests {
 
         async fn offline_break_glass(&self, _ttl: Option<u64>) -> Result<(), IdpError> {
             Ok(())
+        }
+
+        async fn validate_offline_token(
+            &self,
+            mut token: UserToken,
+        ) -> Result<UserToken, IdpError> {
+            if self.offline_token_error.load(Ordering::Acquire) {
+                return Err(IdpError::BadRequest);
+            }
+            if let Some((name, uid, gid)) = self
+                .offline_token_override
+                .read()
+                .expect("offline override lock poisoned")
+                .clone()
+            {
+                token.name = name;
+                token.gidnumber = uid;
+                token.real_gidnumber = Some(gid);
+            }
+            Ok(token)
         }
     }
 
@@ -2770,6 +2794,91 @@ mod tests {
 
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn offline_password_auth_enforces_validate_offline_token() {
+        let (resolver, _conn) = setup_sql_resolver().await;
+        let token = test_token();
+        let mut dbtxn = resolver.db.write().await;
+        dbtxn.update_account(&token, 0).unwrap();
+        dbtxn.commit().unwrap();
+        resolver
+            .set_cache_userpassword(token.uuid, "offline-secret")
+            .await
+            .unwrap();
+        resolver.client.set_cache_state(CacheState::Offline);
+
+        *resolver
+            .client
+            .offline_token_override
+            .write()
+            .expect("offline override lock poisoned") =
+            Some(("mapped_user".to_string(), 3400, 3401));
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let mut ok_session = AuthSession::InProgress {
+            account_id: token.spn.clone(),
+            service: "login".to_string(),
+            id: Id::Name(token.spn.clone()),
+            token: Some(Box::new(token.clone())),
+            pending_password: None,
+            cache_generation: 0,
+            identity_staged: false,
+            online_at_init: false,
+            cred_handler: AuthCredHandler::None,
+            shutdown_rx,
+            no_hello_pin: true,
+            force_reauth: false,
+        };
+        let resp = resolver
+            .pam_account_authenticate_step(
+                &mut ok_session,
+                PamAuthRequest::Password {
+                    cred: "offline-secret".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(resp, PamAuthResponse::Success));
+        assert!(matches!(ok_session, AuthSession::Success(ref spn) if spn == &token.spn));
+        let (_, updated) = resolver
+            .get_cached_usertoken(&Id::Name(token.spn.clone()))
+            .await
+            .unwrap();
+        let updated = updated.unwrap();
+        assert_eq!(updated.name, "mapped_user");
+        assert_eq!(updated.gidnumber, 3400);
+        assert_eq!(updated.real_gidnumber, Some(3401));
+
+        resolver
+            .client
+            .offline_token_error
+            .store(true, Ordering::Release);
+        let (_shutdown_tx2, shutdown_rx2) = broadcast::channel(1);
+        let mut fail_session = AuthSession::InProgress {
+            account_id: token.spn.clone(),
+            service: "login".to_string(),
+            id: Id::Name(token.spn.clone()),
+            token: Some(Box::new(updated)),
+            pending_password: None,
+            cache_generation: 1,
+            identity_staged: false,
+            online_at_init: false,
+            cred_handler: AuthCredHandler::None,
+            shutdown_rx: shutdown_rx2,
+            no_hello_pin: true,
+            force_reauth: false,
+        };
+        assert!(resolver
+            .pam_account_authenticate_step(
+                &mut fail_session,
+                PamAuthRequest::Password {
+                    cred: "offline-secret".to_string(),
+                },
+            )
+            .await
+            .is_err());
+        assert!(!matches!(fail_session, AuthSession::Success(_)));
+    }
 }
 
 impl<I> Resolver<I>
@@ -4528,9 +4637,11 @@ where
                     }
                     (_, PamAuthRequest::Password { cred }) => {
                         match self.check_cache_userpassword(token.uuid, cred).await {
-                            Ok(true) => Ok(AuthResult::Success {
-                                token: *token.clone(),
-                            }),
+                            Ok(true) => self
+                                .client
+                                .validate_offline_token(token.as_ref().clone())
+                                .await
+                                .map(|token| AuthResult::Success { token }),
                             Ok(false) => Ok(AuthResult::Denied("Offline auth failed".to_string())),
                             Err(_) => {
                                 // We had a genuine backend error of some description.

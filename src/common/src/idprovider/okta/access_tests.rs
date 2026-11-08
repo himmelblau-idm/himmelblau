@@ -27,7 +27,13 @@ async fn provider() -> OktaProvider {
     config.set("oidc", "app_id", OKTA_CLIENT);
     let config = Arc::new(Mutex::new(config));
     let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
-    let standard = OidcProvider::new(&config, "oidc", &idmap).unwrap();
+    let standard = OidcProvider::new(
+        &config,
+        "oidc",
+        &idmap,
+        &crate::idprovider::common::TaskChannel::new(),
+    )
+    .unwrap();
     let provider = OktaProvider::new(&config, "oidc", &idmap, &standard)
         .await
         .unwrap();
@@ -341,4 +347,145 @@ async fn helper_requests_refresh_okta_tokens_with_filtered_scopes_and_rotation()
         assert_eq!(requests[0]["refresh_token"], "fixture-refresh");
         assert_eq!(requests[1]["refresh_token"], "fixture-rotated");
     }
+}
+
+#[tokio::test]
+async fn unix_user_get_refreshes_with_spn_when_username_is_overridden() {
+    use tpm::{provider::SoftTpm, provider::Tpm, AuthValue};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let issuer = format!("{origin}/oauth2/default");
+    let (id_token, jwk) = signed_id_token(&issuer);
+    let responses = vec![
+        (
+            "POST /oauth2/default/v1/token ",
+            json!({
+                "access_token": "fixture-access",
+                "id_token": id_token,
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": "fixture-rotated",
+                "scope": "openid email",
+            }),
+        ),
+        (
+            "GET /oauth2/default/.well-known/openid-configuration ",
+            json!({
+                "issuer": issuer,
+                "jwks_uri": format!("{issuer}/v1/keys"),
+            }),
+        ),
+        ("GET /oauth2/default/v1/keys ", json!({ "keys": [jwk] })),
+        (
+            "GET /oauth2/default/v1/userinfo ",
+            json!({
+                "sub": "broker-test-subject",
+                "preferred_username": ACCOUNT,
+                "email": ACCOUNT,
+                "name": "Broker Test",
+            }),
+        ),
+    ];
+    let server = tokio::spawn(async move {
+        let mut token_requests = Vec::new();
+        for (path, body) in &responses {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut stream).await;
+            assert!(
+                request.starts_with(path),
+                "unexpected HTTP request: {request}"
+            );
+            if request.starts_with("POST ") {
+                let body = request.split_once("\r\n\r\n").unwrap().1;
+                let fields = body
+                    .split('&')
+                    .map(|field| {
+                        let (key, value) = field.split_once('=').unwrap();
+                        (
+                            key.to_string(),
+                            urlencoding::decode(&value.replace('+', " "))
+                                .unwrap()
+                                .into_owned(),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+                token_requests.push(fields);
+            }
+            let body = body.to_string();
+            let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            stream.write_all(response.as_bytes()).await.unwrap();
+        }
+        token_requests
+    });
+
+    let mut provider = provider().await;
+    provider
+        .config
+        .lock()
+        .await
+        .set("global", "oidc_issuer_url", &issuer);
+    provider.issuer = issuer.clone();
+    provider.origin = origin;
+    provider.tenant_id = Uuid::new_v5(&OIDC_NAMESPACE, issuer.as_bytes());
+    let mut options = ClientConfig::new(&issuer, &provider.client_id, &provider.redirect_uri);
+    options.allow_loopback_http = true;
+    options.scopes = vec![
+        "openid".into(),
+        "profile".into(),
+        "email".into(),
+        "offline_access".into(),
+    ];
+    provider.client = Arc::new(PublicClientApplication::new(options).unwrap());
+    provider
+        .refresh_cache
+        .add(
+            ACCOUNT,
+            &RefreshCacheEntry::RefreshToken("fixture-refresh".into()),
+        )
+        .await;
+
+    let old = UserToken {
+        name: "overridden_username".to_string(),
+        spn: ACCOUNT.to_string(),
+        uuid: Uuid::new_v5(&provider.tenant_id, b"broker-test-subject"),
+        real_gidnumber: Some(1001),
+        gidnumber: 1000,
+        displayname: "Broker Test".to_string(),
+        shell: None,
+        groups: vec![],
+        tenant_id: Some(provider.tenant_id),
+        valid: true,
+    };
+
+    let db = crate::db::Db::new("").unwrap();
+    let mut txn = db.write().await;
+    let mut tpm = tpm::provider::BoxedDynTpm::new(SoftTpm::new());
+    let auth = AuthValue::ephemeral().unwrap();
+    let loadable = tpm.root_storage_key_create(&auth).unwrap();
+    let key = tpm.root_storage_key_load(&auth, &loadable).unwrap();
+
+    let state = provider
+        .unix_user_get(
+            &Id::Name("overridden_username".into()),
+            Some(&old),
+            &mut txn,
+            &mut tpm,
+            &key,
+        )
+        .await
+        .unwrap();
+
+    let UserTokenState::Update(updated) = state else {
+        panic!("expected UserTokenState::Update");
+    };
+    assert_eq!(updated.spn, ACCOUNT);
+
+    let requests = tokio::time::timeout(Duration::from_secs(10), server)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["refresh_token"], "fixture-refresh");
 }

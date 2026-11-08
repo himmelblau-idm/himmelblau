@@ -37,7 +37,7 @@ use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::PRT_REFRESH_AGE;
-use crate::idprovider::common::{BadPinCounter, RefreshCache};
+use crate::idprovider::common::{BadPinCounter, RefreshCache, TaskChannel};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
 use crate::tpm::confidential_client_creds;
@@ -349,6 +349,7 @@ pub struct HimmelblauProvider {
     idmap: Arc<Mutex<Idmap>>,
     init: OnceCell<()>,
     bad_pin_counter: BadPinCounter,
+    task_channel: TaskChannel,
 }
 
 impl HimmelblauProvider {
@@ -358,6 +359,7 @@ impl HimmelblauProvider {
         domain: &str,
         graph: Graph,
         idmap: &Arc<Mutex<Idmap>>,
+        task_channel: &TaskChannel,
     ) -> Result<Self, IdpError> {
         Ok(HimmelblauProvider {
             state: Mutex::new(CacheState::OfflineNextCheck(SystemTime::now())),
@@ -369,7 +371,116 @@ impl HimmelblauProvider {
             idmap: idmap.clone(),
             init: OnceCell::new(),
             bad_pin_counter: BadPinCounter::new(),
+            task_channel: task_channel.clone(),
         })
+    }
+
+    async fn resolve_default_uid_gid(
+        &self,
+        id_attr_map: IdAttr,
+        spn: &str,
+        uuid: Uuid,
+        posix_attrs: &HashMap<String, String>,
+    ) -> Result<(u32, u32), IdpError> {
+        let tenant_id = self.graph.tenant_id().await.map_err(|e| {
+            error!("{:?}", e);
+            IdpError::BadRequest
+        })?;
+        let idmap = self.idmap.lock().await;
+
+        let uidnumber = match id_attr_map {
+            IdAttr::Uuid => idmap
+                .object_id_to_unix_id(
+                    &tenant_id,
+                    &AadSid::from_object_id(&uuid).map_err(|e| {
+                        error!("Failed parsing object id: {:?}", e);
+                        IdpError::BadRequest
+                    })?,
+                )
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?,
+            IdAttr::Name => idmap.gen_to_unix(&tenant_id, spn).map_err(|e| {
+                error!("{:?}", e);
+                IdpError::BadRequest
+            })?,
+            IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
+                Some(uid_number) => {
+                    let uid_number = uid_number.parse::<u32>().map_err(|e| {
+                        error!(
+                            "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
+                            uid_number, e
+                        );
+                        IdpError::BadRequest
+                    })?;
+                    // Never hand a directory identity the UID of a systemd
+                    // dynamic user (such as himmelblaud itself). See GHSA-6gp8-pp9v-gx45.
+                    if is_systemd_dynamic_id(uid_number) {
+                        error!(
+                            "Refusing uidNumber {} for user {}: {}-{} is reserved for systemd dynamic users",
+                            uid_number,
+                            uuid,
+                            SYSTEMD_DYNAMIC_ID_MIN,
+                            SYSTEMD_DYNAMIC_ID_MAX
+                        );
+                        return Err(IdpError::BadRequest);
+                    }
+                    uid_number
+                }
+                None => {
+                    error!("User {} has no uidNumber defined in the directory!", uuid);
+                    return Err(IdpError::BadRequest);
+                }
+            },
+        };
+
+        let gidnumber = match posix_attrs.get("gidNumber") {
+            Some(gid_number) => {
+                let gid_number = gid_number.parse::<u32>().map_err(|e| {
+                    error!(
+                        "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                        gid_number, e
+                    );
+                    IdpError::BadRequest
+                })?;
+                // Never hand a directory identity the GID of a systemd
+                // dynamic user. See GHSA-6gp8-pp9v-gx45.
+                if is_systemd_dynamic_id(gid_number) {
+                    error!(
+                        "Refusing gidNumber {} for user {}: {}-{} is reserved for systemd dynamic users",
+                        gid_number,
+                        uuid,
+                        SYSTEMD_DYNAMIC_ID_MIN,
+                        SYSTEMD_DYNAMIC_ID_MAX
+                    );
+                    return Err(IdpError::BadRequest);
+                }
+                gid_number
+            }
+            None => uidnumber,
+        };
+
+        Ok((uidnumber, gidnumber))
+    }
+
+    fn ensure_primary_group(
+        groups: &mut Vec<GroupToken>,
+        spn: &str,
+        uuid: Uuid,
+        gidnumber: u32,
+        posix_attrs: &HashMap<String, String>,
+    ) {
+        if !posix_attrs.contains_key("gidNumber")
+            && groups.iter().all(|group| group.gidnumber != gidnumber)
+        {
+            groups.push(GroupToken {
+                name: spn.to_string(),
+                spn: spn.to_string(),
+                uuid,
+                gidnumber,
+            });
+        }
     }
 
     pub fn client(&self) -> &Mutex<BrokerClientApplication> {
@@ -2164,12 +2275,14 @@ impl IdProvider for HimmelblauProvider {
                             $loaded_hello_key.storage_key(),
                             $cred,
                             tpm,
-                            cred_handler
+                            cred_handler,
+                            None
                         );
                     } else {
                         *cred_handler = AuthCredHandler::HelloTOTP {
                             cred: $cred.clone(),
                             pending_sealed_totp: None,
+                            validated_token: None,
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::HelloTOTP {
@@ -2181,12 +2294,8 @@ impl IdProvider for HimmelblauProvider {
                         ));
                     }
                 } else {
-                    return Ok((
-                        AuthResult::Success {
-                            token: old_token.clone(),
-                        },
-                        AuthCacheAction::None,
-                    ));
+                    let token = self.validate_offline_token(old_token.clone()).await?;
+                    return Ok((AuthResult::Success { token }, AuthCacheAction::None));
                 }
             }};
         }
@@ -2312,8 +2421,7 @@ impl IdProvider for HimmelblauProvider {
                         Err(MsalError::RequestFailed(msg)) => {
                             let url = extract_base_url!(msg);
                             info!(?url, "Network down detected");
-                            let mut state = self.state.lock().await;
-                            *state = CacheState::OfflineNextCheck(
+                            *self.state.lock().await = CacheState::OfflineNextCheck(
                                 SystemTime::now() + OFFLINE_NEXT_CHECK,
                             );
                             if $require_hello_totp {
@@ -2323,12 +2431,14 @@ impl IdProvider for HimmelblauProvider {
                                         $loaded_hello_key.storage_key(),
                                         $cred,
                                         tpm,
-                                        cred_handler
+                                        cred_handler,
+                                        None
                                     );
                                 }
                                 *cred_handler = AuthCredHandler::HelloTOTP {
                                     cred: $cred.clone(),
                                     pending_sealed_totp: None,
+                                    validated_token: None,
                                 };
                                 return Ok((
                                     AuthResult::Next(AuthRequest::HelloTOTP {
@@ -2337,10 +2447,9 @@ impl IdProvider for HimmelblauProvider {
                                     AuthCacheAction::None,
                                 ));
                             } else {
+                                let token = self.validate_offline_token(old_token.clone()).await?;
                                 return Ok((
-                                    AuthResult::Success {
-                                        token: old_token.clone(),
-                                    },
+                                    AuthResult::Success { token },
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -2407,8 +2516,7 @@ impl IdProvider for HimmelblauProvider {
                         Err(MsalError::RequestFailed(msg)) => {
                             let url = extract_base_url!(msg);
                             info!(?url, "Network down detected");
-                            let mut state = self.state.lock().await;
-                            *state =
+                            *self.state.lock().await =
                                 CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                             if $require_hello_totp {
                                 if !check_hello_totp_setup!(self, account_id, keystore) {
@@ -2417,22 +2525,23 @@ impl IdProvider for HimmelblauProvider {
                                         $loaded_hello_key.storage_key(),
                                         $cred,
                                         tpm,
-                                        cred_handler
+                                        cred_handler,
+                                        None
                                     );
                                 } else {
                                     *cred_handler = AuthCredHandler::HelloTOTP {
                                         cred: $cred.clone(),
                                         pending_sealed_totp: None,
+                                        validated_token: None,
                                     };
                                     return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                         msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                     }), AuthCacheAction::None));
                                 }
                             } else {
+                                let token = self.validate_offline_token(old_token.clone()).await?;
                                 return Ok((
-                                    AuthResult::Success {
-                                        token: old_token.clone(),
-                                    },
+                                    AuthResult::Success { token },
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -2660,8 +2769,7 @@ impl IdProvider for HimmelblauProvider {
                                 Err(MsalError::RequestFailed(msg)) => {
                                     let url = extract_base_url!(msg);
                                     info!(?url, "Network down detected");
-                                    let mut state = self.state.lock().await;
-                                    *state =
+                                    *self.state.lock().await =
                                         CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                                     if $require_hello_totp {
                                         if !check_hello_totp_setup!(self, account_id, keystore) {
@@ -2670,22 +2778,24 @@ impl IdProvider for HimmelblauProvider {
                                                 $loaded_hello_key.storage_key(),
                                                 $cred,
                                                 tpm,
-                                                cred_handler
+                                                cred_handler,
+                                                None
                                             );
                                         } else {
                                             *cred_handler = AuthCredHandler::HelloTOTP {
                                                 cred: $cred.clone(),
                                                 pending_sealed_totp: None,
+                                                validated_token: None,
                                             };
                                             return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                                 msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                             }), AuthCacheAction::None));
                                         }
                                     } else {
+                                        let token =
+                                            self.validate_offline_token(old_token.clone()).await?;
                                         return Ok((
-                                            AuthResult::Success {
-                                                token: old_token.clone(),
-                                            },
+                                            AuthResult::Success { token },
                                             AuthCacheAction::None,
                                         ));
                                     }
@@ -2788,8 +2898,7 @@ impl IdProvider for HimmelblauProvider {
                             Err(MsalError::RequestFailed(msg)) => {
                                 let url = extract_base_url!(msg);
                                 info!(?url, "Network down detected");
-                                let mut state = self.state.lock().await;
-                                *state =
+                                *self.state.lock().await =
                                     CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                                 if $require_hello_totp {
                                     if !check_hello_totp_setup!(self, account_id, keystore) {
@@ -2798,22 +2907,24 @@ impl IdProvider for HimmelblauProvider {
                                             $loaded_hello_key.storage_key(),
                                             $cred,
                                             tpm,
-                                            cred_handler
+                                            cred_handler,
+                                            None
                                         );
                                     } else {
                                         *cred_handler = AuthCredHandler::HelloTOTP {
                                             cred: $cred.clone(),
                                             pending_sealed_totp: None,
+                                            validated_token: None,
                                         };
                                         return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                             msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                         }), AuthCacheAction::None));
                                     }
                                 } else {
+                                    let token =
+                                        self.validate_offline_token(old_token.clone()).await?;
                                     return Ok((
-                                        AuthResult::Success {
-                                            token: old_token.clone(),
-                                        },
+                                        AuthResult::Success { token },
                                         AuthCacheAction::None,
                                     ));
                                 }
@@ -2878,12 +2989,14 @@ impl IdProvider for HimmelblauProvider {
                                     $loaded_hello_key.storage_key(),
                                     $cred,
                                     tpm,
-                                    cred_handler
+                                    cred_handler,
+                                    Some(Box::new(token))
                                 );
                             } else {
                                 *cred_handler = AuthCredHandler::HelloTOTP {
                                     cred: $cred.clone(),
                                     pending_sealed_totp: None,
+                                    validated_token: Some(Box::new(token)),
                                 };
                                 return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                     msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
@@ -3971,6 +4084,7 @@ impl IdProvider for HimmelblauProvider {
                 AuthCredHandler::HelloTOTP {
                     cred: hello_pin,
                     pending_sealed_totp,
+                    validated_token,
                 },
                 PamAuthRequest::HelloTOTP { cred },
             ) => {
@@ -3979,6 +4093,7 @@ impl IdProvider for HimmelblauProvider {
                     account_id,
                     keystore,
                     old_token,
+                    validated_token.as_deref().cloned(),
                     cred,
                     hello_pin,
                     tpm,
@@ -4068,6 +4183,12 @@ impl IdProvider for HimmelblauProvider {
 
     async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState {
         (*self.state.lock().await).clone()
+    }
+
+    async fn validate_offline_token(&self, token: UserToken) -> Result<UserToken, IdpError> {
+        self.task_channel
+            .validate_offline_token(&self.config, token, true)
+            .await
     }
 }
 
@@ -4565,7 +4686,16 @@ impl HimmelblauProvider {
             }
         };
         let valid = true;
-        let user_map = UserMap::new(&self.config.lock().await.get_user_map_file());
+        let (user_map_file, idmap_script, id_attr_map) = {
+            let cfg = self.config.lock().await;
+            (
+                cfg.get_user_map_file(),
+                cfg.get_idmap_script(),
+                cfg.get_id_attr_map(),
+            )
+        };
+        let user_map = UserMap::new(&user_map_file);
+        let mut username_override: Option<String> = None;
         let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
             Some(user) => {
                 let passwd = tokio::fs::read("/etc/passwd").await.map_err(|e| {
@@ -4578,115 +4708,52 @@ impl HimmelblauProvider {
                 })?
             }
             None => {
-                let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
-                    error!("Failed reading from the idmap cache: {:?}", e);
-                    IdpError::BadRequest
-                })?;
-                match idmap_cache.get_user_by_name(&spn) {
-                    Some(user) => (user.uid, user.gid),
-                    None => {
-                        let id_attr_map = self.config.lock().await.get_id_attr_map();
-                        let uidnumber = match id_attr_map {
-                            IdAttr::Uuid => self
-                                .idmap
-                                .lock()
-                                .await
-                                .object_id_to_unix_id(
-                                    &self.graph.tenant_id().await.map_err(|e| {
-                                        error!("{:?}", e);
-                                        IdpError::BadRequest
-                                    })?,
-                                    &AadSid::from_object_id(&uuid).map_err(|e| {
-                                        error!("Failed parsing object id: {:?}", e);
-                                        IdpError::BadRequest
-                                    })?,
-                                )
-                                .map_err(|e| {
-                                    error!("{:?}", e);
-                                    IdpError::BadRequest
-                                })?,
-                            IdAttr::Name => self
-                                .idmap
-                                .lock()
-                                .await
-                                .gen_to_unix(
-                                    &self.graph.tenant_id().await.map_err(|e| {
-                                        error!("{:?}", e);
-                                        IdpError::BadRequest
-                                    })?,
-                                    &spn,
-                                )
-                                .map_err(|e| {
-                                    error!("{:?}", e);
-                                    IdpError::BadRequest
-                                })?,
-                            IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
-                                Some(uid_number) => {
-                                    let uid_number = uid_number.parse::<u32>().map_err(|e| {
-                                        error!(
-                                            "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
-                                            uid_number, e
-                                        );
-                                        IdpError::BadRequest
-                                    })?;
-                                    // Never hand a directory identity the UID of a
-                                    // systemd dynamic user (such as himmelblaud
-                                    // itself). See GHSA-6gp8-pp9v-gx45.
-                                    if is_systemd_dynamic_id(uid_number) {
-                                        error!(
-                                            "Refusing uidNumber {} for user {}: {}-{} is reserved for systemd dynamic users",
-                                            uid_number,
-                                            uuid,
-                                            SYSTEMD_DYNAMIC_ID_MIN,
-                                            SYSTEMD_DYNAMIC_ID_MAX
-                                        );
-                                        return Err(IdpError::BadRequest);
-                                    }
-                                    uid_number
-                                }
-                                None => {
-                                    error!(
-                                        "User {} has no uidNumber defined in the directory!",
-                                        uuid
-                                    );
-                                    return Err(IdpError::BadRequest);
-                                }
-                            },
-                        };
+                if idmap_script.is_some() {
+                    let tenant_id = self.graph.tenant_id().await.map_err(|e| {
+                        error!("Failed fetching tenant id for idmap script: {:?}", e);
+                        IdpError::BadRequest
+                    })?;
+                    let domain = split_username(&spn).map(|(_, d)| d).unwrap_or("");
+                    let default_ids = self
+                        .resolve_default_uid_gid(id_attr_map, &spn, uuid, &posix_attrs)
+                        .await
+                        .ok();
 
-                        // Utilize the existing primary group if set
-                        let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
-                            let gid_number = gid_number.parse::<u32>().map_err(|e| {
-                                error!(
-                                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
-                                    gid_number, e
-                                );
-                                IdpError::BadRequest
-                            })?;
-                            // Never hand a directory identity the GID of a systemd
-                            // dynamic user. See GHSA-6gp8-pp9v-gx45.
-                            if is_systemd_dynamic_id(gid_number) {
-                                error!(
-                                    "Refusing gidNumber {} for user {}: {}-{} is reserved for systemd dynamic users",
-                                    gid_number,
-                                    uuid,
-                                    SYSTEMD_DYNAMIC_ID_MIN,
-                                    SYSTEMD_DYNAMIC_ID_MAX
-                                );
-                                return Err(IdpError::BadRequest);
-                            }
-                            gid_number
-                        } else {
-                            // Otherwise add a fake primary group
-                            groups.push(GroupToken {
-                                name: spn.clone(),
-                                spn: spn.clone(),
+                    let user = self
+                        .task_channel
+                        .run_idmap_script(
+                            &spn,
+                            access_token.as_deref().unwrap_or(""),
+                            &uuid.to_string(),
+                            &tenant_id,
+                            domain,
+                            default_ids,
+                        )
+                        .await?;
+
+                    Self::ensure_primary_group(&mut groups, &spn, uuid, user.gid, &posix_attrs);
+                    username_override = user.username;
+                    (user.uid, user.gid)
+                } else {
+                    let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
+                        error!("Failed reading from the idmap cache: {:?}", e);
+                        IdpError::BadRequest
+                    })?;
+                    match idmap_cache.get_user_by_name(&spn) {
+                        Some(user) => (user.uid, user.gid),
+                        None => {
+                            let (uidnumber, gidnumber) = self
+                                .resolve_default_uid_gid(id_attr_map, &spn, uuid, &posix_attrs)
+                                .await?;
+                            Self::ensure_primary_group(
+                                &mut groups,
+                                &spn,
                                 uuid,
-                                gidnumber: uidnumber,
-                            });
-                            uidnumber
-                        };
-                        (uidnumber, gidnumber)
+                                gidnumber,
+                                &posix_attrs,
+                            );
+                            (uidnumber, gidnumber)
+                        }
                     }
                 }
             }
@@ -4716,8 +4783,9 @@ impl HimmelblauProvider {
             );
         }
 
+        let session_name = username_override.unwrap_or_else(|| spn.clone());
         Ok(UserToken {
-            name: spn.clone(),
+            name: session_name,
             spn: spn.clone(),
             uuid,
             real_gidnumber: Some(gidnumber),
