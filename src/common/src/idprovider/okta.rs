@@ -1209,8 +1209,8 @@ impl IdProvider for OktaProvider {
             name: account.into(),
             spn: account.into(),
             uuid: object_id,
-            real_gidnumber: Some(uid),
-            gidnumber: gid,
+            real_gidnumber: Some(gid),
+            gidnumber: uid,
             displayname: flip_displayname_comma(""),
             shell: Some(self.config.lock().await.get_shell(None)),
             groups: vec![GroupToken {
