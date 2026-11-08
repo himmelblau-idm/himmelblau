@@ -62,6 +62,21 @@ let
 
   ini = pkgs.formats.ini { };
   configFile = ini.generate "himmelblau.conf" (toIniSettings cfg.settings);
+  managedConfigDropIns = lib.filterAttrs (
+    _: entry:
+    entry.enable
+    && (
+      entry.target == "himmelblau/himmelblau.conf.d"
+      || lib.hasPrefix "himmelblau/himmelblau.conf.d/" entry.target
+    )
+  ) config.environment.etc;
+  managedConfigDropInsTrigger = pkgs.writeText "himmelblau-managed-drop-ins.json" (
+    builtins.toJSON (
+      lib.mapAttrsToList (_: entry: {
+        inherit (entry) target source;
+      }) managedConfigDropIns
+    )
+  );
 in
 {
   # Import the auto-generated typed options
@@ -350,6 +365,7 @@ in
 
         himmelblaud = {
           description = "Himmelblau Authentication Daemon";
+          restartTriggers = [ configFile managedConfigDropInsTrigger ];
           wants = [
             "chronyd.service"
             "ntpd.service"
@@ -377,7 +393,7 @@ in
           serviceConfig = commonServiceConfig // {
             UMask = "0027";
             ExecStart =
-              "${cfg.daemonPackage}/bin/himmelblaud --config ${configFile}"
+              "${cfg.daemonPackage}/bin/himmelblaud"
               + lib.optionalString cfg.debugFlag " -d";
             Restart = "on-failure";
             RestartSec = "500ms";
@@ -441,6 +457,7 @@ in
 
         himmelblaud-tasks = {
           description = "Himmelblau Local Tasks";
+          restartTriggers = [ configFile managedConfigDropInsTrigger ];
           after = commonAfter ++ [ "himmelblaud.service" ];
           wants = [ "network-online.target" ];
           bindsTo = [ "himmelblaud.service" ];
