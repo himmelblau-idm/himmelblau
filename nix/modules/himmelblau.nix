@@ -147,6 +147,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # The cross-platform default is /bin/bash, which does not exist on NixOS.
+    # Keep this override weaker than an explicit user setting.
+    services.himmelblau.settings.shell = lib.mkDefault "/run/current-system/sw/bin/bash";
+
     security.tpm2.enable = lib.mkDefault mayUseLocalTpmDevice;
 
     assertions = [

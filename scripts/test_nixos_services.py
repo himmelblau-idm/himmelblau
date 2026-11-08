@@ -634,6 +634,18 @@ class NixosServiceTests(unittest.TestCase):
         self.assertIn("nscd.service", daemon["After"].split())
         self.assertNotIn("nscd.service", daemon.get("Conflicts", "").split())
 
+    def test_nixos_default_shell_exists_in_the_system_profile(self):
+        self.assertEqual(
+            self.evaluated["defaultShell"],
+            "/run/current-system/sw/bin/bash",
+        )
+
+    def test_explicit_shell_overrides_nixos_default(self):
+        self.assertEqual(
+            evaluate(shell="/bin/custom-shell")["defaultShell"],
+            "/bin/custom-shell",
+        )
+
     def test_network_online_ordering_has_explicit_dependencies(self):
         for name, unit in self.units.items():
             if "network-online.target" not in unit["Unit"].get("After", "").split():
