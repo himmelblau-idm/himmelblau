@@ -13,6 +13,7 @@ use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::idprovider::himmelblau::is_synthetic_primary_group;
 use crate::idprovider::interface::{GroupToken, Id, UserToken};
 use async_trait::async_trait;
 use kanidm_lib_crypto::CryptoPolicy;
@@ -34,6 +35,17 @@ use kanidm_hsm_crypto::{
 const DBV_MAIN: &str = "main";
 // A blocked lookup holds the daemon's only runtime thread, so give up quickly.
 const READ_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
+
+// UNION permits separate name/SPN range indexes. Drive legacy candidates from
+// accounts rather than scanning all groups; the final membership probe is indexed.
+const UNUSED_PRIMARY_GROUPS_QUERY: &str = "SELECT token FROM group_t WHERE uuid IN (
+    SELECT uuid FROM group_t WHERE name GLOB 'himmelblau-primary-group-*'
+    UNION
+    SELECT uuid FROM group_t WHERE spn GLOB 'himmelblau-primary-group-*'
+    UNION
+    SELECT g.uuid FROM account_t AS a CROSS JOIN group_t AS g ON g.uuid = a.uuid
+    WHERE g.name = g.spn AND g.spn = a.spn
+) AND NOT EXISTS (SELECT 1 FROM memberof_t WHERE memberof_t.g_uuid = group_t.uuid)";
 
 #[async_trait]
 pub trait Cache {
@@ -121,7 +133,18 @@ pub trait CacheTxn {
 
     fn get_groups(&mut self) -> Result<Vec<GroupToken>, CacheError>;
 
-    fn update_group(&mut self, grp: &GroupToken, expire: u64) -> Result<(), CacheError>;
+    fn get_groups_by_gids(&mut self, gids: &[u32]) -> Result<Vec<GroupToken>, CacheError>;
+
+    fn update_group_with_owner(
+        &mut self,
+        grp: &GroupToken,
+        expire: u64,
+        owner: Option<Uuid>,
+    ) -> Result<(), CacheError>;
+
+    fn update_group(&mut self, grp: &GroupToken, expire: u64) -> Result<(), CacheError> {
+        self.update_group_with_owner(grp, expire, None)
+    }
 
     fn delete_group(&mut self, g_uuid: Uuid) -> Result<(), CacheError>;
 }
@@ -311,6 +334,159 @@ impl<'a> DbTxn<'a> {
         );
         // TODO: one day figure out if there's an easy way to dump the transaction without the token...
         CacheError::Sqlite
+    }
+
+    fn is_cached_legacy_primary_group(&self, group: &GroupToken) -> Result<bool, CacheError> {
+        if group.name != group.spn {
+            return Ok(false);
+        }
+
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM account_t WHERE uuid = ?1 AND spn = ?2)",
+                rusqlite::params![group.uuid.to_string(), &group.spn],
+                |row| row.get(0),
+            )
+            .map_err(|e| self.sqlite_error("legacy primary group lookup", &e))
+    }
+
+    fn available_synthetic_alias(
+        &self,
+        group: &GroupToken,
+        incoming_labels: &[&str],
+    ) -> Result<String, CacheError> {
+        let base = format!("himmelblau-primary-group-{}-synthetic", group.gidnumber);
+        let mut alias = base.clone();
+        let mut suffix = 0u64;
+        loop {
+            let occupied = self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM group_t WHERE uuid != ?1 AND (name = ?2 OR spn = ?2))",
+                rusqlite::params![group.uuid.to_string(), alias],
+                |row| row.get::<_, bool>(0),
+            ).map_err(|e| self.sqlite_error("synthetic group alias lookup", &e))?;
+            if !occupied && !incoming_labels.contains(&alias.as_str()) {
+                return Ok(alias);
+            }
+            suffix += 1;
+            alias = format!("{base}-{suffix}");
+        }
+    }
+
+    fn relocate_synthetic_labels(
+        &mut self,
+        group: &GroupToken,
+        incoming: &GroupToken,
+    ) -> Result<(), CacheError> {
+        let mut relocated = group.clone();
+        relocated.name = self.available_synthetic_alias(group, &[&incoming.name, &incoming.spn])?;
+        relocated.spn = relocated.name.clone();
+        let data = serde_json::to_vec(&relocated).map_err(|_| CacheError::SerdeJson)?;
+        // Change only display labels. UUID, GID, expiry and membership edges
+        // remain intact, as do canonical claims in cached account tokens.
+        self.conn
+            .execute(
+                "UPDATE group_t SET name = ?1, spn = ?1, token = ?2 WHERE uuid = ?3",
+                rusqlite::params![relocated.name, data, group.uuid.to_string()],
+            )
+            .map_err(|e| self.sqlite_error("relocate synthetic labels", &e))?;
+        Ok(())
+    }
+
+    fn cached_group_by_uuid(&self, uuid: Uuid) -> Result<Option<GroupToken>, CacheError> {
+        let data = self
+            .conn
+            .query_row(
+                "SELECT token FROM group_t WHERE uuid = ?1",
+                [uuid.to_string()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(|e| self.sqlite_error("group UUID lookup", &e))?;
+        Ok(data.and_then(|token| serde_json::from_slice(&token).ok()))
+    }
+
+    fn is_private_cached_legacy_primary_group(
+        &self,
+        group: &GroupToken,
+        owner: Uuid,
+    ) -> Result<bool, CacheError> {
+        if group.uuid != owner || !self.is_cached_legacy_primary_group(group)? {
+            return Ok(false);
+        }
+
+        self.conn
+            .query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM memberof_t WHERE g_uuid = ?1 AND a_uuid != ?2)",
+                rusqlite::params![group.uuid.to_string(), owner.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(|e| self.sqlite_error("legacy primary group ownership lookup", &e))
+    }
+
+    fn canonicalize_cached_legacy_primary_group(
+        &self,
+        legacy: &GroupToken,
+        synthetic: &GroupToken,
+        owner: Uuid,
+    ) -> Result<bool, CacheError> {
+        if legacy.uuid != owner
+            || !self.is_private_cached_legacy_primary_group(legacy, owner)?
+            || legacy.gidnumber != synthetic.gidnumber
+        {
+            return Ok(false);
+        }
+
+        let data = self
+            .conn
+            .query_row(
+                "SELECT token FROM account_t WHERE uuid = ?1",
+                [legacy.uuid.to_string()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(|e| self.sqlite_error("legacy primary account lookup", &e))?;
+        let Some(data) = data else {
+            return Ok(false);
+        };
+        let mut account = match serde_json::from_slice::<UserToken>(&data) {
+            Ok(account) => account,
+            Err(error) => {
+                warn!(
+                    "unable to canonicalize legacy primary group token: {:?}",
+                    error
+                );
+                return Ok(false);
+            }
+        };
+        let mut replaced = false;
+        for group in &mut account.groups {
+            if group.uuid == legacy.uuid
+                && group.name == legacy.name
+                && group.spn == legacy.spn
+                && group.gidnumber == legacy.gidnumber
+            {
+                *group = synthetic.clone();
+                replaced = true;
+            }
+        }
+        if !replaced {
+            return Ok(false);
+        }
+
+        let data = serde_json::to_vec(&account).map_err(|error| {
+            error!(
+                "unable to serialize canonicalized account token: {:?}",
+                error
+            );
+            CacheError::SerdeJson
+        })?;
+        self.conn
+            .execute(
+                "UPDATE account_t SET token = ?1 WHERE uuid = ?2",
+                rusqlite::params![data, legacy.uuid.to_string()],
+            )
+            .map_err(|e| self.sqlite_error("canonicalize legacy primary account", &e))?;
+        Ok(true)
     }
 
     fn get_db_version(&self, key: &str) -> i64 {
@@ -594,6 +770,13 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 .map_err(|e| self.sqlite_error("invalidate legacy accounts", &e))?;
         }
 
+        // Additive/idempotent so existing version-2 caches gain the index too.
+        // Cleanup and group-ownership checks probe by g_uuid, never a_uuid.
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS memberof_group_account_idx ON memberof_t(g_uuid, a_uuid)",
+            [],
+        ).map_err(|e| self.sqlite_error("memberof group index", &e))?;
+
         self.set_db_version(DBV_MAIN, 2)?;
 
         Ok(())
@@ -839,6 +1022,21 @@ impl<'a> CacheTxn for DbTxn<'a> {
     }
 
     fn update_account(&mut self, account: &UserToken, expire: u64) -> Result<(), CacheError> {
+        let group_expire = expire;
+        // Retry only groups blocked by a cached GID owner before this account
+        // update can remove obsolete rows. A token claim without any cached
+        // group must remain unresolved (not acquire an invented NSS identity).
+        let mut deferred_groups = Vec::new();
+        for group in &account.groups {
+            if !is_synthetic_primary_group(group)
+                && !self
+                    .cached_group_by_uuid(group.uuid)?
+                    .is_some_and(|cached| cached.gidnumber == group.gidnumber)
+                && self.get_group(&Id::Gid(group.gidnumber))?.is_some()
+            {
+                deferred_groups.push(group.clone());
+            }
+        }
         let data = serde_json::to_vec(account).map_err(|e| {
             error!("update_account json error -> {:?}", e);
             CacheError::SerdeJson
@@ -853,19 +1051,57 @@ impl<'a> CacheTxn for DbTxn<'a> {
         // to manually manage the update or insert :( :(
         let account_uuid = account.uuid.as_hyphenated().to_string();
 
-        // Find anything conflicting and purge it.
-        self.conn.execute("DELETE FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)",
-            named_params!{
+        // A UPN change can otherwise strand the old per-user fallback group:
+        // after account_t is updated, its old labels can no longer be proven to
+        // belong to this account. Remove it while the previous SPN is available.
+        let previous_spn = self
+            .conn
+            .query_row(
+                "SELECT spn FROM account_t WHERE uuid = :uuid",
+                named_params! { ":uuid": &account_uuid },
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| self.sqlite_error("select previous account spn", &e))?;
+        if let Some(previous_spn) = previous_spn.filter(|spn| spn != &account.spn) {
+            if let Some(group) = self.cached_group_by_uuid(account.uuid)? {
+                if group.name == previous_spn
+                    && group.spn == previous_spn
+                    && self.is_private_cached_legacy_primary_group(&group, account.uuid)?
+                {
+                    self.delete_group(group.uuid)?;
+                }
+            }
+        }
+
+        // Find anything conflicting and purge it through delete_account so a
+        // legacy per-user primary-group row is removed while the account row
+        // still proves its origin.
+        let mut stmt = self
+            .conn
+            .prepare("SELECT uuid FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)")
+            .map_err(|e| self.sqlite_error("select account_t duplicate", &e))?;
+        let duplicates = stmt
+            .query_map(
+                named_params! {
                 ":uuid": &account_uuid,
                 ":name": &account.name,
                 ":spn": &account.spn,
                 ":gidnumber": &account.gidnumber,
-            }
+                },
+                |row| row.get::<_, String>(0),
             )
-            .map_err(|e| {
-                self.sqlite_error("delete account_t duplicate", &e)
-            })
-            .map(|_| ())?;
+            .map_err(|e| self.sqlite_error("query account_t duplicate", &e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| self.sqlite_error("collect account_t duplicate", &e))?;
+        drop(stmt);
+        for duplicate in duplicates {
+            let uuid = Uuid::parse_str(&duplicate).map_err(|e| {
+                error!("invalid cached account UUID: {:?}", e);
+                CacheError::Parse
+            })?;
+            self.delete_account(uuid)?;
+        }
 
         let updated = self.conn.execute(
                 "UPDATE account_t SET name=:name, spn=:spn, gidnumber=:gidnumber, token=:token, expiry=:expiry WHERE uuid = :uuid",
@@ -917,25 +1153,113 @@ impl<'a> CacheTxn for DbTxn<'a> {
             })
             .map_err(|error| self.sqlite_transaction_error(&error, &stmt))?;
 
+        drop(stmt);
+        // Preserve the synthetic authorization claim in the account token,
+        // but never attach it to an unrelated provider row which happens to
+        // occupy the same numeric GID in the shared cache.
+        let mut groups = Vec::with_capacity(account.groups.len());
+        for group in &account.groups {
+            if is_synthetic_primary_group(group) {
+                match self.get_group(&Id::Gid(group.gidnumber))? {
+                    Some((cached, _)) if is_synthetic_primary_group(&cached) => {
+                        groups.push(cached.uuid)
+                    }
+                    Some(_) => {}
+                    None => groups.push(group.uuid),
+                }
+            } else {
+                match self.cached_group_by_uuid(group.uuid)? {
+                    Some(cached) if cached.gidnumber == group.gidnumber => groups.push(group.uuid),
+                    _ => {
+                        // A different provider identity may already own the
+                        // incoming GID, while this UUID still names a stale row
+                        // at its previous GID. Keep the claim in the serialized
+                        // account token, but do not attach membership unless the
+                        // cached identity matches the current numeric identity.
+                    }
+                }
+            }
+        }
         let mut stmt = self
             .conn
             .prepare("INSERT INTO memberof_t (a_uuid, g_uuid) VALUES (:a_uuid, :g_uuid)")
             .map_err(|e| self.sqlite_error("prepare", &e))?;
         // Now for each group, add the relation.
-        account.groups.iter().try_for_each(|g| {
+        groups.iter().try_for_each(|group_uuid| {
             stmt.execute(named_params! {
                 ":a_uuid": &account_uuid,
-                ":g_uuid": &g.uuid.as_hyphenated().to_string(),
+                ":g_uuid": &group_uuid.as_hyphenated().to_string(),
             })
             .map(|r| {
                 trace!("insert membership -> {:?}", r);
             })
             .map_err(|error| self.sqlite_transaction_error(&error, &stmt))
-        })
+        })?;
+        drop(stmt);
+        // Only unreferenced deterministic synthetic rows and legacy per-user
+        // fallback rows may be removed. A second cached account sharing the old
+        // GID keeps its row alive.
+        let mut stmt = self
+            .conn
+            .prepare(UNUSED_PRIMARY_GROUPS_QUERY)
+            .map_err(|e| self.sqlite_error("unused groups prepare", &e))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .map_err(|e| self.sqlite_error("unused groups query", &e))?;
+        let unused = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| self.sqlite_error("unused groups collect", &e))?;
+        drop(stmt);
+        for data in unused {
+            // A corrupt unrelated row cannot be identified as synthetic;
+            // retain it rather than blocking this account's cache update.
+            if let Ok(group) = serde_json::from_slice::<GroupToken>(&data) {
+                if is_synthetic_primary_group(&group)
+                    || self.is_cached_legacy_primary_group(&group)?
+                {
+                    self.delete_group(group.uuid)?;
+                }
+            }
+        }
+        // A same-account Entra refresh can replace the old UPN-named fallback
+        // with a real directory group at the same GID. The group update cannot
+        // prove that transition while the ambiguous old row is still present,
+        // so retry only after account reconciliation has removed the obsolete
+        // membership and cleanup has freed the GID. Generic OIDC claims which
+        // collide with their still-referenced primary row remain deferred.
+        for group in deferred_groups {
+            if self.get_group(&Id::Gid(group.gidnumber))?.is_none() {
+                self.update_group_with_owner(&group, group_expire, Some(account.uuid))?;
+                if self
+                    .cached_group_by_uuid(group.uuid)?
+                    .is_some_and(|cached| cached.gidnumber == group.gidnumber)
+                {
+                    self.conn
+                        .execute(
+                            "INSERT INTO memberof_t (a_uuid, g_uuid) VALUES (:a_uuid, :g_uuid)",
+                            named_params! {
+                                ":a_uuid": &account_uuid,
+                                ":g_uuid": group.uuid.as_hyphenated().to_string(),
+                            },
+                        )
+                        .map_err(|e| self.sqlite_error("insert deferred membership", &e))?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn delete_account(&mut self, a_uuid: Uuid) -> Result<(), CacheError> {
         let account_uuid = a_uuid.as_hyphenated().to_string();
+
+        // A legacy fallback is private only when no other cached account uses
+        // it. A generic claim can otherwise share its UUID and labels.
+        let private_legacy_group = match self.cached_group_by_uuid(a_uuid)? {
+            Some(group) if self.is_private_cached_legacy_primary_group(&group, a_uuid)? => {
+                Some(group)
+            }
+            _ => None,
+        };
 
         self.conn
             .execute(
@@ -944,6 +1268,12 @@ impl<'a> CacheTxn for DbTxn<'a> {
             )
             .map(|_| ())
             .map_err(|e| self.sqlite_error("account_t memberof_t cascade delete", &e))?;
+
+        if let Some(group) = private_legacy_group {
+            // Use the normal cascade path even though the ownership check
+            // proves that only this account could have referenced the row.
+            self.delete_group(group.uuid)?;
+        }
 
         self.conn
             .execute(
@@ -1143,8 +1473,203 @@ impl<'a> CacheTxn for DbTxn<'a> {
             .collect())
     }
 
-    fn update_group(&mut self, grp: &GroupToken, expire: u64) -> Result<(), CacheError> {
-        let data = serde_json::to_vec(grp).map_err(|e| {
+    fn get_groups_by_gids(&mut self, gids: &[u32]) -> Result<Vec<GroupToken>, CacheError> {
+        // Keep every batch in this transaction's snapshot and below SQLite's
+        // historical 999-variable limit. Do not scan unrelated cached groups.
+        let mut gids = gids.to_vec();
+        gids.sort_unstable();
+        gids.dedup();
+        let mut groups = Vec::new();
+        for chunk in gids.chunks(500) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let mut stmt = self
+                .conn
+                .prepare(&format!(
+                    "SELECT gidnumber, token FROM group_t WHERE gidnumber IN ({placeholders})"
+                ))
+                .map_err(|e| self.sqlite_error("batch group prepare", &e))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk), |row| {
+                    Ok((row.get::<_, u32>(0)?, row.get::<_, Vec<u8>>(1)?))
+                })
+                .map_err(|e| self.sqlite_error("batch group query", &e))?;
+            for row in rows {
+                let (gid, data) = row.map_err(|e| self.sqlite_error("batch group row", &e))?;
+                // A malformed owner must not look like an unclaimed GID to
+                // Full initgroups. Fail the snapshot rather than grant it.
+                let group: GroupToken =
+                    serde_json::from_slice(&data).map_err(|_| CacheError::SerdeJson)?;
+                if group.gidnumber != gid {
+                    return Err(CacheError::Parse);
+                }
+                groups.push(group);
+            }
+        }
+        Ok(groups)
+    }
+
+    fn update_group_with_owner(
+        &mut self,
+        grp: &GroupToken,
+        expire: u64,
+        owner: Option<Uuid>,
+    ) -> Result<(), CacheError> {
+        let synthetic = is_synthetic_primary_group(grp);
+        let mut stored = grp.clone();
+        let mut relocate_labels = Vec::new();
+        if !synthetic {
+            // Generic OIDC claims may legitimately use the textual namespace
+            // reserved by the Entra synthetic-group implementation. A label
+            // collision must not remove an active primary group at a
+            // different GID. Move referenced synthetic labels out of the way
+            // so provider claim names remain resolvable; only unreferenced
+            // synthetic rows are stale.
+            let mut stmt = self
+                .conn
+                .prepare("SELECT token FROM group_t WHERE uuid != :uuid AND (name = :name OR name = :spn OR spn = :name OR spn = :spn)")
+                .map_err(|e| self.sqlite_error("synthetic label collision prepare", &e))?;
+            let rows = stmt
+                .query_map(
+                    named_params! {
+                        ":uuid": grp.uuid.as_hyphenated().to_string(),
+                        ":name": &grp.name,
+                        ":spn": &grp.spn,
+                    },
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .map_err(|e| self.sqlite_error("synthetic label collision query", &e))?;
+            let collisions = rows
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| self.sqlite_error("synthetic label collision collect", &e))?;
+            drop(stmt);
+            let mut isolate_labels = false;
+            for data in collisions {
+                if let Ok(cached) = serde_json::from_slice::<GroupToken>(&data) {
+                    if self.is_cached_legacy_primary_group(&cached)?
+                        || self
+                            .conn
+                            .query_row(
+                                "SELECT EXISTS(SELECT 1 FROM memberof_t WHERE g_uuid = ?1)",
+                                [cached.uuid.to_string()],
+                                |row| row.get::<_, bool>(0),
+                            )
+                            .map_err(|e| self.sqlite_error("group membership lookup", &e))?
+                    {
+                        // An account-shaped row may be either an old Entra
+                        // fallback or generic OIDC's synthesized primary group;
+                        // its shape is not provider provenance. Preserve it, as
+                        // well as any other referenced provider identity, and
+                        // isolate the incoming cache identity under a stable
+                        // UUID-derived alias. Keep established replacement
+                        // behavior only for unreferenced ordinary duplicates.
+                        if is_synthetic_primary_group(&cached) {
+                            relocate_labels.push(cached);
+                        } else {
+                            isolate_labels = true;
+                        }
+                    } else if is_synthetic_primary_group(&cached) {
+                        self.delete_group(cached.uuid)?;
+                    }
+                }
+            }
+            if isolate_labels {
+                // Another real provider already owns a label, so the incoming
+                // identity still needs isolation; no synthetic label is reused.
+                relocate_labels.clear();
+                let base = format!("himmelblau-directory-group-{}", grp.uuid);
+                let mut alias = base.clone();
+                let mut suffix = 0u64;
+                while self
+                    .conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM group_t WHERE uuid != ?1 AND (name = ?2 OR spn = ?2))",
+                        rusqlite::params![grp.uuid.to_string(), alias],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(|e| self.sqlite_error("provider group alias lookup", &e))?
+                {
+                    suffix += 1;
+                    alias = format!("{base}-{suffix}");
+                }
+                stored.name = alias.clone();
+                stored.spn = alias;
+            }
+        }
+        let mut discarded_primary = None;
+        let replaced_primary = match self.get_group(&Id::Gid(grp.gidnumber))? {
+            Some((cached, _)) if cached.uuid != grp.uuid => {
+                if synthetic && !is_synthetic_primary_group(&cached) {
+                    if let Some(owner) = owner {
+                        if self.canonicalize_cached_legacy_primary_group(&cached, grp, owner)? {
+                            Some(cached)
+                        } else {
+                            // A genuine directory group or another provider's
+                            // account group owns this GID. Preserve it;
+                            // update_account will avoid granting membership.
+                            return Ok(());
+                        }
+                    } else {
+                        return Ok(());
+                    }
+                } else if !synthetic && is_synthetic_primary_group(&cached) {
+                    // Provider provenance is unavailable at this layer. Do not
+                    // turn stale Entra fallback memberships into authorization
+                    // for an unrelated generic OIDC group sharing its GID.
+                    discarded_primary = Some(cached);
+                    None
+                } else if !synthetic {
+                    let referenced = self
+                        .conn
+                        .query_row(
+                            "SELECT EXISTS(SELECT 1 FROM memberof_t WHERE g_uuid = ?1)",
+                            [cached.uuid.to_string()],
+                            |row| row.get::<_, bool>(0),
+                        )
+                        .map_err(|e| self.sqlite_error("group membership lookup", &e))?;
+                    if self.is_cached_legacy_primary_group(&cached)? || referenced {
+                        // UUID/name/SPN shape is not provider provenance: a
+                        // generic OIDC primary group has the same shape as the
+                        // old Entra fallback. Preserve ambiguous or referenced
+                        // identities instead of letting SQLite's GID conflict
+                        // replacement delete their row and memberships.
+                        return Ok(());
+                    }
+                    None
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(previous) = discarded_primary {
+            self.delete_group(previous.uuid)?;
+        }
+        // Only move labels once numeric-GID ownership checks accepted the
+        // incoming identity. A rejected claim must not rename unrelated rows.
+        for cached in relocate_labels {
+            if cached.gidnumber != grp.gidnumber {
+                self.relocate_synthetic_labels(&cached, grp)?;
+            }
+        }
+        if synthetic {
+            let occupied = self
+                .conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM group_t WHERE uuid != ?1 AND (name = ?2 OR spn = ?2 OR name = ?3 OR spn = ?3))",
+                    rusqlite::params![grp.uuid.to_string(), &grp.name, &grp.spn],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(|e| self.sqlite_error("synthetic group collision lookup", &e))?;
+            if occupied {
+                // Generic OIDC claims may legitimately own the canonical text.
+                // Keep that identity unchanged and give the deterministic Entra
+                // row a stable cache/NSS alias instead.
+                let alias = self.available_synthetic_alias(grp, &[])?;
+                stored.name = alias.clone();
+                stored.spn = alias;
+            }
+        }
+        let data = serde_json::to_vec(&stored).map_err(|e| {
             error!("json error -> {:?}", e);
             CacheError::SerdeJson
         })?;
@@ -1161,17 +1686,29 @@ impl<'a> CacheTxn for DbTxn<'a> {
 
         // We have to to-str uuid as the sqlite impl makes it a blob which breaks our selects in get.
         stmt.execute(named_params! {
-            ":uuid": &grp.uuid.as_hyphenated().to_string(),
-            ":name": &grp.name,
-            ":spn": &grp.spn,
-            ":gidnumber": &grp.gidnumber,
+            ":uuid": &stored.uuid.as_hyphenated().to_string(),
+            ":name": &stored.name,
+            ":spn": &stored.spn,
+            ":gidnumber": &stored.gidnumber,
             ":token": &data,
             ":expiry": &expire,
         })
         .map(|r| {
             trace!("insert -> {:?}", r);
         })
-        .map_err(|e| self.sqlite_error("execute", &e))
+        .map_err(|e| self.sqlite_error("execute", &e))?;
+        if let Some(previous) = replaced_primary {
+            self.conn
+                .execute(
+                    "UPDATE memberof_t SET g_uuid = :new_uuid WHERE g_uuid = :old_uuid",
+                    named_params! {
+                        ":new_uuid": grp.uuid.as_hyphenated().to_string(),
+                        ":old_uuid": previous.uuid.as_hyphenated().to_string(),
+                    },
+                )
+                .map_err(|e| self.sqlite_error("migrate synthetic memberships", &e))?;
+        }
+        Ok(())
     }
 
     fn delete_group(&mut self, g_uuid: Uuid) -> Result<(), CacheError> {
@@ -1222,6 +1759,10 @@ impl DbReadTxn<'_> {
         self.txn.get_group(grp_id)
     }
 
+    pub fn get_groups_by_gids(&mut self, gids: &[u32]) -> Result<Vec<GroupToken>, CacheError> {
+        self.txn.get_groups_by_gids(gids)
+    }
+
     pub fn get_group_members(&mut self, g_uuid: Uuid) -> Result<Vec<UserToken>, CacheError> {
         self.txn.get_group_members(g_uuid)
     }
@@ -1258,6 +1799,861 @@ impl Drop for TestDbFile {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn primary_group_cleanup_uses_indexes_and_preserves_candidates() {
+        let db = Db::new("").unwrap();
+        let mut txn = db.write().await;
+        txn.migrate().unwrap();
+        // Also exercise upgrading an existing version-2 cache, not only creation.
+        txn.conn
+            .execute("DROP INDEX memberof_group_account_idx", [])
+            .unwrap();
+        txn.migrate().unwrap();
+        for (id, name, spn) in [
+            (
+                "synthetic",
+                "himmelblau-primary-group-2400",
+                "himmelblau-primary-group-2400",
+            ),
+            (
+                "alias",
+                "himmelblau-primary-group-2500-synthetic-1",
+                "himmelblau-primary-group-2500-synthetic-1",
+            ),
+            (
+                "reserved-spn",
+                "ordinary-label",
+                "himmelblau-primary-group-2600",
+            ),
+            ("legacy", "legacy@example.com", "legacy@example.com"),
+            ("mismatch", "mismatch@example.com", "mismatch@example.com"),
+            ("ordinary", "ordinary", "ordinary"),
+            (
+                "active",
+                "himmelblau-primary-group-2700",
+                "himmelblau-primary-group-2700",
+            ),
+        ] {
+            txn.conn.execute("INSERT INTO group_t(uuid,name,spn,gidnumber,token,expiry) VALUES(?1,?2,?3,(SELECT COUNT(*) FROM group_t),?1,0)", rusqlite::params![id,name,spn]).unwrap();
+        }
+        for (id, spn) in [
+            ("legacy", "legacy@example.com"),
+            ("mismatch", "new@example.com"),
+        ] {
+            txn.conn.execute("INSERT INTO account_t(uuid,name,spn,gidnumber,token,expiry) VALUES(?1,?1,?2,(SELECT COUNT(*) FROM account_t),?1,123)", rusqlite::params![id,spn]).unwrap();
+        }
+        txn.conn
+            .execute(
+                "INSERT INTO memberof_t(g_uuid,a_uuid) VALUES('active','legacy')",
+                [],
+            )
+            .unwrap();
+        let select = |query: &str| {
+            let mut stmt = txn.conn.prepare(query).unwrap();
+            let mut rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            rows.sort();
+            rows
+        };
+        let original = "SELECT token FROM group_t WHERE (name GLOB 'himmelblau-primary-group-*' OR spn GLOB 'himmelblau-primary-group-*' OR (name = spn AND EXISTS (SELECT 1 FROM account_t WHERE account_t.uuid = group_t.uuid AND account_t.spn = group_t.spn))) AND NOT EXISTS (SELECT 1 FROM memberof_t WHERE memberof_t.g_uuid = group_t.uuid)";
+        assert_eq!(select(super::UNUSED_PRIMARY_GROUPS_QUERY), select(original));
+        assert_eq!(
+            select(super::UNUSED_PRIMARY_GROUPS_QUERY),
+            vec!["alias", "legacy", "reserved-spn", "synthetic"]
+        );
+        let mut stmt = txn
+            .conn
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN {}",
+                super::UNUSED_PRIMARY_GROUPS_QUERY
+            ))
+            .unwrap();
+        let plan = stmt
+            .query_map([], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|line| line.contains("SEARCH memberof_t")
+                && line.contains("memberof_group_account_idx")),
+            "{plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|line| line.contains("SCAN group_t")
+                || line.contains("SCAN memberof_t")
+                || line == "SCAN g"),
+            "{plan:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn group_owner_snapshot_batches_requested_gids_and_rejects_corruption() {
+        let db = Db::new("").unwrap();
+        let mut txn = db.write().await;
+        txn.migrate().unwrap();
+        let requested: Vec<u32> = (10000..11205).collect();
+        for gid in requested.iter().step_by(2).chain(std::iter::once(&20000)) {
+            let group = super::GroupToken {
+                name: format!("group-{gid}"),
+                spn: format!("group-{gid}"),
+                uuid: uuid::Uuid::from_u128(u128::from(*gid)),
+                gidnumber: *gid,
+            };
+            txn.update_group(&group, 0).unwrap();
+        }
+        assert!(txn.get_groups_by_gids(&[]).unwrap().is_empty());
+        let mut with_duplicates = requested.clone();
+        with_duplicates.extend_from_slice(&requested);
+        let mut found: Vec<_> = txn
+            .get_groups_by_gids(&with_duplicates)
+            .unwrap()
+            .into_iter()
+            .map(|group| group.gidnumber)
+            .collect();
+        found.sort_unstable();
+        assert_eq!(
+            found,
+            requested.iter().step_by(2).copied().collect::<Vec<_>>()
+        );
+        txn.conn
+            .execute(
+                "UPDATE group_t SET token = ?1 WHERE gidnumber = 10000",
+                [b"invalid".as_slice()],
+            )
+            .unwrap();
+        assert!(matches!(
+            txn.get_groups_by_gids(&requested),
+            Err(CacheError::SerdeJson)
+        ));
+        // Corrupt unrelated rows do not prevent a targeted valid lookup.
+        assert_eq!(txn.get_groups_by_gids(&[20000]).unwrap().len(), 1);
+        txn.conn
+            .execute(
+                "UPDATE group_t SET gidnumber = 20001 WHERE gidnumber = 20000",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            txn.get_groups_by_gids(&[20001]),
+            Err(CacheError::Parse)
+        ));
+    }
+
+    #[tokio::test]
+    async fn duplicate_account_purge_removes_legacy_primary_group() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let old = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 2400,
+            real_gidnumber: None,
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![],
+            tenant_id: None,
+            valid: true,
+        };
+        let legacy = super::GroupToken {
+            name: old.spn.clone(),
+            spn: old.spn.clone(),
+            uuid: old.uuid,
+            gidnumber: old.gidnumber,
+        };
+        let mut old = old;
+        old.groups = vec![legacy.clone()];
+        txn.update_group(&legacy, 0).expect("legacy group");
+        txn.update_account(&old, 0).expect("old account");
+
+        let mut replacement = old.clone();
+        replacement.uuid = uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        replacement.spn = "replacement@example.com".into();
+        replacement.gidnumber = 3000;
+        replacement.groups.clear();
+        txn.update_account(&replacement, 0)
+            .expect("replace duplicate name");
+
+        assert!(txn
+            .get_group(&super::Id::Name(old.spn.clone()))
+            .expect("legacy lookup")
+            .is_none());
+        let synthetic = synthetic_primary_group(legacy.gidnumber);
+        txn.update_group(&synthetic, 0)
+            .expect("reused GID accepts canonical synthetic group");
+        assert_eq!(
+            txn.get_group(&super::Id::Gid(legacy.gidnumber))
+                .expect("synthetic lookup")
+                .expect("canonical synthetic group")
+                .0
+                .uuid,
+            synthetic.uuid
+        );
+        txn.commit().expect("valid duplicate cleanup");
+    }
+
+    #[tokio::test]
+    async fn deleting_account_preserves_shared_generic_group() {
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let owner = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 2400,
+            real_gidnumber: None,
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![],
+            tenant_id: None,
+            valid: true,
+        };
+        let generic = super::GroupToken {
+            name: owner.spn.clone(),
+            spn: owner.spn.clone(),
+            uuid: owner.uuid,
+            gidnumber: owner.gidnumber,
+        };
+        txn.update_group(&generic, 0).expect("generic group");
+        let mut owner = owner;
+        owner.groups = vec![generic.clone()];
+        txn.update_account(&owner, 0).expect("owner account");
+        let other = super::UserToken {
+            name: "bob".into(),
+            spn: "bob@example.com".into(),
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            gidnumber: 2500,
+            real_gidnumber: None,
+            displayname: "Bob".into(),
+            shell: None,
+            groups: vec![generic.clone()],
+            tenant_id: None,
+            valid: true,
+        };
+        txn.update_account(&other, 0).expect("other account");
+
+        txn.delete_account(owner.uuid).expect("delete owner");
+
+        assert_eq!(
+            txn.get_group(&super::Id::Gid(generic.gidnumber))
+                .expect("group lookup")
+                .expect("shared generic group retained")
+                .0
+                .uuid,
+            generic.uuid
+        );
+        assert_eq!(
+            txn.get_group_members(generic.uuid).expect("members")[0].uuid,
+            other.uuid
+        );
+        txn.commit().expect("no dangling memberships");
+    }
+
+    #[tokio::test]
+    async fn generic_label_collision_isolates_private_account_group() {
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let owner = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 2400,
+            real_gidnumber: None,
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![],
+            tenant_id: None,
+            valid: true,
+        };
+        let legacy = super::GroupToken {
+            name: owner.spn.clone(),
+            spn: owner.spn.clone(),
+            uuid: owner.uuid,
+            gidnumber: owner.gidnumber,
+        };
+        txn.update_group(&legacy, 0).expect("legacy group");
+        let mut owner = owner;
+        owner.groups = vec![legacy.clone()];
+        txn.update_account(&owner, 0).expect("owner account");
+        let provider = super::GroupToken {
+            name: legacy.name.clone(),
+            spn: legacy.spn.clone(),
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            gidnumber: 2500,
+        };
+
+        txn.update_group(&provider, 0)
+            .expect("provider isolates ambiguous account labels");
+
+        let retained = txn
+            .cached_group_by_uuid(legacy.uuid)
+            .expect("legacy lookup")
+            .expect("account-shaped group retained");
+        assert_eq!(retained.name, legacy.name);
+        assert_eq!(retained.spn, legacy.spn);
+        assert_eq!(
+            txn.get_group_members(legacy.uuid)
+                .expect("owner membership")[0]
+                .uuid,
+            owner.uuid
+        );
+        let expected_alias = format!("himmelblau-directory-group-{}", provider.uuid);
+        let cached = txn
+            .cached_group_by_uuid(provider.uuid)
+            .expect("provider lookup")
+            .expect("provider group");
+        assert_eq!(cached.name, expected_alias);
+        assert_eq!(cached.spn, expected_alias);
+        assert!(txn
+            .get_group_members(provider.uuid)
+            .expect("provider members")
+            .is_empty());
+
+        txn.update_group(&provider, 0)
+            .expect("provider refresh remains isolated");
+        let refreshed = txn
+            .cached_group_by_uuid(provider.uuid)
+            .expect("refreshed provider lookup")
+            .expect("refreshed provider group");
+        assert_eq!(refreshed.name, expected_alias);
+        assert_eq!(refreshed.spn, expected_alias);
+        assert!(txn
+            .cached_group_by_uuid(legacy.uuid)
+            .expect("legacy refresh lookup")
+            .is_some());
+        txn.commit().expect("no dangling account membership");
+    }
+
+    #[tokio::test]
+    async fn generic_label_collision_isolates_shared_legacy_identity() {
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let owner = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 2400,
+            real_gidnumber: None,
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![],
+            tenant_id: None,
+            valid: true,
+        };
+        let shared = super::GroupToken {
+            name: owner.spn.clone(),
+            spn: owner.spn.clone(),
+            uuid: owner.uuid,
+            gidnumber: owner.gidnumber,
+        };
+        txn.update_group(&shared, 0).expect("shared group");
+        let mut owner = owner;
+        owner.groups = vec![shared.clone()];
+        txn.update_account(&owner, 0).expect("owner account");
+        let other = super::UserToken {
+            name: "bob".into(),
+            spn: "bob@example.com".into(),
+            uuid: uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            gidnumber: 2600,
+            real_gidnumber: None,
+            displayname: "Bob".into(),
+            shell: None,
+            groups: vec![shared.clone()],
+            tenant_id: None,
+            valid: true,
+        };
+        txn.update_account(&other, 0).expect("other account");
+        let provider = super::GroupToken {
+            name: shared.name.clone(),
+            spn: shared.spn.clone(),
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            gidnumber: 2500,
+        };
+
+        txn.update_group(&provider, 0)
+            .expect("provider labels are isolated");
+
+        let preserved = txn
+            .cached_group_by_uuid(shared.uuid)
+            .expect("shared lookup")
+            .expect("shared group preserved");
+        assert_eq!(preserved.uuid, shared.uuid);
+        assert_eq!(preserved.name, shared.name);
+        assert_eq!(preserved.spn, shared.spn);
+        assert_eq!(preserved.gidnumber, shared.gidnumber);
+        assert_eq!(
+            txn.get_group_members(shared.uuid).expect("members").len(),
+            2
+        );
+        let cached = txn
+            .cached_group_by_uuid(provider.uuid)
+            .expect("provider lookup")
+            .expect("provider group");
+        assert_eq!(
+            cached.name,
+            format!("himmelblau-directory-group-{}", provider.uuid)
+        );
+        assert_eq!(cached.spn, cached.name);
+        txn.commit().expect("shared identity remains consistent");
+    }
+
+    #[tokio::test]
+    async fn synthetic_gid_collision_preserves_other_provider_owner() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let owner = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 1000,
+            real_gidnumber: Some(2400),
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![],
+            tenant_id: None,
+            valid: true,
+        };
+        // Generic OIDC synthesizes exactly this account-group shape, which is
+        // indistinguishable in the shared cache from the old Entra fallback.
+        let oidc_group = super::GroupToken {
+            name: owner.spn.clone(),
+            spn: owner.spn.clone(),
+            uuid: owner.uuid,
+            gidnumber: 2400,
+        };
+        txn.update_group_with_owner(&oidc_group, 0, Some(owner.uuid))
+            .expect("OIDC account group");
+        let mut owner = owner;
+        owner.groups = vec![oidc_group.clone()];
+        txn.update_account(&owner, 0).expect("OIDC account");
+
+        let synthetic = synthetic_primary_group(oidc_group.gidnumber);
+        let second = super::UserToken {
+            name: "bob".into(),
+            spn: "bob@example.com".into(),
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            gidnumber: 3000,
+            real_gidnumber: Some(synthetic.gidnumber),
+            displayname: "Bob".into(),
+            shell: None,
+            groups: vec![synthetic.clone()],
+            tenant_id: None,
+            valid: true,
+        };
+        txn.update_group_with_owner(&synthetic, 0, Some(second.uuid))
+            .expect("preserve ambiguous GID owner");
+        txn.update_account(&second, 0).expect("Entra account");
+
+        let cached_owner = txn
+            .get_account(&super::Id::Name(owner.spn.clone()))
+            .expect("owner lookup")
+            .expect("owner account retained")
+            .0;
+        assert_eq!(cached_owner.groups.len(), 1);
+        assert_eq!(cached_owner.groups[0].uuid, oidc_group.uuid);
+        assert_eq!(cached_owner.groups[0].name, oidc_group.name);
+        assert_eq!(
+            txn.get_group_members(oidc_group.uuid)
+                .expect("OIDC members")[0]
+                .uuid,
+            owner.uuid
+        );
+        assert!(txn
+            .cached_group_by_uuid(synthetic.uuid)
+            .expect("synthetic lookup")
+            .is_none());
+
+        // Refreshing either provider must not alternate the cached GID owner.
+        for account in [&owner, &second] {
+            txn.update_group_with_owner(&account.groups[0], 0, Some(account.uuid))
+                .expect("refresh provider group");
+            txn.update_account(account, 0)
+                .expect("refresh provider account");
+        }
+        assert_eq!(
+            txn.get_group(&super::Id::Gid(oidc_group.gidnumber))
+                .expect("GID lookup")
+                .expect("OIDC group retained")
+                .0
+                .uuid,
+            oidc_group.uuid
+        );
+        assert_eq!(
+            txn.get_group_members(oidc_group.uuid)
+                .expect("OIDC members after refresh")[0]
+                .uuid,
+            owner.uuid
+        );
+        txn.commit().expect("provider identities remain stable");
+    }
+
+    #[tokio::test]
+    async fn generic_gid_collision_preserves_ambiguous_account_group() {
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let owner = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 2400,
+            real_gidnumber: Some(2400),
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![],
+            tenant_id: None,
+            valid: true,
+        };
+        // Generic OIDC creates this account-shaped primary group. Its shape is
+        // indistinguishable from the old Entra per-user fallback.
+        let primary = super::GroupToken {
+            name: owner.spn.clone(),
+            spn: owner.spn.clone(),
+            uuid: owner.uuid,
+            gidnumber: owner.gidnumber,
+        };
+        txn.update_group_with_owner(&primary, 0, Some(owner.uuid))
+            .expect("OIDC primary group");
+        let mut owner = owner;
+        owner.groups = vec![primary.clone()];
+        txn.update_account(&owner, 0).expect("OIDC owner account");
+
+        let incoming = super::GroupToken {
+            name: "unrelated-provider-claim".into(),
+            spn: "unrelated-provider-claim@example.net".into(),
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            gidnumber: primary.gidnumber,
+        };
+        let second = super::UserToken {
+            name: "bob".into(),
+            spn: "bob@example.com".into(),
+            uuid: uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            gidnumber: 3000,
+            real_gidnumber: Some(incoming.gidnumber),
+            displayname: "Bob".into(),
+            shell: None,
+            groups: vec![incoming.clone()],
+            tenant_id: None,
+            valid: true,
+        };
+        txn.update_group_with_owner(&incoming, 0, Some(second.uuid))
+            .expect("ambiguous GID owner is preserved");
+        txn.update_account(&second, 0)
+            .expect("uncached claim does not create a dangling membership");
+
+        assert_eq!(
+            txn.get_group(&super::Id::Gid(primary.gidnumber))
+                .expect("GID lookup")
+                .expect("OIDC primary retained")
+                .0
+                .uuid,
+            primary.uuid
+        );
+        assert!(txn
+            .cached_group_by_uuid(incoming.uuid)
+            .expect("incoming lookup")
+            .is_none());
+        assert_eq!(
+            txn.get_group_members(primary.uuid)
+                .expect("primary members")
+                .iter()
+                .map(|account| account.uuid)
+                .collect::<Vec<_>>(),
+            vec![owner.uuid]
+        );
+        let cached_second = txn
+            .get_account(&super::Id::Name(second.spn.clone()))
+            .expect("second account lookup")
+            .expect("second account cached")
+            .0;
+        assert_eq!(cached_second.groups.len(), 1);
+        assert_eq!(cached_second.groups[0].uuid, incoming.uuid);
+        assert_eq!(cached_second.groups[0].name, incoming.name);
+        assert_eq!(cached_second.groups[0].spn, incoming.spn);
+        assert_eq!(cached_second.groups[0].gidnumber, incoming.gidnumber);
+
+        txn.update_group_with_owner(&incoming, 0, Some(second.uuid))
+            .expect("provider refresh remains non-destructive");
+        txn.update_account(&second, 0)
+            .expect("provider account refresh remains consistent");
+        assert_eq!(
+            txn.get_group(&super::Id::Gid(primary.gidnumber))
+                .expect("refreshed GID lookup")
+                .expect("refreshed primary retained")
+                .0
+                .uuid,
+            primary.uuid
+        );
+        txn.commit().expect("no dangling provider membership");
+    }
+
+    #[tokio::test]
+    async fn changed_group_gid_does_not_reuse_stale_uuid_membership() {
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let stale = super::GroupToken {
+            name: "directory-group".into(),
+            spn: "directory-group@example.com".into(),
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            gidnumber: 2400,
+        };
+        txn.update_group(&stale, 0).expect("old group GID");
+        let mut user = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 2000,
+            real_gidnumber: Some(stale.gidnumber),
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![stale.clone()],
+            tenant_id: None,
+            valid: true,
+        };
+        txn.update_account(&user, 0).expect("old group membership");
+
+        let occupied = super::GroupToken {
+            name: "other-provider-group".into(),
+            spn: "other-provider-group@example.net".into(),
+            uuid: uuid::uuid!("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            gidnumber: 2500,
+        };
+        txn.update_group(&occupied, 0).expect("occupied target GID");
+        let other = super::UserToken {
+            name: "bob".into(),
+            spn: "bob@example.net".into(),
+            uuid: uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            gidnumber: 3000,
+            real_gidnumber: Some(occupied.gidnumber),
+            displayname: "Bob".into(),
+            shell: None,
+            groups: vec![occupied.clone()],
+            tenant_id: None,
+            valid: true,
+        };
+        txn.update_account(&other, 0)
+            .expect("target GID membership");
+
+        let mut incoming = stale.clone();
+        incoming.gidnumber = occupied.gidnumber;
+        txn.update_group_with_owner(&incoming, 0, Some(user.uuid))
+            .expect("referenced target GID is preserved");
+        user.real_gidnumber = Some(incoming.gidnumber);
+        user.groups = vec![incoming.clone()];
+        txn.update_account(&user, 0)
+            .expect("changed GID remains deferred");
+
+        let cached_stale = txn
+            .cached_group_by_uuid(stale.uuid)
+            .expect("stale UUID lookup")
+            .expect("stale row retained");
+        assert_eq!(cached_stale.gidnumber, stale.gidnumber);
+        assert!(txn
+            .get_group_members(stale.uuid)
+            .expect("stale memberships")
+            .is_empty());
+        assert_eq!(
+            txn.get_group_members(occupied.uuid)
+                .expect("occupied memberships")
+                .iter()
+                .map(|account| account.uuid)
+                .collect::<Vec<_>>(),
+            vec![other.uuid]
+        );
+        let cached_user = txn
+            .get_account(&super::Id::Name(user.spn.clone()))
+            .expect("user lookup")
+            .expect("user account")
+            .0;
+        assert_eq!(cached_user.groups[0].uuid, incoming.uuid);
+        assert_eq!(cached_user.groups[0].gidnumber, incoming.gidnumber);
+        txn.commit().expect("no stale-GID membership");
+    }
+
+    #[tokio::test]
+    async fn generic_gid_collision_discards_stale_synthetic_memberships() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let synthetic = synthetic_primary_group(2400);
+        txn.update_group(&synthetic, 0).expect("synthetic group");
+        let stale_user = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 2400,
+            real_gidnumber: None,
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![synthetic.clone()],
+            tenant_id: None,
+            valid: true,
+        };
+        txn.update_account(&stale_user, 0).expect("stale account");
+        let generic = super::GroupToken {
+            name: "unrelated-claim".into(),
+            spn: "unrelated-claim@example.net".into(),
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            gidnumber: synthetic.gidnumber,
+        };
+
+        txn.update_group(&generic, 0).expect("generic replacement");
+
+        assert!(txn
+            .get_group_members(generic.uuid)
+            .expect("generic members")
+            .is_empty());
+        assert!(txn
+            .get_group(&super::Id::Name(synthetic.uuid.to_string()))
+            .expect("synthetic lookup")
+            .is_none());
+        txn.commit().expect("no dangling memberships");
+    }
+
+    #[tokio::test]
+    async fn synthetic_claim_does_not_join_cached_generic_gid_collision() {
+        use crate::idprovider::himmelblau::synthetic_primary_group;
+
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let generic = super::GroupToken {
+            name: "generic-claim".into(),
+            spn: "generic-claim@example.net".into(),
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            gidnumber: 2400,
+        };
+        txn.update_group(&generic, 0).expect("generic group");
+        let synthetic = synthetic_primary_group(generic.gidnumber);
+        txn.update_group(&synthetic, 0)
+            .expect("synthetic collision is non-destructive");
+        let user = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: synthetic.gidnumber,
+            real_gidnumber: Some(synthetic.gidnumber),
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![synthetic],
+            tenant_id: None,
+            valid: true,
+        };
+
+        txn.update_account(&user, 0).expect("cache user");
+
+        assert!(txn
+            .get_group_members(generic.uuid)
+            .expect("generic members")
+            .is_empty());
+        assert_eq!(
+            txn.get_group(&super::Id::Gid(generic.gidnumber))
+                .expect("GID lookup")
+                .expect("generic group retained")
+                .0
+                .uuid,
+            generic.uuid
+        );
+        txn.commit().expect("no cross-provider membership");
+    }
+
+    #[tokio::test]
+    async fn synthetic_name_collision_preserves_generic_identity_and_members() {
+        use crate::idprovider::himmelblau::{is_synthetic_primary_group, synthetic_primary_group};
+        let db = super::Db::new("").expect("database");
+        let mut txn = db.write().await;
+        txn.migrate().expect("schema");
+        let synthetic = synthetic_primary_group(2400);
+        let real = super::GroupToken {
+            uuid: uuid::uuid!("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            name: synthetic.name.clone(),
+            spn: synthetic.spn.clone(),
+            gidnumber: 2500,
+        };
+        // Emulate an older cache populated before the namespace was reserved.
+        txn.conn.execute("INSERT INTO group_t (uuid,name,spn,gidnumber,token,expiry) VALUES (?1,?2,?3,?4,?5,0)", rusqlite::params![real.uuid.to_string(), real.name, real.spn, real.gidnumber, serde_json::to_vec(&real).expect("token JSON")]).expect("seed old group");
+        let user = super::UserToken {
+            name: "alice".into(),
+            spn: "alice@example.com".into(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 1000,
+            real_gidnumber: Some(2500),
+            displayname: "Alice".into(),
+            shell: None,
+            groups: vec![real.clone()],
+            tenant_id: None,
+            valid: true,
+        };
+        txn.update_account(&user, 0).expect("old group member");
+        let occupied_alias = super::GroupToken {
+            uuid: uuid::uuid!("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            name: format!("{}-synthetic", synthetic.name),
+            spn: "other-directory-group".into(),
+            gidnumber: 2600,
+        };
+        txn.update_group(&occupied_alias, 0)
+            .expect("existing migration-alias name");
+        txn.update_group(&synthetic, 0)
+            .expect("migrate conflicting reserved labels");
+        let (cached, _) = txn
+            .get_group(&super::Id::Gid(2500))
+            .expect("lookup")
+            .expect("real group preserved");
+        assert_eq!(cached.uuid, real.uuid);
+        assert_eq!(cached.gidnumber, real.gidnumber);
+        assert_eq!(cached.name, real.name);
+        assert_eq!(cached.spn, real.spn);
+        assert_eq!(
+            txn.get_group_members(real.uuid).expect("members")[0].uuid,
+            user.uuid
+        );
+        let (stored_synthetic, _) = txn
+            .get_group(&super::Id::Gid(2400))
+            .expect("synthetic lookup")
+            .expect("synthetic inserted");
+        assert_eq!(stored_synthetic.uuid, synthetic.uuid);
+        assert_eq!(
+            stored_synthetic.name,
+            format!("{}-synthetic-1", synthetic.name)
+        );
+        assert!(is_synthetic_primary_group(&stored_synthetic));
+        let mut new_user = user.clone();
+        new_user.uuid = uuid::uuid!("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        new_user.name = "new-user".into();
+        new_user.spn = "new-user@example.com".into();
+        new_user.gidnumber = 3000;
+        new_user.groups = vec![synthetic];
+        txn.update_account(&new_user, 0)
+            .expect("new account caches without denial");
+        assert_eq!(
+            txn.get_group_members(real.uuid).expect("original members")[0].uuid,
+            user.uuid
+        );
+        assert_eq!(
+            txn.get_group(&super::Id::Gid(2600))
+                .expect("occupied alias lookup")
+                .expect("occupied group preserved")
+                .0
+                .uuid,
+            occupied_alias.uuid
+        );
+        txn.commit().expect("no dangling memberships");
+    }
 
     use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn, TestDbFile, DBV_MAIN};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
