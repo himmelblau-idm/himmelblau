@@ -142,6 +142,43 @@ pub trait KeyStoreTxn {
     fn delete_tagged_hsm_key(&mut self, tag: &str) -> Result<(), CacheError>;
 }
 
+pub(crate) struct ScopedKeyStore<'a, D> {
+    inner: &'a mut D,
+    scope: Option<Uuid>,
+}
+
+impl<'a, D> ScopedKeyStore<'a, D> {
+    pub(crate) fn new(inner: &'a mut D, scope: Option<Uuid>) -> Self {
+        Self { inner, scope }
+    }
+
+    fn tag(&self, tag: &str) -> String {
+        self.scope
+            .map_or_else(|| tag.to_string(), |scope| format!("oidc/{scope}/{tag}"))
+    }
+}
+
+impl<D: KeyStoreTxn> KeyStoreTxn for ScopedKeyStore<'_, D> {
+    fn get_tagged_hsm_key<K: DeserializeOwned>(
+        &mut self,
+        tag: &str,
+    ) -> Result<Option<K>, CacheError> {
+        self.inner.get_tagged_hsm_key(&self.tag(tag))
+    }
+
+    fn insert_tagged_hsm_key<K: Serialize>(
+        &mut self,
+        tag: &str,
+        key: &K,
+    ) -> Result<(), CacheError> {
+        self.inner.insert_tagged_hsm_key(&self.tag(tag), key)
+    }
+
+    fn delete_tagged_hsm_key(&mut self, tag: &str) -> Result<(), CacheError> {
+        self.inner.delete_tagged_hsm_key(&self.tag(tag))
+    }
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
     // Lookups read committed data here rather than wait for a write transaction.
@@ -978,11 +1015,11 @@ impl<'a> CacheTxn for DbTxn<'a> {
     }
 
     fn delete_replaced_accounts(&mut self, account: &UserToken) -> Result<(), CacheError> {
-        let replaced: Vec<String> = {
+        let replaced: Vec<(String, Vec<u8>)> = {
             let mut stmt = self
                 .conn
                 .prepare(
-                    "SELECT uuid FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)",
+                    "SELECT uuid, token FROM account_t WHERE NOT uuid = :uuid AND (name = :name COLLATE NOCASE OR spn = :spn COLLATE NOCASE OR gidnumber = :gidnumber)",
                 )
                 .map_err(|e| self.sqlite_error("select prepare", &e))?;
             let rows = stmt
@@ -993,15 +1030,23 @@ impl<'a> CacheTxn for DbTxn<'a> {
                         ":spn": &account.spn,
                         ":gidnumber": &account.gidnumber,
                     },
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .map_err(|e| self.sqlite_error("query_map", &e))?;
             rows.collect::<Result<_, _>>()
                 .map_err(|e| self.sqlite_error("map", &e))?
         };
+        for (_, data) in &replaced {
+            let cached: UserToken =
+                serde_json::from_slice(data).map_err(|_| CacheError::SerdeJson)?;
+            if cached.tenant_id != account.tenant_id {
+                error!(existing = %cached.uuid, incoming = %account.uuid, "Account collision between providers");
+                return Err(CacheError::TooManyResults);
+            }
+        }
         replaced
             .iter()
-            .try_for_each(|uuid| self.delete_account_rows(uuid))
+            .try_for_each(|(uuid, _)| self.delete_account_rows(uuid))
     }
 
     fn delete_account(&mut self, a_uuid: Uuid) -> Result<(), CacheError> {
@@ -1368,6 +1413,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         }
     }
@@ -1465,6 +1511,7 @@ mod tests {
             shell: None,
             groups: vec![group.clone()],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
         let authenticated = UserToken {
@@ -1630,6 +1677,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 
@@ -1802,6 +1850,7 @@ mod tests {
             shell: None,
             groups: vec![gt1.clone(), gt2],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 
@@ -1872,6 +1921,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 
@@ -2009,6 +2059,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 
@@ -2022,6 +2073,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 

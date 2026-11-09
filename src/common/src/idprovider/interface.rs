@@ -93,6 +93,9 @@ pub struct UserToken {
     pub groups: Vec<GroupToken>,
     #[serde(default)]
     pub tenant_id: Option<Uuid>,
+    /// Original OIDC account claim, independent of the local provider label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_account_id: Option<String>,
     // Defaults to false.
     pub valid: bool,
 }
@@ -311,7 +314,7 @@ pub trait IdProvider {
 
     /// Provider that owns a cached token, resolved without network access.
     async fn provider_for_token(&self, token: &UserToken) -> Option<crate::config::ProviderConfig> {
-        self.provider_config()?.provider_for_account(&token.spn)
+        self.provider_config()?.provider_for_token(token)
     }
 
     async fn provider_status(&self) -> Vec<(String, bool)> {

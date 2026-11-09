@@ -122,6 +122,7 @@ mod tests {
                 shell: None,
                 groups: vec![],
                 tenant_id: None,
+                oidc_account_id: None,
                 valid: true,
             },
         }
@@ -1222,6 +1223,7 @@ impl IdProvider for OktaProvider {
                 gidnumber: gid,
             }],
             tenant_id: Some(self.tenant_id),
+            oidc_account_id: None,
             valid: true,
         }))
     }

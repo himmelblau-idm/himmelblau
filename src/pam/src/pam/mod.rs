@@ -64,7 +64,7 @@ use himmelblau::error::MsalError;
 use himmelblau::{AuthOption, PublicClientApplication};
 use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client_sync::{should_skip_daemon_call, DaemonClientBlocking};
-use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
+use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::BROKER_APP_ID;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
@@ -725,13 +725,10 @@ impl PamHooks for PamKanidm {
         // in both phases. Previously PAM_PRELIM_CHECK returned PAM_SUCCESS
         // unconditionally, which with [success=end ...] skipped pam_unix's prelim
         // check and left it unable to handle the UPDATE_AUTHTOK phase.
-        let (_, _domain) = match split_username(&account_id) {
-            Some(resp) => resp,
-            None => {
-                debug!(%account_id, "chauthtok: not a UPN, skipping (local user)");
-                return PamResultCode::PAM_IGNORE;
-            }
-        };
+        if !account_id.contains('@') {
+            debug!(%account_id, "chauthtok: not a UPN, skipping (local user)");
+            return PamResultCode::PAM_IGNORE;
+        }
 
         let Some(provider) = cfg.provider_for_account(&account_id) else {
             debug!(%account_id, "chauthtok: no configured provider, skipping");

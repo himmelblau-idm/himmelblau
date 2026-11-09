@@ -632,6 +632,7 @@ mod tests {
             shell: None,
             groups: vec![group],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         }
     }
@@ -1454,9 +1455,9 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::unwrap_used)]
     async fn mixed_provider_authorization_scopes_group_claims_and_home_settings() {
-        let mut resolver = setup_resolver().await;
-        resolver.client.user_get_error.store(6, Ordering::Release);
         for (kind, allowed) in [("entra", false), ("oidc", true)] {
+            let mut resolver = setup_resolver().await;
+            resolver.client.user_get_error.store(6, Ordering::Release);
             let issuer = if kind == "oidc" {
                 "oidc_issuer_url=https://id.example.com\napp_id=linux\n"
             } else {
@@ -1467,31 +1468,85 @@ mod tests {
                  [tenant.b]\ndomain=other.example\nidmap_range=10001-20000\npam_allow_groups=linux-users\nhome_prefix=/home/b/\n"
             ));
             assert!(settings.validate().is_ok());
+            let mut token = test_token();
+            if kind == "oidc" {
+                let provider = settings.default_provider().unwrap();
+                token.tenant_id = provider.oidc_tenant_id(&settings);
+                token.oidc_account_id = Some(token.spn.clone());
+                token.spn = provider.local_account_name(&token.spn);
+                token.name.clone_from(&token.spn);
+            }
             resolver.client.settings = Some(settings);
+            resolver
+                .set_cache_usertoken(&mut token, false)
+                .await
+                .unwrap();
+            *resolver.client.auth_token.write().unwrap() = token.clone();
             assert_eq!(
-                resolver
-                    .pam_account_allowed(&test_token().spn)
-                    .await
-                    .unwrap(),
+                resolver.pam_account_allowed(&token.spn).await.unwrap(),
                 Some(allowed)
             );
             assert_eq!(
-                resolver
-                    .token_home_settings(&test_token())
-                    .await
-                    .absolute(&test_token()),
-                "/home/a/testuser@example.com"
+                resolver.token_home_settings(&token).await.absolute(&token),
+                format!("/home/a/{}", token.spn)
+            );
+            let cfg = resolver.client.settings.as_mut().unwrap();
+            cfg.set("tenant.a", "pam_allow_groups", "different-group");
+            assert_eq!(
+                resolver.pam_account_allowed(&token.spn).await.unwrap(),
+                Some(false)
             );
         }
-        let cfg = resolver.client.settings.as_mut().unwrap();
-        cfg.set("tenant.a", "pam_allow_groups", "different-group");
-        assert_eq!(
-            resolver
-                .pam_account_allowed(&test_token().spn)
-                .await
-                .unwrap(),
-            Some(false)
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn default_oidc_names_resolve_to_the_qualified_cached_account_offline() {
+        let mut resolver = setup_resolver().await;
+        let settings = HimmelblauConfig::from_test_config(
+            "[tenant.work]\ntype=oidc\ndomain=work.example\n\
+             oidc_issuer_url=https://id.example\napp_id=linux\nidmap_range=1000-10000\n",
         );
+        let mut token = test_token();
+        token.tenant_id = settings
+            .default_provider()
+            .unwrap()
+            .oidc_tenant_id(&settings);
+        token.oidc_account_id = Some("testuser".into());
+        token.name = "testuser@work".into();
+        token.spn.clone_from(&token.name);
+        resolver.client.settings = Some(settings);
+        resolver
+            .set_cache_usertoken(&mut token, false)
+            .await
+            .unwrap();
+        resolver.client.set_cache_state(CacheState::Offline);
+        for name in ["testuser", "testuser@work"] {
+            let cached = resolver
+                .get_usertoken(Id::Name(name.into()))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(cached.uuid, token.uuid);
+            assert_eq!(cached.spn, token.spn);
+            let nss = resolver
+                .get_nssaccount_name(name, OnExpiry::Refresh)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(nss.name, token.spn);
+        }
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        resolver.client.settings.as_mut().unwrap().set(
+            "tenant.work",
+            "oidc_issuer_url",
+            "https://different.example",
+        );
+        assert!(resolver
+            .get_usertoken(Id::Name(token.spn))
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -3241,11 +3296,12 @@ where
         //  * spn
         //  * uuid
         //  Attempt to search these in the db.
+        let canonical = self.canonical_account_id(account_id);
         let r = self
             .db
             .write()
             .await
-            .get_account(account_id)
+            .get_account(&canonical)
             .map_err(|err| {
                 trace!("get_cached_usertoken {:?}", err);
             })?;
@@ -3256,15 +3312,28 @@ where
         &self,
         account_id: &Id,
     ) -> ResolverResult<(bool, Option<UserToken>)> {
+        let canonical = self.canonical_account_id(account_id);
         let r = self
             .db
             .read()
             .await
-            .get_account(account_id)
+            .get_account(&canonical)
             .map_err(|err| {
                 trace!("lookup_cached_usertoken {:?}", err);
             })?;
         self.cached_usertoken_with_expiry(account_id, r).await
+    }
+
+    fn canonical_account_id(&self, id: &Id) -> Id {
+        match id {
+            Id::Name(name) if uuid::Uuid::parse_str(name).is_err() => self
+                .client
+                .provider_config()
+                .and_then(|cfg| cfg.canonical_account_name(name))
+                .map(Id::Name)
+                .unwrap_or_else(|| id.clone()),
+            _ => id.clone(),
+        }
     }
 
     async fn cached_usertoken_with_expiry(
@@ -3274,6 +3343,12 @@ where
     ) -> ResolverResult<(bool, Option<UserToken>)> {
         match r {
             Some((ut, ex)) => {
+                if ut.oidc_account_id.is_some()
+                    && self.client.provider_config().is_some()
+                    && self.client.provider_for_token(&ut).await.is_none()
+                {
+                    return Ok((true, None));
+                }
                 // Are we expired?
                 let offset = Duration::from_secs(ex);
                 let ex_time = SystemTime::UNIX_EPOCH + offset;

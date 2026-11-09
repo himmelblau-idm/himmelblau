@@ -2995,6 +2995,7 @@ impl IdProvider for OidcProvider {
                 gidnumber: gid,
             }],
             tenant_id: Some(tenant_id),
+            oidc_account_id: None,
             valid: true,
         }))
     }
