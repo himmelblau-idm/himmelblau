@@ -6631,7 +6631,8 @@ class RecoveryMaintenanceTests(unittest.TestCase):
                     commits.append(self.commit(runner, "Fix " + name))
                 runner.git(["checkout", "stable-4.x"])
                 state = sm.State(Path(tmp) / "state")
-                state.save({"branch": "stable-4.x", "cutoff": base, "main_head": commits[-1]})
+                state.save({"branch": "stable-4.x", "cutoff": base, "main_head": commits[-1], "original_head": base,
+                            "last_phase": "import-dependabot"})
                 ai = mock.Mock(call=mock.Mock(return_value={"decision": True, "reason": "bug-fix"}))
                 ai.call.side_effect = lambda instructions, data, schema, name: (
                     {"decision": False, "reason": "new-feature"} if "Add feature" in data
@@ -6648,6 +6649,18 @@ class RecoveryMaintenanceTests(unittest.TestCase):
                 self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), base)
                 self.assertEqual(sm.maintenance_main_through(value), base)
                 self.assertFalse(value.get("backports_deferred"))
+                env = {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                       "MAINTENANCE_TOOLING_COMMIT": commits[-1],
+                       "GITHUB_REPOSITORY": "himmelblau-idm/himmelblau"}
+                with mock.patch.dict(os.environ, env), mock.patch.object(sm, "secure_github_push") as push, \
+                     mock.patch.object(sm, "checkpoint_output"):
+                    sm.phase_checkpoint(mock.Mock(branch="stable-4.x", stage="backports-1"), state, runner)
+                push.assert_called_once()
+                checkpoint = json.loads((state.directory / "checkpoint.json").read_bytes())
+                self.assertEqual(checkpoint["head"], base)
+                self.assertEqual(checkpoint["state"]["backport_remaining"], commits)
+                self.assertEqual(checkpoint["state"]["phase_failures"], value["phase_failures"])
+                self.assertEqual(sm.maintenance_main_through(checkpoint["state"]), base)
 
     def test_pre_inventory_failure_keeps_cutoff_in_recovery_description(self):
         with tempfile.TemporaryDirectory() as tmp:

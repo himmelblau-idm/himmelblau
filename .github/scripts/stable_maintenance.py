@@ -3875,6 +3875,7 @@ def _phase_backport_batch_cached(
             previous_value["backport_remaining"] = inventory[index:]
             state.save(previous_value)
             record_phase_failure(state, "backports", "baseline-build-failed", gate="baseline-build")
+            state.event("backports", "baseline build failed; remaining fixes retained", remaining=len(inventory) - index)
             return
         except BackportBatchExpired:
             runner.git(["cherry-pick", "--abort"], check=False)
