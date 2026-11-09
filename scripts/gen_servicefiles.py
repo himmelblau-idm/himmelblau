@@ -255,6 +255,8 @@ FileDescriptorStoreMax=1
 PrivateTmp=true
 # We have to disable this to allow tpmrm0 access for tpm binding.
 PrivateDevices=false
+# Avoid NSS recursion through proxy
+InaccessiblePaths=-/run/nscd/socket -/var/run/nscd/socket
 
 [Install]
 WantedBy=multi-user.target

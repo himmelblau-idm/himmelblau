@@ -40,6 +40,9 @@ NixOS-specific requirements and intentional deviations from the generated units:
 - Retain RequiresMountsFor on the HSM credential directory so initialization
   waits for the filesystem containing the encrypted credential.
 - Keep NixOS's nscd/nsncd NSS proxy running; do not add Conflicts=nscd.service.
+  Hide its sockets only inside himmelblaud so the daemon's NSS recursion guard
+  also covers systems using a host NSS proxy.
+  Supply the configured NSS module library path to the daemon for direct lookups.
 - Keep the daemon's Type=notify because it does not implement notify-reload.
 - Retain the tasks service's BindsTo dependency instead of Requires, while
   ordering it after the daemon.
@@ -329,6 +332,8 @@ def nixos_expected_units(generated, paths):
             template.format(**paths, toolPath=tool_path)
             for template in NIXOS_ENVIRONMENT_PATHS
         ]
+        if name == "himmelblaud.service":
+            environment.append(f"LD_LIBRARY_PATH={paths['nssModules']}")
         if "Environment" in unit["Service"]:
             environment += shlex.split(unit["Service"]["Environment"])
         unit["Service"]["Environment"] = shlex.join(environment)

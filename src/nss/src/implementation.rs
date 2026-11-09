@@ -7,7 +7,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
-use himmelblau_unix_common::client_sync::{should_skip_daemon_call, DaemonClientBlocking};
+use himmelblau_unix_common::client_sync::{
+    should_skip_daemon_call as daemon_is_starting, DaemonClientBlocking,
+};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, NSS_CACHE};
 use himmelblau_unix_common::idprovider::interface::Id;
@@ -31,6 +33,10 @@ const NSS_STATUS_TRYAGAIN: libc::c_int = -2;
 
 struct HimmelblauPasswd;
 libnss_passwd_hooks!(himmelblau, HimmelblauPasswd);
+
+fn should_skip_daemon_call() -> bool {
+    crate::recursion_guard::_nss_himmelblau_is_blocked() || daemon_is_starting()
+}
 
 fn is_local_group(name: &str) -> bool {
     let contents = read_etc_group();
@@ -938,6 +944,63 @@ impl ShadowHooks for HimmelblauShadow {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn blocked_nss_hooks_do_not_contact_daemon() {
+        use crate::recursion_guard::_nss_himmelblau_block;
+
+        assert_eq!(_nss_himmelblau_block(true), 1);
+        assert!(should_skip_daemon_call());
+        assert!(matches!(
+            HimmelblauPasswd::get_all_entries(),
+            Response::Unavail
+        ));
+        assert!(matches!(
+            HimmelblauPasswd::get_entry_by_uid(1000),
+            Response::Unavail
+        ));
+        assert!(matches!(
+            HimmelblauPasswd::get_entry_by_name("mapped".into()),
+            Response::Unavail
+        ));
+        assert!(matches!(
+            HimmelblauGroup::get_all_entries(),
+            Response::Unavail
+        ));
+        assert!(matches!(
+            HimmelblauGroup::get_entry_by_gid(1000),
+            Response::Unavail
+        ));
+        assert!(matches!(
+            HimmelblauGroup::get_entry_by_name("mapped".into()),
+            Response::Unavail
+        ));
+        assert!(matches!(
+            HimmelblauShadow::get_all_entries(),
+            Response::Unavail
+        ));
+        assert!(matches!(
+            HimmelblauShadow::get_entry_by_name("mapped".into()),
+            Response::Unavail
+        ));
+        let (mut start, mut size, mut error) = (0, 0, 0);
+        let mut groups = std::ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                _nss_himmelblau_initgroups_dyn(
+                    c"mapped".as_ptr(),
+                    1000,
+                    &mut start,
+                    &mut size,
+                    &mut groups,
+                    0,
+                    &mut error,
+                )
+            },
+            NSS_STATUS_UNAVAIL
+        );
+        assert_eq!(_nss_himmelblau_block(false), 0);
+    }
 
     unsafe fn collect_groups(groups: *mut libc::gid_t, len: libc::c_long) -> Vec<libc::gid_t> {
         (0..len).map(|idx| *groups.offset(idx as isize)).collect()

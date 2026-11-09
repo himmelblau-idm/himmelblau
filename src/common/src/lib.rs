@@ -58,6 +58,8 @@ pub mod mapping;
 #[cfg(target_family = "unix")]
 pub mod nss_cache;
 #[cfg(target_family = "unix")]
+pub mod nss_lookup;
+#[cfg(target_family = "unix")]
 pub mod pam;
 #[cfg(target_family = "unix")]
 pub mod policy_cache;
