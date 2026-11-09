@@ -3,6 +3,11 @@
 <title>TENANT CONFIGURATION</title>
 <preamble>
 Each [tenant.&lt;label&gt;] section defines one provider served by the daemon.
+Choose a local label, such as work in [tenant.work], to identify its settings.
+Configuration fragments using the same section name update the same provider.
+For Entra providers, domain identifies the stored credentials and server cache
+when a section label changes.
+.P
 Use type = entra for Microsoft Entra ID or type = oidc for OpenID Connect.
 Okta backend selection is automatic within each OIDC provider.
 .P

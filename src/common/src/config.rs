@@ -3676,6 +3676,45 @@ mod tests {
 
     #[test]
     #[allow(clippy::unwrap_used)]
+    fn renaming_entra_label_preserves_identity_and_provider_settings() {
+        let input = "[tenant.work]\ndomain=contoso.com\nidmap_range=200000-300000\n\
+                     home_prefix=/home/work/\nshell=/bin/zsh\n";
+        let mut original = HimmelblauConfig::from_test_config(input);
+        original.set("contoso.com", "tenant_id", "tenant-id");
+        original.set("contoso.com", "device_id", "device-id");
+        let mut renamed =
+            HimmelblauConfig::from_test_config(&input.replace("[tenant.work]", "[tenant.office]"));
+        renamed.cache = original.cache.clone();
+
+        assert!(original.validate().is_ok());
+        assert!(renamed.validate().is_ok());
+        let before = original.provider_for_account("alice@contoso.com").unwrap();
+        let after = renamed.provider_for_account("alice@contoso.com").unwrap();
+        assert_ne!(before.label, after.label);
+        assert_ne!(before.section, after.section);
+        assert_eq!(before.domain, after.domain);
+        assert_eq!(before.kind, after.kind);
+        assert_eq!(
+            renamed.get_tenant_id(&after.domain),
+            Some("tenant-id".into())
+        );
+        assert_eq!(
+            renamed.domain_value(&after.domain, "device_id"),
+            Some("device-id".into())
+        );
+        assert_eq!(
+            before.get_idmap_range(&original),
+            after.get_idmap_range(&renamed)
+        );
+        assert_eq!(
+            before.get_home_prefix(&original),
+            after.get_home_prefix(&renamed)
+        );
+        assert_eq!(before.get_shell(&original), after.get_shell(&renamed));
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_single_tenant_section_is_the_default() {
         let config = load_with_cache("[tenant.contoso]\ndomain = contoso.com\n", "");
         assert!(config.validate().is_ok());
