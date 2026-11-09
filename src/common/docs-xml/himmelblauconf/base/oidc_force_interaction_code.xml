@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <parameter name="oidc_force_interaction_code" section="global" type="bool"
-           rust_type="bool" documented="true"            domain_specific="true" order="201">
+           rust_type="bool" documented="true" domain_specific="true" order="201">
 <description>
 Require native Interaction Code (IDX) authentication for the configured OIDC
 issuer. When true, Himmelblau never falls back to device authorization or the
