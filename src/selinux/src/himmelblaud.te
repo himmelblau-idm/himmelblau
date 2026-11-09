@@ -1494,6 +1494,16 @@ optional {
 	allow auditd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 }
 
+#============= systemd_userdbd_runtime_t ==============
+optional {
+	require {
+		type systemd_userdbd_runtime_t;
+	}
+	allow himmelblaud_t systemd_userdbd_runtime_t:dir { getattr open read search };
+	allow himmelblaud_t systemd_userdbd_runtime_t:lnk_file read;
+	allow himmelblaud_t systemd_userdbd_runtime_t:sock_file write;
+}
+
 #============= systemd_userdbd_t ==============
 # systemd_userdbd_t is for systemd-userdbd, may not exist on all distros
 optional {
@@ -1511,6 +1521,7 @@ optional {
 	allow systemd_userdbd_t himmelblau_etc_t:file { getattr open read };
 	allow systemd_userdbd_t himmelblau_etc_t:lnk_file { getattr read };
 	allow systemd_userdbd_t himmelblaud_t:unix_stream_socket connectto;
+	allow himmelblaud_t systemd_userdbd_t:unix_stream_socket connectto;
 	allow himmelblaud_tasks_t systemd_userdbd_t:unix_stream_socket connectto;
 }
 
@@ -1603,6 +1614,7 @@ optional {
 	require {
 		type systemd_homed_t;
 	}
+	allow himmelblaud_t systemd_homed_t:unix_stream_socket connectto;
 	allow himmelblaud_tasks_t systemd_homed_t:unix_stream_socket { connectto };
 }
 

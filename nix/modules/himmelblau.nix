@@ -374,6 +374,7 @@ in
           upholds = [ "himmelblaud-tasks.service" ];
           startLimitIntervalSec = 30;
           startLimitBurst = 8;
+          environment.LD_LIBRARY_PATH = config.system.nssModules.path;
           serviceConfig = commonServiceConfig // {
             UMask = "0027";
             ExecStart =
@@ -387,6 +388,8 @@ in
             Sockets = daemonSockets;
             DynamicUser = "yes";
             User = "himmelblaud";
+            # Keep lookups in-process without disabling the host's NSS proxy.
+            InaccessiblePaths = "-/run/nscd/socket -/var/run/nscd/socket";
             CacheDirectory = "himmelblaud"; # /var/cache/himmelblaud
             StateDirectory = "himmelblaud"; # /var/lib/himmelblaud
             ConfigurationDirectory = "himmelblau";

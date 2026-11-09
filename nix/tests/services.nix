@@ -66,6 +66,7 @@ in
     config = toString cfg.environment.etc."himmelblau/himmelblau.conf".source;
     localeArchive = "${cfg.i18n.glibcLocales}/lib/locale/locale-archive";
     timezone = "${pkgs.tzdata}/share/zoneinfo";
+    nssModules = cfg.system.nssModules.path;
     defaultTools = map toString [
       pkgs.coreutils
       pkgs.findutils
