@@ -52,7 +52,6 @@ use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const OIDC_NAMESPACE: Uuid = uuid::uuid!("e669513b-1345-4853-96a7-596243184319");
 const SESSION_LIFETIME: Duration = Duration::from_secs(10 * 60);
 
 fn with_password_cache_action(
@@ -363,7 +362,7 @@ impl OktaProvider {
             client_id,
             redirect_uri,
             origin,
-            tenant_id: Uuid::new_v5(&OIDC_NAMESPACE, issuer.as_bytes()),
+            tenant_id: crate::config::oidc_tenant_id(&issuer),
             issuer,
             initialized: OnceCell::new(),
             refresh_locks: Mutex::new(HashMap::new()),

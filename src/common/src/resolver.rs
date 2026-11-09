@@ -1461,10 +1461,10 @@ mod tests {
             let issuer = if kind == "oidc" {
                 "oidc_issuer_url=https://id.example.com\napp_id=linux\n"
             } else {
-                ""
+                "domain=example.com\n"
             };
             let settings = HimmelblauConfig::from_test_config(&format!(
-                "[tenant.a]\ntype={kind}\n{issuer}domain=example.com\ndefault=true\nidmap_range=1000-10000\npam_allow_groups=linux-users\nhome_prefix=/home/a/\n\
+                "[tenant.a]\n{issuer}default=true\nidmap_range=1000-10000\npam_allow_groups=linux-users\nhome_prefix=/home/a/\n\
                  [tenant.b]\ndomain=other.example\nidmap_range=10001-20000\npam_allow_groups=linux-users\nhome_prefix=/home/b/\n"
             ));
             assert!(settings.validate().is_ok());
@@ -1504,7 +1504,7 @@ mod tests {
     async fn default_oidc_names_resolve_to_the_qualified_cached_account_offline() {
         let mut resolver = setup_resolver().await;
         let settings = HimmelblauConfig::from_test_config(
-            "[tenant.work]\ntype=oidc\ndomain=work.example\n\
+            "[tenant.work]\n\
              oidc_issuer_url=https://id.example\napp_id=linux\nidmap_range=1000-10000\n",
         );
         let mut token = test_token();

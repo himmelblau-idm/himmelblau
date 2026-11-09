@@ -1409,14 +1409,14 @@ Configuration fragments using the same section name update the same provider.
 For Entra providers, domain identifies the stored credentials and server cache
 when a section label changes.
 .P
-Use type = entra for Microsoft Entra ID or type = oidc for OpenID Connect.
+Set domain for Microsoft Entra ID or oidc_issuer_url for OpenID Connect.
+Exactly one of these options defines the protocol of each provider.
 Okta backend selection is automatic within each OIDC provider.
 .P
-Set domain to the provider's primary domain and domain_aliases to its other
+Set domain to an Entra provider's primary domain and domain_aliases to its other
 sign-in domains. The domain keys device credentials, the server cache and ID
 mapping. Preserve that value and idmap_range when converting an existing
-configuration. Legacy OIDC configurations use domain = oidc as their storage key;
-list their scoped account suffixes in domain_aliases when converting them.
+configuration. OIDC storage keys are derived from the issuer URL.
 .P
 With several providers, mark exactly one default = true and assign each a
 non-overlapping idmap_range. A single provider is the implicit default.
@@ -1468,12 +1468,7 @@ overlapping ID ranges, and multi-provider rfc2307 mappings.
 One section per provider; labels select providers in qualified login names.
 .TP
 .B domain
-Primary domain and persistent storage key for this provider.
-.TP
-.B type
-Provider protocol: entra or oidc. OIDC requires oidc_issuer_url and app_id.
-.P
-Default: entra
+Primary Microsoft Entra ID domain and persistent storage key. Set domain for an Entra provider, or oidc_issuer_url for an OIDC provider.
 .TP
 .B default
 Serve bare account names with this provider. Exactly one provider must be the default in a multi-provider configuration.
@@ -1507,8 +1502,6 @@ idmap_range = 200000-999999
 home_prefix = /home/contoso/
 
 [tenant.partners]
-type = oidc
-domain = partners.example
 oidc_issuer_url = https://id.partners.example/realms/linux
 app_id = linux-login
 idmap_range = 1000000-1999999
