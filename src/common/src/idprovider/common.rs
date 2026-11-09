@@ -2694,6 +2694,7 @@ pub(crate) async fn oidc_user_token_from_claims(
         shell: Some(shell),
         groups,
         tenant_id: Some(*tenant_id),
+        oidc_account_id: None,
         valid: true,
     })
 }

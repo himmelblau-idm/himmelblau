@@ -145,6 +145,51 @@ pub struct ProviderConfig {
     pub default: bool,
 }
 
+impl ProviderConfig {
+    pub(crate) fn oidc_tenant_id(&self, config: &HimmelblauConfig) -> Option<uuid::Uuid> {
+        if self.kind != ProviderKind::Oidc {
+            return None;
+        }
+        let issuer = config.get_oidc_issuer_url(Some(&self.domain))?;
+        Some(uuid::Uuid::new_v5(
+            &uuid::uuid!("e669513b-1345-4853-96a7-596243184319"),
+            issuer.as_bytes(),
+        ))
+    }
+
+    pub(crate) fn scopes_oidc_accounts(&self) -> bool {
+        self.kind == ProviderKind::Oidc && self.section.starts_with(TENANT_SECTION_PREFIX)
+    }
+
+    pub(crate) fn local_account_name(&self, account: &str) -> String {
+        if self.scopes_oidc_accounts() {
+            format!("{account}@{}", self.label)
+        } else {
+            account.to_string()
+        }
+    }
+
+    pub(crate) fn upstream_account_name(&self, account: &str) -> Option<String> {
+        let qualified = if self.section.starts_with(TENANT_SECTION_PREFIX) {
+            account
+                .rsplit_once('@')
+                .filter(|(_, suffix)| suffix.eq_ignore_ascii_case(&self.label))
+                .map(|(name, _)| name)
+        } else {
+            None
+        };
+        let account = qualified.unwrap_or(account);
+        if account.is_empty() || account.starts_with('@') || account.ends_with('@') {
+            return None;
+        }
+        if self.kind == ProviderKind::Entra && qualified.is_some() && !account.contains('@') {
+            Some(format!("{account}@{}", self.domain))
+        } else {
+            Some(account.to_string())
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ValidationReport {
     pub errors: Vec<String>,
@@ -970,6 +1015,13 @@ impl HimmelblauConfig {
                 errors.push(format!("[{}] requires a label", section));
                 continue;
             }
+            if label.contains('@') || label.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                errors.push(format!(
+                    "[{}] label must not contain @ or whitespace",
+                    section
+                ));
+                continue;
+            }
             let stanza = match self.tenant_stanza(&section) {
                 Ok(stanza) => stanza,
                 Err(e) => {
@@ -1018,26 +1070,39 @@ impl HimmelblauConfig {
     /// Resolve only explicitly configured domains and their known aliases.
     pub fn provider_for_domain(&self, domain: &str) -> Option<ProviderConfig> {
         let providers = self.parse_providers().ok()?;
-        // An explicit primary domain always wins over a stale discovered alias.
-        if let Some(provider) = providers
-            .iter()
-            .find(|p| p.domain.eq_ignore_ascii_case(domain))
-        {
-            return Some(provider.clone());
-        }
         let mut matches = providers.into_iter().filter(|p| {
-            self.domain_aliases_for(p)
-                .iter()
-                .any(|a| a.eq_ignore_ascii_case(domain))
+            p.domain.eq_ignore_ascii_case(domain)
+                || self
+                    .domain_aliases_for(p)
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(domain))
         });
         let provider = matches.next()?;
         matches.next().is_none().then_some(provider)
     }
 
-    /// Names without a suffix belong to the default provider.
+    /// An explicit final label selects a provider; bare names use the default.
     pub fn provider_for_account(&self, account: &str) -> Option<ProviderConfig> {
-        if account.is_empty() {
+        if account.is_empty() || account.starts_with('@') || account.ends_with('@') {
             return None;
+        }
+        if let Some((name, suffix)) = account.rsplit_once('@') {
+            let providers = self.parse_providers().ok()?;
+            if let Some(provider) = providers.iter().find(|p| {
+                p.section.starts_with(TENANT_SECTION_PREFIX) && p.label.eq_ignore_ascii_case(suffix)
+            }) {
+                if self.routing_name_conflicts(provider, suffix) {
+                    return None;
+                }
+                if provider.kind == ProviderKind::Entra && name.contains('@') {
+                    let (_, domain) = split_username(name)?;
+                    if self.provider_for_domain(domain).as_ref() != Some(provider) {
+                        return None;
+                    }
+                }
+                provider.upstream_account_name(account)?;
+                return Some(provider.clone());
+            }
         }
         if let Some((name, domain)) = split_username(account) {
             if name.is_empty() || domain.is_empty() {
@@ -1055,6 +1120,29 @@ impl HimmelblauConfig {
             return None;
         }
         self.default_provider()
+    }
+
+    pub fn canonical_account_name(&self, account: &str) -> Option<String> {
+        let provider = self.provider_for_account(account)?;
+        Some(provider.local_account_name(&provider.upstream_account_name(account)?))
+    }
+
+    pub(crate) fn provider_for_token(
+        &self,
+        token: &crate::idprovider::interface::UserToken,
+    ) -> Option<ProviderConfig> {
+        if let Some(tenant) = token.tenant_id {
+            if let Some(provider) = self
+                .parse_providers()
+                .ok()?
+                .into_iter()
+                .find(|p| p.oidc_tenant_id(self) == Some(tenant))
+            {
+                return Some(provider);
+            }
+        }
+        self.provider_for_account(&token.spn)
+            .filter(|p| p.kind == ProviderKind::Entra && token.oidc_account_id.is_none())
     }
 
     pub fn provider_for_gid(&self, gid: u32) -> Option<ProviderConfig> {
@@ -1124,7 +1212,33 @@ impl HimmelblauConfig {
         matches.next().is_none().then_some(provider)
     }
 
-    pub(crate) fn record_domain_alias(&mut self, provider: &ProviderConfig, alias: &str) {
+    fn routing_name_conflicts(&self, provider: &ProviderConfig, name: &str) -> bool {
+        self.parse_providers().is_ok_and(|providers| {
+            providers
+                .iter()
+                .any(|p| p != provider && self.provider_claims_name(p, name))
+        })
+    }
+
+    fn provider_claims_name(&self, provider: &ProviderConfig, name: &str) -> bool {
+        provider.label.eq_ignore_ascii_case(name)
+            || provider.domain.eq_ignore_ascii_case(name)
+            || self
+                .domain_aliases_for(provider)
+                .iter()
+                .any(|a| a.eq_ignore_ascii_case(name))
+    }
+
+    pub(crate) fn routing_name_is_known(&self, name: &str) -> bool {
+        self.parse_providers()
+            .is_ok_and(|providers| providers.iter().any(|p| self.provider_claims_name(p, name)))
+    }
+
+    pub(crate) fn record_domain_alias(&mut self, provider: &ProviderConfig, alias: &str) -> bool {
+        if self.routing_name_conflicts(provider, alias) {
+            error!(provider = %provider.label, alias, "Discovered alias conflicts with a configured provider");
+            return false;
+        }
         let mut aliases = self.domain_aliases_for(provider);
         if !aliases.iter().any(|a| a.eq_ignore_ascii_case(alias)) {
             aliases.push(alias.to_lowercase());
@@ -1133,6 +1247,7 @@ impl HimmelblauConfig {
                 error!(?error, "Failed to write the server cache");
             }
         }
+        true
     }
 
     /// Check the provider configuration. The daemon refuses to start when
@@ -1189,7 +1304,10 @@ impl HimmelblauConfig {
         for p in providers {
             let section = p.section.as_str();
             let aliases = self.domain_aliases_for(p);
-            for name in std::iter::once(p.domain.clone()).chain(aliases) {
+            for name in [p.label.clone(), p.domain.clone()]
+                .into_iter()
+                .chain(aliases)
+            {
                 match names.insert(name.to_lowercase(), section) {
                     Some(other) if other != section => report.errors.push(format!(
                         "[{}] and [{}] both claim the domain {}",
@@ -1258,28 +1376,6 @@ impl HimmelblauConfig {
                 )),
                 (ProviderKind::Entra, None) => {}
             }
-
-            let strip_suffix = self.config.get(section, "oidc_account_id_strip_at_suffix");
-            if !p.default
-                && match_bool("oidc_account_id_strip_at_suffix", strip_suffix, false)
-                && providers.len() > 1
-            {
-                report.errors.push(format!(
-                    "[{}] oidc_account_id_strip_at_suffix is only allowed on the default tenant",
-                    section
-                ));
-            }
-        }
-
-        if match_bool(
-            "oidc_account_id_strip_at_suffix",
-            self.config.get("global", "oidc_account_id_strip_at_suffix"),
-            false,
-        ) {
-            report.errors.push(format!(
-                "[global] oidc_account_id_strip_at_suffix must be set in the default [{}<label>] section",
-                TENANT_SECTION_PREFIX
-            ));
         }
 
         let defaults: Vec<&str> = providers
@@ -1332,7 +1428,8 @@ impl HimmelblauConfig {
     fn provider_uses_cn_home_name(&self, provider: &ProviderConfig) -> bool {
         let home_attr = provider.get_home_attr(self);
         let home_alias = provider.get_home_alias(self);
-        let oidc_strips_spn_suffix = provider.kind == ProviderKind::Oidc
+        let oidc_strips_spn_suffix = !provider.scopes_oidc_accounts()
+            && provider.kind == ProviderKind::Oidc
             && provider.get_oidc_account_id_strip_at_suffix(self);
 
         home_attr == HomeAttr::Cn
@@ -1575,7 +1672,10 @@ impl HimmelblauConfig {
                 return Some(format!("{}@{}", account_id, domain));
             }
         }
-        Some(account_id.to_string())
+        Some(
+            self.canonical_account_name(account_id)
+                .unwrap_or_else(|| account_id.to_string()),
+        )
     }
 
     /// This function maps a UPN to a mapped name. If a mapping script is
@@ -3937,23 +4037,6 @@ mod tests {
                 "rfc2307 supports a single tenant",
             ),
             (
-                tenants(
-                    &format!("domain = contoso.com;{}", range_a),
-                    &format!(
-                        "domain = fabrikam.com;oidc_account_id_strip_at_suffix = true;{}",
-                        range_b
-                    ),
-                ),
-                "",
-                "only allowed on the default tenant",
-            ),
-            (
-                "[global]\noidc_account_id_strip_at_suffix = true\n[tenant.a]\ndomain = contoso.com\n"
-                    .to_string(),
-                "",
-                "must be set in the default",
-            ),
-            (
                 "[tenant.a]\ntype = oidc\ndomain = contoso.com\n".to_string(),
                 "",
                 "type = oidc requires oidc_issuer_url",
@@ -4023,7 +4106,7 @@ mod tests {
     }
 
     #[test]
-    fn cn_home_prefix_collisions_include_stripped_oidc_spn_aliases() {
+    fn qualified_oidc_spn_homes_are_distinct_from_entra_cn_homes() {
         let config = HimmelblauConfig::from_test_config(
             "[tenant.oidc]\ntype = oidc\ndomain = oidc.example\ndefault = true\n\
              oidc_issuer_url = https://issuer.example\napp_id = linux\n\
@@ -4034,14 +4117,92 @@ mod tests {
         );
 
         let report = config.validate();
-        assert!(
-            report
-                .errors
-                .iter()
-                .any(|error| error.contains("require distinct home_prefix")),
-            "{:?}",
-            report.errors
+        assert!(report.is_ok(), "{:?}", report.errors);
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn explicit_labels_preserve_upstream_names_and_default_routing() {
+        let config = HimmelblauConfig::from_test_config(TWO_TENANTS);
+        for (login, label, upstream, canonical) in [
+            ("alice", "contoso", "alice", "alice"),
+            (
+                "alice@contoso",
+                "contoso",
+                "alice@contoso.com",
+                "alice@contoso.com",
+            ),
+            (
+                "alice@contoso.com",
+                "contoso",
+                "alice@contoso.com",
+                "alice@contoso.com",
+            ),
+            ("alice@fabrikam", "fabrikam", "alice", "alice@fabrikam"),
+            (
+                "alice@example.org@FABRIKAM",
+                "fabrikam",
+                "alice@example.org",
+                "alice@example.org@fabrikam",
+            ),
+        ] {
+            let provider = config.provider_for_account(login).unwrap();
+            assert_eq!(provider.label, label);
+            assert_eq!(
+                provider.upstream_account_name(login).as_deref(),
+                Some(upstream)
+            );
+            assert_eq!(
+                config.canonical_account_name(login).as_deref(),
+                Some(canonical)
+            );
+        }
+        for login in [
+            "@fabrikam",
+            "alice@@fabrikam",
+            "alice@",
+            "alice@unknown",
+            "alice@fabrikam.com@contoso",
+        ] {
+            assert!(config.provider_for_account(login).is_none(), "{login}");
+        }
+        let oidc_default = HimmelblauConfig::from_test_config(
+            &TWO_TENANTS
+                .replace("default = yes", "default = no\n")
+                .replace(
+                    "type = OIDC",
+                    "type = OIDC\ndefault = true\noidc_account_id_strip_at_suffix = true",
+                ),
         );
+        assert!(oidc_default.validate().is_ok());
+        assert_eq!(
+            oidc_default.canonical_account_name("alice").as_deref(),
+            Some("alice@fabrikam")
+        );
+        let legacy = HimmelblauConfig::from_test_config(
+            "[global]\noidc_issuer_url=https://issuer.example\n",
+        );
+        assert_eq!(
+            legacy
+                .canonical_account_name("alice@example.org")
+                .as_deref(),
+            Some("alice@example.org")
+        );
+    }
+
+    #[test]
+    fn labels_cannot_shadow_other_providers_or_contain_separators() {
+        for label in ["contoso.com", "contoso.org"] {
+            let input = TWO_TENANTS.replace("[tenant.fabrikam]", &format!("[tenant.{label}]"));
+            assert_rejected(&input, "", "both claim the domain");
+        }
+        for label in ["a@b", "two words"] {
+            assert_rejected(
+                &format!("[tenant.{label}]\ndomain=example.com\n"),
+                "",
+                "label must not contain",
+            );
+        }
     }
 
     #[cfg(unix)]

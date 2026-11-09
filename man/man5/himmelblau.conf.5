@@ -243,9 +243,8 @@ fallback.
 This is useful when the selected OIDC claim is scoped, such as
 .B user@example.com,
 but the desired Linux account name is only the local portion.
-Only enable this when the remaining local portion is unique across all accepted
-OIDC issuers/domains; otherwise distinct identities that differ only by suffix
-can collide on the same Linux account name.
+The remaining local portion must be unique within the provider. Tenant sections
+append their local provider label after this transformation.
 
 .P
 Default: false
@@ -1404,7 +1403,8 @@ ttl = 1d
 
 .SH TENANT CONFIGURATION
 Each [tenant.<label>] section defines one provider served by the daemon.
-Choose a local label, such as work in [tenant.work], to identify its settings.
+Choose a local label, such as work in [tenant.work], to identify its settings
+and select it with an account name such as alice@work.
 Configuration fragments using the same section name update the same provider.
 For Entra providers, domain identifies the stored credentials and server cache
 when a section label changes.
@@ -1421,8 +1421,23 @@ list their scoped account suffixes in domain_aliases when converting them.
 With several providers, mark exactly one default = true and assign each a
 non-overlapping idmap_range. A single provider is the implicit default.
 Bare account names and cn_name_mapping use the default provider.
-OIDC account-name claims on other providers must contain a configured domain or
-alias. oidc_account_id_strip_at_suffix is supported on the default provider.
+The final @label explicitly selects a provider. For example,
+alice@example.org@partners selects [tenant.partners] with the upstream account
+alice@example.org. OIDC account claims retain their original spelling when
+sent to the provider. oidc_account_id_strip_at_suffix applies before adding
+the local provider label.
+.P
+OIDC accounts from tenant sections use account@label as their canonical Linux
+name, including accounts on the default provider. Entra accounts retain their
+UPN. Labels must be distinct from other providers' sign-in domains and aliases.
+Ambiguous routing is rejected.
+.P
+OIDC credentials are scoped by the issuer-derived tenant identity. Cached OIDC
+accounts and credentials are migrated when converting a legacy configuration
+or renaming a label, preserving numeric IDs, UUIDs and cached passwords.
+Preserve the issuer URL and idmap_range during conversion. Label changes
+change OIDC Linux account names: update name-based permissions and, when using
+name or spn home naming, move existing home directories to the new names.
 .P
 Provider settings override [global] settings. Discovered metadata is stored
 separately in /var/cache/himmelblaud/himmelblau.conf. Only administrator
@@ -1450,7 +1465,7 @@ The daemon validates configuration at startup and with --configtest. It rejects
 mixed legacy/stanza definitions, duplicate domains, aliases or tenant identities,
 overlapping ID ranges, and multi-provider rfc2307 mappings.
 .SS [tenant.<label>]
-One section per provider; labels are local configuration handles.
+One section per provider; labels select providers in qualified login names.
 .TP
 .B domain
 Primary domain and persistent storage key for this provider.

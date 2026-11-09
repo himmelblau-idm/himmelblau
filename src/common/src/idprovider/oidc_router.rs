@@ -108,6 +108,10 @@ fn discovery_trust_failure(error: &reqwest::Error) -> bool {
 }
 
 impl OidcRouter {
+    pub(crate) fn domain(&self) -> &str {
+        &self.domain
+    }
+
     #[cfg(test)]
     #[allow(clippy::unwrap_used)]
     pub(crate) async fn for_test(

@@ -175,9 +175,8 @@ in
         This is useful when the selected OIDC claim is scoped, such as
         **user@example.com,**
         but the desired Linux account name is only the local portion.
-        Only enable this when the remaining local portion is unique across all accepted
-        OIDC issuers/domains; otherwise distinct identities that differ only by suffix
-        can collide on the same Linux account name.
+        The remaining local portion must be unique within the provider. Tenant sections
+        append their local provider label after this transformation.
       '';
       example = true;
     };
@@ -1340,9 +1339,8 @@ in
               This is useful when the selected OIDC claim is scoped, such as
               **user@example.com,**
               but the desired Linux account name is only the local portion.
-              Only enable this when the remaining local portion is unique across all accepted
-              OIDC issuers/domains; otherwise distinct identities that differ only by suffix
-              can collide on the same Linux account name.
+              The remaining local portion must be unique within the provider. Tenant sections
+              append their local provider label after this transformation.
             '';
             example = true;
           };

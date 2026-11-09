@@ -1026,6 +1026,7 @@ impl IdProvider for HimmelblauProvider {
                                     error!("{:?}", e);
                                     IdpError::BadRequest
                                 })?),
+                                oidc_account_id: None,
                                 valid: true,
                             }));
                         } else {
@@ -4745,6 +4746,7 @@ impl HimmelblauProvider {
                     IdpError::BadRequest
                 })?,
             ),
+            oidc_account_id: None,
             valid,
         })
     }

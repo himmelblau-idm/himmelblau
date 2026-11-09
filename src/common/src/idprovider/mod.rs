@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::config::{split_username, HimmelblauConfig, ProviderConfig, ProviderKind};
-use crate::db::KeyStoreTxn;
+use crate::db::{CacheError, CacheTxn, KeyStoreTxn, ScopedKeyStore};
 use crate::idprovider::himmelblau::HimmelblauProvider;
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -58,6 +58,13 @@ pub struct IdProviderProxy {
 }
 
 impl Providers {
+    fn domain(&self) -> &str {
+        match self {
+            Self::Oidc(p) => p.domain(),
+            Self::Himmelblau(p) => p.domain(),
+        }
+    }
+
     async fn new(
         config: &Arc<Mutex<HimmelblauConfig>>,
         settings: &ProviderConfig,
@@ -135,8 +142,125 @@ impl Providers {
     }
 }
 
+struct ProviderRequest<'a> {
+    provider: &'a Providers,
+    definition: ProviderConfig,
+    tenant_id: Option<uuid::Uuid>,
+    id: Id,
+    token: Option<UserToken>,
+}
+
+fn rename_token(token: &mut UserToken, name: String) {
+    token.name.clone_from(&name);
+    for group in &mut token.groups {
+        if group.uuid == token.uuid {
+            group.name.clone_from(&name);
+            group.spn.clone_from(&name);
+        }
+    }
+    token.spn = name;
+}
+
+fn localize_oidc_token(
+    definition: &ProviderConfig,
+    tenant_id: Option<uuid::Uuid>,
+    token: &mut UserToken,
+) -> Result<(), IdpError> {
+    if definition.kind != ProviderKind::Oidc {
+        return Ok(());
+    }
+    if tenant_id.is_none() || token.tenant_id != tenant_id {
+        error!(provider = %definition.label, "OIDC token belongs to another issuer");
+        return Err(IdpError::BadRequest);
+    }
+    if definition.scopes_oidc_accounts() {
+        let account = token
+            .oidc_account_id
+            .clone()
+            .unwrap_or_else(|| token.spn.clone());
+        rename_token(token, definition.local_account_name(&account));
+        token.oidc_account_id = Some(account);
+    }
+    Ok(())
+}
+
+impl ProviderRequest<'_> {
+    fn account_id(&self) -> Result<&str, IdpError> {
+        match &self.id {
+            Id::Name(name) => Ok(name),
+            Id::Gid(_) => Err(IdpError::BadRequest),
+        }
+    }
+
+    fn keystore<'a, D>(&self, inner: &'a mut D) -> ScopedKeyStore<'a, D> {
+        ScopedKeyStore::new(
+            inner,
+            self.definition
+                .scopes_oidc_accounts()
+                .then_some(self.tenant_id)
+                .flatten(),
+        )
+    }
+
+    fn localize(&self, token: &mut UserToken) -> Result<(), IdpError> {
+        localize_oidc_token(&self.definition, self.tenant_id, token)
+    }
+}
+
+fn migrate_oidc_accounts<D: CacheTxn + KeyStoreTxn>(
+    settings: &HimmelblauConfig,
+    db: &mut D,
+) -> Result<(), CacheError> {
+    for mut token in db.get_accounts()? {
+        let Some(definition) = settings
+            .provider_for_token(&token)
+            .filter(ProviderConfig::scopes_oidc_accounts)
+        else {
+            continue;
+        };
+        let tenant_id = definition.oidc_tenant_id(settings);
+        let original = token.clone();
+        localize_oidc_token(&definition, tenant_id, &mut token).map_err(|_| CacheError::Parse)?;
+        if original.oidc_account_id == token.oidc_account_id && original.spn == token.spn {
+            continue;
+        }
+        if original.oidc_account_id.is_none() {
+            for suffix in [
+                "hello",
+                "hello_decoupled",
+                "hello_prt",
+                "hello_refresh_token",
+                "hello_totp",
+            ] {
+                let tag = format!("{}/{suffix}", original.spn.to_lowercase());
+                if let Some(key) = db.get_tagged_hsm_key::<serde_json::Value>(&tag)? {
+                    let mut scoped = ScopedKeyStore::new(db, tenant_id);
+                    if scoped
+                        .get_tagged_hsm_key::<serde_json::Value>(&tag)?
+                        .is_some()
+                    {
+                        error!(provider = %definition.label, "OIDC credential migration would overwrite a key");
+                        return Err(CacheError::TooManyResults);
+                    }
+                    scoped.insert_tagged_hsm_key(&tag, &key)?;
+                    db.delete_tagged_hsm_key(&tag)?;
+                }
+            }
+        }
+        let (_, expiry) = db
+            .get_account(&Id::Name(token.uuid.to_string()))?
+            .ok_or(CacheError::Parse)?;
+        db.delete_replaced_accounts(&token)?;
+        for group in &token.groups {
+            db.update_group(group, expiry)?;
+        }
+        db.update_account(&token, expiry)?;
+    }
+    Ok(())
+}
+
 impl IdProviderProxy {
-    pub async fn new<D: KeyStoreTxn + Send>(
+    pub async fn new<D: KeyStoreTxn + CacheTxn + Send>(
         config_filename: &str,
         keystore: &mut D,
     ) -> Result<Self> {
@@ -151,6 +275,8 @@ impl IdProviderProxy {
         if definitions.is_empty() {
             return Err(anyhow!("No provider was configured"));
         }
+        migrate_oidc_accounts(&settings, keystore)
+            .map_err(|error| anyhow!("Failed to migrate OIDC accounts: {error:?}"))?;
         let config = Arc::new(Mutex::new(settings.clone()));
         let idmap = Arc::new(Mutex::new(Idmap::new().map_err(|e| anyhow!("{e:?}"))?));
         let initialized = join_all(
@@ -209,12 +335,20 @@ impl IdProviderProxy {
                 if !name.is_empty() && !domain.is_empty() {
                     // Discovery must not hold the shared config lock or create providers.
                     let snapshot = self.config.lock().await.clone();
+                    if snapshot.routing_name_is_known(domain) {
+                        error!(domain, "Ambiguous provider selection");
+                        return Err(IdpError::BadRequest);
+                    }
                     selected = snapshot.discover_provider_for_domain(domain).await;
                     if let Some(provider) = &selected {
-                        self.config
+                        if !self
+                            .config
                             .lock()
                             .await
-                            .record_domain_alias(provider, domain);
+                            .record_domain_alias(provider, domain)
+                        {
+                            return Err(IdpError::BadRequest);
+                        }
                     }
                 }
             }
@@ -238,7 +372,8 @@ impl IdProviderProxy {
         token: Option<&UserToken>,
     ) -> Result<&Providers, IdpError> {
         if let Some(token) = token {
-            return self.find_provider(&token.spn).await;
+            let selected = self.config.lock().await.provider_for_token(token);
+            return self.lookup_provider(selected.as_ref());
         }
         match id {
             Id::Name(name) => self.find_provider(name).await,
@@ -246,12 +381,50 @@ impl IdProviderProxy {
         }
     }
 
+    async fn prepare_request(
+        &self,
+        id: &Id,
+        token: Option<&UserToken>,
+    ) -> Result<ProviderRequest<'_>, IdpError> {
+        let provider = self.find_provider_for_id(id, token).await?;
+        let definition = self
+            .settings
+            .provider_for_domain(provider.domain())
+            .ok_or(IdpError::BadRequest)?;
+        let tenant_id = definition.oidc_tenant_id(&self.settings);
+        let token = token.map(|token| {
+            let mut token = token.clone();
+            if let Some(account) = token.oidc_account_id.take() {
+                rename_token(&mut token, account);
+            }
+            token
+        });
+        let id = match id {
+            Id::Name(account) => Id::Name(match &token {
+                Some(token) => token.spn.clone(),
+                None => definition
+                    .upstream_account_name(account)
+                    .ok_or(IdpError::BadRequest)?,
+            }),
+            Id::Gid(gid) => Id::Gid(*gid),
+        };
+        Ok(ProviderRequest {
+            provider,
+            definition,
+            tenant_id,
+            id,
+            token,
+        })
+    }
+
     async fn validate_token_provider(
         &self,
         provider: &Providers,
         token: &UserToken,
     ) -> Result<(), IdpError> {
-        let owner = self.find_provider(&token.spn).await?;
+        let owner = self
+            .find_provider_for_id(&Id::Name(token.spn.clone()), Some(token))
+            .await?;
         if !std::ptr::eq(provider, owner) {
             error!("Provider returned an account routed to another tenant");
             return Err(IdpError::BadRequest);
@@ -288,7 +461,7 @@ impl IdProvider for IdProviderProxy {
 
     async fn provider_for_token(&self, token: &UserToken) -> Option<ProviderConfig> {
         // Runtime-discovered aliases exist only in the live configuration.
-        self.config.lock().await.provider_for_account(&token.spn)
+        self.config.lock().await.provider_for_token(token)
     }
 
     async fn provider_status(&self) -> Vec<(String, bool)> {
@@ -369,8 +542,12 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
-        let provider = self.find_provider_for_id(id, old_token).await?;
-        match provider {
+        let request = self.prepare_request(id, old_token).await?;
+        let id = &request.id;
+        let old_token = request.token.as_ref();
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_access(
@@ -417,10 +594,14 @@ impl IdProvider for IdProviderProxy {
         Option<String>,
         Option<String>,
     ) {
-        let Ok(provider) = self.find_provider_for_id(id, old_token).await else {
+        let Ok(request) = self.prepare_request(id, old_token).await else {
             return (None, None, None, None);
         };
-        match provider {
+        let id = &request.id;
+        let old_token = request.token.as_ref();
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_tgts(id, old_token, keystore, tpm, machine_key)
@@ -443,8 +624,12 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
-        let provider = self.find_provider_for_id(id, old_token).await?;
-        match provider {
+        let request = self.prepare_request(id, old_token).await?;
+        let id = &request.id;
+        let old_token = request.token.as_ref();
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_prt_cookie(id, old_token, sso_nonce, keystore, tpm, machine_key)
@@ -467,8 +652,13 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
-        let provider = self.find_provider(account_id).await?;
-        match provider {
+        let request = self
+            .prepare_request(&Id::Name(account_id.to_string()), None)
+            .await?;
+        let account_id = request.account_id()?;
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
@@ -491,8 +681,12 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
-        let provider = self.find_provider_for_id(id, old_token).await?;
-        let result = match provider {
+        let request = self.prepare_request(id, old_token).await?;
+        let id = &request.id;
+        let old_token = request.token.as_ref();
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        let mut result = match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_get(id, old_token, keystore, tpm, machine_key)
@@ -504,8 +698,10 @@ impl IdProvider for IdProviderProxy {
                     .await
             }
         }?;
-        if let UserTokenState::Update(token) | UserTokenState::LookupOnly(token) = &result {
-            self.validate_token_provider(provider, token).await?;
+        if let UserTokenState::Update(token) | UserTokenState::LookupOnly(token) = &mut result {
+            request.localize(token)?;
+            self.validate_token_provider(request.provider, token)
+                .await?;
         }
         Ok(result)
     }
@@ -522,10 +718,14 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let provider = self
-            .find_provider(token.map_or(account_id, |t| t.spn.as_str()))
+        let request = self
+            .prepare_request(&Id::Name(account_id.to_string()), token)
             .await?;
-        match provider {
+        let account_id = request.account_id()?;
+        let token = request.token.as_ref();
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_online_auth_init(
@@ -572,8 +772,14 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
-        let provider = self.find_provider(&old_token.spn).await?;
-        let result = match provider {
+        let request = self
+            .prepare_request(&Id::Name(account_id.to_string()), Some(old_token))
+            .await?;
+        let account_id = request.account_id()?;
+        let old_token = request.token.as_ref().ok_or(IdpError::BadRequest)?;
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        let mut result = match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_online_auth_step(
@@ -607,8 +813,10 @@ impl IdProvider for IdProviderProxy {
                     .await
             }
         }?;
-        if let AuthResult::Success { token } = &result.0 {
-            self.validate_token_provider(provider, token).await?;
+        if let AuthResult::Success { token } = &mut result.0 {
+            request.localize(token)?;
+            self.validate_token_provider(request.provider, token)
+                .await?;
         }
         Ok(result)
     }
@@ -621,10 +829,14 @@ impl IdProvider for IdProviderProxy {
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let provider = self
-            .find_provider(token.map_or(account_id, |t| t.spn.as_str()))
+        let request = self
+            .prepare_request(&Id::Name(account_id.to_string()), token)
             .await?;
-        match provider {
+        let account_id = request.account_id()?;
+        let token = request.token.as_ref();
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_offline_auth_init(account_id, token, service, no_hello_pin, keystore)
@@ -649,8 +861,14 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
-        let provider = self.find_provider(&token.spn).await?;
-        let result = match provider {
+        let request = self
+            .prepare_request(&Id::Name(account_id.to_string()), Some(token))
+            .await?;
+        let account_id = request.account_id()?;
+        let token = request.token.as_ref().ok_or(IdpError::BadRequest)?;
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        let mut result = match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_offline_auth_step(
@@ -680,8 +898,10 @@ impl IdProvider for IdProviderProxy {
                     .await
             }
         }?;
-        if let AuthResult::Success { token } = &result {
-            self.validate_token_provider(provider, token).await?;
+        if let AuthResult::Success { token } = &mut result {
+            request.localize(token)?;
+            self.validate_token_provider(request.provider, token)
+                .await?;
         }
         Ok(result)
     }
@@ -695,8 +915,13 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         online: bool,
     ) -> Result<bool, IdpError> {
-        let provider = self.find_provider(account_id).await?;
-        match provider {
+        let request = self
+            .prepare_request(&Id::Name(account_id.to_string()), None)
+            .await?;
+        let account_id = request.account_id()?;
+        let mut scoped = request.keystore(keystore);
+        let keystore = &mut scoped;
+        match request.provider {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_try_unseal(account_id, cred, keystore, tpm, machine_key, online)
@@ -768,6 +993,7 @@ impl IdProvider for IdProviderProxy {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::db::Cache;
 
     async fn test_proxy() -> IdProviderProxy {
         let settings = HimmelblauConfig::from_test_config(
@@ -808,6 +1034,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: None,
+            oidc_account_id: None,
             valid: true,
         }
     }
@@ -821,13 +1048,16 @@ mod tests {
         for account in ["alice", "alice@ALIAS.EXAMPLE"] {
             assert!(std::ptr::eq(a, proxy.find_provider(account).await.unwrap()));
         }
+        let mut cached = token("bob@b.example");
+        cached.tenant_id = proxy
+            .settings
+            .provider_for_domain("b.example")
+            .unwrap()
+            .oidc_tenant_id(&proxy.settings);
         assert!(std::ptr::eq(
             b,
             proxy
-                .find_provider_for_id(
-                    &Id::Name("wrong@a.example".to_string()),
-                    Some(&token("bob@b.example")),
-                )
+                .find_provider_for_id(&Id::Name("wrong@a.example".to_string()), Some(&cached),)
                 .await
                 .unwrap()
         ));
@@ -842,7 +1072,7 @@ mod tests {
             .find_provider_for_id(&Id::Gid(400001), None)
             .await
             .is_err());
-        for account in ["alice@unknown.example", "alice@a@b", ""] {
+        for account in ["alice@unknown.example", "alice@a@unknown", ""] {
             assert!(proxy.find_provider(account).await.is_err());
         }
         assert!(proxy
@@ -875,8 +1105,12 @@ mod tests {
             .lock()
             .await
             .set("a.example", "domain_aliases", "late.example");
-        // Ownership follows the live alias, not the identity's ID range.
-        let late = token("alice@late.example");
+        let mut late = token("alice@late.example");
+        late.tenant_id = proxy
+            .settings
+            .provider_for_domain("a.example")
+            .unwrap()
+            .oidc_tenant_id(&proxy.settings);
         assert_eq!(
             proxy
                 .settings
@@ -893,6 +1127,215 @@ mod tests {
             .provider_for_token(&token("alice@unknown.example"))
             .await
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn oidc_request_boundary_keeps_names_and_credentials_provider_scoped() {
+        let proxy = test_proxy().await;
+        let db = crate::db::Db::new("").unwrap();
+        let mut txn = db.write().await;
+        txn.migrate().unwrap();
+        for (label, gid) in [("a", 200001), ("b", 300001)] {
+            let request = proxy
+                .prepare_request(&Id::Name(format!("alice@example.org@{label}")), None)
+                .await
+                .unwrap();
+            assert_eq!(request.account_id().unwrap(), "alice@example.org");
+            let mut native = token("alice@example.org");
+            native.uuid = uuid::Uuid::new_v5(&request.tenant_id.unwrap(), b"subject");
+            native.tenant_id = request.tenant_id;
+            native.gidnumber = gid;
+            native.groups = vec![GroupToken {
+                name: native.name.clone(),
+                spn: native.spn.clone(),
+                uuid: native.uuid,
+                gidnumber: gid,
+            }];
+            let uuid = native.uuid;
+            request.localize(&mut native).unwrap();
+            assert_eq!(native.spn, format!("alice@example.org@{label}"));
+            assert_eq!(native.name, native.spn);
+            assert_eq!(native.groups[0].name, native.spn);
+            assert_eq!(native.oidc_account_id.as_deref(), Some("alice@example.org"));
+            assert_eq!(native.uuid, uuid);
+            assert_eq!(native.gidnumber, gid);
+            txn.update_group(&native.groups[0], 123).unwrap();
+            txn.update_account(&native, 123).unwrap();
+            request
+                .keystore(&mut txn)
+                .insert_tagged_hsm_key("alice@example.org/hello_totp", &label)
+                .unwrap();
+            let refreshed = proxy
+                .prepare_request(&Id::Name(native.spn.clone()), Some(&native))
+                .await
+                .unwrap();
+            assert_eq!(refreshed.account_id().unwrap(), "alice@example.org");
+            assert_eq!(refreshed.token.as_ref().unwrap().spn, "alice@example.org");
+            assert_eq!(
+                refreshed.token.as_ref().unwrap().groups[0].spn,
+                "alice@example.org"
+            );
+            assert!(refreshed.token.as_ref().unwrap().oidc_account_id.is_none());
+            let mut wrong_issuer = token("alice@example.org");
+            wrong_issuer.tenant_id = Some(uuid::Uuid::nil());
+            assert!(request.localize(&mut wrong_issuer).is_err());
+        }
+        assert_eq!(txn.get_accounts().unwrap().len(), 2);
+        assert!(txn
+            .get_tagged_hsm_key::<String>("alice@example.org/hello_totp")
+            .unwrap()
+            .is_none());
+        for label in ["a", "b"] {
+            let request = proxy
+                .prepare_request(&Id::Name(format!("alice@example.org@{label}")), None)
+                .await
+                .unwrap();
+            assert_eq!(
+                request
+                    .keystore(&mut txn)
+                    .get_tagged_hsm_key::<String>("alice@example.org/hello_totp")
+                    .unwrap()
+                    .as_deref(),
+                Some(label)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn oidc_migration_and_label_rename_preserve_identity_credentials_and_expiry() {
+        use tpm::provider::Tpm;
+
+        let proxy = test_proxy().await;
+        let request = proxy
+            .prepare_request(&Id::Name("alice@example.org@b".into()), None)
+            .await
+            .unwrap();
+        let db = crate::db::Db::new("").unwrap();
+        let mut txn = db.write().await;
+        txn.migrate().unwrap();
+        let mut native = token("alice@example.org");
+        native.uuid = uuid::Uuid::new_v4();
+        native.tenant_id = request.tenant_id;
+        txn.update_account(&native, 456).unwrap();
+        let mut hsm = tpm::provider::BoxedDynTpm::new(tpm::provider::SoftTpm::new());
+        let auth = tpm::AuthValue::ephemeral().unwrap();
+        let loadable = hsm.root_storage_key_create(&auth).unwrap();
+        let machine = hsm.root_storage_key_load(&auth, &loadable).unwrap();
+        let loadable_hmac = hsm.hmac_s256_create(&machine).unwrap();
+        let hmac = hsm.hmac_s256_load(&machine, &loadable_hmac).unwrap();
+        txn.update_account_password(native.uuid, "cached-password", &mut hsm, &hmac)
+            .unwrap();
+        txn.insert_tagged_hsm_key("alice@example.org/hello_refresh_token", &"sealed")
+            .unwrap();
+        migrate_oidc_accounts(&proxy.settings, &mut txn).unwrap();
+        let (migrated, expiry) = txn
+            .get_account(&Id::Name("alice@example.org@b".into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(expiry, 456);
+        assert_eq!(migrated.uuid, native.uuid);
+        assert_eq!(migrated.gidnumber, native.gidnumber);
+        assert!(txn
+            .get_tagged_hsm_key::<String>("alice@example.org/hello_refresh_token")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            request
+                .keystore(&mut txn)
+                .get_tagged_hsm_key::<String>("alice@example.org/hello_refresh_token")
+                .unwrap()
+                .as_deref(),
+            Some("sealed")
+        );
+        let renamed = HimmelblauConfig::from_test_config(
+            "[global]\napp_id=linux\n[tenant.renamed]\ntype=oidc\ndomain=b.example\n\
+             oidc_issuer_url=https://b.example\nidmap_range=300001-400000\n",
+        );
+        migrate_oidc_accounts(&renamed, &mut txn).unwrap();
+        migrate_oidc_accounts(&renamed, &mut txn).unwrap();
+        let (renamed_token, expiry) = txn
+            .get_account(&Id::Name("alice@example.org@renamed".into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(renamed_token.uuid, native.uuid);
+        assert_eq!(
+            renamed_token.oidc_account_id.as_deref(),
+            Some("alice@example.org")
+        );
+        assert_eq!(expiry, 456);
+        assert!(txn.get_account(&Id::Name(migrated.spn)).unwrap().is_none());
+        assert!(txn
+            .check_account_password(native.uuid, "cached-password", &mut hsm, &hmac)
+            .unwrap());
+        assert_eq!(
+            request
+                .keystore(&mut txn)
+                .get_tagged_hsm_key::<String>("alice@example.org/hello_refresh_token")
+                .unwrap()
+                .as_deref(),
+            Some("sealed")
+        );
+    }
+
+    #[tokio::test]
+    async fn credential_migration_and_cross_provider_account_collisions_fail_closed() {
+        let proxy = test_proxy().await;
+        let request = proxy
+            .prepare_request(&Id::Name("alice@b".into()), None)
+            .await
+            .unwrap();
+        let db = crate::db::Db::new("").unwrap();
+        let mut txn = db.write().await;
+        txn.migrate().unwrap();
+        let mut cached = token("alice");
+        cached.tenant_id = request.tenant_id;
+        txn.update_account(&cached, 123).unwrap();
+        txn.insert_tagged_hsm_key("alice/hello_decoupled", &"old")
+            .unwrap();
+        request
+            .keystore(&mut txn)
+            .insert_tagged_hsm_key("alice/hello_decoupled", &"existing")
+            .unwrap();
+        assert!(matches!(
+            migrate_oidc_accounts(&proxy.settings, &mut txn),
+            Err(CacheError::TooManyResults)
+        ));
+        assert!(txn
+            .get_account(&Id::Name("alice".into()))
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            txn.get_tagged_hsm_key::<String>("alice/hello_decoupled")
+                .unwrap()
+                .as_deref(),
+            Some("old")
+        );
+        let mut other = cached.clone();
+        other.uuid = uuid::Uuid::new_v4();
+        other.tenant_id = Some(uuid::Uuid::new_v4());
+        assert!(matches!(
+            txn.update_account(&other, 456),
+            Err(CacheError::TooManyResults)
+        ));
+        assert_eq!(txn.get_accounts().unwrap()[0].uuid, cached.uuid);
+    }
+
+    #[tokio::test]
+    async fn a_colliding_runtime_alias_cannot_select_or_discover_a_provider() {
+        let proxy = test_proxy().await;
+        let mut config = proxy.config.lock().await;
+        let a = config.provider_for_domain("a.example").unwrap();
+        assert!(!config.record_domain_alias(&a, "b"));
+        config.set("a.example", "domain_aliases", "b.example,b");
+        drop(config);
+        for account in ["alice@b", "alice@b.example"] {
+            assert!(
+                tokio::time::timeout(Duration::from_secs(1), proxy.find_provider(account))
+                    .await
+                    .unwrap()
+                    .is_err()
+            );
+        }
     }
 
     #[tokio::test]
