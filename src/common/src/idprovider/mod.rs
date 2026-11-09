@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::config::{split_username, HimmelblauConfig, ProviderConfig, ProviderKind};
-use crate::constants::ID_MAP_CACHE;
+use crate::constants::{ID_MAP_CACHE, NSS_CACHE};
 use crate::db::{CacheError, CacheTxn, KeyStoreTxn, ScopedKeyStore};
 use crate::idmap_cache::{StaticIdCache, UserMappingMigration};
 use crate::idprovider::himmelblau::HimmelblauProvider;
@@ -25,6 +25,7 @@ use crate::idprovider::interface::{
     IdProvider, IdpError, UserToken, UserTokenState,
 };
 use crate::idprovider::oidc_router::OidcRouter;
+use crate::nss_cache::{Mode, NssCache};
 use crate::unix_proto::PamAuthRequest;
 use ::himmelblau::auth::UserToken as UnixUserToken;
 use ::himmelblau::graph::Graph;
@@ -378,6 +379,54 @@ fn migrate_oidc_static_id_mappings(
     Ok(())
 }
 
+fn oidc_nss_cache_invalidations(
+    settings: &HimmelblauConfig,
+    accounts: &[UserToken],
+) -> Result<Vec<(Vec<String>, u32)>> {
+    let mut invalidations = Vec::new();
+    for original in accounts {
+        let Some(definition) = settings
+            .provider_for_token(original)
+            .filter(ProviderConfig::scopes_oidc_accounts)
+        else {
+            continue;
+        };
+        let mut localized = original.clone();
+        localize_oidc_token(
+            &definition,
+            definition.oidc_tenant_id(settings),
+            &mut localized,
+        )
+        .map_err(|error| anyhow!("Failed to prepare OIDC account migration: {error:?}"))?;
+        if original.oidc_account_id == localized.oidc_account_id && original.spn == localized.spn {
+            continue;
+        }
+        let mut names = vec![
+            original.name.clone(),
+            original.spn.clone(),
+            localized.name,
+            localized.spn,
+        ];
+        names.sort();
+        names.dedup();
+        invalidations.push((names, original.gidnumber));
+    }
+    Ok(invalidations)
+}
+
+fn invalidate_oidc_nss_cache(settings: &HimmelblauConfig, accounts: &[UserToken]) -> Result<()> {
+    let invalidations = oidc_nss_cache_invalidations(settings, accounts)?;
+    if invalidations.is_empty() || !Path::new(NSS_CACHE).exists() {
+        return Ok(());
+    }
+
+    let cache = NssCache::new(NSS_CACHE, &Mode::ReadWrite)?;
+    for (names, uid) in invalidations {
+        cache.invalidate_user(&names, uid)?;
+    }
+    Ok(())
+}
+
 impl IdProviderProxy {
     pub fn prepare_provider_caches(
         settings: &HimmelblauConfig,
@@ -393,7 +442,8 @@ impl IdProviderProxy {
         if definitions.is_empty() {
             return Err(anyhow!("No provider was configured"));
         }
-        migrate_oidc_static_id_mappings(settings, accounts)
+        migrate_oidc_static_id_mappings(settings, accounts)?;
+        invalidate_oidc_nss_cache(settings, accounts)
     }
 
     pub async fn new<D: KeyStoreTxn + CacheTxn + Send>(
@@ -1263,6 +1313,31 @@ mod tests {
         assert!(
             oidc_static_id_migrations(&entra_settings, &[account_b.clone(), entra_account])
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn oidc_account_rename_invalidates_nss_rows_by_uid_and_name() {
+        let settings = HimmelblauConfig::from_test_config(
+            "[global]\napp_id=linux\n\
+             [tenant.a]\ndefault=true\nidmap_range=200000-300000\noidc_issuer_url=https://a.example\n\
+             [tenant.b]\nidmap_range=300001-400000\noidc_issuer_url=https://b.example\n",
+        );
+        let provider = settings.provider_for_account("alice@b").unwrap();
+        let tenant_id = provider.oidc_tenant_id(&settings).unwrap();
+        let mut account = token("alice@example.org");
+        account.tenant_id = Some(tenant_id);
+        account.oidc_account_id = Some("alice@example.org".to_string());
+
+        assert_eq!(
+            oidc_nss_cache_invalidations(&settings, &[account]).unwrap(),
+            vec![(
+                vec![
+                    "alice@example.org".to_string(),
+                    "alice@example.org@b".to_string()
+                ],
+                300001,
+            )]
         );
     }
 

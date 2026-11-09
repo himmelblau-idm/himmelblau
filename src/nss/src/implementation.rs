@@ -84,7 +84,9 @@ macro_rules! fetch_cached_user {
 macro_rules! insert_cached_user {
     ($cache:expr, $nu:ident) => {{
         if let Some(ref cache) = $cache {
-            let _ = cache.insert_user(&$nu);
+            if let Err(err) = cache.insert_user(&$nu) {
+                tracing::error!(?err, "Failed to update NSS fallback cache");
+            }
         }
     }};
 }
