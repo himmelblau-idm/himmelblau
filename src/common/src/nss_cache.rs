@@ -88,20 +88,24 @@ impl NssCache {
     pub fn insert_user(&self, user: &NssUser) -> Result<()> {
         if let Some(conn) = &self.conn {
             if self.writable {
+                let tx = conn.unchecked_transaction()?;
                 if !user.cacheable {
-                    // A lookup-only result must also invalidate older fallback rows.
-                    conn.execute(
+                    tx.execute(
                         "DELETE FROM nss_passwd WHERE name = ?1 OR uid = ?2",
                         params![user.name, user.uid],
                     )?;
-                    return Ok(());
+                    return tx.commit();
                 }
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs() as i64;
 
-                let _ = conn.execute(
+                tx.execute(
+                    "DELETE FROM nss_passwd WHERE name = ?1 OR uid = ?2",
+                    params![user.name, user.uid],
+                )?;
+                tx.execute(
                     "INSERT OR REPLACE INTO nss_passwd (name, uid, gid, gecos, homedir, shell, last_updated)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                     params![
@@ -113,10 +117,27 @@ impl NssCache {
                         user.shell,
                         now
                     ],
-                );
+                )?;
+                tx.commit()?;
             }
         }
         Ok(())
+    }
+
+    pub fn invalidate_user(&self, names: &[String], uid: u32) -> Result<()> {
+        let Some(conn) = &self.conn else {
+            return Ok(());
+        };
+        if !self.writable {
+            return Ok(());
+        }
+
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM nss_passwd WHERE uid = ?1", [uid])?;
+        for name in names {
+            tx.execute("DELETE FROM nss_passwd WHERE name = ?1", [name])?;
+        }
+        tx.commit()
     }
 
     pub fn get_user(&self, id: &Id) -> Option<NssUser> {
@@ -301,5 +322,92 @@ mod tests {
             assert_eq!(users.len(), 1);
             assert_eq!(users[0].name, unrelated.name);
         }
+    }
+
+    #[test]
+    fn cacheable_rename_replaces_fallback_rows_with_the_same_uid() {
+        let cache = test_cache();
+        let mut old = test_user();
+        old.cacheable = true;
+        cache.insert_user(&old).unwrap();
+        let mut unrelated = test_user();
+        unrelated.name = "unrelated@example.com".to_string();
+        unrelated.uid = 3000;
+        unrelated.gid = 3000;
+        unrelated.cacheable = true;
+        cache.insert_user(&unrelated).unwrap();
+
+        let mut renamed = test_user();
+        renamed.name = "user@example.com@work".to_string();
+        renamed.uid = old.uid;
+        renamed.gid = old.gid;
+        renamed.homedir = "/home/user-work".to_string();
+        renamed.cacheable = true;
+        cache.insert_user(&renamed).unwrap();
+
+        assert!(cache.get_user(&Id::Name(old.name)).is_none());
+        assert_eq!(
+            cache.get_user(&Id::Gid(renamed.uid)).unwrap().name,
+            renamed.name
+        );
+        assert_eq!(cache.get_users().len(), 2);
+    }
+
+    #[test]
+    fn invalidation_removes_old_and_new_names_for_uid() {
+        let cache = test_cache();
+        let mut old = test_user();
+        old.cacheable = true;
+        cache.insert_user(&old).unwrap();
+        let mut unrelated = test_user();
+        unrelated.name = "unrelated@example.com".to_string();
+        unrelated.uid = 3000;
+        unrelated.gid = 3000;
+        unrelated.cacheable = true;
+        cache.insert_user(&unrelated).unwrap();
+
+        cache
+            .invalidate_user(
+                &[old.name.clone(), "user@example.com@work".to_string()],
+                old.uid,
+            )
+            .unwrap();
+
+        assert!(cache.get_user(&Id::Name(old.name)).is_none());
+        assert!(cache
+            .get_user(&Id::Name("user@example.com@work".to_string()))
+            .is_none());
+        assert!(cache.get_user(&Id::Gid(old.uid)).is_none());
+        assert!(cache.get_user(&Id::Name(unrelated.name.clone())).is_some());
+        assert_eq!(cache.get_users().len(), 1);
+    }
+
+    #[test]
+    fn failed_insert_rolls_back_old_name_and_uid_rows() {
+        let cache = test_cache();
+        let mut old = test_user();
+        old.cacheable = true;
+        cache.insert_user(&old).unwrap();
+        cache
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_nss_user BEFORE INSERT ON nss_passwd
+                 BEGIN SELECT RAISE(ABORT, 'rejected'); END;",
+            )
+            .unwrap();
+
+        let mut renamed = test_user();
+        renamed.name = "user@example.com@work".to_string();
+        renamed.uid = old.uid;
+        renamed.gid = old.gid;
+        renamed.cacheable = true;
+        assert!(cache.insert_user(&renamed).is_err());
+        assert_eq!(
+            cache.get_user(&Id::Name(old.name.clone())).unwrap().uid,
+            old.uid
+        );
+        assert_eq!(cache.get_user(&Id::Gid(old.uid)).unwrap().name, old.name);
     }
 }
