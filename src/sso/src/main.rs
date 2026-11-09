@@ -265,50 +265,47 @@ async fn run_as_native_messaging() -> Result<(), Box<dyn Error>> {
 
     loop {
         let received_message = NativeMessaging::get_message()?;
-        match received_message["command"].as_str() {
-            Some("acquirePrtSsoCookie") => {
-                let account = &received_message["account"];
-                let sso_url = received_message.get("ssoUrl").and_then(|v| v.as_str());
-                let cookie = ssomib
-                    .acquire_prt_sso_cookie(account, sso_url, None)
-                    .await?;
-                NativeMessaging::send_message(&NativeMessaging::encode_message(&json!({
-                    "command": received_message["command"],
-                    "message": cookie,
-                }))?)?;
+        // A failed request is answered with an error message, like the
+        // upstream host does, so the extension keeps its connection and can
+        // retry. Exiting here would only surface as a lost connection.
+        let message = match handle_command(&ssomib, &received_message).await {
+            Ok(message) => message,
+            Err(e) => {
+                log!("{:?} failed: {}", received_message["command"], e);
+                json!({ "error": format!("Failure during request processing: {}", e) })
             }
-            Some("acquireTokenSilently") => {
-                let account = &received_message["account"];
-                let scopes = received_message
-                    .get("scopes")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-                    .unwrap_or(GRAPH_SCOPES.to_vec());
-                let token = ssomib.acquire_token_silently(account, Some(scopes)).await?;
-                NativeMessaging::send_message(&NativeMessaging::encode_message(&json!({
-                    "command": received_message["command"],
-                    "message": token,
-                }))?)?;
-            }
-            Some("getAccounts") => {
-                NativeMessaging::send_message(&NativeMessaging::encode_message(&json!({
-                    "command": received_message["command"],
-                    "message": ssomib.get_accounts().await?,
-                }))?)?;
-            }
-            Some("getVersion") => {
-                NativeMessaging::send_message(&NativeMessaging::encode_message(&json!({
-                    "command": received_message["command"],
-                    "message": ssomib.get_broker_version().await?,
-                }))?)?;
-            }
-            _ => {
-                log!("Invalid request '{:?}'", received_message["command"]);
-                NativeMessaging::send_message(&NativeMessaging::encode_message(&json!({
-                    "command": received_message["command"],
-                    "message": { "error": "Invalid request" },
-                }))?)?;
-            }
+        };
+        NativeMessaging::send_message(&NativeMessaging::encode_message(&json!({
+            "command": received_message["command"],
+            "message": message,
+        }))?)?;
+    }
+}
+
+async fn handle_command(
+    ssomib: &SsoMib,
+    received_message: &Value,
+) -> Result<Value, Box<dyn Error>> {
+    match received_message["command"].as_str() {
+        Some("acquirePrtSsoCookie") => {
+            let account = &received_message["account"];
+            let sso_url = received_message.get("ssoUrl").and_then(|v| v.as_str());
+            ssomib.acquire_prt_sso_cookie(account, sso_url, None).await
+        }
+        Some("acquireTokenSilently") => {
+            let account = &received_message["account"];
+            let scopes = received_message
+                .get("scopes")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                .unwrap_or(GRAPH_SCOPES.to_vec());
+            ssomib.acquire_token_silently(account, Some(scopes)).await
+        }
+        Some("getAccounts") => ssomib.get_accounts().await,
+        Some("getVersion") => ssomib.get_broker_version().await,
+        _ => {
+            log!("Invalid request '{:?}'", received_message["command"]);
+            Ok(json!({ "error": "Invalid request" }))
         }
     }
 }
