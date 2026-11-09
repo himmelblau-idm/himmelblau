@@ -3566,6 +3566,7 @@ dependencies = [
  "himmelblau_unix_common",
  "libc",
  "libnss",
+ "tracing",
  "uuid",
 ]
 

@@ -11633,6 +11633,10 @@ rec {
             packageId = "libnss";
           }
           {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
             name = "uuid";
             packageId = "uuid";
             features = [ "v4" "v5" ];
