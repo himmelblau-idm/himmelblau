@@ -10,6 +10,7 @@
 
 use std::convert::TryFrom;
 use std::fmt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::time::Duration;
 
@@ -162,6 +163,20 @@ pub enum DbError {
     Tpm,
 }
 
+fn open_database_file_for_hardening(path: &str) -> std::io::Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "database path is not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
 impl Db {
     fn from_connection(conn: Connection, read_conn: Option<Connection>) -> Self {
         // We only build a single thread. If we need more than one, we'll
@@ -178,12 +193,52 @@ impl Db {
     }
 
     pub fn new(path: &str) -> Result<Self, DbError> {
+        // Resolve only the trusted parent; reject symlinks at the database leaf.
+        let resolved_path = if !path.is_empty() && path != ":memory:" && !path.starts_with("file:")
+        {
+            let path = std::path::Path::new(path);
+            let parent = path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let parent = parent.canonicalize().map_err(|e| {
+                error!(err = ?e, "unable to resolve database parent directory");
+                DbError::Sqlite
+            })?;
+            parent.join(path.file_name().ok_or(DbError::Sqlite)?)
+        } else {
+            std::path::PathBuf::from(path)
+        };
         let before = unsafe { umask(0o0077) };
-        let conn = Connection::open(path).map_err(|e| {
+        let opened = Connection::open_with_flags(
+            resolved_path,
+            OpenFlags::default() | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        );
+        let _ = unsafe { umask(before) };
+        let conn = opened.map_err(|e| {
             error!(err = ?e, "rusqulite error");
             DbError::Sqlite
         })?;
-        let _ = unsafe { umask(before) };
+        if let Some(path) = conn.path().filter(|path| !path.is_empty()) {
+            for suffix in ["", "-wal", "-shm", "-journal"] {
+                let file_path = format!("{path}{suffix}");
+                let file = match open_database_file_for_hardening(&file_path) {
+                    Ok(file) => file,
+                    Err(e) if !suffix.is_empty() && e.kind() == std::io::ErrorKind::NotFound => {
+                        continue
+                    }
+                    Err(e) => {
+                        error!(err = ?e, "unable to open database file for permission hardening");
+                        return Err(DbError::Sqlite);
+                    }
+                };
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| {
+                        error!(err = ?e, "unable to restrict database permissions");
+                        DbError::Sqlite
+                    })?;
+            }
+        }
         // Without spilling, the writer locks readers out only while it commits.
         if let Err(e) = conn.pragma_update(None, "cache_spill", false) {
             warn!(err = ?e, "Unable to disable the cache spill");
@@ -1258,6 +1313,39 @@ impl Drop for TestDbFile {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn database_permissions_and_symlinked_parent_are_hardened() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root =
+            std::env::temp_dir().join(format!("himmelblau-db-review-{}", uuid::Uuid::new_v4()));
+        let private = root.join("private");
+        std::fs::create_dir_all(&private).unwrap();
+        symlink(&private, root.join("cache")).unwrap();
+        let path = root.join("cache/cache.db");
+        drop(super::Db::new(path.to_str().unwrap()).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        drop(super::Db::new(path.to_str().unwrap()).unwrap());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let target = private.join("unrelated");
+        std::fs::write(&target, "unrelated").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let link = root.join("cache/link.db");
+        symlink(&target, &link).unwrap();
+        assert!(super::Db::new(link.to_str().unwrap()).is_err());
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn, TestDbFile, DBV_MAIN};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};

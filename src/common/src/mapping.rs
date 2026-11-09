@@ -86,11 +86,7 @@ impl MappedNameCache {
                 conn.execute(
                     "INSERT OR REPLACE INTO mapping (upn, mapped_name) VALUES (?1, ?2)",
                     params![upn, mapped_name],
-                )
-                .map_err(|e| {
-                    error!("Failed to insert name mapping for {}: {}", upn, e);
-                    e
-                })?;
+                )?;
             }
         }
         Ok(())
@@ -125,5 +121,36 @@ impl MappedNameCache {
         } else {
             upn.to_string()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_failure_is_propagated_to_the_caller() {
+        // No mapping table: insertion must fail rather than silently succeed.
+        let cache = MappedNameCache {
+            conn: Some(Connection::open_in_memory().unwrap()),
+            writable: true,
+        };
+        assert!(cache.insert_mapping("alice@example.com", "alice").is_err());
+    }
+
+    #[test]
+    fn insert_success_retains_the_mapping() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE mapping (upn TEXT PRIMARY KEY, mapped_name TEXT NOT NULL)",
+            [],
+        )
+        .unwrap();
+        let cache = MappedNameCache {
+            conn: Some(conn),
+            writable: true,
+        };
+        cache.insert_mapping("alice@example.com", "alice").unwrap();
+        assert_eq!(cache.get_mapped_name("alice@example.com"), "alice");
     }
 }

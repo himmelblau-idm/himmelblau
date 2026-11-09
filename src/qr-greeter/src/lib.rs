@@ -44,4 +44,9 @@ mod tests {
     fn enrollment_qr_js_test() {
         run_js_test("enrollmentqr.test.js");
     }
+
+    #[test]
+    fn user_code_parser_js_test() {
+        run_js_test("usercode.test.cjs");
+    }
 }
