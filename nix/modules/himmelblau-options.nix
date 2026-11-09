@@ -1209,7 +1209,7 @@ in
             type = types.nullOr (types.str);
             default = null;
             description = ''
-              Primary domain and persistent storage key for this provider.
+              Primary Microsoft Entra ID domain and persistent storage key. Set domain for an Entra provider, or oidc_issuer_url for an OIDC provider.
             '';
             example = "example.com";
           };
@@ -1484,14 +1484,6 @@ in
               will be used.
             '';
             example = [ "f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12" "5ba4ef1d-e454-4f43-ba7c-6fe6f1601915" ];
-          };
-          type = mkOption {
-            type = types.nullOr (types.enum [ "entra" "oidc" ]);
-            default = null;
-            description = ''
-              Provider protocol: entra or oidc. OIDC requires oidc_issuer_url and app_id.
-            '';
-            example = "entra";
           };
         };
       });

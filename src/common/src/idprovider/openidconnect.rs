@@ -1594,7 +1594,6 @@ mod tests {
     }
 }
 
-const HIMMELBLAU_OIDC_NAMESPACE: uuid::Uuid = uuid::uuid!("e669513b-1345-4853-96a7-596243184319");
 const OFFLINE_NEXT_CHECK: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2441,7 +2440,7 @@ impl OidcProvider {
                 error!("Missing OIDC issuer URL in config");
                 IdpError::BadRequest
             })?;
-        Ok(Uuid::new_v5(&HIMMELBLAU_OIDC_NAMESPACE, issuer.as_bytes()))
+        Ok(crate::config::oidc_tenant_id(&issuer))
     }
 
     #[instrument(level = "debug", skip(self))]

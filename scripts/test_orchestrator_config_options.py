@@ -78,6 +78,7 @@ class OrchestratorConfigTests(unittest.TestCase):
             nix = (output / "nix").read_text(encoding="utf-8")
             self.assertIn("type = types.attrsOf (types.submodule {", nix)
             tenant_options = nix.split("    tenant = mkOption {", 1)[1]
+            self.assertNotIn("type = mkOption {", tenant_options)
             self.assertTrue(all(line == line.rstrip() for line in tenant_options.splitlines()))
             home_prefix = tenant_options.split("home_prefix = mkOption {", 1)[1].split("};", 1)[0]
             self.assertIn("default = null;", home_prefix)
@@ -97,6 +98,8 @@ class OrchestratorConfigTests(unittest.TestCase):
         self.assertEqual(settings["tenant.work"]["default"], "true")
         self.assertEqual(settings["tenant.work"]["domain_aliases"], "alias.example,other.example")
         self.assertEqual(settings["tenant.partners"]["home_prefix"], "/home/partners/")
+        self.assertNotIn("type", settings["tenant.partners"])
+        self.assertNotIn("domain", settings["tenant.partners"])
         self.assertEqual(settings["tenant.partners"]["oidc_account_id_strip_at_suffix"], "false")
 
     @unittest.skipUnless(shutil.which("rustc"), "rustc is not installed")

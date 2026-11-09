@@ -471,7 +471,14 @@ impl IdProvider for IdProviderProxy {
                 Some(provider) => provider.probe(SystemTime::now()).await,
                 None => false,
             };
-            (p.domain.clone(), online)
+            (
+                if p.kind == ProviderKind::Oidc {
+                    p.label.clone()
+                } else {
+                    p.domain.clone()
+                },
+                online,
+            )
         }))
         .await
     }
@@ -998,17 +1005,20 @@ mod tests {
     async fn test_proxy() -> IdProviderProxy {
         let settings = HimmelblauConfig::from_test_config(
             "[global]\napp_id=linux\n\
-             [tenant.a]\ntype=oidc\ndomain=a.example\ndomain_aliases=alias.example\ndefault=true\nidmap_range=200000-300000\noidc_issuer_url=https://a.example\n\
-             [tenant.b]\ntype=oidc\ndomain=b.example\nidmap_range=300001-400000\noidc_issuer_url=https://b.example\n"
+             [tenant.a]\ndefault=true\nidmap_range=200000-300000\noidc_issuer_url=https://a.example\n\
+             [tenant.b]\nidmap_range=300001-400000\noidc_issuer_url=https://b.example\n"
         );
         assert!(settings.validate().is_ok());
         let config = Arc::new(Mutex::new(settings.clone()));
         let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
         let mut providers = HashMap::new();
-        for (domain, state) in [
-            ("a.example", CacheState::Offline),
-            ("b.example", CacheState::Online),
-        ] {
+        for definition in settings.parse_providers().unwrap() {
+            let domain = &definition.domain;
+            let state = if definition.label == "a" {
+                CacheState::Offline
+            } else {
+                CacheState::Online
+            };
             providers.insert(
                 domain.to_string(),
                 Arc::new(Providers::Oidc(
@@ -1040,24 +1050,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn routes_names_aliases_cached_tokens_and_numeric_ids() {
+    async fn routes_labels_cached_tokens_and_numeric_ids() {
         let proxy = test_proxy().await;
-        let a = proxy.find_provider("alice@a.example").await.unwrap();
-        let b = proxy.find_provider("bob@b.example").await.unwrap();
+        let a = proxy.find_provider("alice@a").await.unwrap();
+        let b = proxy.find_provider("bob@b").await.unwrap();
         assert!(!std::ptr::eq(a, b));
-        for account in ["alice", "alice@ALIAS.EXAMPLE"] {
+        for account in ["alice", "alice@A"] {
             assert!(std::ptr::eq(a, proxy.find_provider(account).await.unwrap()));
         }
         let mut cached = token("bob@b.example");
         cached.tenant_id = proxy
             .settings
-            .provider_for_domain("b.example")
+            .provider_for_account("bob@b")
             .unwrap()
             .oidc_tenant_id(&proxy.settings);
         assert!(std::ptr::eq(
             b,
             proxy
-                .find_provider_for_id(&Id::Name("wrong@a.example".to_string()), Some(&cached),)
+                .find_provider_for_id(&Id::Name("wrong@a".to_string()), Some(&cached),)
                 .await
                 .unwrap()
         ));
@@ -1072,43 +1082,19 @@ mod tests {
             .find_provider_for_id(&Id::Gid(400001), None)
             .await
             .is_err());
-        for account in ["alice@unknown.example", "alice@a@unknown", ""] {
+        for account in [
+            "alice@unknown.example",
+            "alice@a@unknown",
+            "alice@b.example",
+            "",
+        ] {
             assert!(proxy.find_provider(account).await.is_err());
         }
-        assert!(proxy
-            .validate_token_provider(a, &token("bob@b.example"))
-            .await
-            .is_err());
-        proxy
-            .config
-            .lock()
-            .await
-            .set("b.example", "domain_aliases", "discovered.example");
-        assert!(proxy
-            .settings
-            .provider_for_account("bob@discovered.example")
-            .is_none());
-        assert_eq!(
-            proxy
-                .provider_for_account("bob@discovered.example")
-                .await
-                .unwrap()
-                .domain,
-            "b.example"
-        );
-        assert!(std::ptr::eq(
-            b,
-            proxy.find_provider("bob@discovered.example").await.unwrap()
-        ));
-        proxy
-            .config
-            .lock()
-            .await
-            .set("a.example", "domain_aliases", "late.example");
+        assert!(proxy.validate_token_provider(a, &cached).await.is_err());
         let mut late = token("alice@late.example");
         late.tenant_id = proxy
             .settings
-            .provider_for_domain("a.example")
+            .provider_for_account("alice@a")
             .unwrap()
             .oidc_tenant_id(&proxy.settings);
         assert_eq!(
@@ -1116,13 +1102,10 @@ mod tests {
                 .settings
                 .provider_for_gid(late.gidnumber)
                 .unwrap()
-                .domain,
-            "b.example"
+                .label,
+            "b"
         );
-        assert_eq!(
-            proxy.provider_for_token(&late).await.unwrap().domain,
-            "a.example"
-        );
+        assert_eq!(proxy.provider_for_token(&late).await.unwrap().label, "a");
         assert!(proxy
             .provider_for_token(&token("alice@unknown.example"))
             .await
@@ -1248,7 +1231,7 @@ mod tests {
             Some("sealed")
         );
         let renamed = HimmelblauConfig::from_test_config(
-            "[global]\napp_id=linux\n[tenant.renamed]\ntype=oidc\ndomain=b.example\n\
+            "[global]\napp_id=linux\n[tenant.renamed]\n\
              oidc_issuer_url=https://b.example\nidmap_range=300001-400000\n",
         );
         migrate_oidc_accounts(&renamed, &mut txn).unwrap();
@@ -1322,7 +1305,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_colliding_runtime_alias_cannot_select_or_discover_a_provider() {
-        let proxy = test_proxy().await;
+        let proxy = entra_proxy().await;
         let mut config = proxy.config.lock().await;
         let a = config.provider_for_domain("a.example").unwrap();
         assert!(!config.record_domain_alias(&a, "b"));
@@ -1346,7 +1329,7 @@ mod tests {
             CacheState::Offline
         ));
         assert!(matches!(
-            proxy.get_cachestate(Some("bob@b.example")).await,
+            proxy.get_cachestate(Some("bob@b")).await,
             CacheState::Online
         ));
         assert!(matches!(
@@ -1361,34 +1344,72 @@ mod tests {
         );
         assert!(
             proxy
-                .check_online_for_account("bob@b.example", &mut tpm, SystemTime::now())
+                .check_online_for_account("bob@b", &mut tpm, SystemTime::now())
                 .await
         );
-        proxy.providers.remove("a.example");
+        proxy
+            .providers
+            .remove(&proxy.settings.default_provider().unwrap().domain);
         assert!(proxy.find_provider("alice").await.is_err());
-        assert!(proxy.find_provider("bob@b.example").await.is_ok());
+        assert!(proxy.find_provider("bob@b").await.is_ok());
+    }
+
+    async fn entra_proxy() -> IdProviderProxy {
+        let settings = HimmelblauConfig::from_test_config(
+            "[tenant.a]\ndomain=a.example\ndefault=true\nidmap_range=200000-300000\n\
+                 [tenant.b]\ndomain=b.example\nidmap_range=300001-400000\n",
+        );
+        let config = Arc::new(Mutex::new(settings.clone()));
+        let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
+        let mut providers = HashMap::new();
+        for definition in settings.parse_providers().unwrap() {
+            let provider = Providers::new(&config, &definition, &idmap).await.unwrap();
+            providers.insert(definition.domain, Arc::new(provider));
+        }
+        IdProviderProxy {
+            settings,
+            config,
+            providers,
+        }
+    }
+
+    #[tokio::test]
+    async fn cached_entra_token_ownership_uses_live_discovered_aliases() {
+        let proxy = entra_proxy().await;
+        proxy
+            .config
+            .lock()
+            .await
+            .set("a.example", "domain_aliases", "discovered.example");
+        assert!(proxy
+            .settings
+            .provider_for_account("alice@discovered.example")
+            .is_none());
+        let cached = token("alice@discovered.example");
+        assert_eq!(
+            proxy
+                .settings
+                .provider_for_gid(cached.gidnumber)
+                .unwrap()
+                .label,
+            "b"
+        );
+        assert_eq!(proxy.provider_for_token(&cached).await.unwrap().label, "a");
+        let provider = proxy
+            .find_provider_for_id(&Id::Gid(cached.gidnumber), Some(&cached))
+            .await
+            .unwrap();
+        assert!(std::ptr::eq(
+            provider,
+            proxy
+                .find_provider("alice@discovered.example")
+                .await
+                .unwrap()
+        ));
     }
 
     #[tokio::test]
     async fn prt_roundtrip_keeps_all_configured_entra_domains() {
-        async fn entra_proxy() -> IdProviderProxy {
-            let settings = HimmelblauConfig::from_test_config(
-                "[tenant.a]\ndomain=a.example\ndefault=true\nidmap_range=200000-300000\n\
-                 [tenant.b]\ndomain=b.example\nidmap_range=300001-400000\n",
-            );
-            let config = Arc::new(Mutex::new(settings.clone()));
-            let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
-            let mut providers = HashMap::new();
-            for definition in settings.parse_providers().unwrap() {
-                let provider = Providers::new(&config, &definition, &idmap).await.unwrap();
-                providers.insert(definition.domain, Arc::new(provider));
-            }
-            IdProviderProxy {
-                settings,
-                config,
-                providers,
-            }
-        }
         let proxy = entra_proxy().await;
         let mut expected = HashMap::new();
         for (domain, byte) in [("a.example", 1), ("b.example", 2)] {

@@ -288,7 +288,7 @@ async fn helper_requests_refresh_okta_tokens_with_filtered_scopes_and_rotation()
             .set("global", "oidc_issuer_url", &issuer);
         provider.issuer = issuer.clone();
         provider.origin = origin;
-        provider.tenant_id = Uuid::new_v5(&OIDC_NAMESPACE, issuer.as_bytes());
+        provider.tenant_id = crate::config::oidc_tenant_id(&issuer);
         let mut options = ClientConfig::new(&issuer, &provider.client_id, &provider.redirect_uri);
         options.allow_loopback_http = true;
         options.scopes = vec![

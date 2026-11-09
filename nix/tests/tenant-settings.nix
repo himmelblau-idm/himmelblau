@@ -13,8 +13,6 @@ let
             idmap_range = "200000-999999";
           };
           tenant.partners = {
-            type = "oidc";
-            domain = "partners.example";
             oidc_issuer_url = "https://id.partners.example";
             app_id = "linux";
             idmap_range = "1000000-1999999";

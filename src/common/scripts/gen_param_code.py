@@ -421,11 +421,11 @@ def generate_example_tests(params: List[Parameter], sections: Dict[str, Section]
             ])
             if example.get('providers'):
                 providers = ', '.join(rust_string(p) for p in example.get('providers').split(','))
-                lines.append(f'        assert_eq!(cfg.get_configured_domains(), vec![{providers}]);')
+                lines.append(f'        assert_eq!(cfg.parse_providers().unwrap().into_iter().map(|p| if p.kind == ProviderKind::Oidc {{ p.label }} else {{ p.domain }}).collect::<Vec<_>>(), vec![{providers}]);')
             if example.get('default'):
                 lines.append(f'        assert_eq!(cfg.default_provider().unwrap().domain, {rust_string(example.get("default"))});')
             if example.get('oidc'):
-                lines.append(f'        assert_eq!(cfg.provider_for_domain({rust_string(example.get("oidc"))}).unwrap().kind, ProviderKind::Oidc);')
+                lines.append(f'        assert_eq!(cfg.provider_for_account({rust_string("alice@" + example.get("oidc"))}).unwrap().kind, ProviderKind::Oidc);')
             lines.append('    }')
     lines.append('}')
     return lines

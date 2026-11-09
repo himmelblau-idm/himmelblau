@@ -51,7 +51,7 @@ use himmelblau::auth::IpVersion;
 use himmelblau::error::MsalError;
 use idmap::{DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE};
 use reqwest::Url;
-use serde::de::{self, IntoDeserializer};
+use serde::de;
 use serde::{Deserialize, Deserializer};
 use std::env;
 use std::time::Duration;
@@ -113,10 +113,8 @@ pub const TENANT_SECTION_PREFIX: &str = "tenant.";
 /// Global keys that define a provider in configs without tenant stanzas.
 const LEGACY_PROVIDER_KEYS: [&str; 3] = ["domain", "domains", "oidc_issuer_url"];
 
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ProviderKind {
-    #[default]
     Entra,
     Oidc,
 }
@@ -125,9 +123,10 @@ pub enum ProviderKind {
 /// domain-specific options read through the getters.
 #[derive(Deserialize)]
 struct TenantStanza {
-    #[serde(rename = "type", default, deserialize_with = "de_lowercase")]
-    kind: ProviderKind,
-    domain: String,
+    #[serde(default, deserialize_with = "de_optional_string")]
+    domain: Option<String>,
+    #[serde(default, deserialize_with = "de_optional_string")]
+    oidc_issuer_url: Option<String>,
     #[serde(default, deserialize_with = "de_bool")]
     default: bool,
 }
@@ -140,7 +139,7 @@ pub struct ProviderConfig {
     /// The section holding the provider's admin settings.
     pub section: String,
     pub kind: ProviderKind,
-    /// Primary domain. Keys the server cache, keystore and idmap state.
+    /// Settings/storage key: an Entra domain or an issuer-derived OIDC key.
     pub domain: String,
     pub default: bool,
 }
@@ -151,10 +150,7 @@ impl ProviderConfig {
             return None;
         }
         let issuer = config.get_oidc_issuer_url(Some(&self.domain))?;
-        Some(uuid::Uuid::new_v5(
-            &uuid::uuid!("e669513b-1345-4853-96a7-596243184319"),
-            issuer.as_bytes(),
-        ))
+        Some(oidc_tenant_id(&issuer))
     }
 
     pub(crate) fn scopes_oidc_accounts(&self) -> bool {
@@ -357,13 +353,10 @@ fn de_bool<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error>
         .ok_or_else(|| de::Error::invalid_value(de::Unexpected::Str(&val), &"a boolean"))
 }
 
-fn de_lowercase<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    let val = String::deserialize(deserializer)?;
-    T::deserialize(val.to_lowercase().into_deserializer())
+fn de_optional_string<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
 }
 
 fn parse_range(val: &str) -> Option<(u32, u32)> {
@@ -450,6 +443,13 @@ fn parse_issuer_url(val: &str) -> Result<Option<String>, String> {
     } else {
         Ok(Some(s.to_string()))
     }
+}
+
+pub(crate) fn oidc_tenant_id(issuer: &str) -> uuid::Uuid {
+    uuid::Uuid::new_v5(
+        &uuid::uuid!("e669513b-1345-4853-96a7-596243184319"),
+        issuer.as_bytes(),
+    )
 }
 
 fn path_exists(path: &Path) -> Result<bool, String> {
@@ -1022,6 +1022,18 @@ impl HimmelblauConfig {
                 ));
                 continue;
             }
+            if self
+                .config
+                .get_map_ref()
+                .get(&section)
+                .is_some_and(|values| values.contains_key("type"))
+            {
+                errors.push(format!(
+                    "[{}] type is inferred from domain or oidc_issuer_url; remove type",
+                    section
+                ));
+                continue;
+            }
             let stanza = match self.tenant_stanza(&section) {
                 Ok(stanza) => stanza,
                 Err(e) => {
@@ -1029,22 +1041,53 @@ impl HimmelblauConfig {
                     continue;
                 }
             };
-            let domain = stanza.domain.trim().to_string();
-            if domain.is_empty() {
-                errors.push(format!("[{}] requires a domain", section));
-                continue;
-            }
-            if domain.contains(',') {
-                errors.push(format!(
-                    "[{}] domain must be a single domain, list others in domain_aliases",
-                    section
-                ));
-                continue;
-            }
+            let (kind, domain) = match (stanza.domain, stanza.oidc_issuer_url) {
+                (Some(domain), None) => {
+                    let domain = domain.trim().to_string();
+                    if domain.is_empty() {
+                        errors.push(format!("[{}] requires a domain", section));
+                        continue;
+                    }
+                    if domain.contains(',') {
+                        errors.push(format!(
+                            "[{}] domain must be a single domain, list others in domain_aliases",
+                            section
+                        ));
+                        continue;
+                    }
+                    if domain.contains(['@', '/', ':']) || domain.chars().any(char::is_whitespace) {
+                        errors.push(format!("[{}] requires a domain name", section));
+                        continue;
+                    }
+                    (ProviderKind::Entra, domain)
+                }
+                (None, Some(url)) => match parse_issuer_url(&url) {
+                    Ok(Some(issuer)) => (
+                        ProviderKind::Oidc,
+                        format!("oidc:{}", oidc_tenant_id(&issuer)),
+                    ),
+                    Ok(None) => {
+                        errors.push(format!("[{}] OIDC issuer URL is empty", section));
+                        continue;
+                    }
+                    Err(error) => {
+                        errors.push(format!("[{}] {}", section, error));
+                        continue;
+                    }
+                },
+                (Some(_), Some(_)) => {
+                    errors.push(format!("[{}] domain and oidc_issuer_url select different protocols; configure exactly one", section));
+                    continue;
+                }
+                (None, None) => {
+                    errors.push(format!("[{}] requires domain or oidc_issuer_url", section));
+                    continue;
+                }
+            };
             providers.push(ProviderConfig {
                 label,
                 section,
-                kind: stanza.kind,
+                kind,
                 domain,
                 default: stanza.default,
             });
@@ -1067,7 +1110,7 @@ impl HimmelblauConfig {
         providers.into_iter().find(|p| p.default)
     }
 
-    /// Resolve only explicitly configured domains and their known aliases.
+    /// Resolve storage/settings keys and known Entra domain aliases.
     pub fn provider_for_domain(&self, domain: &str) -> Option<ProviderConfig> {
         let providers = self.parse_providers().ok()?;
         let mut matches = providers.into_iter().filter(|p| {
@@ -1108,7 +1151,10 @@ impl HimmelblauConfig {
             if name.is_empty() || domain.is_empty() {
                 return None;
             }
-            if let Some(provider) = self.provider_for_domain(domain) {
+            if let Some(provider) = self
+                .provider_for_domain(domain)
+                .filter(|p| p.kind == ProviderKind::Entra)
+            {
                 return Some(provider);
             }
             // Legacy OIDC configurations accept the issuer's account-name claim.
@@ -1346,35 +1392,22 @@ impl HimmelblauConfig {
             {
                 report
                     .errors
-                    .push(format!("[{}] type = oidc requires app_id", section));
+                    .push(format!("[{}] OIDC provider requires app_id", section));
             }
 
-            match (p.kind, self.config.get(section, "oidc_issuer_url")) {
-                (ProviderKind::Oidc, None) => report.errors.push(format!(
-                    "[{}] type = oidc requires oidc_issuer_url",
-                    section
-                )),
-                (ProviderKind::Oidc, Some(url)) => match parse_issuer_url(&url) {
-                    Ok(Some(issuer)) => {
-                        if let Some(other) =
-                            issuers.insert(issuer.trim_end_matches('/').to_string(), section)
-                        {
-                            report.errors.push(format!(
-                                "[{}] and [{}] share the OIDC issuer {}",
-                                other, section, url
-                            ));
-                        }
-                    }
-                    Ok(None) => report
-                        .errors
-                        .push(format!("[{}] OIDC issuer URL is empty", section)),
-                    Err(error) => report.errors.push(format!("[{}] {}", section, error)),
-                },
-                (ProviderKind::Entra, Some(_)) => report.errors.push(format!(
-                    "[{}] oidc_issuer_url requires type = oidc",
-                    section
-                )),
-                (ProviderKind::Entra, None) => {}
+            if let Some(issuer) = self
+                .config
+                .get(section, "oidc_issuer_url")
+                .and_then(|url| parse_issuer_url(&url).ok().flatten())
+            {
+                if let Some(other) =
+                    issuers.insert(issuer.trim_end_matches('/').to_string(), section)
+                {
+                    report.errors.push(format!(
+                        "[{}] and [{}] share the OIDC issuer {}",
+                        other, section, issuer
+                    ));
+                }
             }
         }
 
@@ -1463,7 +1496,7 @@ impl HimmelblauConfig {
         }
     }
 
-    /// Primary domains of the providers served by this configuration.
+    /// Storage/settings keys of the providers served by this configuration.
     pub fn get_configured_domains(&self) -> Vec<String> {
         self.parse_providers()
             .unwrap_or_default()
@@ -3637,8 +3670,6 @@ mod tests {
         home_prefix = /home/contoso/
 
         [tenant.fabrikam]
-        type = OIDC
-        domain = fabrikam.com
         oidc_issuer_url = https://login.fabrikam.com/.well-known/openid-configuration
         app_id = linux-login
         idmap_range = 1000001-2000000
@@ -3735,7 +3766,7 @@ mod tests {
         assert_eq!(config.default_provider().unwrap().label, "contoso");
         assert_eq!(
             config.get_configured_domains(),
-            vec!["contoso.com", "fabrikam.com"]
+            vec!["contoso.com".to_string(), providers[1].domain.clone()]
         );
         assert_eq!(config.get_configured_entra_domains(), vec!["contoso.com"]);
         assert_eq!(
@@ -3749,10 +3780,13 @@ mod tests {
             "/home/contoso/"
         );
         assert_eq!(
-            config.get_home_prefix(Some("fabrikam.com")),
+            config.get_home_prefix(Some(&providers[1].domain)),
             DEFAULT_HOME_PREFIX
         );
-        assert_eq!(config.get_idmap_range("fabrikam.com"), (1000001, 2000000));
+        assert_eq!(
+            config.get_idmap_range(&providers[1].domain),
+            (1000001, 2000000)
+        );
         assert_eq!(
             config.get_primary_domain_from_alias_simple("Contoso.org"),
             Some("contoso.com".to_string())
@@ -3827,7 +3861,7 @@ mod tests {
         let config = config_for_provider_test();
         assert!(config.validate().is_ok());
         let entra = config.provider_for_account("alice@CONTOSO.ORG").unwrap();
-        let oidc = config.provider_for_account("bob@fabrikam.com").unwrap();
+        let oidc = config.provider_for_account("bob@fabrikam").unwrap();
         assert_eq!(entra.label, "contoso");
         assert_eq!(config.provider_for_account("alice").unwrap(), entra);
         assert_eq!(entra.get_home_prefix(&config), "/home/contoso/");
@@ -3892,9 +3926,8 @@ mod tests {
 
     #[test]
     fn oidc_stanzas_require_client_ids_and_distinct_normalized_issuers() {
-        let mut config = HimmelblauConfig::from_test_config(
-            "[tenant.a]\ntype=oidc\ndomain=a.example\noidc_issuer_url=https://id.example\n",
-        );
+        let mut config =
+            HimmelblauConfig::from_test_config("[tenant.a]\noidc_issuer_url=https://id.example\n");
         assert!(config
             .validate()
             .errors
@@ -3905,8 +3938,6 @@ mod tests {
 
         config.set("tenant.a", "default", "true");
         config.set("tenant.a", "idmap_range", "200000-300000");
-        config.set("tenant.b", "type", "oidc");
-        config.set("tenant.b", "domain", "b.example");
         config.set("tenant.b", "idmap_range", "300001-400000");
         for issuer in [
             "https://id.example/",
@@ -3924,14 +3955,62 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
+    fn oidc_protocol_and_storage_identity_come_from_the_issuer() {
+        let input = "[global]\napp_id=linux\n\
+                     [tenant.first]\noidc_issuer_url=https://id.example/realms/first\n\
+                     default=true\nidmap_range=200000-300000\nshell=/bin/zsh\n\
+                     [tenant.second]\noidc_issuer_url=https://id.example/realms/second\n\
+                     idmap_range=300001-400000\n";
+        let config = HimmelblauConfig::from_test_config(input);
+        assert!(config.validate().is_ok());
+        let first = config.provider_for_account("alice@first").unwrap();
+        let second = config.provider_for_account("alice@second").unwrap();
+        assert_eq!(first.kind, ProviderKind::Oidc);
+        assert_ne!(first.domain, second.domain);
+        assert_eq!(first.get_shell(&config), "/bin/zsh");
+        let renamed = HimmelblauConfig::from_test_config(
+            &input.replace("[tenant.first]", "[tenant.renamed]"),
+        );
+        let after = renamed.provider_for_account("alice@renamed").unwrap();
+        assert_eq!(first.domain, after.domain);
+        assert_eq!(
+            first.oidc_tenant_id(&config),
+            after.oidc_tenant_id(&renamed)
+        );
+        for (extra, expected) in [
+            ("domain=example.org", "configure exactly one"),
+            ("type=oidc", "type is inferred"),
+        ] {
+            assert_rejected(
+                &format!("[tenant.a]\noidc_issuer_url=https://id.example\n{extra}\n"),
+                "",
+                expected,
+            );
+        }
+        for (issuer, expected) in [
+            ("", "OIDC issuer URL is empty"),
+            ("http://id.example", "must use https://"),
+            ("https://", "not a valid URL"),
+            ("https://id.example?query=1", "query or fragment"),
+        ] {
+            assert_rejected(
+                &format!("[tenant.a]\noidc_issuer_url={issuer}\n"),
+                "",
+                expected,
+            );
+        }
+    }
+
+    #[test]
     fn test_tenant_section_parse_errors() {
         for (config, expected) in [
             ("[tenant.]\ndomain = contoso.com\n", "requires a label"),
             (
                 "[tenant.contoso]\ntype = saml\ndomain = contoso.com\n",
-                "unknown variant `saml`",
+                "type is inferred",
             ),
-            ("[tenant.contoso]\ntype = entra\n", "missing field `domain`"),
+            ("[tenant.contoso]\n", "requires domain or oidc_issuer_url"),
             ("[tenant.contoso]\ndomain =\n", "requires a domain"),
             (
                 "[tenant.contoso]\ndomain = contoso.com,contoso.org\n",
@@ -3977,7 +4056,10 @@ mod tests {
             ),
             (
                 tenants(
-                    &format!("domain = contoso.com;domain_aliases = fabrikam.com;{}", range_a),
+                    &format!(
+                        "domain = contoso.com;domain_aliases = fabrikam.com;{}",
+                        range_a
+                    ),
                     &format!("domain = fabrikam.com;{}", range_b),
                 ),
                 "",
@@ -4037,13 +4119,12 @@ mod tests {
                 "rfc2307 supports a single tenant",
             ),
             (
-                "[tenant.a]\ntype = oidc\ndomain = contoso.com\n".to_string(),
+                "[tenant.a]\n".to_string(),
                 "",
-                "type = oidc requires oidc_issuer_url",
+                "requires domain or oidc_issuer_url",
             ),
             (
-                "[tenant.a]\ntype = oidc\ndomain = contoso.com\noidc_issuer_url = http://issuer.example.com\n"
-                    .to_string(),
+                "[tenant.a]\noidc_issuer_url = http://issuer.example.com\n".to_string(),
                 "",
                 "must use https://",
             ),
@@ -4051,7 +4132,7 @@ mod tests {
                 "[tenant.a]\ndomain = contoso.com\noidc_issuer_url = https://issuer.example.com\n"
                     .to_string(),
                 "",
-                "oidc_issuer_url requires type = oidc",
+                "configure exactly one",
             ),
             (
                 tenants(
@@ -4068,12 +4149,15 @@ mod tests {
                 "of contoso.com overlaps with subid_range",
             ),
             (
-                "[global]\ndomain = contoso.com\nidmap_range = 2100000000-2100000100\n"
-                    .to_string(),
+                "[global]\ndomain = contoso.com\nidmap_range = 2100000000-2100000100\n".to_string(),
                 "",
                 "of contoso.com overlaps with subid_range",
             ),
-            ("[global]\ndebug = true\n".to_string(), "", "No provider is configured"),
+            (
+                "[global]\ndebug = true\n".to_string(),
+                "",
+                "No provider is configured",
+            ),
         ] {
             assert_rejected(&config, cache, expected);
         }
@@ -4108,7 +4192,7 @@ mod tests {
     #[test]
     fn qualified_oidc_spn_homes_are_distinct_from_entra_cn_homes() {
         let config = HimmelblauConfig::from_test_config(
-            "[tenant.oidc]\ntype = oidc\ndomain = oidc.example\ndefault = true\n\
+            "[tenant.oidc]\ndefault = true\n\
              oidc_issuer_url = https://issuer.example\napp_id = linux\n\
              oidc_account_id_strip_at_suffix = true\nidmap_range = 200000-300000\n\
              home_prefix = /home/\n\
@@ -4170,8 +4254,8 @@ mod tests {
             &TWO_TENANTS
                 .replace("default = yes", "default = no\n")
                 .replace(
-                    "type = OIDC",
-                    "type = OIDC\ndefault = true\noidc_account_id_strip_at_suffix = true",
+                    "[tenant.fabrikam]",
+                    "[tenant.fabrikam]\ndefault = true\noidc_account_id_strip_at_suffix = true",
                 ),
         );
         assert!(oidc_default.validate().is_ok());
