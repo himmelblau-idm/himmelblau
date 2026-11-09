@@ -613,6 +613,11 @@ fn select_entra_provider(
         .ok_or("An Entra provider is required")
 }
 
+fn canonical_entra_account(cfg: &HimmelblauConfig, account: &str) -> String {
+    cfg.canonical_account_name(account)
+        .unwrap_or_else(|| account.to_string())
+}
+
 /// First broker account matching `account_id` that belongs to the selected Entra provider.
 fn select_broker_account(
     cfg: &HimmelblauConfig,
@@ -620,8 +625,8 @@ fn select_broker_account(
     account_id: Option<&str>,
     domain: Option<&str>,
 ) -> Option<(Value, String)> {
-    let account_id = account_id.map(str::to_lowercase);
-    let provider = select_entra_provider(cfg, account_id.as_deref(), domain).ok()?;
+    let provider = select_entra_provider(cfg, account_id, domain).ok()?;
+    let account_id = account_id.map(|account| canonical_entra_account(cfg, account).to_lowercase());
     accounts.into_iter().find_map(|account| {
         let Account { username } = serde_json::from_value(account.clone()).ok()?;
         let requested = account_id
@@ -1104,6 +1109,8 @@ async fn main() -> ExitCode {
                     if unsafe { libc::geteuid() } == 0 {
                         debug!("Attempting broker on-behalf-of flow auth ...");
                         if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                            let canonical_account_id =
+                                canonical_entra_account(&cfg, &account_id);
                             let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
                             let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
                                 obtain_host_data!(domain, cfg);
@@ -1113,7 +1120,7 @@ async fn main() -> ExitCode {
                                 Some(loadable_transport_key),
                                 Some(loadable_cert_key)
                             );
-                            let user_token = auth(&app, &account_id).await;
+                            let user_token = auth(&app, &canonical_account_id).await;
                             if let Some(user_token) = &user_token {
                                 let token = on_behalf_of_token!(
                                     app, user_token, tpm, machine_key,
@@ -2654,7 +2661,12 @@ mod tests {
             serde_json::json!({}),
             serde_json::json!({"username": "alice@a.example"}),
             serde_json::json!({"username": "Carol@b.example"}),
+            serde_json::json!({"username": "riley@a.example"}),
         ];
+        assert_eq!(
+            super::canonical_entra_account(&cfg, "riley@a"),
+            "riley@a.example"
+        );
         let select = |account, domain| {
             super::select_broker_account(&cfg, accounts.clone(), account, domain)
                 .map(|(_, username)| username)
@@ -2665,7 +2677,13 @@ mod tests {
             select(Some("CAROL@B.EXAMPLE"), Some("b.example")).unwrap(),
             "Carol@b.example"
         );
+        assert_eq!(select(Some("riley@a"), None).unwrap(), "riley@a.example");
+        assert_eq!(
+            select(Some("riley@a"), Some("a.example")).unwrap(),
+            "riley@a.example"
+        );
         assert!(select(Some("alice@a.example"), Some("b.example")).is_none());
+        assert!(select(Some("riley@a"), Some("b.example")).is_none());
     }
 
     const ACCOUNT_LINE: &str =
