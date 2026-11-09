@@ -464,7 +464,7 @@ in
             RestartSec = "1s";
             WatchdogSec = "120s";
             User = "root";
-            CacheDirectory = "nss-himmelblau";
+            CacheDirectory = "nss-himmelblau himmelblau-policies";
             ConfigurationDirectory = "himmelblau";
             CapabilityBoundingSet = [
               "CAP_CHOWN"

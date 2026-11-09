@@ -68,6 +68,8 @@ pub mod reserved_ids;
 #[cfg(target_family = "unix")]
 pub mod resolver;
 #[cfg(target_family = "unix")]
+pub mod systemd_api;
+#[cfg(target_family = "unix")]
 pub mod tpm;
 #[cfg(target_family = "unix")]
 pub mod unix_passwd;

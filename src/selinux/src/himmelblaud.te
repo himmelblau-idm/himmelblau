@@ -539,7 +539,7 @@ allow himmelblaud_tasks_t himmelblau_etc_t:lnk_file { getattr read };
 allow himmelblaud_tasks_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search write };
 allow himmelblaud_tasks_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename rmdir search setattr write };
-allow himmelblaud_tasks_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
+allow himmelblaud_tasks_t himmelblau_var_cache_t:file { create getattr lock open read rename setattr unlink write };
 allow himmelblaud_tasks_t himmelblau_server_conf_t:file { create getattr lock open read setattr unlink write };
 type_transition himmelblaud_tasks_t himmelblau_var_cache_t:file himmelblau_server_conf_t "himmelblau.conf";
 allow himmelblaud_tasks_t himmelblau_var_cache_t:lnk_file { getattr read };
@@ -754,6 +754,57 @@ ifdef(`files_read_usr_files',`
 ')
 ifdef(`dbus_system_bus_client',`dbus_system_bus_client(himmelblaud_tasks_t)')
 
+# Forward the compliance unit's output pipe descriptors through the system bus.
+optional {
+	require {
+		type system_dbusd_t;
+		class fd use;
+		class fifo_file { getattr write };
+	}
+	allow system_dbusd_t himmelblaud_tasks_t:fd use;
+	allow system_dbusd_t himmelblaud_tasks_t:fifo_file { getattr write };
+}
+
+# Policy timers and the transient discovery unit are managed through systemd.
+optional {
+	require {
+		type init_t;
+		class service { start stop status };
+		class dbus send_msg;
+	}
+	allow himmelblaud_tasks_t init_t:service { start stop status };
+	allow himmelblaud_tasks_t init_t:dbus send_msg;
+	allow init_t himmelblaud_tasks_t:dbus send_msg;
+}
+
+optional {
+	require {
+		type systemd_transient_unit_t;
+		class service { start stop status };
+	}
+	allow himmelblaud_tasks_t systemd_transient_unit_t:service { start stop status };
+}
+
+# Keep executable policy content separate from the daemon's token cache.
+type_transition himmelblaud_tasks_t himmelblau_var_cache_t:dir himmelblau_policy_script_t "bin";
+allow himmelblaud_tasks_t himmelblau_policy_script_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
+allow himmelblaud_tasks_t himmelblau_policy_script_t:file { create getattr open read rename setattr unlink write };
+optional {
+	require {
+		type init_t;
+		type initrc_t;
+		class dir { getattr open read search };
+		class file { execute execute_no_trans getattr map open read };
+		class fd use;
+		class fifo_file { getattr ioctl read write };
+	}
+	allow { init_t initrc_t } himmelblau_var_cache_t:dir search;
+	allow { init_t initrc_t } himmelblau_policy_script_t:dir { getattr open read search };
+	allow { init_t initrc_t } himmelblau_policy_script_t:file { execute execute_no_trans getattr map open read };
+	allow { init_t initrc_t } himmelblaud_tasks_t:fd use;
+	allow { init_t initrc_t } himmelblaud_tasks_t:fifo_file { getattr ioctl read write };
+}
+
 # himmelblaud_tasks needs to manage user home content
 ifdef(`userdom_manage_user_home_content',`userdom_manage_user_home_content(himmelblaud_tasks_t)')
 ifdef(`files_search_home',`files_search_home(himmelblaud_tasks_t)')
@@ -850,6 +901,16 @@ optional {
 ############################
 # App-specific types
 
+type himmelblau_policy_script_t;
+ifdef(`files_type',`optional {
+        require { attribute file_type; }
+        files_type(himmelblau_policy_script_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblau_policy_script_t file_type;
+       }')
+
 type himmelblau_etc_t;
 # files_config_file macro may not exist on all distros - provide fallback
 # Keep fallback optional: some minimal policies omit the file_type attribute
@@ -945,6 +1006,7 @@ require {
 # Allow our types to associate with the root filesystem (fs_t)
 allow himmelblau_etc_t fs_t:filesystem associate;
 allow himmelblau_var_cache_t fs_t:filesystem associate;
+allow himmelblau_policy_script_t fs_t:filesystem associate;
 allow himmelblau_server_conf_t fs_t:filesystem associate;
 allow himmelblau_nss_cache_t fs_t:filesystem associate;
 allow himmelblau_var_lib_t fs_t:filesystem associate;
@@ -956,6 +1018,7 @@ allow himmelblaud_orchestrator_exec_t fs_t:filesystem associate;
 allow himmelblau_etc_t tmpfs_t:filesystem associate;
 allow himmelblau_var_run_t tmpfs_t:filesystem associate;
 allow himmelblau_var_cache_t tmpfs_t:filesystem associate;
+allow himmelblau_policy_script_t tmpfs_t:filesystem associate;
 allow himmelblau_server_conf_t tmpfs_t:filesystem associate;
 allow himmelblau_nss_cache_t tmpfs_t:filesystem associate;
 allow himmelblau_var_lib_t tmpfs_t:filesystem associate;

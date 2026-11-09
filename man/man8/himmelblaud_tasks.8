@@ -8,6 +8,20 @@ The `himmelblaud-tasks` daemon is responsible for managing user accounts and aut
 
 The daemon operates as a background service and does not accept any command-line arguments. It is automatically invoked by the system when required.
 
+.SS Intune policy scripts
+Configuration scripts run in transient system units named
+.BR himmelblaud-policy@POLICY_ID.service ,
+scheduled by matching
+.BR himmelblaud-policy@POLICY_ID.timer
+units.
+Custom compliance discovery scripts run on demand in the transient system unit
+.BR himmelblaud-tasks-compliance.service ,
+which is removed after execution.
+The separate user unit
+.B himmelblau-compliance-check.service
+requests a full policy check (so that it originates from the user) via
+.BR "aad-tool compliance-check" .
+
 .SH USAGE
 The `himmelblaud-tasks` daemon must be run as the root user. If the daemon is started without root privileges, it will fail with an error. No user interaction is needed beyond ensuring the daemon is active and running correctly.
 

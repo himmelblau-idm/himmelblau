@@ -303,7 +303,7 @@ Restart=on-failure
 RestartSec=1s
 WatchdogSec=120s
 
-CacheDirectory=nss-himmelblau
+CacheDirectory=nss-himmelblau himmelblau-policies
 ConfigurationDirectory=himmelblau
 CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID
 AmbientCapabilities=CAP_SETUID CAP_SETGID
