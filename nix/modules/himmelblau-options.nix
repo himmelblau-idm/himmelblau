@@ -1213,14 +1213,6 @@ in
             '';
             example = "example.com";
           };
-          domain_aliases = mkOption {
-            type = types.nullOr (types.listOf types.str);
-            default = null;
-            description = ''
-              Comma-separated sign-in domains served by this provider. Each alias belongs to exactly one provider.
-            '';
-            example = [ "example.org" "example.net" ];
-          };
           home_alias = mkOption {
             type = types.nullOr (types.enum [ "uuid" "spn" "cn" ]);
             default = null;

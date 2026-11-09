@@ -1376,6 +1376,12 @@ mod tests {
     #[tokio::test]
     async fn cached_entra_token_ownership_uses_live_discovered_aliases() {
         let proxy = entra_proxy().await;
+        let tenant_id = uuid::Uuid::new_v4();
+        proxy
+            .config
+            .lock()
+            .await
+            .set("a.example", "tenant_id", &tenant_id.to_string());
         proxy
             .config
             .lock()
@@ -1385,7 +1391,8 @@ mod tests {
             .settings
             .provider_for_account("alice@discovered.example")
             .is_none());
-        let cached = token("alice@discovered.example");
+        let mut cached = token("alice@discovered.example");
+        cached.tenant_id = Some(tenant_id);
         assert_eq!(
             proxy
                 .settings
@@ -1406,6 +1413,12 @@ mod tests {
                 .await
                 .unwrap()
         ));
+        cached.tenant_id = Some(uuid::Uuid::new_v4());
+        assert!(proxy.provider_for_token(&cached).await.is_none());
+        assert!(proxy
+            .find_provider_for_id(&Id::Name(cached.spn.clone()), Some(&cached))
+            .await
+            .is_err());
     }
 
     #[tokio::test]

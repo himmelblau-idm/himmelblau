@@ -1463,7 +1463,7 @@ mod tests {
             } else {
                 "domain=example.com\n"
             };
-            let settings = HimmelblauConfig::from_test_config(&format!(
+            let mut settings = HimmelblauConfig::from_test_config(&format!(
                 "[tenant.a]\n{issuer}default=true\nidmap_range=1000-10000\npam_allow_groups=linux-users\nhome_prefix=/home/a/\n\
                  [tenant.b]\ndomain=other.example\nidmap_range=10001-20000\npam_allow_groups=linux-users\nhome_prefix=/home/b/\n"
             ));
@@ -1475,6 +1475,12 @@ mod tests {
                 token.oidc_account_id = Some(token.spn.clone());
                 token.spn = provider.local_account_name(&token.spn);
                 token.name.clone_from(&token.spn);
+            } else {
+                settings.set(
+                    "example.com",
+                    "tenant_id",
+                    &token.tenant_id.unwrap().to_string(),
+                );
             }
             resolver.client.settings = Some(settings);
             resolver
@@ -1496,6 +1502,21 @@ mod tests {
                 resolver.pam_account_allowed(&token.spn).await.unwrap(),
                 Some(false)
             );
+            if kind == "entra" {
+                assert_eq!(resolver.get_nssaccounts().await.unwrap().len(), 1);
+                resolver.client.set_cache_state(CacheState::Offline);
+                resolver.client.settings.as_mut().unwrap().set(
+                    "example.com",
+                    "tenant_id",
+                    &uuid::Uuid::new_v4().to_string(),
+                );
+                assert!(resolver
+                    .get_usertoken(Id::Name(token.spn))
+                    .await
+                    .unwrap()
+                    .is_none());
+                assert!(resolver.get_nssaccounts().await.unwrap().is_empty());
+            }
         }
     }
 
@@ -1537,6 +1558,7 @@ mod tests {
             assert_eq!(nss.name, token.spn);
         }
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        assert_eq!(resolver.get_nssaccounts().await.unwrap().len(), 1);
         resolver.client.settings.as_mut().unwrap().set(
             "tenant.work",
             "oidc_issuer_url",
@@ -1547,6 +1569,7 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+        assert!(resolver.get_nssaccounts().await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -3343,8 +3366,7 @@ where
     ) -> ResolverResult<(bool, Option<UserToken>)> {
         match r {
             Some((ut, ex)) => {
-                if ut.oidc_account_id.is_some()
-                    && self.client.provider_config().is_some()
+                if self.client.provider_config().is_some()
                     && self.client.provider_for_token(&ut).await.is_none()
                 {
                     return Ok((true, None));
@@ -4195,6 +4217,11 @@ where
             .map_err(|_| ResolverError)?;
         let mut users = Vec::with_capacity(tokens.len());
         for tok in tokens {
+            if self.client.provider_config().is_some()
+                && self.client.provider_for_token(&tok).await.is_none()
+            {
+                continue;
+            }
             users.push(self.nss_user_from_token(tok, true).await);
         }
         Ok(users)
