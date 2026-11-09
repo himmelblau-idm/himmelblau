@@ -30,14 +30,17 @@ use std::time::Duration;
 use std::{fs, io};
 
 use bytes::{BufMut, BytesMut};
+use clap::{Arg, ArgAction, Command as ClapCommand};
 use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
 use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{HimmelblauConfig, ProviderKind};
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR};
+use himmelblau_unix_common::db::Db;
+use himmelblau_unix_common::idprovider::IdProviderProxy;
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use himmelblau_unix_common::user_map::UserMap;
-use kanidm_utils_users::{get_effective_gid, get_effective_uid};
+use kanidm_utils_users::{get_current_uid, get_effective_gid, get_effective_uid};
 use libc::uid_t;
 use libc::{lchown, umask};
 use libkrimes::proto::KerberosCredentials;
@@ -942,8 +945,49 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     }
 }
 
+async fn prepare_provider_caches(cfg: &HimmelblauConfig) -> Result<(), String> {
+    let db_path = cfg.get_db_path();
+    let Some(db) = Db::open_read_only(&db_path)
+        .map_err(|error| format!("Failed opening cache database {db_path}: {error:?}"))?
+    else {
+        return Ok(());
+    };
+
+    let mut txn = db.read().await;
+    if !txn
+        .is_initialized()
+        .map_err(|error| format!("Failed checking cache database: {error:?}"))?
+    {
+        return Ok(());
+    }
+    let accounts = txn
+        .get_accounts()
+        .map_err(|error| format!("Failed reading cached accounts: {error:?}"))?;
+    drop(txn);
+
+    IdProviderProxy::prepare_provider_caches(cfg, &accounts)
+        .map_err(|error| format!("Failed preparing provider caches: {error:#}"))
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    let args = ClapCommand::new("himmelblaud_tasks")
+        .version(env!("CARGO_PKG_VERSION"))
+        .about("Himmelblau privileged task daemon")
+        .arg(
+            Arg::new("prepare-provider-cache")
+                .long("prepare-provider-cache")
+                .help("Prepare provider-scoped identity caches before daemon startup")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("config")
+                .long("config")
+                .short('c')
+                .help("Set the config file path")
+                .action(ArgAction::Set),
+        )
+        .get_matches();
     // let cuid = get_current_uid();
     // let cgid = get_current_gid();
     // We only need to check effective id
@@ -951,7 +995,19 @@ async fn main() -> ExitCode {
     let cegid = get_effective_gid();
     let systemd_booted = sd_notify::booted().unwrap_or(false);
 
-    let config_path = Path::new(DEFAULT_CONFIG_PATH);
+    let prepare_provider_cache = args.get_flag("prepare-provider-cache");
+    let config_path_str = if prepare_provider_cache {
+        args.get_one::<String>("config")
+            .map(String::as_str)
+            .unwrap_or(DEFAULT_CONFIG_PATH)
+    } else {
+        if args.get_one::<String>("config").is_some() {
+            error!("--config is only valid with --prepare-provider-cache");
+            return ExitCode::FAILURE;
+        }
+        DEFAULT_CONFIG_PATH
+    };
+    let config_path = Path::new(config_path_str);
     let config_path_str = match config_path.to_str() {
         Some(cps) => cps,
         None => {
@@ -991,6 +1047,20 @@ async fn main() -> ExitCode {
             if ceuid != 0 || cegid != 0 {
                 error!("Refusing to run - this process *MUST* operate as root.");
                 return ExitCode::FAILURE;
+            }
+
+            if prepare_provider_cache {
+                if get_current_uid() != 0 {
+                    error!("Provider cache preparation requires a real root user");
+                    return ExitCode::FAILURE;
+                }
+                return match prepare_provider_caches(&cfg).await {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(message) => {
+                        error!(%message, "Provider cache preparation failed");
+                        ExitCode::FAILURE
+                    }
+                };
             }
 
             let task_sock_path = cfg.get_task_socket_path();

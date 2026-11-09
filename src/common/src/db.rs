@@ -1309,6 +1309,24 @@ impl<'a> Drop for DbTxn<'a> {
 }
 
 impl DbReadTxn<'_> {
+    pub fn is_initialized(&self) -> Result<bool, CacheError> {
+        self.txn
+            .conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'db_version_t'
+                )",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| self.txn.sqlite_error("check database initialization", &e))
+    }
+
+    pub fn get_accounts(&mut self) -> Result<Vec<UserToken>, CacheError> {
+        self.txn.get_accounts()
+    }
+
     pub fn get_account(&mut self, account_id: &Id) -> Result<Option<(UserToken, u64)>, CacheError> {
         self.txn.get_account(account_id)
     }
