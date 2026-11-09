@@ -109,6 +109,7 @@ fn discovery_trust_failure(error: &reqwest::Error) -> bool {
 
 impl OidcRouter {
     #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
     pub(crate) async fn for_test(
         config: &Arc<Mutex<HimmelblauConfig>>,
         domain: &str,

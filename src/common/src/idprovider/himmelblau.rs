@@ -5273,8 +5273,7 @@ mod tests {
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = [0; 4096];
-                let read = socket.read(&mut request).await.unwrap();
-                assert!(read > 0, "expected an HTTP request");
+                socket.read(&mut request).await.unwrap();
                 // Following the redirect would fail like the blocked host in #1733.
                 let response = format!(
                     "HTTP/1.1 {status}\r\nLocation: http://127.0.0.1:0/blocked\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"

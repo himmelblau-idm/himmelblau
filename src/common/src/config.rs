@@ -531,6 +531,7 @@ fn load_config_hierarchy(
 
 impl HimmelblauConfig {
     #[cfg(test)]
+    #[allow(clippy::expect_used)]
     pub(crate) fn from_test_config(input: &str) -> Self {
         let mut config = Ini::new();
         config
@@ -2060,9 +2061,9 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert!(config.get_apply_policy());
+        assert_eq!(config.get_apply_policy(), true);
         let config_empty = create_empty_config();
-        assert!(!config_empty.get_apply_policy());
+        assert_eq!(config_empty.get_apply_policy(), false);
     }
 
     #[test]
@@ -2075,12 +2076,12 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert!(config.get_intune_auth_resource());
-        assert!(!config.get_apply_policy());
-        assert!(config.get_use_intune_auth_resource());
+        assert_eq!(config.get_intune_auth_resource(), true);
+        assert_eq!(config.get_apply_policy(), false);
+        assert_eq!(config.get_use_intune_auth_resource(), true);
         let config_empty = create_empty_config();
-        assert!(!config_empty.get_intune_auth_resource());
-        assert!(!config_empty.get_use_intune_auth_resource());
+        assert_eq!(config_empty.get_intune_auth_resource(), false);
+        assert_eq!(config_empty.get_use_intune_auth_resource(), false);
 
         let apply_policy_data = r#"
         [global]
@@ -2090,8 +2091,8 @@ mod tests {
         let apply_policy_file = create_temp_config(apply_policy_data);
         let apply_policy = HimmelblauConfig::new(Some(&apply_policy_file)).unwrap();
 
-        assert!(!apply_policy.get_intune_auth_resource());
-        assert!(apply_policy.get_use_intune_auth_resource());
+        assert_eq!(apply_policy.get_intune_auth_resource(), false);
+        assert_eq!(apply_policy.get_use_intune_auth_resource(), true);
     }
 
     #[test]
@@ -2297,10 +2298,10 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert!(config.get_use_etc_skel());
+        assert_eq!(config.get_use_etc_skel(), true);
 
         let config_empty = create_empty_config();
-        assert!(!config_empty.get_use_etc_skel());
+        assert_eq!(config_empty.get_use_etc_skel(), false);
     }
 
     #[test]
@@ -2391,7 +2392,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert!(!config.get_enable_hello());
+        assert_eq!(config.get_enable_hello(), false);
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_enable_hello(), DEFAULT_HELLO_ENABLED);
     }
@@ -2406,11 +2407,11 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert!(!config.get_enable_passwordless());
+        assert_eq!(config.get_enable_passwordless(), false);
 
         // Test that default is true (backward compat)
         let config_empty = create_empty_config();
-        assert!(config_empty.get_enable_passwordless());
+        assert_eq!(config_empty.get_enable_passwordless(), true);
     }
 
     #[test]
@@ -2423,9 +2424,9 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert!(!config.get_enable_experimental_mfa());
+        assert_eq!(config.get_enable_experimental_mfa(), false);
         let config_empty = create_empty_config();
-        assert!(config_empty.get_enable_experimental_mfa());
+        assert_eq!(config_empty.get_enable_experimental_mfa(), true);
     }
 
     #[test]
@@ -2439,11 +2440,14 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         // Test when explicitly set to true
-        assert!(config.get_enable_experimental_passwordless_fido());
+        assert_eq!(config.get_enable_experimental_passwordless_fido(), true);
 
         // Test fallback default (false) when config is missing
         let config_empty = create_empty_config();
-        assert!(!config_empty.get_enable_experimental_passwordless_fido());
+        assert_eq!(
+            config_empty.get_enable_experimental_passwordless_fido(),
+            false
+        );
     }
 
     #[test]
@@ -2456,9 +2460,9 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert!(config.get_debug());
+        assert_eq!(config.get_debug(), true);
         let config_empty = create_empty_config();
-        assert!(!config_empty.get_debug());
+        assert_eq!(config_empty.get_debug(), false);
     }
 
     #[test]
@@ -2471,7 +2475,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert!(!config.get_cn_name_mapping());
+        assert_eq!(config.get_cn_name_mapping(), false);
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_cn_name_mapping(), CN_NAME_MAPPING);
     }
@@ -2620,7 +2624,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert!(config.get_selinux());
+        assert_eq!(config.get_selinux(), true);
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_selinux(), DEFAULT_SELINUX);
     }
@@ -3124,7 +3128,7 @@ mod tests {
         "#;
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert!(!config.get_offline_breakglass_enabled());
+        assert_eq!(config.get_offline_breakglass_enabled(), false);
 
         // Explicitly enabled
         let config_data = r#"
@@ -3133,7 +3137,7 @@ mod tests {
         "#;
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert!(config.get_offline_breakglass_enabled());
+        assert_eq!(config.get_offline_breakglass_enabled(), true);
 
         // Missing value → default (false)
         let config_data = r#"
@@ -3141,7 +3145,7 @@ mod tests {
         "#;
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-        assert!(!config.get_offline_breakglass_enabled());
+        assert_eq!(config.get_offline_breakglass_enabled(), false);
     }
 
     #[test]
@@ -3506,6 +3510,7 @@ mod tests {
         assert_eq!(split_username("@"), Some(("", "")));
     }
 
+    #[allow(clippy::unwrap_used)]
     fn load_with_cache(config: &str, cache: &str) -> HimmelblauConfig {
         let config_file = create_temp_config(config);
         let cache_file = create_temp_config(cache);
@@ -3555,6 +3560,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_legacy_domain_is_the_single_provider() {
         let config = load_with_cache("[global]\ndomain = contoso.com\n", "");
         assert_eq!(
@@ -3586,6 +3592,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_legacy_oidc_takes_precedence_over_domain() {
         let config = load_with_cache(
             "[global]\ndomain = contoso.com\noidc_issuer_url = https://issuer.example.com\n",
@@ -3610,6 +3617,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_tenant_sections_define_providers() {
         let config = load_with_cache(TWO_TENANTS, "");
         let report = config.validate();
@@ -3652,6 +3660,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn tenant_domain_spelling_is_preserved_for_cache_keys() {
         let mut config =
             HimmelblauConfig::from_test_config("[tenant.contoso]\ndomain = Contoso.COM\n");
@@ -3666,6 +3675,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_single_tenant_section_is_the_default() {
         let config = load_with_cache("[tenant.contoso]\ndomain = contoso.com\n", "");
         assert!(config.validate().is_ok());
@@ -3673,6 +3683,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn provider_lookup_and_settings_are_scoped() {
         let config = config_for_provider_test();
         assert!(config.validate().is_ok());
@@ -3714,6 +3725,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn discovered_alias_requires_a_unique_configured_entra_tenant() {
         let config = HimmelblauConfig::from_test_config(TWO_TENANTS);
         let providers = config.parse_providers().unwrap();
@@ -3946,6 +3958,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn provider_sharing_tenant_finds_other_entra_providers() {
         let mut config = HimmelblauConfig::from_test_config(
             "[tenant.a]\ndomain = contoso.com\ndefault = true\nidmap_range = 200000-300000\n\
@@ -3994,6 +4007,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn cn_home_prefix_collisions_use_resolved_paths_and_report_resolution_errors() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!(".test-home-prefix-{}", uuid::Uuid::new_v4()));
@@ -4087,6 +4101,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_write_server_config_only_writes_discovered_keys() {
         let config_file =
             create_temp_config("[global]\ndomain = contoso.com\n[contoso.com]\nshell = /bin/zsh\n");
@@ -4111,6 +4126,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn reload_server_cache_updates_aliases_without_changing_provider_settings() {
         let mut config = HimmelblauConfig::from_test_config(TWO_TENANTS);
         config.cache_path = Path::new(env!("CARGO_MANIFEST_DIR"))
