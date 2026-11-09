@@ -582,11 +582,20 @@ class NixosServiceTests(unittest.TestCase):
 
     def test_drop_in_directory_target_is_tracked(self):
         directory = evaluate(dropInTarget="himmelblau/himmelblau.conf.d")
+        outside = evaluate(dropInTarget="himmelblau/unrelated.conf")
+        self.assertEqual(
+            directory["paths"]["dropIn"],
+            outside["paths"]["dropIn"],
+        )
         self.assertEqual(
             set(directory["restartTriggers"]["daemon"]),
             set(directory["restartTriggers"]["tasks"]),
         )
         self.assertEqual(len(set(directory["restartTriggers"]["daemon"])), 2)
+        self.assertNotEqual(
+            set(directory["restartTriggers"]["daemon"]),
+            set(outside["restartTriggers"]["daemon"]),
+        )
 
     def test_comparison_rejects_drift_in_evaluated_units(self):
         expected = self.scoped_units(
