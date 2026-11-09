@@ -595,7 +595,10 @@ impl HimmelblauConfig {
         Self::load(config_path, Path::new(SERVER_CONFIG_PATH))
     }
 
-    fn load(config_path: Option<&str>, cache_path: &Path) -> Result<HimmelblauConfig, String> {
+    pub(crate) fn load(
+        config_path: Option<&str>,
+        cache_path: &Path,
+    ) -> Result<HimmelblauConfig, String> {
         let mut sconfig = Ini::new();
         let mut filename: String = DEFAULT_CONFIG_PATH.to_string();
         if let Some(config_path) = config_path {
@@ -624,6 +627,10 @@ impl HimmelblauConfig {
             filename,
             effective_config_paths,
         })
+    }
+
+    pub(crate) fn reload(&self) -> Result<Self, String> {
+        Self::load(Some(&self.filename), &self.cache_path)
     }
 
     pub fn get(&self, section: &str, option: &str) -> Option<String> {
@@ -1050,7 +1057,7 @@ impl HimmelblauConfig {
                     }
                     if domain.contains(',') {
                         errors.push(format!(
-                            "[{}] domain must be a single domain, list others in domain_aliases",
+                            "[{}] domain must be a single domain; Entra aliases are discovered automatically",
                             section
                         ));
                         continue;
@@ -1187,8 +1194,16 @@ impl HimmelblauConfig {
                 return Some(provider);
             }
         }
-        self.provider_for_account(&token.spn)
-            .filter(|p| p.kind == ProviderKind::Entra && token.oidc_account_id.is_none())
+        let provider = self
+            .provider_for_account(&token.spn)
+            .filter(|p| p.kind == ProviderKind::Entra && token.oidc_account_id.is_none())?;
+        if let Some(tenant) = token.tenant_id {
+            let expected = self.get_tenant_id(&provider.domain)?;
+            if !expected.eq_ignore_ascii_case(&tenant.to_string()) {
+                return None;
+            }
+        }
+        Some(provider)
     }
 
     pub fn provider_for_gid(&self, gid: u32) -> Option<ProviderConfig> {
@@ -1281,6 +1296,9 @@ impl HimmelblauConfig {
     }
 
     pub(crate) fn record_domain_alias(&mut self, provider: &ProviderConfig, alias: &str) -> bool {
+        if provider.kind != ProviderKind::Entra {
+            return false;
+        }
         if self.routing_name_conflicts(provider, alias) {
             error!(provider = %provider.label, alias, "Discovered alias conflicts with a configured provider");
             return false;
@@ -1314,6 +1332,14 @@ impl HimmelblauConfig {
                 return report;
             }
         };
+        for (section, values) in self.config.get_map_ref() {
+            if values.contains_key("domain_aliases") {
+                report.errors.push(format!(
+                    "[{}] domain_aliases is internal discovery metadata; remove it from administrator configuration",
+                    section
+                ));
+            }
+        }
 
         if self.tenant_sections().is_empty() {
             self.validate_legacy(&mut report);
@@ -1381,7 +1407,7 @@ impl HimmelblauConfig {
                 if let Some(tenant_id) = self.get_tenant_id(&p.domain) {
                     if let Some(other) = tenant_ids.insert(tenant_id.to_lowercase(), section) {
                         report.errors.push(format!(
-                            "[{}] and [{}] share the tenant {}, use domain_aliases instead",
+                            "[{}] and [{}] share the tenant {}; configure one provider per Entra tenant",
                             other, section, tenant_id
                         ));
                     }
@@ -1580,22 +1606,20 @@ impl HimmelblauConfig {
         self.domain_value(&domain, "intune_device_id")
     }
 
-    /// Aliases configured by the administrator merged with aliases discovered
-    /// at runtime, lowercased.
+    /// Entra sign-in aliases discovered and persisted by the daemon.
     fn domain_aliases_for(&self, provider: &ProviderConfig) -> Vec<String> {
-        let mut aliases: Vec<String> = vec![];
-        let admin = self.config.get(&provider.section, "domain_aliases");
-        let cached = self.cache.get(&provider.domain, "domain_aliases");
-        for alias in admin
-            .iter()
-            .chain(cached.iter())
-            .flat_map(|v| split_list(v).collect::<Vec<_>>())
-            .map(|a| a.to_lowercase())
-        {
-            if !aliases.contains(&alias) {
-                aliases.push(alias);
-            }
+        if provider.kind != ProviderKind::Entra {
+            return Vec::new();
         }
+        let mut aliases: Vec<_> = self
+            .cache
+            .get(&provider.domain, "domain_aliases")
+            .iter()
+            .flat_map(|value| split_list(value))
+            .map(|alias| alias.to_lowercase())
+            .collect();
+        aliases.sort();
+        aliases.dedup();
         aliases
     }
 
@@ -2633,10 +2657,10 @@ mod tests {
 
     #[test]
     fn test_get_authority_host_for_account_resolves_aliases() {
-        let temp_file = create_temp_config(
-            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\ndomain_aliases = first.example.com, ALIAS.example.com  , third.example.com\n",
+        let config = load_with_cache(
+            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\n",
+            "[example.com]\ndomain_aliases = first.example.com, ALIAS.example.com  , third.example.com\n",
         );
-        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(
             config.get_authority_host_for_account("alice@alias.example.com"),
             Some("login.microsoftonline.us".to_string())
@@ -2694,10 +2718,10 @@ mod tests {
 
     #[test]
     fn test_broker_environment_preserves_entra_alias_authority() {
-        let temp_file = create_temp_config(
-            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\ndomain_aliases = alias.example.com\n",
+        let config = load_with_cache(
+            "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\n",
+            "[example.com]\ndomain_aliases = alias.example.com\n",
         );
-        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(
             config.get_broker_environment_for_account("alice@alias.example.com"),
             Some("login.microsoftonline.us".to_string())
@@ -3664,7 +3688,6 @@ mod tests {
     const TWO_TENANTS: &str = r#"
         [tenant.contoso]
         domain = contoso.com
-        domain_aliases = contoso.org
         default = yes
         idmap_range = 200000-1000000
         home_prefix = /home/contoso/
@@ -3750,7 +3773,7 @@ mod tests {
     #[test]
     #[allow(clippy::unwrap_used)]
     fn test_tenant_sections_define_providers() {
-        let config = load_with_cache(TWO_TENANTS, "");
+        let config = load_with_cache(TWO_TENANTS, "[contoso.com]\ndomain_aliases=contoso.org\n");
         let report = config.validate();
         assert!(report.is_ok() && report.warnings.is_empty(), "{:?}", report);
 
@@ -3892,9 +3915,11 @@ mod tests {
     }
 
     fn config_for_provider_test() -> HimmelblauConfig {
-        HimmelblauConfig::from_test_config(&format!(
+        let mut config = HimmelblauConfig::from_test_config(&format!(
             "[global]\nshell = /bin/bash\ncn_name_mapping = true\n{TWO_TENANTS}\nshell = /bin/zsh\noidc_account_id_claims = email\npam_allow_groups = engineers\n"
-        ))
+        ));
+        config.set("contoso.com", "domain_aliases", "contoso.org");
+        config
     }
 
     #[test]
@@ -4014,7 +4039,7 @@ mod tests {
             ("[tenant.contoso]\ndomain =\n", "requires a domain"),
             (
                 "[tenant.contoso]\ndomain = contoso.com,contoso.org\n",
-                "list others in domain_aliases",
+                "aliases are discovered automatically",
             ),
             (
                 "[tenant.contoso]\ndomain = contoso.com\ndefault = maybe\n",
@@ -4056,13 +4081,10 @@ mod tests {
             ),
             (
                 tenants(
-                    &format!(
-                        "domain = contoso.com;domain_aliases = fabrikam.com;{}",
-                        range_a
-                    ),
+                    &format!("domain = contoso.com;{}", range_a),
                     &format!("domain = fabrikam.com;{}", range_b),
                 ),
-                "",
+                "[contoso.com]\ndomain_aliases = fabrikam.com\n",
                 "both claim the domain fabrikam.com",
             ),
             (
@@ -4278,7 +4300,11 @@ mod tests {
     fn labels_cannot_shadow_other_providers_or_contain_separators() {
         for label in ["contoso.com", "contoso.org"] {
             let input = TWO_TENANTS.replace("[tenant.fabrikam]", &format!("[tenant.{label}]"));
-            assert_rejected(&input, "", "both claim the domain");
+            assert_rejected(
+                &input,
+                "[contoso.com]\ndomain_aliases=contoso.org\n",
+                "both claim the domain",
+            );
         }
         for label in ["a@b", "two words"] {
             assert_rejected(
@@ -4335,6 +4361,56 @@ mod tests {
     }
 
     #[test]
+    fn administrator_aliases_are_rejected_and_cannot_route_accounts() {
+        for input in [
+            "[global]\ndomain=example.com\ndomain_aliases=alias.example\n",
+            "[global]\ndomain=example.com\n[example.com]\ndomain_aliases=alias.example\n",
+            "[tenant.work]\ndomain=example.com\ndomain_aliases=alias.example\n",
+        ] {
+            let config = HimmelblauConfig::from_test_config(input);
+            assert!(config
+                .validate()
+                .errors
+                .iter()
+                .any(|e| e.contains("internal discovery metadata")));
+            assert!(config.provider_for_account("alice@alias.example").is_none());
+            assert!(config.provider_for_account("alice@example.com").is_some());
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn verified_aliases_survive_restart_and_oidc_cache_aliases_are_ignored() {
+        let mut config = HimmelblauConfig::from_test_config(TWO_TENANTS);
+        config.cache_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!(".test-verified-alias-{}.ini", uuid::Uuid::new_v4()));
+        let entra = config.provider_for_account("alice@contoso.com").unwrap();
+        let provider = HimmelblauConfig::match_discovered_tenant(
+            [(entra.clone(), "tenant-id".to_string())],
+            "tenant-id",
+        )
+        .unwrap();
+        assert!(config.record_domain_alias(&provider, "SIGN-IN.example"));
+        let mut restarted = HimmelblauConfig::from_test_config(TWO_TENANTS);
+        restarted.cache_path = config.cache_path.clone();
+        restarted.reload_server_cache().unwrap();
+        assert_eq!(
+            restarted.provider_for_account("alice@sign-in.example"),
+            Some(entra)
+        );
+        assert!(restarted.validate().is_ok());
+        let oidc = restarted.provider_for_account("alice@fabrikam").unwrap();
+        restarted.set(&oidc.domain, "domain_aliases", "oidc-alias.example");
+        assert!(restarted
+            .provider_for_account("alice@oidc-alias.example")
+            .is_none());
+        assert!(!restarted.record_domain_alias(&oidc, "another.example"));
+        fs::write(&config.cache_path, "[invalid section").unwrap();
+        assert!(restarted.reload_server_cache().is_err());
+        fs::remove_file(config.cache_path).unwrap();
+    }
+
+    #[test]
     fn test_server_cache_layer() {
         let config = load_with_cache(
             r#"
@@ -4343,12 +4419,11 @@ mod tests {
 
             [contoso.com]
             authority_host = admin.example.com
-            domain_aliases = contoso.org
             "#,
             r#"
             [contoso.com]
             authority_host = cache.example.com
-            domain_aliases = contoso.net
+            domain_aliases = contoso.org,contoso.net
 
             [stale.com]
             tenant_id = 2222
@@ -4365,7 +4440,7 @@ mod tests {
             config.get_authority_host("contoso.com"),
             "cache.example.com"
         );
-        // Admin and discovered aliases both resolve
+        // Persisted aliases resolve without discovery.
         for alias in ["contoso.org", "CONTOSO.net"] {
             assert_eq!(
                 config.get_primary_domain_from_alias_simple(alias),

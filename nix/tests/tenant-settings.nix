@@ -9,7 +9,6 @@ let
           tenant.work = {
             domain = "work.example";
             default = true;
-            domain_aliases = [ "alias.example" "other.example" ];
             idmap_range = "200000-999999";
           };
           tenant.partners = {

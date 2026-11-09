@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<parameter name="domain_aliases" section="tenant" type="string_list" rust_type="Vec&lt;String&gt;" order="130">
-<description>Comma-separated sign-in domains served by this provider. Each alias belongs to exactly one provider.</description>
-<example>domain_aliases = example.org,example.net</example>
-<handler>parse_providers</handler>
-</parameter>

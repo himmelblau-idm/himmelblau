@@ -79,6 +79,7 @@ class OrchestratorConfigTests(unittest.TestCase):
             self.assertIn("type = types.attrsOf (types.submodule {", nix)
             tenant_options = nix.split("    tenant = mkOption {", 1)[1]
             self.assertNotIn("type = mkOption {", tenant_options)
+            self.assertNotIn("domain_aliases = mkOption {", tenant_options)
             self.assertTrue(all(line == line.rstrip() for line in tenant_options.splitlines()))
             home_prefix = tenant_options.split("home_prefix = mkOption {", 1)[1].split("};", 1)[0]
             self.assertIn("default = null;", home_prefix)
@@ -96,7 +97,7 @@ class OrchestratorConfigTests(unittest.TestCase):
         self.assertEqual(settings["global"]["home_prefix"], "/home/shared/")
         self.assertNotIn("home_prefix", settings["tenant.work"])
         self.assertEqual(settings["tenant.work"]["default"], "true")
-        self.assertEqual(settings["tenant.work"]["domain_aliases"], "alias.example,other.example")
+        self.assertNotIn("domain_aliases", settings["tenant.work"])
         self.assertEqual(settings["tenant.partners"]["home_prefix"], "/home/partners/")
         self.assertNotIn("type", settings["tenant.partners"])
         self.assertNotIn("domain", settings["tenant.partners"])

@@ -1413,8 +1413,9 @@ Set domain for Microsoft Entra ID or oidc_issuer_url for OpenID Connect.
 Exactly one of these options defines the protocol of each provider.
 Okta backend selection is automatic within each OIDC provider.
 .P
-Set domain to an Entra provider's primary domain and domain_aliases to its other
-sign-in domains. The domain keys device credentials, the server cache and ID
+Set domain to an Entra provider's primary domain. Other sign-in domains are
+discovered by matching the Entra tenant ID and persisted in the server cache.
+The domain keys device credentials, the server cache and ID
 mapping. Preserve that value and idmap_range when converting an existing
 configuration. OIDC storage keys are derived from the issuer URL.
 .P
@@ -1474,16 +1475,12 @@ Primary Microsoft Entra ID domain and persistent storage key. Set domain for an 
 Serve bare account names with this provider. Exactly one provider must be the default in a multi-provider configuration.
 .P
 Default: false
-.TP
-.B domain_aliases
-Comma-separated sign-in domains served by this provider. Each alias belongs to exactly one provider.
 .P
 Per-provider options: app_id, authority_host, home_alias, home_attr, home_prefix, idmap_range, logon_token_app_id, oidc_account_id_claims, oidc_account_id_strip_at_suffix, oidc_device_authorization_endpoint, oidc_force_interaction_code, oidc_issuer_url, oidc_redirect_uri, pam_allow_groups, shell, sudo_groups.
 .P
 .nf
 [tenant.contoso]
 domain = contoso.com
-domain_aliases = contoso.org
 default = true
 idmap_range = 200000-999999
 home_prefix = /home/contoso/

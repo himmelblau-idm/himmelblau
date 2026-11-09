@@ -4097,7 +4097,7 @@ impl HimmelblauProvider {
                             domain = %self.domain,
                             other_section = %other.section,
                             tenant_id = %tenant_id,
-                            "Provider shares its Entra tenant with another provider, use domain_aliases instead"
+                            "Provider shares its Entra tenant with another provider; configure one provider per Entra tenant"
                         );
                         return Err(IdpError::BadRequest);
                     }

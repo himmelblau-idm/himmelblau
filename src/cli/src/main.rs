@@ -2621,9 +2621,14 @@ mod tests {
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join(format!("cli-tenants-{}.conf", uuid::Uuid::new_v4()));
-        fs::write(&path, "[tenant.a]\ndomain=a.example\ndomain_aliases=alias.example\ndefault=true\nidmap_range=200000-300000\n\
-                         [tenant.b]\ndomain=b.example\nidmap_range=300001-400000\n").unwrap();
-        let cfg = HimmelblauConfig::new(path.to_str()).unwrap();
+        fs::write(
+            &path,
+            "[tenant.a]\ndomain=a.example\ndefault=true\nidmap_range=200000-300000\n\
+                         [tenant.b]\ndomain=b.example\nidmap_range=300001-400000\n",
+        )
+        .unwrap();
+        let mut cfg = HimmelblauConfig::new(path.to_str()).unwrap();
+        cfg.set("a.example", "domain_aliases", "alias.example");
         fs::remove_file(path).unwrap();
         assert_eq!(
             select_entra_provider(&cfg, None, None).unwrap().domain,
