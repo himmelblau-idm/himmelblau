@@ -9,9 +9,9 @@ mod error;
 mod forms;
 
 use super::common::{
-    flip_displayname_comma, oidc_issuer_matches, oidc_user_token_from_claims,
-    should_block_hello_pin_attempts, BadPinCounter, KeyType, RefreshCache, RefreshCacheEntry,
-    TotpEnrollmentRecord,
+    flip_displayname_comma, oidc_issuer_matches, oidc_provider_config, oidc_user_ids,
+    oidc_user_token_from_claims, should_block_hello_pin_attempts, BadPinCounter, KeyType,
+    RefreshCache, RefreshCacheEntry, TotpEnrollmentRecord,
 };
 use super::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -477,6 +477,7 @@ impl OktaProvider {
             return Err(diagnostics::invalid("subject_mismatch"));
         }
         let cfg = self.config.lock().await;
+        let provider = oidc_provider_config(&cfg, &self.domain)?;
         let (shell, account_claims, strip) = (
             cfg.get_shell(Some(&self.domain)),
             cfg.get_oidc_account_id_claims(Some(&self.domain)),
@@ -488,6 +489,7 @@ impl OktaProvider {
             shell,
             &self.idmap,
             &self.tenant_id,
+            provider.as_ref(),
             &account_claims,
             strip,
         )
@@ -1194,19 +1196,13 @@ impl IdProvider for OktaProvider {
         // Match ordinary OIDC's pre-authentication NSS placeholder. This cannot
         // overwrite authenticated groups; those take the refresh branch above.
         let object_id = Uuid::new_v4();
+        let config = self.config.lock().await;
+        let provider = oidc_provider_config(&config, &self.domain)?;
+        drop(config);
         let cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|_| IdpError::BadRequest)?;
-        let (uid, gid) = match cache.get_user_by_name(account) {
-            Some(user) => (user.uid, user.gid),
-            None => {
-                let id = self
-                    .idmap
-                    .lock()
-                    .await
-                    .gen_to_unix(&self.tenant_id.to_string(), account)
-                    .map_err(|_| IdpError::BadRequest)?;
-                (id, id)
-            }
-        };
+        let idmap = self.idmap.lock().await;
+        let (uid, gid) =
+            oidc_user_ids(&cache, &idmap, provider.as_ref(), &self.tenant_id, account)?;
         Ok(UserTokenState::LookupOnly(UserToken {
             name: account.into(),
             spn: account.into(),

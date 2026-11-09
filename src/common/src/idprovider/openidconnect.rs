@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-use crate::config::HimmelblauConfig;
+use crate::config::{HimmelblauConfig, ProviderConfig};
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::i18n::{tr, tr_fmt};
@@ -26,8 +26,8 @@ use crate::idprovider::common::should_block_hello_pin_attempts;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{
-    build_online_probe_client, oidc_group_claims_from_value, oidc_user_token_from_claims,
-    OidcUserInfoClaims,
+    build_online_probe_client, oidc_group_claims_from_value, oidc_provider_config, oidc_user_ids,
+    oidc_user_token_from_claims, OidcUserInfoClaims,
 };
 use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
 use crate::idprovider::interface::{
@@ -2367,6 +2367,7 @@ impl OidcApplication {
         shell: String,
         idmap: &Mutex<Idmap>,
         tenant_id: &Uuid,
+        provider: Option<&ProviderConfig>,
         account_id_claims: &[String],
         strip_at_suffix: bool,
     ) -> Result<UserToken, IdpError> {
@@ -2388,6 +2389,7 @@ impl OidcApplication {
             shell,
             idmap,
             tenant_id,
+            provider,
             account_id_claims,
             strip_at_suffix,
         )
@@ -2769,12 +2771,14 @@ impl OidcProvider {
         token: &OidcTokenResponse,
     ) -> Result<AuthResult, IdpError> {
         let tenant_id = self.tenant_id().await?;
-        let (shell, account_id_claims, strip_at_suffix) = {
+        let (shell, account_id_claims, strip_at_suffix, provider) = {
             let config = self.config.lock().await;
+            let provider = oidc_provider_config(&config, &self.domain)?;
             (
                 config.get_shell(Some(&self.domain)),
                 config.get_oidc_account_id_claims(Some(&self.domain)),
                 config.get_oidc_account_id_strip_at_suffix(Some(&self.domain)),
+                provider,
             )
         };
         let token2 = self
@@ -2784,6 +2788,7 @@ impl OidcProvider {
                 shell,
                 self.idmap.as_ref(),
                 &tenant_id,
+                provider.as_ref(),
                 &account_id_claims,
                 strip_at_suffix,
             )
@@ -2959,25 +2964,22 @@ impl IdProvider for OidcProvider {
                 uuid::Uuid::new_v4()
             }
         };
+        let config = self.config.lock().await;
+        let provider = oidc_provider_config(&config, &self.domain)?;
+        drop(config);
 
         let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
             error!("Failed reading from the idmap cache: {:?}", e);
             IdpError::BadRequest
         })?;
-
-        let (uid, gid) = match idmap_cache.get_user_by_name(account_id) {
-            Some(user) => (user.uid, user.gid),
-            None => {
-                let idmap = self.idmap.lock().await;
-                let gid = idmap
-                    .gen_to_unix(&tenant_id.to_string(), account_id)
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::BadRequest
-                    })?;
-                (gid, gid)
-            }
-        };
+        let idmap = self.idmap.lock().await;
+        let (uid, gid) = oidc_user_ids(
+            &idmap_cache,
+            &idmap,
+            provider.as_ref(),
+            &tenant_id,
+            account_id,
+        )?;
 
         Ok(UserTokenState::LookupOnly(UserToken {
             name: account_id.to_string(),
@@ -3346,12 +3348,14 @@ impl IdProvider for OidcProvider {
                     }
                 };
                 let tenant_id = self.tenant_id().await?;
-                let (shell, account_id_claims, strip_at_suffix) = {
+                let (shell, account_id_claims, strip_at_suffix, provider) = {
                     let config = self.config.lock().await;
+                    let provider = oidc_provider_config(&config, &self.domain)?;
                     (
                         config.get_shell(Some(&self.domain)),
                         config.get_oidc_account_id_claims(Some(&self.domain)),
                         config.get_oidc_account_id_strip_at_suffix(Some(&self.domain)),
+                        provider,
                     )
                 };
                 let token2 = self
@@ -3361,6 +3365,7 @@ impl IdProvider for OidcProvider {
                         shell,
                         self.idmap.as_ref(),
                         &tenant_id,
+                        provider.as_ref(),
                         &account_id_claims,
                         strip_at_suffix,
                     )

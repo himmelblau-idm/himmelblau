@@ -15,6 +15,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use crate::config::{HimmelblauConfig, ProviderConfig};
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
@@ -2630,11 +2631,47 @@ pub(crate) fn oidc_group_tokens_from_claims(
         .collect()
 }
 
+pub(crate) fn oidc_user_ids(
+    idmap_cache: &StaticIdCache,
+    idmap: &Idmap,
+    provider: Option<&ProviderConfig>,
+    tenant_id: &Uuid,
+    account_id: &str,
+) -> Result<(u32, u32), IdpError> {
+    let local_account_id = provider
+        .map(|provider| provider.local_account_name(account_id))
+        .unwrap_or_else(|| account_id.to_string());
+    match idmap_cache.get_user_by_name(&local_account_id) {
+        Some(user) => Ok((user.uid, user.gid)),
+        None => {
+            let gid = idmap
+                .gen_to_unix(&tenant_id.to_string(), account_id)
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?;
+            Ok((gid, gid))
+        }
+    }
+}
+
+pub(crate) fn oidc_provider_config(
+    config: &HimmelblauConfig,
+    domain: &str,
+) -> Result<Option<ProviderConfig>, IdpError> {
+    match config.provider_for_domain(domain) {
+        Some(provider) => Ok(Some(provider)),
+        None if domain == "oidc" => Ok(None),
+        None => Err(IdpError::BadRequest),
+    }
+}
+
 pub(crate) async fn oidc_user_token_from_claims(
     claims: &serde_json::Value,
     shell: String,
     idmap: &tokio::sync::Mutex<Idmap>,
     tenant_id: &uuid::Uuid,
+    provider: Option<&ProviderConfig>,
     account_id_claims: &[String],
     strip_at_suffix: bool,
 ) -> Result<UserToken, IdpError> {
@@ -2654,19 +2691,7 @@ pub(crate) async fn oidc_user_token_from_claims(
 
     let idmap = idmap.lock().await;
     let oidc_groups = oidc_group_tokens_from_claims(group_claims, &idmap, tenant_id);
-
-    let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
-        Some(user) => (user.uid, user.gid),
-        None => {
-            let gid = idmap
-                .gen_to_unix(&tenant_id.to_string(), &account_id)
-                .map_err(|e| {
-                    error!("{:?}", e);
-                    IdpError::BadRequest
-                })?;
-            (gid, gid)
-        }
-    };
+    let (uid, gid) = oidc_user_ids(&idmap_cache, &idmap, provider, tenant_id, &account_id)?;
 
     let displayname = userinfo
         .name()

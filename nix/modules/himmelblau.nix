@@ -383,6 +383,8 @@ in
           environment.LD_LIBRARY_PATH = config.system.nssModules.path;
           serviceConfig = commonServiceConfig // {
             UMask = "0027";
+            ExecStartPre =
+              "+${cfg.daemonPackage}/bin/himmelblaud_tasks --prepare-provider-cache --config ${configFile}";
             ExecStart =
               "${cfg.daemonPackage}/bin/himmelblaud --config ${configFile}"
               + lib.optionalString cfg.debugFlag " -d";

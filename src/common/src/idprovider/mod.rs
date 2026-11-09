@@ -16,7 +16,9 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::config::{split_username, HimmelblauConfig, ProviderConfig, ProviderKind};
+use crate::constants::ID_MAP_CACHE;
 use crate::db::{CacheError, CacheTxn, KeyStoreTxn, ScopedKeyStore};
+use crate::idmap_cache::{StaticIdCache, UserMappingMigration};
 use crate::idprovider::himmelblau::HimmelblauProvider;
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -32,7 +34,8 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use idmap::Idmap;
 use libkrimes::proto::KerberosCredentials;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{broadcast, Mutex};
@@ -259,7 +262,140 @@ fn migrate_oidc_accounts<D: CacheTxn + KeyStoreTxn>(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct OidcStaticIdMigration {
+    source: String,
+    target: String,
+    provider: String,
+}
+
+fn oidc_static_id_migrations(
+    settings: &HimmelblauConfig,
+    accounts: &[UserToken],
+) -> Vec<OidcStaticIdMigration> {
+    let providers: Vec<_> = accounts
+        .iter()
+        .map(|token| settings.provider_for_token(token))
+        .collect();
+    let mut name_owners: HashMap<String, HashSet<String>> = HashMap::new();
+    for (token, owner) in accounts.iter().zip(&providers) {
+        let owner = owner
+            .as_ref()
+            .map(|provider| provider.domain.clone())
+            .unwrap_or_default();
+        for name in [
+            Some(token.name.as_str()),
+            Some(token.spn.as_str()),
+            token.oidc_account_id.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            name_owners
+                .entry(name.to_ascii_lowercase())
+                .or_default()
+                .insert(owner.clone());
+        }
+    }
+
+    let mut migrations = HashMap::new();
+    for (token, provider) in accounts.iter().zip(providers) {
+        let Some(provider) = provider.filter(ProviderConfig::scopes_oidc_accounts) else {
+            continue;
+        };
+        let source = token
+            .oidc_account_id
+            .clone()
+            .unwrap_or_else(|| token.spn.clone());
+        let target = provider.local_account_name(&source);
+        if source == target {
+            continue;
+        }
+
+        let conflicting_route = settings
+            .provider_for_account(&source)
+            .is_some_and(|routed| {
+                routed.kind == ProviderKind::Entra
+                    || (source.contains('@') && routed.domain != provider.domain)
+            });
+        let owners = name_owners.get(&source.to_ascii_lowercase());
+        let unique_owner =
+            owners.is_some_and(|owners| owners.len() == 1 && owners.contains(&provider.domain));
+        if conflicting_route || !unique_owner {
+            debug!(
+                provider = %provider.label,
+                "Skipping ambiguous legacy OIDC static ID mapping"
+            );
+            continue;
+        }
+
+        let migration_source = source.clone();
+        migrations.insert(
+            source,
+            OidcStaticIdMigration {
+                source: migration_source,
+                target,
+                provider: provider.label,
+            },
+        );
+    }
+    migrations.into_values().collect()
+}
+
+fn migrate_oidc_static_id_mappings(
+    settings: &HimmelblauConfig,
+    accounts: &[UserToken],
+) -> Result<()> {
+    let migrations = oidc_static_id_migrations(settings, accounts);
+    if migrations.is_empty() || !Path::new(ID_MAP_CACHE).exists() {
+        return Ok(());
+    }
+
+    let mut cache = StaticIdCache::new(ID_MAP_CACHE, true)?;
+    for migration in migrations {
+        match cache.migrate_user_mapping(&migration.source, &migration.target)? {
+            UserMappingMigration::Migrated => {
+                info!(
+                    provider = %migration.provider,
+                    "Migrated legacy OIDC static ID mapping"
+                );
+            }
+            UserMappingMigration::MissingSource => {}
+            UserMappingMigration::Conflict => {
+                error!(
+                    provider = %migration.provider,
+                    "Conflicting provider-qualified static ID mapping"
+                );
+            }
+            UserMappingMigration::Unavailable | UserMappingMigration::ReadOnly => {
+                error!(
+                    provider = %migration.provider,
+                    "Static ID cache is not writable for OIDC mapping migration"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 impl IdProviderProxy {
+    pub fn prepare_provider_caches(
+        settings: &HimmelblauConfig,
+        accounts: &[UserToken],
+    ) -> Result<()> {
+        let report = settings.validate();
+        if !report.is_ok() {
+            return Err(anyhow!("{}", report.errors.join("; ")));
+        }
+        let definitions = settings
+            .parse_providers()
+            .map_err(|errors| anyhow!("{}", errors.join("; ")))?;
+        if definitions.is_empty() {
+            return Err(anyhow!("No provider was configured"));
+        }
+        migrate_oidc_static_id_mappings(settings, accounts)
+    }
+
     pub async fn new<D: KeyStoreTxn + CacheTxn + Send>(
         config_filename: &str,
         keystore: &mut D,
@@ -1001,6 +1137,7 @@ impl IdProvider for IdProviderProxy {
 mod tests {
     use super::*;
     use crate::db::Cache;
+    use crate::idmap_cache::StaticUser;
 
     async fn test_proxy() -> IdProviderProxy {
         let settings = HimmelblauConfig::from_test_config(
@@ -1047,6 +1184,86 @@ mod tests {
             oidc_account_id: None,
             valid: true,
         }
+    }
+
+    #[tokio::test]
+    async fn oidc_static_id_lookup_uses_the_qualified_local_name() {
+        let proxy = test_proxy().await;
+        let provider = proxy.settings.provider_for_account("alice@b").unwrap();
+        let tenant_id = provider.oidc_tenant_id(&proxy.settings).unwrap();
+        let idmap = Idmap::new().unwrap();
+        let cache = StaticIdCache::in_memory_for_test().unwrap();
+        cache
+            .insert_user(&StaticUser {
+                name: "alice@example.org".to_string(),
+                uid: 1234,
+                gid: 5678,
+            })
+            .unwrap();
+        cache
+            .insert_user(&StaticUser {
+                name: "alice@example.org@b".to_string(),
+                uid: 2345,
+                gid: 6789,
+            })
+            .unwrap();
+        assert_eq!(
+            common::oidc_user_ids(
+                &cache,
+                &idmap,
+                Some(&provider),
+                &tenant_id,
+                "alice@example.org"
+            )
+            .unwrap(),
+            (2345, 6789)
+        );
+    }
+
+    #[test]
+    fn legacy_oidc_static_id_migration_requires_one_provider_owner() {
+        let settings = HimmelblauConfig::from_test_config(
+            "[global]\napp_id=linux\n\
+             [tenant.a]\ndefault=true\nidmap_range=200000-300000\noidc_issuer_url=https://a.example\n\
+             [tenant.b]\nidmap_range=300001-400000\noidc_issuer_url=https://b.example\n",
+        );
+        let provider_b = settings.provider_for_account("alice@b").unwrap();
+        let tenant_b = provider_b.oidc_tenant_id(&settings).unwrap();
+        let mut account_b = token("alice@example.org");
+        account_b.tenant_id = Some(tenant_b);
+        account_b.oidc_account_id = Some("alice@example.org".to_string());
+
+        assert_eq!(
+            oidc_static_id_migrations(&settings, std::slice::from_ref(&account_b)),
+            vec![OidcStaticIdMigration {
+                source: "alice@example.org".to_string(),
+                target: "alice@example.org@b".to_string(),
+                provider: "b".to_string(),
+            }]
+        );
+
+        let provider_a = settings.provider_for_account("alice@a").unwrap();
+        let mut account_a = token("alice@example.org");
+        account_a.tenant_id = provider_a.oidc_tenant_id(&settings);
+        account_a.oidc_account_id = Some("alice@example.org".to_string());
+        assert!(oidc_static_id_migrations(&settings, &[account_a, account_b.clone()]).is_empty());
+
+        let entra_settings = HimmelblauConfig::from_test_config(
+            "[global]\napp_id=linux\n\
+             [tenant.b]\ndefault=true\nidmap_range=300001-400000\noidc_issuer_url=https://b.example\n\
+             [tenant.entra]\ndomain=example.org\nidmap_range=400001-500000\n",
+        );
+        let entra_provider = entra_settings
+            .provider_for_account("alice@example.org")
+            .unwrap();
+        assert_eq!(entra_provider.kind, ProviderKind::Entra);
+        let entra_tenant = entra_provider.oidc_tenant_id(&entra_settings);
+        let mut entra_account = token("alice@example.org");
+        entra_account.tenant_id = entra_tenant;
+        assert!(
+            oidc_static_id_migrations(&entra_settings, &[account_b.clone(), entra_account])
+                .is_empty()
+        );
     }
 
     #[tokio::test]

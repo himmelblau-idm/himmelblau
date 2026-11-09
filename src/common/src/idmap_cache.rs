@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
-use rusqlite::{params, Connection, OpenFlags, Result};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Result};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -38,6 +38,25 @@ pub struct StaticIdCache {
     conn: Option<Connection>,
     writable: bool,
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UserMappingMigration {
+    Migrated,
+    MissingSource,
+    Conflict,
+    Unavailable,
+    ReadOnly,
+}
+
+const CREATE_TABLES: &str = "CREATE TABLE IF NOT EXISTS static_users (
+    name TEXT PRIMARY KEY,
+    uid INTEGER NOT NULL,
+    gid INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS static_groups (
+    name TEXT PRIMARY KEY,
+    gid INTEGER NOT NULL
+);";
 
 /// Reject a cached user whose UID or GID lands in systemd's dynamic user
 /// range. The cache is populated from directory supplied rfc2307 attributes
@@ -94,17 +113,7 @@ impl StaticIdCache {
         } else if writable && is_root {
             write = true;
             let conn = Connection::open(db_path)?;
-            conn.execute_batch(
-                "CREATE TABLE IF NOT EXISTS static_users (
-                    name TEXT PRIMARY KEY,
-                    uid INTEGER NOT NULL,
-                    gid INTEGER NOT NULL
-                );
-                 CREATE TABLE IF NOT EXISTS static_groups (
-                    name TEXT PRIMARY KEY,
-                    gid INTEGER NOT NULL
-                );",
-            )?;
+            conn.execute_batch(CREATE_TABLES)?;
             fs::set_permissions(db_path, fs::Permissions::from_mode(0o644))
                 .map_err(|_| rusqlite::Error::InvalidPath(db_path.into()))?;
             Some(conn)
@@ -116,6 +125,75 @@ impl StaticIdCache {
             conn,
             writable: write,
         })
+    }
+
+    pub(crate) fn migrate_user_mapping(
+        &mut self,
+        source: &str,
+        target: &str,
+    ) -> Result<UserMappingMigration> {
+        if source == target {
+            return Ok(UserMappingMigration::Migrated);
+        }
+        let Some(conn) = self.conn.as_mut() else {
+            return Ok(UserMappingMigration::Unavailable);
+        };
+        if !self.writable {
+            return Ok(UserMappingMigration::ReadOnly);
+        }
+
+        let tx = conn.transaction()?;
+        let source_user = tx
+            .query_row(
+                "SELECT name, uid, gid FROM static_users WHERE name = ?1",
+                [source],
+                |row| {
+                    Ok(StaticUser {
+                        name: row.get(0)?,
+                        uid: row.get(1)?,
+                        gid: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?;
+        let Some(source_user) = source_user else {
+            tx.commit()?;
+            return Ok(UserMappingMigration::MissingSource);
+        };
+        if !static_user_is_safe(&source_user) {
+            tx.commit()?;
+            return Ok(UserMappingMigration::MissingSource);
+        }
+
+        let target_user = tx
+            .query_row(
+                "SELECT name, uid, gid FROM static_users WHERE name = ?1",
+                [target],
+                |row| {
+                    Ok(StaticUser {
+                        name: row.get(0)?,
+                        uid: row.get(1)?,
+                        gid: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?;
+        if let Some(target_user) = target_user {
+            if target_user.uid != source_user.uid
+                || target_user.gid != source_user.gid
+                || !static_user_is_safe(&target_user)
+            {
+                return Ok(UserMappingMigration::Conflict);
+            }
+        } else {
+            tx.execute(
+                "INSERT INTO static_users (name, uid, gid) VALUES (?1, ?2, ?3)",
+                params![target, source_user.uid, source_user.gid],
+            )?;
+        }
+        tx.execute("DELETE FROM static_users WHERE name = ?1", [source])?;
+        tx.commit()?;
+        Ok(UserMappingMigration::Migrated)
     }
 
     pub fn insert_user(&self, user: &StaticUser) -> Result<()> {
@@ -244,5 +322,67 @@ impl StaticIdCache {
         }
 
         groups
+    }
+
+    #[cfg(test)]
+    pub(crate) fn in_memory_for_test() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(CREATE_TABLES)?;
+        Ok(Self {
+            conn: Some(conn),
+            writable: true,
+        })
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn cache_with_user(user: &StaticUser) -> StaticIdCache {
+        let cache = StaticIdCache::in_memory_for_test().unwrap();
+        cache.insert_user(user).unwrap();
+        cache
+    }
+
+    #[test]
+    fn user_mapping_migration_renames_without_overwriting() {
+        let mut cache = cache_with_user(&StaticUser {
+            name: "alice".to_string(),
+            uid: 1234,
+            gid: 5678,
+        });
+
+        assert_eq!(
+            cache.migrate_user_mapping("alice", "alice@work").unwrap(),
+            UserMappingMigration::Migrated
+        );
+        assert!(cache.get_user_by_name("alice").is_none());
+        let migrated = cache.get_user_by_name("alice@work").unwrap();
+        assert_eq!((migrated.uid, migrated.gid), (1234, 5678));
+    }
+
+    #[test]
+    fn user_mapping_migration_keeps_conflicting_entries() {
+        let mut cache = cache_with_user(&StaticUser {
+            name: "alice".to_string(),
+            uid: 1234,
+            gid: 5678,
+        });
+        cache
+            .insert_user(&StaticUser {
+                name: "alice@work".to_string(),
+                uid: 9876,
+                gid: 5432,
+            })
+            .unwrap();
+
+        assert_eq!(
+            cache.migrate_user_mapping("alice", "alice@work").unwrap(),
+            UserMappingMigration::Conflict
+        );
+        assert_eq!(cache.get_user_by_name("alice").unwrap().uid, 1234);
+        assert_eq!(cache.get_user_by_name("alice@work").unwrap().uid, 9876);
     }
 }
