@@ -32,10 +32,31 @@ Show the help message with information about available options.
 \fB\-V\fR, \fB\-\-version\fR
 Print the version of the `himmelblaud` daemon and exit.
 
+.SH SIGNALS
+.TP
+.B SIGHUP
+Reload the configuration without restarting the daemon. With the units generated for systemd 253 or later, which use \fBType=notify-reload\fR and propagate reloads to \fBhimmelblaud-tasks\fR (\fBReloadPropagatedFrom=himmelblaud.service\fR), \fBsystemctl reload himmelblaud\fR sends this signal and also reloads \fBhimmelblaud-tasks\fR. Otherwise, for example with older systemd versions, the NixOS module or custom units without that propagation, use \fBsystemctl kill \-\-kill-whom=main \-\-signal=HUP himmelblaud himmelblaud-tasks\fR (\fB\-\-kill-who=main\fR before systemd 252), which signals only the daemons and not the scripts they run. The result of the reload is logged. If the new configuration cannot be read or is invalid, the error is logged and the previous configuration stays in effect.
+
+A reload that changes \fBdomain\fR, \fBoidc_issuer_url\fR, \fBoidc_redirect_uri\fR, \fBapp_id\fR, \fBtenant_id\fR, \fBauthority_host\fR, \fBgraph_url\fR, \fBodc_provider\fR or \fBidmap_range\fR is rejected, and the previous configuration stays in effect. If OIDC is configured, a reload that changes \fBoidc_force_interaction_code\fR or \fBoidc_device_authorization_endpoint\fR is also rejected. \fBhimmelblaud-tasks\fR rejects the same reloads. Restart both services to apply these settings.
+
+The following settings are read only at startup. A reload that changes them logs a warning, and they take effect after the listed services are restarted:
+.RS
+.TP
+.B himmelblaud
+socket_path, broker_socket_path, db_path, hsm_type, tpm_tcti_name, hsm_pin_path, user_map_file, local_groups_reconcile_interval, request_timeout, ip_version
+.TP
+.B himmelblaud and himmelblaud-tasks
+task_socket_path, debug, home_prefix, home_attr, home_alias
+.RE
+
 .SH USAGE EXAMPLES
 .TP
 .B Start the daemon:
 # systemctl start himmelblaud
+
+.TP
+.B Reload the configuration (generated units for systemd 253 or later):
+# systemctl reload himmelblaud
 
 .TP
 .B Run with a specific config file:

@@ -8,6 +8,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use crate::config::HimmelblauConfig;
 use crate::db::KeyStoreTxn;
 use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
@@ -464,5 +465,12 @@ pub trait IdProvider {
     /// Import broker PRTs previously exported by [`Self::export_broker_prts`].
     async fn import_broker_prts(&self, _data: &[u8]) -> Result<(), serde_json::Error> {
         Ok(())
+    }
+
+    /// Replace the configuration the provider reads at runtime.
+    async fn reload_config(&self, _config: HimmelblauConfig) {}
+
+    async fn current_config(&self) -> Option<HimmelblauConfig> {
+        None
     }
 }

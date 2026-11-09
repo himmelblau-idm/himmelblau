@@ -118,6 +118,8 @@ def main():
         type_line = "Type=notify"
     else:
         type_line = "Type=notify-reload" if supported("TypeNotifyReload") else "Type=notify"
+    # `systemctl reload himmelblaud` also reloads the tasks daemon.
+    tasks_reload_line = "ReloadPropagatedFrom=himmelblaud.service" if type_line == "Type=notify-reload" else ""
 
     # ---- Decide DynamicUser vs static ----
     service_user_block = []
@@ -284,6 +286,7 @@ WantedBy=multi-user.target
 Description=Himmelblau Local Tasks
 After={' '.join(tasks_after)} himmelblaud.service
 Requires=himmelblaud.service
+{tasks_reload_line}
 
 # This prevents starting himmelblaud-tasks before himmelblaud is running and
 # has created the socket necessary for communication.
@@ -295,7 +298,7 @@ StartLimitBurst=8
 
 [Service]
 User=root
-Type=notify
+{type_line}
 ExecStart=/usr/sbin/himmelblaud_tasks
 Restart=on-failure
 RestartSec=1s

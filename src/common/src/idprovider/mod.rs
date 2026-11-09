@@ -661,6 +661,16 @@ impl IdProvider for IdProviderProxy {
         }
         Ok(())
     }
+
+    async fn reload_config(&self, mut config: HimmelblauConfig) {
+        let mut current = self.config.lock().await;
+        config.keep_runtime_values(&current);
+        *current = config;
+    }
+
+    async fn current_config(&self) -> Option<HimmelblauConfig> {
+        Some(self.config.lock().await.clone())
+    }
 }
 
 #[cfg(test)]
