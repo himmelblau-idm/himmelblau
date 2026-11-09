@@ -220,7 +220,7 @@ in
       description = ''
         Specify whether to map uid/gid based on the object name, the object uuid, or based on the rfc2307 schema extension attributes synchronized from an on-prem Active Directory instance. Mapping by name or by rfc2307 is recommended.
       '';
-      example = "uuid";
+      example = "name";
     };
 
     rfc2307_group_fallback_map = mkOption {
@@ -241,7 +241,7 @@ in
         **gidNumber**
         will not be available to NSS.
       '';
-      example = "uuid";
+      example = "name";
     };
 
     enable_hello = mkOption {
