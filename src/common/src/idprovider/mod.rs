@@ -304,20 +304,17 @@ fn oidc_static_id_migrations(
         let Some(provider) = provider.filter(ProviderConfig::scopes_oidc_accounts) else {
             continue;
         };
-        let source = token
-            .oidc_account_id
-            .clone()
-            .unwrap_or_else(|| token.spn.clone());
-        let target = provider.local_account_name(&source);
+        let source = token.spn.clone();
+        let account = token.oidc_account_id.as_deref().unwrap_or(&source);
+        let target = provider.local_account_name(account);
         if source == target {
             continue;
         }
-
         let conflicting_route = settings
-            .provider_for_account(&source)
+            .provider_for_account(account)
             .is_some_and(|routed| {
                 routed.kind == ProviderKind::Entra
-                    || (source.contains('@') && routed.domain != provider.domain)
+                    || (account.contains('@') && routed.domain != provider.domain)
             });
         let owners = name_owners.get(&source.to_ascii_lowercase());
         let unique_owner =
@@ -1313,6 +1310,27 @@ mod tests {
         assert!(
             oidc_static_id_migrations(&entra_settings, &[account_b.clone(), entra_account])
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn scoped_oidc_static_id_migration_uses_cached_local_name() {
+        let settings = HimmelblauConfig::from_test_config(
+            "[global]\napp_id=linux\n\
+             [tenant.new]\ndefault=true\nidmap_range=200000-300000\noidc_issuer_url=https://b.example\n",
+        );
+        let provider = settings.provider_for_account("alice@new").unwrap();
+        let mut account = token("alice@example.org@old");
+        account.tenant_id = provider.oidc_tenant_id(&settings);
+        account.oidc_account_id = Some("alice@example.org".to_string());
+
+        assert_eq!(
+            oidc_static_id_migrations(&settings, &[account]),
+            vec![OidcStaticIdMigration {
+                source: "alice@example.org@old".to_string(),
+                target: "alice@example.org@new".to_string(),
+                provider: "new".to_string(),
+            }]
         );
     }
 
