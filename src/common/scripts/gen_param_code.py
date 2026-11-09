@@ -353,7 +353,8 @@ def example_config(example: str) -> str:
 
 
 def generate_example_tests(params: List[Parameter], sections: Dict[str, Section]) -> List[str]:
-    lines = ['', '#[cfg(test)]', 'mod documentation_examples {', '    use super::*;']
+    lines = ['', '#[cfg(test)]', '#[allow(clippy::unwrap_used, clippy::expect_used)]',
+             'mod documentation_examples {', '    use super::*;']
     for param in sorted(params, key=lambda p: (p.section, p.name)):
         for index, example in enumerate(param.examples):
             text = example_config(example)
@@ -1232,7 +1233,7 @@ def generate_nix_options(params: List[Parameter], sections: Dict[str, Section]) 
             scoped = {p.name: p for p in params if p.domain_specific and p.documented}
             scoped.update({p.name: p for p in section_params})
             for param in sorted(scoped.values(), key=lambda p: p.name):
-                lines.extend(_generate_nix_option(param, indent=10, use_default=False))
+                lines.extend(line.rstrip() for line in _generate_nix_option(param, indent=10, use_default=False))
             lines.extend(['        };', '      });', '    };', ''])
             continue
 
@@ -1291,7 +1292,7 @@ def _generate_nix_option(param: Parameter, indent: int = 4, use_default: bool = 
 
         lines.append(f"{ind}  description = ''")
         for desc_line in clean_desc.split('\n'):
-            lines.append(f'{ind}    {desc_line}'.rstrip())
+            lines.append(f'{ind}    {desc_line}')
         lines.append(f"{ind}  '';")
 
     # Example

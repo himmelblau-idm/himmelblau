@@ -1544,6 +1544,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::unwrap_used)]
     async fn test_cache_db_migrate_preserves_memberships_with_foreign_keys() {
         let db = Db::new("").expect("failed to create.");
         db.conn
@@ -2059,6 +2060,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::unwrap_used)]
     async fn test_cache_db_account_replacement_removes_synthetic_primary_group() {
         let db = Db::new("").expect("failed to create.");
         let mut dbtxn = db.write().await;

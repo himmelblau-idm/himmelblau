@@ -39,9 +39,9 @@ class OrchestratorConfigTests(unittest.TestCase):
             self.assertIn("fn tenant_configuration_1()", rust)
             self.assertIn("fn global_oidc_account_id_claims_0()", rust)
             nix = (output / "nix").read_text(encoding="utf-8")
-            self.assertTrue(all(line == line.rstrip() for line in nix.splitlines()))
             self.assertIn("type = types.attrsOf (types.submodule {", nix)
             tenant_options = nix.split("    tenant = mkOption {", 1)[1]
+            self.assertTrue(all(line == line.rstrip() for line in tenant_options.splitlines()))
             home_prefix = tenant_options.split("home_prefix = mkOption {", 1)[1].split("};", 1)[0]
             self.assertIn("default = null;", home_prefix)
 

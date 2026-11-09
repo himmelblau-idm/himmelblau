@@ -784,27 +784,6 @@ fn granted_file_scopes(scopes: &str) -> String {
     }
 }
 
-fn enc(value: &str) -> String {
-    urlencoding::encode(value).into_owned()
-}
-fn drive_search_path(drive: &str, search: &str) -> String {
-    format!(
-        "/drives/{}/root/search(q='{}')",
-        enc(drive),
-        enc(&search.replace('\'', "''"))
-    )
-}
-fn compact_error(body: &str) -> String {
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|v| {
-            v.pointer("/error/code")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| "request rejected".to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1255,4 +1234,25 @@ mod tests {
             "Files.Read.All"
         );
     }
+}
+
+fn enc(value: &str) -> String {
+    urlencoding::encode(value).into_owned()
+}
+fn drive_search_path(drive: &str, search: &str) -> String {
+    format!(
+        "/drives/{}/root/search(q='{}')",
+        enc(drive),
+        enc(&search.replace('\'', "''"))
+    )
+}
+fn compact_error(body: &str) -> String {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.pointer("/error/code")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "request rejected".to_owned())
 }
