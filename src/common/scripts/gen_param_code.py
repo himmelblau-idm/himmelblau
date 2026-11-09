@@ -352,11 +352,26 @@ def example_config(example: str) -> str:
     return '\n'.join(line for line in example.strip().splitlines() if line.strip() != '.br')
 
 
+def example_variants(param: Parameter, example: str) -> List[str]:
+    if param.param_type != 'enum':
+        return [example]
+    match = re.fullmatch(rf'(\s*{re.escape(param.name)}\s*=\s*)<([^<>]*)>(\s*)', example)
+    if match is None:
+        return [example]
+    choices = [value.strip() for value in match[2].split('|')]
+    allowed = {value.config_value.lower() for value in param.enum_values}
+    for choice in choices:
+        if choice.lower() not in allowed:
+            raise ValueError(f'Invalid enum alternative for {param.name}: {choice!r}')
+    return [f'{match[1]}{choice}{match[3]}' for choice in choices]
+
+
 def generate_example_tests(params: List[Parameter], sections: Dict[str, Section]) -> List[str]:
     lines = ['', '#[cfg(test)]', '#[allow(clippy::unwrap_used, clippy::expect_used)]',
              'mod documentation_examples {', '    use super::*;']
     for param in sorted(params, key=lambda p: (p.section, p.name)):
-        for index, example in enumerate(param.examples):
+        examples = [variant for example in param.examples for variant in example_variants(param, example)]
+        for index, example in enumerate(examples):
             text = example_config(example)
             section = param.section
             if section == 'tenant':

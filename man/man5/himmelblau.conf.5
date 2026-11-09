@@ -298,7 +298,7 @@ Specify whether to map uid/gid based on the object name, the object uuid, or bas
 Default: name
 
 .P
-Example: id_attr_map = uuid
+Example: id_attr_map = <name|uuid|rfc2307>
 
 .TP
 .B rfc2307_group_fallback_map
@@ -318,7 +318,7 @@ defined in the directory, this setting determines the fallback method for mappin
 will not be available to NSS.
 
 .P
-Example: rfc2307_group_fallback_map = uuid
+Example: rfc2307_group_fallback_map = <name|uuid>
 
 .TP
 .B enable_hello
@@ -650,7 +650,7 @@ full \(em return every cached group GID, including ones with no NSS name. Use th
 Default: named
 
 .P
-Example: initgroups_mode = named
+Example: initgroups_mode = <named|full>
 
 .TP
 .B local_groups_reconcile_interval

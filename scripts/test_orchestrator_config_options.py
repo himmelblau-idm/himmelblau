@@ -23,6 +23,43 @@ ORCHESTRATOR_NAMES = (
 
 
 class OrchestratorConfigTests(unittest.TestCase):
+    def test_enum_examples_expand_and_reject_invalid_alternatives(self):
+        cases = (
+            ("&lt;name|uuid&gt;", ("name", "uuid")),
+            ("uuid", ("uuid",)),
+            ("&lt;name|unknown&gt;", None),
+            ("&lt;name||uuid&gt;", None),
+            ("&lt;&gt;", None),
+        )
+        for example, expected in cases:
+            with self.subTest(example=example), tempfile.TemporaryDirectory(dir=ROOT) as directory:
+                root = Path(directory)
+                xml = root / "xml/base"
+                xml.mkdir(parents=True)
+                (xml / "id_attr_map.xml").write_text(
+                    '<parameter name="id_attr_map" type="enum" rust_type="IdAttr">'
+                    '<handler>get_id_attr_map</handler>'
+                    f'<example>id_attr_map = {example}</example>'
+                    '<enum_values><value rust="IdAttr::Name">name</value>'
+                    '<value rust="IdAttr::Uuid">uuid</value></enum_values>'
+                    '</parameter>', encoding="utf-8",
+                )
+                output = root / "config_gen.rs"
+                result = subprocess.run(
+                    [sys.executable, str(GENERATOR), "--xml-dir", str(xml.parent),
+                     "--gen-rust", "--rust-output", str(output)],
+                    capture_output=True, text=True,
+                )
+                if expected is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Invalid enum alternative for id_attr_map", result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    rust = output.read_text(encoding="utf-8")
+                    self.assertEqual(rust.count("fn global_id_attr_map_"), len(expected))
+                    for value in expected:
+                        self.assertIn(f'id_attr_map = {value}"#', rust)
+
     def test_tenant_examples_and_options_are_generated(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:
             output = Path(directory)
