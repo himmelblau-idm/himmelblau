@@ -80,6 +80,17 @@ The failed operation is not recorded as passing; no release approval is granted.
 Recovered failures travel as data-only checkpoint progress, never as validation
 approval. A moved stable base also produces a draft requiring reconciliation.
 Label/readiness failures preserve the already-created PR for human intervention.
+The duplicate guard trusts same-repository automation branches from the configured
+publication App (resolved from its credentials), even if labeling failed.
+
+Image, tooling and isolation smoke-check failures are recorded in checkpointed
+recovery state. Cache-dependent phases stop after a failed prerequisite or cache
+preparation, while checkpointing and draft publication still run. A later stage
+may retry preparation with its fresh cache; earlier failures still require human
+review. A failed backport baseline stops the batch once, retaining unexamined
+candidates. Candidate metadata errors and cache teardown failures preserve earlier
+accepted backports. Any backport phase failure retains the previous main cutoff,
+including in the recovery PR description used for squash merges.
 
 Both final cargo-audit and locked cargo-vet checks run when non-audit gates allow
 validation to reach them. Audit findings or execution failures retain the existing

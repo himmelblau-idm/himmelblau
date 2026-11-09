@@ -191,16 +191,34 @@ jobs:
             --stage "$PREVIOUS_STAGE" --expected-head "$CHECKPOINT_HEAD" \
             --expected-digest "$CHECKPOINT_DIGEST" --checkpoint-ref "$CHECKPOINT_REF"
 
+      - name: Resolve trusted publication App identity
+        id: guard-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.STABLE_MAINTENANCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.STABLE_MAINTENANCE_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: read
+
       - name: Guard — check for an existing maintenance PR
         id: guard
         env:
+          MAINTENANCE_PUBLISHER_LOGIN: ${{ steps.guard-token.outputs.app-slug }}[bot]
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
           python3 tooling/.github/scripts/stable_maintenance.py
           --repo-dir source --state-dir "$STATE_DIR"
           guard --branch "$TARGET_BRANCH"
 
+      - name: Initialize — snapshot trusted refs and backport cutoff
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies' }}
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          initialize --branch "$TARGET_BRANCH"
+
       - name: Build pinned maintenance image without credentials
+        id: image
         if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' }}
         timeout-minutes: 45
         shell: bash
@@ -214,6 +232,7 @@ jobs:
             "$image_context"
 
       - name: Smoke-test maintenance image Git tooling
+        id: tooling-smoke
         if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' }}
         shell: bash
         run: |
@@ -247,6 +266,7 @@ jobs:
               crate2nix --version | grep -F "0.15.0"
             '
       - name: Smoke-test isolated asset generation
+        id: isolation-smoke
         if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' }}
         run: |
           MAINTENANCE_CONTAINER_TESTS=1 python3 tooling/.github/scripts/test_stable_maintenance.py \
@@ -254,18 +274,22 @@ jobs:
             BranchAndCliTests.test_backport_cache_reuses_artifacts_and_assets_then_final_build_is_clean
 
 
+      - name: Record prerequisite outcomes for checkpointed draft recovery
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' }}
+        env:
+          IMAGE_OUTCOME: ${{ steps.image.outcome }}
+          TOOLING_OUTCOME: ${{ steps.tooling-smoke.outcome }}
+          ISOLATION_OUTCOME: ${{ steps.isolation-smoke.outcome }}
+        run: |
+          python3 tooling/.github/scripts/stable_maintenance.py \
+            --repo-dir source --state-dir "$STATE_DIR" record-prerequisites --branch "$TARGET_BRANCH" \
+            --image "$IMAGE_OUTCOME" --tooling "$TOOLING_OUTCOME" --isolation "$ISOLATION_OUTCOME"
+
       - name: Prepare exact locked dependencies in the fresh private Cargo cache
         if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage != 'dependencies' }}
         run: |
           python3 tooling/.github/scripts/stable_maintenance.py --best-effort \
             --repo-dir source --state-dir "$STATE_DIR" prepare --branch "$TARGET_BRANCH"
-
-      - name: Initialize — snapshot trusted refs and backport cutoff
-        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies' }}
-        run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
-          --repo-dir source --state-dir "$STATE_DIR"
-          initialize --branch "$TARGET_BRANCH"
 
       - name: Supply chain — refresh cargo-vet imports
         if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies' }}

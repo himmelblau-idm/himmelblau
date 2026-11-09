@@ -6556,6 +6556,11 @@ class RecoveryMaintenanceTests(unittest.TestCase):
             self.assertTrue((runner.root / "later.rs").exists())
             self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
             self.assertNotIn("secret", json.dumps(value))
+            self.assertEqual([row["phase"] for row in value["phase_failures"]], ["backports"])
+            with mock.patch.dict(sm.PHASES, {"validate": lambda args, state, runner: None}):
+                sm.run_best_effort_phase(self.args("validate"), state, runner)
+            self.assertEqual(state.load()["recovery_head"], runner.git(["rev-parse", "HEAD"]).stdout.strip())
+            self.assertNotIn("validated_head", state.load())
 
     def test_repair_shares_context_budget_and_still_calls_model(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -6571,6 +6576,189 @@ class RecoveryMaintenanceTests(unittest.TestCase):
                 self.assertFalse(sm.repair_backport(runner, head, head, ai))
             ai.call.assert_called_once()
             self.assertLess(len(ai.call.call_args.args[1].encode()), sm.MAX_BACKPORT_INPUT_BYTES)
+
+    def test_later_metadata_failure_and_teardown_preserve_accepted_backports(self):
+        for failure in ("metadata", "teardown"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                commits = []
+                for name in ("first", "middle", "last"):
+                    (runner.root / (name + ".rs")).write_text(name + "\n")
+                    commits.append(self.commit(runner, "Fix " + name))
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": base, "main_head": commits[-1]})
+                original = sm._commit_record
+                def record(current, sha):
+                    if failure == "metadata" and sha == commits[1]:
+                        raise sm.MaintenanceError("main commit context exceeds budget")
+                    return original(current, sha)
+                @contextmanager
+                def cache(current):
+                    yield None
+                    if failure == "teardown":
+                        raise sm.MaintenanceError("backport cache cleanup failed")
+                ai = mock.Mock(call=mock.Mock(return_value={"decision": True, "reason": "bug-fix"}))
+                with mock.patch.object(sm, "_commit_record", side_effect=record), \
+                     mock.patch.object(sm, "backport_build_cache", side_effect=cache), \
+                     mock.patch.object(sm, "AzureAI", return_value=ai), \
+                     mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "format_backport"):
+                    sm.run_best_effort_phase(self.args("backports"), state, runner)
+                value = state.load()
+                expected = [commits[0], commits[2]] if failure == "metadata" else commits
+                self.assertEqual(value["backports_applied"], expected)
+                self.assertEqual(value["backport_cursor"], 3)
+                self.assertEqual(value["backport_remaining"], [])
+                self.assertEqual(len(value["phase_failures"]), 1)
+                self.assertTrue((runner.root / "first.rs").exists())
+                self.assertTrue((runner.root / "last.rs").exists())
+                self.assertEqual((runner.root / "middle.rs").exists(), failure == "teardown")
+                self.assertEqual(sm.maintenance_main_through(value), base)
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
+    def test_baseline_failure_stops_once_without_examining_later_candidates(self):
+        for error in (sm.CommandResult(101, "", ""), sm.MaintenanceError("capture failed")):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                (runner.root / "value.rs").write_text("feature\n")
+                skipped = self.commit(runner, "Add feature")
+                commits = []
+                for name in ("first", "later"):
+                    (runner.root / (name + ".rs")).write_text(name + "\n")
+                    commits.append(self.commit(runner, "Fix " + name))
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": base, "main_head": commits[-1]})
+                ai = mock.Mock(call=mock.Mock(return_value={"decision": True, "reason": "bug-fix"}))
+                ai.call.side_effect = lambda instructions, data, schema, name: (
+                    {"decision": False, "reason": "new-feature"} if "Add feature" in data
+                    else {"decision": True, "reason": "bug-fix"})
+                with mock.patch.object(sm, "AzureAI", return_value=ai), \
+                     mock.patch.object(sm, "locked_build", side_effect=[error]) as build:
+                    sm.run_best_effort_phase(self.args("backports"), state, runner)
+                value = state.load()
+                build.assert_called_once()
+                self.assertEqual(value["backport_remaining"], commits)
+                self.assertEqual(value["backport_cursor"], 1)
+                self.assertEqual([row["sha"] for row in value["backport_outcomes"]], [skipped])
+                self.assertEqual(value["phase_failures"], [{"phase": "backports", "gate": "baseline-build", "reason": "baseline-build-failed"}])
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), base)
+                self.assertEqual(sm.maintenance_main_through(value), base)
+                self.assertFalse(value.get("backports_deferred"))
+
+    def test_pre_inventory_failure_keeps_cutoff_in_recovery_description(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state = sm.State(Path(tmp) / "state")
+            state.save({"cutoff": base, "main_head": "a" * 40, "dependency_updates": [{}]})
+            with mock.patch.object(sm, "_phase_backport_batch", side_effect=RuntimeError("inventory failed")):
+                sm.run_best_effort_phase(self.args("backports"), state, runner)
+            self.assertEqual(sm.maintenance_main_through(state.load()), base)
+            self.assertIn(sm.MARKER + " " + base, sm.build_pr_body(state.load()))
+
+    def test_failed_smoke_checks_block_work_but_allow_draft_recovery(self):
+        for gate in ("image", "tooling", "isolation"):
+            with self.subTest(gate=gate), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                state = sm.State(Path(tmp) / "state")
+                args = sm.build_parser().parse_args(["record-prerequisites", "--image", "success",
+                                                    "--tooling", "success", "--isolation", "success"])
+                setattr(args, gate, "failure")
+                sm.phase_record_prerequisites(args, state, runner)
+                for phase in ("prepare", "backports", "release", "validate"):
+                    with mock.patch.dict(sm.PHASES, {phase: mock.Mock()}) as phases:
+                        sm.run_best_effort_phase(self.args(phase), state, runner)
+                        phases[phase].assert_not_called()
+                value = state.load()
+                self.assertEqual(value["phase_failures"][0]["gate"], gate)
+                self.assertIn("recovery_head", value)
+                self.assertNotIn("validated_head", value)
+                self.assertEqual(value["recovery_head"], runner.git(["rev-parse", "HEAD"]).stdout.strip())
+
+    def test_prepare_retry_can_enable_work_but_retains_historical_failures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            state = sm.State(Path(tmp) / "state")
+            with mock.patch.dict(sm.PHASES, {"prepare": mock.Mock(side_effect=sm.MaintenanceError("incomplete"))}):
+                sm.run_best_effort_phase(self.args("prepare"), state, runner)
+            with mock.patch.dict(sm.PHASES, {"backports": mock.Mock()}) as phases:
+                sm.run_best_effort_phase(self.args("backports"), state, runner)
+                phases["backports"].assert_not_called()
+            with mock.patch.dict(sm.PHASES, {"prepare": mock.Mock(), "backports": mock.Mock()}) as phases:
+                sm.run_best_effort_phase(self.args("prepare"), state, runner)
+                sm.run_best_effort_phase(self.args("backports"), state, runner)
+                phases["backports"].assert_called_once()
+            self.assertEqual(len(state.load()["phase_failures"]), 2)
+            self.assertNotIn("cache_prepared", sm.CHECKPOINT_KEYS)
+            self.assertNotIn("prerequisites_ready", sm.CHECKPOINT_KEYS)
+
+    def test_workflow_records_checks_before_work_and_uses_trusted_app_identity(self):
+        workflow = STAGE_WORKFLOW.read_text()
+        self.assertLess(workflow.index("Initialize —"), workflow.index("Build pinned maintenance image"))
+        self.assertLess(workflow.index("record-prerequisites --branch"), workflow.index("Prepare exact locked"))
+        for step in ("image", "tooling-smoke", "isolation-smoke"):
+            self.assertIn("steps." + step + ".outcome", workflow)
+        self.assertIn("MAINTENANCE_PUBLISHER_LOGIN: ${{ steps.guard-token.outputs.app-slug }}[bot]", workflow)
+
+    def test_custom_app_unlabeled_draft_blocks_duplicate_but_spoofs_do_not(self):
+        pr = {"state": "open", "number": 9, "draft": True, "labels": [],
+              "head": {"ref": sm.AUTOMATION_PREFIX + "stable-4.x-x", "repo": {"full_name": "o/r"}},
+              "user": {"login": "maintenance-app[bot]"}}
+        fork = dict(pr, head={"ref": pr["head"]["ref"], "repo": {"full_name": "attacker/r"}})
+        spoof = dict(pr, user={"login": "attacker[bot]"})
+        self.assertEqual(sm.validated_automation_prs([fork, spoof, pr], "o/r", publisher="maintenance-app[bot]"), [pr])
+        with tempfile.TemporaryDirectory() as tmp:
+            state = sm.State(Path(tmp) / "state")
+            with mock.patch.object(sm, "github_repository", return_value="o/r"), \
+                 mock.patch.object(sm, "github_paginated", return_value=[pr]), \
+                 mock.patch.object(sm, "github_search_items", return_value=[]), \
+                 mock.patch.dict(os.environ, {"MAINTENANCE_PUBLISHER_LOGIN": "maintenance-app[bot]"}):
+                sm.phase_guard(self.args("guard"), state, mock.Mock())
+            self.assertTrue(state.load()["skip"])
+
+    def test_multiple_versions_with_different_library_name_resolve_or_report_ambiguity(self):
+        registry = "registry+https://github.com/rust-lang/crates.io-index"
+        metadata = {"workspace_members": ["member"], "packages": [
+            {"id": "member", "manifest_path": "/repo/Cargo.toml", "dependencies": [
+                {"name": "libfoo", "req": "^1.0.0", "source": registry},
+                {"name": "libfoo", "rename": "foo2", "req": "^2.0.0", "source": registry}]},
+            {"id": "foo1", "name": "libfoo", "version": "1.2.0", "source": registry},
+            {"id": "foo2", "name": "libfoo", "version": "2.3.0", "source": registry}],
+            "resolve": {"nodes": [{"id": "member", "deps": [
+                {"name": "foo", "pkg": "foo1"}, {"name": "foo2", "pkg": "foo2"}]}]}}
+        self.assertEqual([(t.version, t.bindings[0][1]) for t in sm.direct_registry_packages(metadata)],
+                         [("1.2.0", "libfoo"), ("2.3.0", "foo2")])
+        metadata["resolve"]["nodes"][0]["deps"][1]["name"] = "foo"
+        with self.assertRaisesRegex(sm.MaintenanceError, "ambiguous direct dependency binding"):
+            sm.direct_registry_packages(metadata)
+        metadata["resolve"]["nodes"][0]["deps"][1]["name"] = "foo2"
+        metadata["packages"][0]["dependencies"][0]["rename"] = "unrecognized"
+        with self.assertRaisesRegex(sm.MaintenanceError, "ambiguous direct dependency binding"):
+            sm.direct_registry_packages(metadata)
+
+    def test_repair_reserves_large_metadata_and_instruction_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            (runner.root / "value.rs").write_text("stable source\n" * 20000)
+            head = self.commit(runner, "Large stable source")
+            for size in (20 * 1024, sm.MAX_BACKPORT_INPUT_BYTES):
+                with self.subTest(metadata_bytes=size):
+                    record = {"paths": ["value.rs"], "subject": "Fix", "body": "é" * size}
+                    ai = mock.Mock(call=mock.Mock(return_value={"decision": False, "patch": ""}))
+                    with mock.patch.object(sm, "_commit_record", return_value=record), \
+                         mock.patch.object(sm, "backport_patch", return_value="upstream patch\n" * 4000):
+                        if size == sm.MAX_BACKPORT_INPUT_BYTES:
+                            with self.assertRaisesRegex(sm.MaintenanceError, "context exceeds budget"):
+                                sm.repair_backport(runner, head, head, ai)
+                            ai.call.assert_not_called()
+                        else:
+                            self.assertFalse(sm.repair_backport(runner, head, head, ai))
+                            instructions, data = ai.call.call_args.args[:2]
+                            self.assertLessEqual(len((instructions + data).encode()), sm.MAX_BACKPORT_INPUT_BYTES)
 
 
 if __name__ == "__main__":
