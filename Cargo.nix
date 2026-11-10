@@ -253,7 +253,7 @@ rec {
     crates = {
       "aad-tool" = rec {
         crateName = "aad-tool";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -664,7 +664,7 @@ rec {
       };
       "apparmor" = rec {
         crateName = "apparmor";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/apparmor; };
         authors = [
@@ -2421,7 +2421,7 @@ rec {
       };
       "broker" = rec {
         crateName = "broker";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -2481,7 +2481,7 @@ rec {
       };
       "broker-client" = rec {
         crateName = "broker-client";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/broker-client; };
         libName = "broker_client";
@@ -7424,7 +7424,7 @@ rec {
       };
       "himmelblau-fuzz" = rec {
         crateName = "himmelblau-fuzz";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -7473,7 +7473,7 @@ rec {
       };
       "himmelblau-orchestrator" = rec {
         crateName = "himmelblau-orchestrator";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -7550,7 +7550,7 @@ rec {
       };
       "himmelblau_policies" = rec {
         crateName = "himmelblau_policies";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/policies; };
         authors = [
@@ -7621,7 +7621,7 @@ rec {
       };
       "himmelblau_unix_common" = rec {
         crateName = "himmelblau_unix_common";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/common; };
         authors = [
@@ -7819,7 +7819,7 @@ rec {
       };
       "himmelblaud" = rec {
         crateName = "himmelblaud";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -9085,7 +9085,7 @@ rec {
       };
       "idmap" = rec {
         crateName = "idmap";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/idmap; };
         authors = [
@@ -11691,7 +11691,7 @@ rec {
       };
       "nss_himmelblau" = rec {
         crateName = "nss_himmelblau";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/nss; };type = [ "cdylib" ];
         authors = [
@@ -11934,7 +11934,7 @@ rec {
       };
       "o365" = rec {
         crateName = "o365";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/o365; };
         authors = [
@@ -13206,7 +13206,7 @@ rec {
       };
       "pam_himmelblau" = rec {
         crateName = "pam_himmelblau";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         links = "pam";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/pam; };type = [ "cdylib" ];
@@ -14394,7 +14394,7 @@ rec {
       };
       "qr-greeter" = rec {
         crateName = "qr-greeter";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/qr-greeter; };
         libName = "qr_greeter";
@@ -16424,7 +16424,7 @@ rec {
       };
       "selinux" = rec {
         crateName = "selinux";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/selinux; };
         authors = [
@@ -17784,7 +17784,7 @@ rec {
       };
       "sshd-config" = rec {
         crateName = "sshd-config";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/sshd-config; };
         libName = "sshd_config";
@@ -17795,7 +17795,7 @@ rec {
       };
       "sso" = rec {
         crateName = "sso";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -17842,7 +17842,7 @@ rec {
       };
       "sso-policies" = rec {
         crateName = "sso-policies";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/sso-policies; };
         libName = "sso_policies";
