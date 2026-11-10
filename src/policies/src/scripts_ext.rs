@@ -377,7 +377,7 @@ impl PolicyCache {
     }
 
     /// Saves the cache to the given file path.
-    pub async fn save(&self, path: &PathBuf) -> Result<()> {
+    pub async fn save(&self, path: &Path) -> Result<()> {
         let data = serde_json::to_string_pretty(self)?;
         write_atomic(path, &data, 0o600).await
     }
