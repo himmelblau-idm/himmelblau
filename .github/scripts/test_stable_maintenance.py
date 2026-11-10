@@ -6618,6 +6618,44 @@ class RecoveryMaintenanceTests(unittest.TestCase):
                 self.assertEqual(sm.maintenance_main_through(value), base)
                 self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
 
+    def test_failed_cache_disposal_keeps_prefix_and_continues_with_private_builds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            commits = []
+            for name in ("earlier", "broken", "later"):
+                (runner.root / (name + ".rs")).write_text(name + "\n")
+                commits.append(self.commit(runner, "Fix " + name))
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": base, "main_head": commits[-1]})
+            volume = "himmelblau-maint-backport-" + "e" * 32
+            calls = []
+            def build(current, **kwargs):
+                calls.append(kwargs.copy())
+                return sm.CommandResult(101 if (current.root / "broken.rs").exists() else 0, "", "")
+            ai = mock.Mock(call=mock.Mock(return_value={"decision": True, "reason": "bug-fix"}))
+            with mock.patch.object(sm, "backport_build_cache") as cache, \
+                 mock.patch.object(sm, "AzureAI", return_value=ai), \
+                 mock.patch.object(sm, "locked_build", side_effect=build), \
+                 mock.patch.object(sm, "format_backport"), \
+                 mock.patch.object(sm, "check_backport_packaging"):
+                cache.return_value.__enter__.return_value = volume
+                cache.return_value.__exit__.side_effect = sm.MaintenanceError("backport cache cleanup failed")
+                sm.run_best_effort_phase(self.args("backports"), state, runner)
+            cache.return_value.__exit__.assert_called_once()
+            self.assertEqual(calls, [{"target_volume": volume}] * 3 + [{}])
+            value = state.load()
+            self.assertEqual(value["backports_applied"], [commits[0], commits[2]])
+            self.assertEqual(value["backports_deferred"], [commits[1]])
+            self.assertEqual(value["backport_remaining"], [])
+            self.assertEqual(len(value["phase_failures"]), 1)
+            self.assertEqual(sm.maintenance_main_through(value), base)
+            self.assertFalse((runner.root / "broken.rs").exists())
+            self.assertTrue((runner.root / "earlier.rs").exists())
+            self.assertTrue((runner.root / "later.rs").exists())
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
     def test_baseline_failure_stops_once_without_examining_later_candidates(self):
         for error in (sm.CommandResult(101, "", ""), sm.MaintenanceError("capture failed")):
             with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as tmp:

@@ -3741,12 +3741,14 @@ def phase_apply_backports(
                 break
             # A failed build can poison or exhaust either shared volume. Once
             # discarded, all remaining candidates use private output as well.
+            # Revoke reuse before disposal: best-effort candidate recovery may
+            # continue even when removing the holder or volumes fails.
+            cache.clear()
             try:
                 caches.close()
             except MaintenanceError:
                 runner.git(["reset", "--hard", pre_head])
                 raise
-            cache.clear()
             print("backport-cache: discarded after failed build; reuse disabled", file=sys.stderr)
             if failure["reason"] != "build failed":
                 break
