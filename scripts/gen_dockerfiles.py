@@ -321,6 +321,12 @@ DISTS = {
         "tpm": True,
         "selinux": True,
     },
+    "fedora45": {
+        "family": "rpm",
+        "image": "fedora:45",
+        "tpm": True,
+        "selinux": True,
+    },
     "rawhide": {
         "family": "rpm",
         "image": "fedora:rawhide",
