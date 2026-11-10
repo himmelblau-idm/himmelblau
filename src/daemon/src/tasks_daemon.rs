@@ -948,7 +948,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
 
 async fn prepare_provider_caches(cfg: &HimmelblauConfig) -> Result<(), String> {
     let db_path = cfg.get_db_path();
-    let Some(db) = Db::open_read_only(&db_path)
+    let Some(db) = Db::open_existing_read_write(&db_path)
         .map_err(|error| format!("Failed opening cache database {db_path}: {error:?}"))?
     else {
         return Ok(());

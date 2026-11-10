@@ -262,6 +262,19 @@ impl Db {
         }
     }
 
+    pub fn open_existing_read_write(path: &str) -> Result<Option<Self>, DbError> {
+        match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE) {
+            Ok(conn) => Ok(Some(Self::from_connection(conn, None))),
+            Err(e) => match Path::new(path).try_exists() {
+                Ok(false) => Ok(None),
+                _ => {
+                    error!(err = ?e, "rusqulite error");
+                    Err(DbError::Sqlite)
+                }
+            },
+        }
+    }
+
     pub async fn get_loadable_hsm_key(&self) -> Result<Option<LoadableMachineKey>, CacheError> {
         let mut dbtxn = self.write().await;
         let initialized = dbtxn
@@ -1379,6 +1392,8 @@ mod tests {
     use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn, TestDbFile, DBV_MAIN};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
     use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::Tpm, AuthValue};
+    use rusqlite::Connection;
+    use std::path::Path;
 
     const TESTACCOUNT1_PASSWORD_A: &str = "password a for account1 test";
     const TESTACCOUNT1_PASSWORD_B: &str = "password b for account1 test";
@@ -1418,6 +1433,71 @@ mod tests {
     async fn uninitialized_database_has_no_hsm_machine_key() {
         let db = Db::new("").expect("failed to create.");
         assert!(matches!(db.get_loadable_hsm_key().await, Ok(None)));
+    }
+
+    #[test]
+    fn existing_read_write_open_does_not_create_database() {
+        let file = TestDbFile::new();
+        assert!(!Path::new(&file.0).exists());
+
+        assert!(Db::open_existing_read_write(&file.0)
+            .expect("open existing database")
+            .is_none());
+        assert!(!Path::new(&file.0).exists());
+    }
+
+    #[tokio::test]
+    async fn existing_read_write_open_recovers_hot_journal() {
+        const HOT_JOURNAL_PATH: &str = "HIMMELBLAU_TEST_HOT_JOURNAL_PATH";
+
+        if let Ok(path) = std::env::var(HOT_JOURNAL_PATH) {
+            let conn = Connection::open(&path).expect("open recovery test database");
+            conn.execute_batch(
+                "PRAGMA journal_mode = DELETE;
+                 BEGIN EXCLUSIVE;
+                 UPDATE recovery_test SET value = 2;",
+            )
+            .expect("create hot rollback journal");
+            assert!(Path::new(&format!("{path}-journal")).exists());
+            std::process::exit(0);
+        }
+
+        let file = TestDbFile::new();
+        let conn = Connection::open(&file.0).expect("create recovery test database");
+        conn.execute_batch(
+            "PRAGMA journal_mode = DELETE;
+             CREATE TABLE recovery_test (value INTEGER NOT NULL);
+             INSERT INTO recovery_test VALUES (1);",
+        )
+        .expect("initialize recovery test database");
+        drop(conn);
+
+        let status = std::process::Command::new(
+            std::env::current_exe().expect("get current test executable"),
+        )
+        .args([
+            "--exact",
+            "db::tests::existing_read_write_open_recovers_hot_journal",
+            "--nocapture",
+        ])
+        .env(HOT_JOURNAL_PATH, &file.0)
+        .status()
+        .expect("run hot-journal child process");
+        assert!(status.success(), "hot-journal child failed: {status}");
+        assert!(Path::new(&format!("{}-journal", file.0)).exists());
+
+        let db = Db::open_existing_read_write(&file.0)
+            .expect("open existing database for recovery")
+            .expect("database exists");
+        let txn = db.read().await;
+        let value = txn
+            .txn
+            .conn
+            .query_row("SELECT value FROM recovery_test", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("read recovered database");
+        assert_eq!(value, 1);
     }
 
     fn test_account() -> UserToken {
