@@ -40,6 +40,9 @@ NixOS-specific requirements and intentional deviations from the generated units:
 - Retain RequiresMountsFor on the HSM credential directory so initialization
   waits for the filesystem containing the encrypted credential.
 - Keep NixOS's nscd/nsncd NSS proxy running; do not add Conflicts=nscd.service.
+  Hide its sockets only inside himmelblaud so the daemon's NSS recursion guard
+  also covers systems using a host NSS proxy.
+  Supply the configured NSS module library path to the daemon for direct lookups.
 - Keep the daemon's Type=notify because it does not implement notify-reload.
 - Retain the tasks service's BindsTo dependency instead of Requires, while
   ordering it after the daemon.
@@ -343,6 +346,8 @@ def nixos_expected_units(generated, paths):
             template.format(**paths, toolPath=tool_path)
             for template in NIXOS_ENVIRONMENT_PATHS
         ]
+        if name == "himmelblaud.service":
+            environment.append(f"LD_LIBRARY_PATH={paths['nssModules']}")
         if "Environment" in unit["Service"]:
             environment += shlex.split(unit["Service"]["Environment"])
         unit["Service"]["Environment"] = shlex.join(environment)
@@ -627,6 +632,21 @@ class NixosServiceTests(unittest.TestCase):
         ]
         self.assertEqual(actual, expected)
 
+    def test_chromium_policies_force_install_the_sso_extension(self):
+        for path, text in self.evaluated["chromiumPolicies"].items():
+            with self.subTest(path=path):
+                self.assertIsNotNone(text, f"/etc/{path} is not generated")
+                self.assertIn(
+                    "jlnfnnolkbjieggibinobhkjdfbpcohn",
+                    json.loads(text)["ExtensionInstallForcelist"],
+                )
+
+    def test_chromium_policies_can_be_disabled_by_the_host(self):
+        evaluated = evaluate(chromiumEnable=False)
+        for path, text in evaluated["chromiumPolicies"].items():
+            with self.subTest(path=path):
+                self.assertIsNone(text, f"/etc/{path} is still generated")
+
     def test_nixos_nss_proxy_is_not_stopped(self):
         self.assertTrue(self.evaluated["nscdEnabled"])
         daemon = self.units["himmelblaud.service"]["Unit"]
@@ -648,6 +668,25 @@ class NixosServiceTests(unittest.TestCase):
                 for warning in self.evaluated["warnings"]
                 if "himmelblau" in warning and "network-online.target" in warning
             ]
+        )
+
+    def test_firefox_policy_force_installs_the_packaged_release(self):
+        postinst = (ROOT / "src/sso-policies/scripts/postinst").read_text()
+        url = next(
+            line.split('"')[1]
+            for line in postinst.splitlines()
+            if line.startswith('FIREFOX_EXTENSION_URL="')
+        )
+        policies = self.evaluated["firefoxPolicies"]
+        self.assertIsNone(policies["extensions"])
+        self.assertEqual(
+            policies["extensionSettings"],
+            {
+                "linux-entra-sso@example.com": {
+                    "installation_mode": "force_installed",
+                    "install_url": url,
+                }
+            },
         )
 
     def test_hsm_initializer_stays_inactive_after_success(self):

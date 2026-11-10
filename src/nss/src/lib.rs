@@ -24,3 +24,5 @@
 extern crate libnss;
 #[cfg(target_family = "unix")]
 mod implementation;
+#[cfg(target_family = "unix")]
+mod recursion_guard;

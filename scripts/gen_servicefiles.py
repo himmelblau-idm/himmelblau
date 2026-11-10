@@ -256,6 +256,8 @@ FileDescriptorStoreMax=1
 PrivateTmp=true
 # We have to disable this to allow tpmrm0 access for tpm binding.
 PrivateDevices=false
+# Avoid NSS recursion through proxy
+InaccessiblePaths=-/run/nscd/socket -/var/run/nscd/socket
 
 [Install]
 WantedBy=multi-user.target
@@ -302,7 +304,7 @@ Restart=on-failure
 RestartSec=1s
 WatchdogSec=120s
 
-CacheDirectory=nss-himmelblau
+CacheDirectory=nss-himmelblau himmelblau-policies
 ConfigurationDirectory=himmelblau
 CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID
 AmbientCapabilities=CAP_SETUID CAP_SETGID

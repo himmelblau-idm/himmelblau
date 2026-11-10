@@ -27,7 +27,7 @@ DESTINATIONS = {
     "ubuntu25.10": "ubuntu/questing", "ubuntu26.04": "ubuntu/resolute",
     "debian12": "debian/bookworm", "debian13": "debian/trixie",
     "rocky8": "el/8", "rocky9": "el/9", "rocky10": "el/10",
-    "fedora42": "fedora/42", "fedora43": "fedora/43", "fedora44": "fedora/44",
+    "fedora42": "fedora/42", "fedora43": "fedora/43", "fedora44": "fedora/44", "fedora45": "fedora/45",
     "rawhide": "fedora/46",
     "amzn2023": "amzn/2023", "tumbleweed": "opensuse/tumbleweed",
     "sle15sp7": "sles/15", "sle16": "sles/16",

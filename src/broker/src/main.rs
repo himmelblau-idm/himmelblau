@@ -96,7 +96,38 @@ impl SyslogLevel {
     }
 }
 
-/// True when we can prompt: a graphical session and a pinentry binary exist.
+/// True when logind reports the user's graphical session as locked. A prompt
+/// cannot be shown over the lock screen (pinentry-gnome3 falls back to curses,
+/// which has no tty in a user service), so the attempt only blocks the broker.
+/// Any lookup failure is treated as unlocked to keep the previous behavior.
+fn graphical_session_locked() -> bool {
+    use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
+    use dbus::blocking::Connection;
+
+    let locked_hint = || -> Result<bool, dbus::Error> {
+        let conn = Connection::new_system()?;
+        let timeout = Duration::from_secs(2);
+        let user = conn.with_proxy(
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1/user/self",
+            timeout,
+        );
+        let (_, session): (String, dbus::Path<'static>) =
+            user.get("org.freedesktop.login1.User", "Display")?;
+        conn.with_proxy("org.freedesktop.login1", session, timeout)
+            .get("org.freedesktop.login1.Session", "LockedHint")
+    };
+    match locked_hint() {
+        Ok(locked) => locked,
+        Err(e) => {
+            debug!("Could not read the logind LockedHint: {}", e);
+            false
+        }
+    }
+}
+
+/// True when we can prompt: an unlocked graphical session and a pinentry
+/// binary exist.
 fn interactive_session_available() -> bool {
     let has_display =
         std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
@@ -107,7 +138,14 @@ fn interactive_session_available() -> bool {
     if !has_pinentry {
         info!("No pinentry binary found on PATH; cannot prompt interactively");
     }
-    has_display && has_pinentry
+    if !(has_display && has_pinentry) {
+        return false;
+    }
+    if graphical_session_locked() {
+        info!("Graphical session is locked; cannot prompt interactively");
+        return false;
+    }
+    true
 }
 
 /// True when a broker SSO cookie response carries a usable cookie.
@@ -366,7 +404,7 @@ impl InteractiveSessionBroker {
     fn run_interactive_auth(&self, account_id: &str) -> Result<(), dbus::MethodErr> {
         if !interactive_session_available() {
             return Err(dbus::MethodErr::failed(
-                &"No interactive prompt available: no graphical session or pinentry binary found",
+                &"No interactive prompt available: no unlocked graphical session or pinentry binary found",
             ));
         }
 

@@ -18,8 +18,8 @@ path =  "src/lib.rs"
 himmelblau_unix_common = { workspace = true }
 libnss = "0.9.0"
 libc = { workspace = true }
-uuid = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }
 
 [package.metadata.deb]
 name = "nss-himmelblau"

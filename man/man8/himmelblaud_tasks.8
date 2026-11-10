@@ -13,6 +13,20 @@ the program prepares provider-scoped identity caches before the authentication d
 
 Without that option, the daemon operates as a background service.
 
+.SS Intune policy scripts
+Configuration scripts run in transient system units named
+.BR himmelblaud-policy@POLICY_ID.service ,
+scheduled by matching
+.BR himmelblaud-policy@POLICY_ID.timer
+units.
+Custom compliance discovery scripts run on demand in the transient system unit
+.BR himmelblaud-tasks-compliance.service ,
+which is removed after execution.
+The separate user unit
+.B himmelblau-compliance-check.service
+requests a full policy check (so that it originates from the user) via
+.BR "aad-tool compliance-check" .
+
 .SH USAGE
 The daemon and its cache-preparation mode must be run as root. If either is started without root privileges, it will fail with an error. No user interaction is needed beyond ensuring the daemon is active and running correctly.
 
