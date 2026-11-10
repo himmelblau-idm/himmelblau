@@ -89,6 +89,13 @@ SELINUX_DISTROS = {
         "extra_setup": None,
         "requires_scc": False,
     },
+    "fedora45": {
+        "base_image": "fedora:45",
+        "pkg_manager": "dnf",
+        "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "policycoreutils-devel"],
+        "extra_setup": None,
+        "requires_scc": False,
+    },
     "rawhide": {
         "base_image": "fedora:rawhide",
         "pkg_manager": "dnf",
