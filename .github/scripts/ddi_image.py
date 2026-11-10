@@ -33,6 +33,8 @@ PORTABLE_RUNTIME_PACKAGES = {
         # Fedora packages the HSM helper's systemd-creds in systemd itself.
         "systemd", "tpm2-tools",
         "pinentry", "pinentry-gnome3", "xdg-utils",
+        # Fedora ships portablectl in systemd-container.
+        "systemd-container", "jq",
     ),
 }
 
@@ -212,7 +214,7 @@ def stage_portable(packages, root, fedora, architecture, version):
     run(dnf + ["clean", "all"])
     for name in ("himmelblaud", "himmelblaud_tasks", "himmelblau_broker"):
         validate_elf(resolve_in_root(root, "/usr/sbin/" + name), architecture)
-    for name in ("aad-tool", "pinentry-gnome3"):
+    for name in ("aad-tool", "portablectl", "jq", "pinentry-gnome3", "systemctl", "busctl"):
         validate_elf(root / "usr/bin" / name, architecture)
     for relative in (
         "usr/bin/pinentry",
@@ -226,13 +228,21 @@ def stage_portable(packages, root, fedora, architecture, version):
         if not (root / relative).is_file():
             raise ValueError(f"Missing portable runtime file: {relative}")
     configure_portable_units(root)
+    for name in ("himmelblaud-sysupdate-notify.socket", "himmelblaud-sysupdate-notify@.service"):
+        unit = root / "usr/lib/systemd/system" / name
+        shutil.copyfile(CONFIG / name, unit)
+        unit.chmod(0o644)
+    notifier = root / "usr/libexec/himmelblaud-sysupdate-notify"
+    notifier.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(CONFIG / notifier.name, notifier)
+    notifier.chmod(0o755)
     for relative in (
         "proc", "sys", "dev", "run", "tmp", "var/tmp", "home",
         "run/himmelblaud", "etc/himmelblau", "etc/krb5.conf.d",
         "var/lib/himmelblaud", "var/cache/himmelblaud",
         "var/lib/private/himmelblaud", "var/cache/private/himmelblaud",
         "var/cache/nss-himmelblau", "var/cache/himmelblau-policies",
-        "var/lib/AccountsService",
+        "var/lib/himmelblau-ddi", "var/lib/AccountsService",
     ):
         (root / relative).mkdir(parents=True, exist_ok=True)
     for relative in ("etc/machine-id", "etc/resolv.conf", "etc/nsswitch.conf"):
@@ -245,7 +255,7 @@ def stage_portable(packages, root, fedora, architecture, version):
         raise ValueError(f"Portable root does not match {fedora}")
     with os_release.open("a") as stream:
         stream.write(
-            '\nPORTABLE_PREFIXES="himmelblaud himmelblau-hsm-pin-init himmelblau-broker himmelblau-compliance-check"\n'
+            '\nPORTABLE_PREFIXES="himmelblaud himmelblaud-sysupdate-notify himmelblau-hsm-pin-init himmelblau-broker himmelblau-compliance-check"\n'
             "PORTABLE_SCOPE=any\nIMAGE_ID=himmelblau\n"
             f"IMAGE_VERSION={json.dumps(version)}\nARCHITECTURE={ARCHITECTURES[architecture][0]}\n"
         )

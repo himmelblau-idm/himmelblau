@@ -293,8 +293,8 @@ Packages will be written to `./packaging/`. You can then copy them to a target m
 ### Portable Service and sysext DDIs
 
 Signed [Discoverable Disk Images (DDIs)](https://uapi-group.org/specifications/specs/discoverable_disk_image/)
-are published alongside the distribution packages, to allow installing Himmelblau
-on immutable systems, without having to use packages.
+are published alongside the distribution packages. These can be used, for example,
+on immutable systems where packages are not supported.
 
 For each architecture, there is one
 [**Portable Service DDI**](https://systemd.io/PORTABLE_SERVICES/), based on the
@@ -313,7 +313,29 @@ each distribution's library paths and host libraries. Each sysext can be install
 on the respective distribution/release, as a companion to the distribution-agnostic
 Portable Service DDI.
 
-First, download the correct **sysext** for your host into
+The available portable images, for x86-64 and arm64 respectively, are listed in these
+SHA256SUMS files (with a corresponding SHA256SUMS.gpg signature to verify them) and
+published (versioned) in the same directory, available for downloads:
+
+```bash
+$ wget -O- -q https://dl.cloudsmith.io/public/himmelblau/nightly/raw/versions/himmelblau-nightly-portable-x86-64/SHA256SUMS
+beb53fcf425adddd48b008d47dfa61783e1c2efc3f84cb041127ccfcc8a7eef2 *himmelblaud_2026-11-19.060403367496-0b6793501f96-x86-64.raw
+$ wget -O- -q https://dl.cloudsmith.io/public/himmelblau/nightly/raw/versions/himmelblau-nightly-portable-arm64/SHA256SUMS
+d38a5b205f4e82a1514b5cbfbd28a6571b01ae05cc45de0447e5558fe4850c8e *himmelblaud_2026-11-19.060403367496-0b6793501f96-arm64.raw
+```
+
+sysext for each distribution and release, and again for x86-64 and arm64, are also
+listed in distro-specific SHA256SUMS files with their nightly version strings:
+
+```bash
+$ wget -O- -q https://dl.cloudsmith.io/public/himmelblau/nightly/raw/versions/himmelblau-nightly-fedora44-x86-64-sysext/SHA256SUMS
+42113a7f470b9689a626b7377c39d99d2f73583fc4ef9f94cc8217519c3534cb *himmelblau_2026-11-19.060403367496-0b6793501f96-fedora44-x86-64.sysext.raw
+$ wget -O- -q https://dl.cloudsmith.io/public/himmelblau/nightly/raw/versions/himmelblau-nightly-debian13-arm64-sysext/SHA256SUMS
+24be393a0d2424a2ef4fa43cbdc5b51fa1066ec60154592553bab8334f685573 *himmelblau_2026-11-19.060403367496-0b6793501f96-debian13-arm64.sysext.raw
+[...]
+```
+
+First, download the correct **sysext** for your host distribution, release and architecture into
 `/var/lib/extensions/himmelblau.sysext.raw.v/`, and merge it to the host with
 `systemd-sysext merge`.
 Then, download the **Portable Service DDI** into `/var/lib/himmelblau-ddi/himmelblaud.v/`.
@@ -356,6 +378,60 @@ Choose the PAM setup appropriate for the host:
 * **Arch Linux or hosts with manually managed PAM:** preview the changes with
   `sudo aad-tool configure-pam`, then apply the reviewed changes with
   `sudo aad-tool configure-pam --really`.
+
+#### Updating the images automatically with systemd-sysupdate
+
+Each sysext includes a `himmelblau` systemd-sysupdate component under
+`/usr/lib/sysupdate.himmelblau.d/`. Its two `.transfer` files update the
+distribution-specific sysext and the portable image together, using the same
+version, channel and architecture. This configuration requires systemd 257 or newer.
+This lets the systemd-sysupdate daily run update himmelblau automatically.
+
+As root on the target machine, initialize the local keyring from the system
+keyring only if the local one does not already exist:
+
+```bash
+if [ ! -e /etc/systemd/import-pubring.pgp ]; then
+    cp /usr/lib/systemd/import-pubring.pgp /etc/systemd/import-pubring.pgp
+fi
+```
+
+Download the Himmelblau public signing key:
+
+```bash
+curl --fail --location --output himmelblau.asc \
+    https://packages.himmelblau-idm.org/himmelblau.asc
+gpg --show-keys --with-fingerprint himmelblau.asc
+```
+
+After confirming the fingerprint
+`E87F D8D4 63A5 E481 4B9C DBA9 0CC0 D400 2C42 5E03`, import it into the
+local systemd keyring without replacing existing keys:
+
+```bash
+gpg --no-default-keyring --keyring /etc/systemd/import-pubring.pgp \
+    --import himmelblau.asc
+```
+
+The transfers keep three versions and protect the version of the installed
+sysext. Images are staged in versioned directories:
+
+* `/var/lib/himmelblau-ddi/himmelblaud.v/`
+* `/var/lib/extensions/himmelblau.sysext.raw.v/`
+
+For a manual update, run:
+
+```bash
+systemd-sysupdate --component=himmelblau list
+systemd-sysupdate --component=himmelblau update
+```
+
+On hosts with systemd 262 or newer, the attached
+`himmelblaud-sysupdate-notify.socket` handles completed updates of the `himmelblau`
+component automatically whenever systemd-sysupdate is scheduled to run by its timer.
+It refreshes the host sysexts, attaches or reattaches the broker and
+compliance units for every running user manager and for the system instance.
+Older OSes may have to run the merge/reattach operations manually.
 
 ### Uninstall
 

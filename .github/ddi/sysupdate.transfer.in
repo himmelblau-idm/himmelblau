@@ -1,0 +1,15 @@
+[Transfer]
+Verify=yes
+ProtectVersion={version}
+
+[Source]
+Type=url-file
+Path={source}
+MatchPattern={pattern}
+
+[Target]
+Type=regular-file
+Path={target}
+MatchPattern={pattern}
+Mode=0444
+InstancesMax=3

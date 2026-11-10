@@ -1,0 +1,13 @@
+[Unit]
+Description=Himmelblau DDI Update Notifications
+Documentation=man:systemd-sysupdate(8)
+
+[Socket]
+ListenStream=/run/systemd/sysupdate/notify/org.himmelblau.SysUpdate
+SocketMode=0600
+Accept=yes
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
