@@ -13,7 +13,9 @@ on:
     - cron: '20 7 * * 2'
   push:
     branches: ["main"]
-  pull_request:
+  # PR runs use local-file analysis and omit repository-level SARIF categories,
+  # causing code scanning to report missing configurations against main.
+  # Keep Scorecard on the default branch for a consistent repository assessment.
 
 # Declare default permissions as read only.
 permissions: read-all
