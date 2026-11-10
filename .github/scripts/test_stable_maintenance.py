@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime as dt
 import email.utils
+import faulthandler
 import hashlib
 import http.server
 import io
@@ -29,6 +30,14 @@ ORPHAN_FIXTURE_FAILURE = "grandchild {orphan} survived the process-group kill"
 WORKFLOW = SCRIPT.parent.parent / "workflows" / "stable-maintenance.yml"
 STAGE_WORKFLOW = WORKFLOW.with_name("stable-maintenance-stage.yml")
 BRANCH_WORKFLOW = WORKFLOW.with_name("stable-maintenance-branch.yml")
+# Resume jobs reuse tooling already tested by select and dependencies.
+PREMUTATION_RESUME_TEST_CLASSES = (
+    "GuardTests",
+    "CheckpointMaintenanceTests",
+    "MutationBoundaryTests",
+    "RecoveryMaintenanceTests",
+    "VersionPolicyTests",
+)
 SPEC = importlib.util.spec_from_file_location("stable_maintenance", SCRIPT)
 assert SPEC and SPEC.loader
 sm = importlib.util.module_from_spec(SPEC)
@@ -5066,6 +5075,32 @@ class CheckpointMaintenanceTests(unittest.TestCase):
     repository = MaintenanceHistoryTests.repository
     commit = MaintenanceHistoryTests.commit
 
+    def test_checkpoint_outputs_require_successful_artifact_upload(self):
+        """A pushed ref alone must not advertise a resumable checkpoint."""
+        stage = STAGE_WORKFLOW.read_text()
+        outputs = stage.split("    outputs:\n", 1)[1].split("    env:\n", 1)[0]
+        for field in ("head", "digest", "ref", "artifact"):
+            self.assertIn(f"      {field}: ${{{{ steps.available.outputs.{field} }}}}", outputs)
+        self.assertNotIn("steps.checkpoint.outputs", outputs)
+        upload = stage.split("      - name: Preserve exact checkpoint state for the next job", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("id: checkpoint-upload", upload)
+        self.assertIn("if-no-files-found: error", upload)
+        expose = stage.split("      - name: Expose only successfully uploaded checkpoint metadata", 1)[1].split("\n      - name:", 1)[0]
+        # Explicit cancellation checks let recovered failures publish outputs,
+        # while failure, skipped and cancelled uploads leave them unavailable.
+        self.assertIn("if: ${{ !cancelled() && steps.checkpoint-upload.outcome == 'success' }}", expose)
+        script = expose.split("        run: |\n", 1)[1]
+        script = "\n".join(line[10:] for line in script.splitlines())
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "outputs"
+            values = {"head": "a" * 40, "digest": "b" * 64,
+                      "ref": sm.AUTOMATION_PREFIX + "checkpoints/123/1/stable-4.x/vet",
+                      "artifact": "maintenance-checkpoint-123-1-stable-4.x-vet"}
+            env = {**os.environ, "GITHUB_OUTPUT": str(output),
+                   **{f"CHECKPOINT_{key.upper()}": value for key, value in values.items()}}
+            subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, check=True, timeout=5)
+            self.assertEqual(dict(line.split("=", 1) for line in output.read_text().splitlines()), values)
+
     def test_workflow_has_ordered_fresh_jobs_and_only_final_publication(self):
         branch = BRANCH_WORKFLOW.read_text()
         stage = STAGE_WORKFLOW.read_text()
@@ -5078,7 +5113,12 @@ class CheckpointMaintenanceTests(unittest.TestCase):
                 self.assertIn(f"needs.{previous}.outputs.{field}", block)
         self.assertEqual(branch.count("uses: ./.github/workflows/stable-maintenance-stage.yml"), 7)
         self.assertIn("MAINTENANCE_TOOLING_COMMIT: ${{ github.sha }}", stage)
-        self.assertIn("run: env -u MAINTENANCE_TOOLING_COMMIT python3 tooling/.github/scripts/test_stable_maintenance.py", stage)
+        premutation = stage.split("      - name: Test trusted automation before repository mutation", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("timeout-minutes: 10", premutation)
+        self.assertIn("MAINTENANCE_PREMUTATION_QUICK: ${{ inputs.stage != 'dependencies' && '1' || '' }}", premutation)
+        self.assertIn("env -u MAINTENANCE_TOOLING_COMMIT", premutation)
+        self.assertIn("python3 -u", premutation)
+        self.assertNotIn("if:", premutation)
         self.assertNotIn("workflow_run:", stage + branch + WORKFLOW.read_text())
         self.assertNotIn("continue-on-error:", stage + branch)
         for name in ("Release —", "Validate —", "Create scoped publication token", "Publish —"):
@@ -6813,7 +6853,16 @@ class RecoveryMaintenanceTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    import sys
+
+    # Explicit unittest selectors take precedence over the workflow's quick mode.
+    if os.environ.get("MAINTENANCE_PREMUTATION_QUICK") == "1" and len(sys.argv) == 1:
+        sys.argv.extend(PREMUTATION_RESUME_TEST_CLASSES)
+    faulthandler.dump_traceback_later(300, repeat=True)
+    try:
+        unittest.main(verbosity=2)
+    finally:
+        faulthandler.cancel_dump_traceback_later()
 
 
 
