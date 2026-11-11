@@ -380,10 +380,10 @@ fn reachable_pam_files(pam_file: &Path, role: &str) -> Vec<PathBuf> {
     let mut queue = vec![pam_file.to_path_buf()];
     let mut reached = vec![];
     while let Some(file) = queue.pop() {
-        let Ok(content) = fs::read_to_string(&file) else {
+        let Ok(bytes) = fs::read(&file) else {
             continue;
         };
-        for included in included_pam_files(&dirs, &content, role) {
+        for included in included_pam_files(&dirs, &String::from_utf8_lossy(&bytes), role) {
             let resolved = canonical(&included);
             if !seen.contains(&resolved) {
                 seen.push(resolved.clone());
@@ -400,14 +400,16 @@ fn included_pam_files(dirs: &[&Path], content: &str, role: &str) -> Vec<PathBuf>
         .iter()
         .filter_map(|line| {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            let target = match fields.as_slice() {
-                ["@include", target, ..] => *target,
-                [stage, "include" | "substack", target, ..]
-                    if stage.trim_start_matches('-') == role =>
-                {
-                    *target
-                }
-                _ => return None,
+            let keyword = |i: usize| fields.get(i).map(|f| f.to_ascii_lowercase());
+            let (first, second) = (keyword(0)?, keyword(1));
+            let target = if first == "@include" {
+                fields.get(1)?
+            } else if first.trim_start_matches('-') == role
+                && matches!(second.as_deref(), Some("include" | "substack"))
+            {
+                fields.get(2)?
+            } else {
+                return None;
             };
             let found = dirs.iter().map(|dir| dir.join(target)).find(|p| p.exists());
             Some(found.unwrap_or_else(|| dirs.first().unwrap_or(&Path::new("/")).join(target)))
@@ -2703,9 +2705,9 @@ async fn main() -> ExitCode {
 mod tests {
     use super::HimmelblauUnixParser;
     use super::{
-        configure_pam_in, detect_pam_files, included_pam_files, insert_module_line,
-        preserve_numeric_account_success, PamFiles, ACCOUNT_LINE, ACCOUNT_LINES, AUTH_LINE,
-        AUTH_LINES, PASSWORD_LINE, PASSWORD_LINES, SESSION_LINE,
+        canonical, configure_pam_in, detect_pam_files, included_pam_files, insert_module_line,
+        preserve_numeric_account_success, reachable_pam_files, PamFiles, ACCOUNT_LINE,
+        ACCOUNT_LINES, AUTH_LINE, AUTH_LINES, PASSWORD_LINE, PASSWORD_LINES, SESSION_LINE,
     };
     use clap::CommandFactory;
     use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
@@ -3226,7 +3228,7 @@ mod tests {
     }
 
     #[test]
-    fn included_files_follow_continued_lines_and_at_include() -> anyhow::Result<()> {
+    fn included_files_are_read_like_libpam_reads_them() -> anyhow::Result<()> {
         let etc = temp_pam_dir("continued", &[("system-auth", ARCH_SYSTEM_AUTH)])?;
         let dirs = [etc.as_path()];
         let continued = "auth include \\\n    system-auth\n\
@@ -3240,6 +3242,17 @@ mod tests {
             included_pam_files(&dirs, "@include system-auth\n", "session"),
             vec![etc.join("system-auth")]
         );
+        assert_eq!(
+            included_pam_files(&dirs, "-ACCOUNT Include system-auth\n", "account"),
+            vec![etc.join("system-auth")]
+        );
+        fs::write(
+            etc.join("site-auth"),
+            b"# caf\xe9\nauth include system-auth\n",
+        )?;
+        fs::write(etc.join("system-login"), "auth include site-auth\n")?;
+        assert!(reachable_pam_files(&etc.join("system-login"), "auth")
+            .contains(&canonical(&etc.join("system-auth"))));
         fs::remove_dir_all(&etc)?;
         Ok(())
     }
