@@ -418,19 +418,19 @@ fn included_pam_files(dirs: &[&Path], content: &str, role: &str) -> Vec<PathBuf>
 }
 
 /// The directives in a PAM file, read the way libpam reads them: `#` starts a comment and a
-/// trailing backslash continues the directive on the next line.
+/// trailing backslash continues the directive, unless the line has a comment.
 fn pam_directives(content: &str) -> Vec<String> {
     let mut directives = vec![];
     let mut current = String::new();
     for line in content.lines() {
-        let line = line.split('#').next().unwrap_or("").trim_end();
-        match line.strip_suffix('\\') {
+        let text = line.split('#').next().unwrap_or("").trim_end();
+        match text.strip_suffix('\\').filter(|_| !line.contains('#')) {
             Some(part) => {
                 current.push_str(part);
                 current.push(' ');
             }
             None => {
-                current.push_str(line);
+                current.push_str(text);
                 directives.push(std::mem::take(&mut current));
             }
         }
@@ -490,8 +490,13 @@ fn configure_pam_in(
 
     // Refuse while lines earlier releases wrote to an including file remain. Removing them
     // here could change where a [...=N] jump in that stage lands.
+    let unseal_check: Vec<&str> = TRY_UNSEAL_LINES
+        .iter()
+        .chain(&AUTH_LINES)
+        .copied()
+        .collect();
     let stages: Vec<(&PamFiles, &[&str])> = if try_unseal {
-        vec![(&auth_files, &TRY_UNSEAL_LINES)]
+        vec![(&auth_files, &unseal_check)]
     } else {
         vec![
             (&auth_files, &AUTH_LINES),
@@ -3233,10 +3238,16 @@ mod tests {
         let dirs = [etc.as_path()];
         let continued = "auth include \\\n    system-auth\n\
             # auth include \\\n\
-            auth required pam_deny.so\n";
+            auth required pam_deny.so\n\
+            auth include other \\ # a comment ends the directive\n\
+            auth include system-login\n";
         assert_eq!(
             included_pam_files(&dirs, continued, "auth"),
-            vec![etc.join("system-auth")]
+            vec![
+                etc.join("system-auth"),
+                etc.join("other"),
+                etc.join("system-login")
+            ]
         );
         assert_eq!(
             included_pam_files(&dirs, "@include system-auth\n", "session"),
@@ -3361,6 +3372,25 @@ mod tests {
             assert_eq!(fs::read_to_string(dir.join("system-login"))?, legacy);
             fs::remove_dir_all(&dir)?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn arch_try_unseal_refuses_while_an_earlier_auth_line_remains() -> anyhow::Result<()> {
+        let legacy = format!("{}\n{}", AUTH_LINE, ARCH_SYSTEM_LOGIN);
+        let dir = temp_pam_dir(
+            "arch-unseal",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                ("system-login", legacy.as_str()),
+            ],
+        )?;
+        assert!(configure_pam_in(&dir, false, None, None, None, None, true).is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join("system-auth"))?,
+            ARCH_SYSTEM_AUTH
+        );
+        fs::remove_dir_all(&dir)?;
         Ok(())
     }
 
