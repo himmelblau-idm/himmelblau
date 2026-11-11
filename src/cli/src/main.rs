@@ -224,7 +224,6 @@ fn insert_module_line(
     Ok(())
 }
 
-/// The options that follow `pam_himmelblau.so` on a PAM line.
 fn module_options(line: &str) -> std::collections::HashSet<&str> {
     line.split("pam_himmelblau.so")
         .nth(1)
@@ -233,8 +232,6 @@ fn module_options(line: &str) -> std::collections::HashSet<&str> {
         .collect()
 }
 
-/// Whether `line` is the pam_himmelblau entry that `module_line` describes:
-/// the same stage and the same module options, whatever its control.
 fn same_module_line(line: &str, module_line: &str) -> bool {
     let stack_type = module_line.split_whitespace().next().unwrap_or("");
     line.contains("pam_himmelblau.so")
@@ -242,18 +239,13 @@ fn same_module_line(line: &str, module_line: &str) -> bool {
         && module_options(line) == module_options(module_line)
 }
 
-/// Whether `line` is exactly one of the `generated` lines, whitespace aside.
 fn is_generated_line(line: &str, generated: &[&str]) -> bool {
     let normalized = |l: &str| l.split_whitespace().collect::<Vec<_>>().join(" ");
     let line = normalized(line);
     generated.iter().any(|g| normalized(g) == line)
 }
 
-/// The pam_himmelblau lines that a configure-pam release wrote for this stage
-/// (`generated`: the current line, then the exact lines earlier releases
-/// wrote) and that are still in a superseded file, as `file: line`. Any other
-/// pam_himmelblau line in those files is an administrator's own and is only
-/// logged.
+/// Lines an earlier configure-pam wrote to the superseded files, as `file: line`.
 fn leftover_generated_lines(files: &PamFiles, generated: &[&str]) -> anyhow::Result<Vec<String>> {
     let stack_type = generated
         .first()
@@ -284,17 +276,12 @@ fn leftover_generated_lines(files: &PamFiles, generated: &[&str]) -> anyhow::Res
     Ok(leftovers)
 }
 
-/// The PAM files configure-pam handles for one stage.
 #[derive(Debug, PartialEq)]
 struct PamFiles {
-    /// Files that get the pam_himmelblau line.
     configure: Vec<String>,
-    /// Detected files left out because their stack for this stage reaches a
-    /// configured file through `include` or `substack`.
     superseded: Vec<String>,
 }
 
-/// Adds `generated[0]`, the current line, to every configured file.
 fn configure_stage(
     files: &PamFiles,
     generated: &[&str],
@@ -348,10 +335,8 @@ fn detect_pam_files(
         );
     }
 
-    // Leave out a file whose stack for this role already reaches another
-    // detected file. On Arch, system-login includes system-auth: configuring
-    // both runs pam_himmelblau twice for every service that uses system-login,
-    // and puts it ahead of system-login's own pam_shells and pam_nologin.
+    // Leave out a file that already includes another detected one: on Arch, system-login
+    // includes system-auth, and configuring both runs pam_himmelblau twice.
     let detected: Vec<PathBuf> = found.iter().map(|p| canonical(Path::new(p))).collect();
     let (superseded, configure): (Vec<String>, Vec<String>) =
         found.into_iter().partition(|pam_file| {
@@ -379,20 +364,13 @@ fn detect_pam_files(
     })
 }
 
-/// `path` with symlinks resolved, or as given if it can't be resolved.
 fn canonical(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Where libpam looks for a relative `include` or `substack` name after
-/// /etc/pam.d.
 const VENDOR_PAM_DIR: &str = "/usr/lib/pam.d";
 
-/// Every file that `pam_file`'s `role` stack reaches through `include` or
-/// `substack`, directly or through other files, with symlinks resolved.
-/// Relative names are looked up in `pam_file`'s directory (/etc/pam.d for the
-/// detected candidates), then in /usr/lib/pam.d. Unreadable files end their
-/// branch, and each file is followed once, so include cycles terminate.
+/// Files that `pam_file`'s `role` stack reaches through include or substack, at any depth.
 fn reachable_pam_files(pam_file: &Path, role: &str) -> Vec<PathBuf> {
     let dirs = [
         pam_file.parent().unwrap_or_else(|| Path::new("/")),
@@ -417,9 +395,6 @@ fn reachable_pam_files(pam_file: &Path, role: &str) -> Vec<PathBuf> {
     reached
 }
 
-/// The files that a PAM file's `role` stack hands over to with `include` or
-/// `substack`. A relative name is taken from the first of `dirs` that has it,
-/// or from the first directory if none does.
 fn included_pam_files(dirs: &[&Path], content: &str, role: &str) -> Vec<PathBuf> {
     content
         .lines()
@@ -457,7 +432,6 @@ fn configure_pam(
     )
 }
 
-/// configure-pam against the PAM files in `pam_dir`.
 fn configure_pam_in(
     pam_dir: &Path,
     dry_run: bool,
@@ -485,11 +459,8 @@ fn configure_pam_in(
     let session_files = detect(session_file, "session")?;
     let password_files = detect(password_file, "password")?;
 
-    // Earlier releases also wrote to files that include a configured file
-    // (system-login on Arch). Those lines run ahead of the including file's
-    // own checks, so refuse until they are gone. They aren't removed here:
-    // removing a line can change where a `[...=N]` jump in that stage lands,
-    // in that file or in one that includes it.
+    // Refuse while lines earlier releases wrote to an including file remain. Removing them
+    // here could change where a [...=N] jump in that stage lands.
     let stages: Vec<(&PamFiles, &[&str])> = if try_unseal {
         vec![(&auth_files, &TRY_UNSEAL_LINES)]
     } else {
@@ -567,9 +538,7 @@ fn configure_pam_in(
     Ok(())
 }
 
-// The lines configure-pam writes for each stage, followed by the exact lines
-// earlier releases wrote instead. configure-pam refuses while any of these is
-// still in a file that includes a configured one.
+// The current line for each stage, then the exact lines earlier releases wrote.
 const AUTH_LINE: &str = "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok";
 const ACCOUNT_LINE: &str =
     "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";
@@ -3020,7 +2989,6 @@ mod tests {
         Ok(dir)
     }
 
-    /// File names that detection configures and supersedes for `role` in `dir`.
     fn detect_in(dir: &Path, role: &str) -> anyhow::Result<(Vec<String>, Vec<String>)> {
         let candidates: Vec<String> = [
             format!("common-{}", role),
@@ -3065,7 +3033,6 @@ mod tests {
         session    include    system-auth\n\
         session    required   pam_env.so\n";
 
-    /// ARCH_SYSTEM_LOGIN as earlier versions of configure-pam left it.
     fn legacy_system_login() -> String {
         format!(
             "{}\n{}{}\n{}\n{}\n",
@@ -3292,7 +3259,6 @@ mod tests {
                     "{line} missing from: {err}"
                 );
             }
-            // Refused before anything was written.
             assert_eq!(fs::read_to_string(dir.join("system-login"))?, legacy);
             assert_eq!(
                 fs::read_to_string(dir.join("system-auth"))?,
@@ -3300,7 +3266,6 @@ mod tests {
             );
         }
 
-        // Once the administrator removes them, configure-pam goes ahead.
         fs::write(dir.join("system-login"), ARCH_SYSTEM_LOGIN)?;
         configure_in(&dir, false)?;
         let system_auth = fs::read_to_string(dir.join("system-auth"))?;
@@ -3342,7 +3307,6 @@ mod tests {
 
     #[test]
     fn arch_rerun_keeps_pam_himmelblau_lines_it_did_not_write() -> anyhow::Result<()> {
-        // An administrator's stricter control, and a line from --try-unseal mode.
         let kept = "auth required pam_himmelblau.so ignore_unknown_user set_authtok\n\
             auth optional pam_himmelblau.so try_unseal\n";
         let system_login = format!("{}{}", kept, ARCH_SYSTEM_LOGIN);
