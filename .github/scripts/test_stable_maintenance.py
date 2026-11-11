@@ -6852,12 +6852,17 @@ class RecoveryMaintenanceTests(unittest.TestCase):
                             self.assertLessEqual(len((instructions + data).encode()), sm.MAX_BACKPORT_INPUT_BYTES)
 
 
+def premutation_quick_argv(argv):
+    """Honor explicit unittest selectors; otherwise run resume-stage suites in quick mode."""
+    if os.environ.get("MAINTENANCE_PREMUTATION_QUICK") == "1" and len(argv) == 1:
+        return [*argv, *PREMUTATION_RESUME_TEST_CLASSES]
+    return argv
+
+
 if __name__ == "__main__":
     import sys
 
-    # Explicit unittest selectors take precedence over the workflow's quick mode.
-    if os.environ.get("MAINTENANCE_PREMUTATION_QUICK") == "1" and len(sys.argv) == 1:
-        sys.argv.extend(PREMUTATION_RESUME_TEST_CLASSES)
+    sys.argv = premutation_quick_argv(sys.argv)
     faulthandler.dump_traceback_later(300, repeat=True)
     try:
         unittest.main(verbosity=2)
