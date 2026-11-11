@@ -396,20 +396,47 @@ fn reachable_pam_files(pam_file: &Path, role: &str) -> Vec<PathBuf> {
 }
 
 fn included_pam_files(dirs: &[&Path], content: &str, role: &str) -> Vec<PathBuf> {
-    content
-        .lines()
+    pam_directives(content)
+        .iter()
         .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let stage = fields.next()?.trim_start_matches('-');
-            let control = fields.next()?;
-            let target = fields.next()?;
-            if stage != role || !matches!(control, "include" | "substack") {
-                return None;
-            }
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let target = match fields.as_slice() {
+                ["@include", target, ..] => *target,
+                [stage, "include" | "substack", target, ..]
+                    if stage.trim_start_matches('-') == role =>
+                {
+                    *target
+                }
+                _ => return None,
+            };
             let found = dirs.iter().map(|dir| dir.join(target)).find(|p| p.exists());
             Some(found.unwrap_or_else(|| dirs.first().unwrap_or(&Path::new("/")).join(target)))
         })
         .collect()
+}
+
+/// The directives in a PAM file, read the way libpam reads them: `#` starts a comment and a
+/// trailing backslash continues the directive on the next line.
+fn pam_directives(content: &str) -> Vec<String> {
+    let mut directives = vec![];
+    let mut current = String::new();
+    for line in content.lines() {
+        let line = line.split('#').next().unwrap_or("").trim_end();
+        match line.strip_suffix('\\') {
+            Some(part) => {
+                current.push_str(part);
+                current.push(' ');
+            }
+            None => {
+                current.push_str(line);
+                directives.push(std::mem::take(&mut current));
+            }
+        }
+    }
+    if !current.is_empty() {
+        directives.push(current);
+    }
+    directives
 }
 
 #[instrument]
@@ -3195,6 +3222,25 @@ mod tests {
         assert!(included_pam_files(&dirs, content, "account").is_empty());
         fs::remove_dir_all(&etc)?;
         fs::remove_dir_all(&vendor)?;
+        Ok(())
+    }
+
+    #[test]
+    fn included_files_follow_continued_lines_and_at_include() -> anyhow::Result<()> {
+        let etc = temp_pam_dir("continued", &[("system-auth", ARCH_SYSTEM_AUTH)])?;
+        let dirs = [etc.as_path()];
+        let continued = "auth include \\\n    system-auth\n\
+            # auth include \\\n\
+            auth required pam_deny.so\n";
+        assert_eq!(
+            included_pam_files(&dirs, continued, "auth"),
+            vec![etc.join("system-auth")]
+        );
+        assert_eq!(
+            included_pam_files(&dirs, "@include system-auth\n", "session"),
+            vec![etc.join("system-auth")]
+        );
+        fs::remove_dir_all(&etc)?;
         Ok(())
     }
 
