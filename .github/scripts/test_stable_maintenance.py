@@ -6885,12 +6885,14 @@ def premutation_quick_argv(argv):
 
 class PremutationQuickArgvTests(unittest.TestCase):
     def test_verbose_flag_still_uses_quick_default_classes(self):
+        """Quick mode still appends resume classes when only ``-v`` is present."""
         with mock.patch.dict(os.environ, {"MAINTENANCE_PREMUTATION_QUICK": "1"}):
             argv = premutation_quick_argv(["test_stable_maintenance.py", "-v"])
         self.assertEqual(argv[:2], ["test_stable_maintenance.py", "-v"])
         self.assertEqual(argv[2:], list(PREMUTATION_RESUME_TEST_CLASSES))
 
     def test_explicit_test_class_skips_quick_injection(self):
+        """An explicit class name must not be overridden by quick defaults."""
         with mock.patch.dict(os.environ, {"MAINTENANCE_PREMUTATION_QUICK": "1"}):
             argv = premutation_quick_argv(["test_stable_maintenance.py", "GuardTests"])
         self.assertEqual(argv, ["test_stable_maintenance.py", "GuardTests"])
