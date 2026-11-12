@@ -383,7 +383,7 @@ impl<const N: usize> Random for Uint<N> {
 #[cfg(feature = "rand_core")]
 impl<const N: usize> RandomMod for Uint<N> {
     fn random_mod(rng: &mut impl CryptoRngCore, p: &NonZero<Self>) -> Self {
-        let bits = p.0 .0.bits_vartime() as usize;
+        let bits = p.0 .0.bit_width_vartime() as usize;
         loop {
             let mut v = Self::random(rng).to_words();
             for (i, w) in v.iter_mut().enumerate() {

@@ -1,0 +1,22 @@
+[package]
+name = "rsa"
+version = "0.10.0-rc.19"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = ["rsa_upstream/default"]
+encoding = ["rsa_upstream/encoding"]
+getrandom = ["rsa_upstream/getrandom"]
+hazmat = ["rsa_upstream/hazmat"]
+pkcs5 = ["rsa_upstream/pkcs5"]
+serde = ["rsa_upstream/serde"]
+std = []
+sha2 = []
+
+[dependencies]
+rsa_upstream = { package = "rsa", git = "https://github.com/RustCrypto/RSA.git", tag = "v0.10.0", features = ["pkcs1v15"] }
