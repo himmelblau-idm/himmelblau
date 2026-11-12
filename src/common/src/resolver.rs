@@ -28,9 +28,8 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::config::InitgroupsMode;
-use crate::constants::{ID_MAP_CACHE, SERVER_CONFIG_PATH};
+use crate::constants::SERVER_CONFIG_PATH;
 use crate::db::{Cache, CacheTxn, Db};
-use crate::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
 use crate::idprovider::interface::{
     AuthCacheAction,
     AuthCredHandler,
@@ -322,6 +321,11 @@ mod tests {
                 3..=5 | 7 if matches!(_id, Id::Name(_)) => {
                     Ok(UserTokenState::LookupOnly(test_token()))
                 }
+                8 if matches!(_id, Id::Name(_)) => {
+                    let mut token = test_token();
+                    token.directory_lookup = true;
+                    Ok(UserTokenState::LookupOnly(token))
+                }
                 6 => Ok(UserTokenState::Update(self.auth_token())),
                 _ => Ok(UserTokenState::UseCached),
             }
@@ -595,6 +599,7 @@ mod tests {
             groups: vec![group],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            directory_lookup: false,
         }
     }
 
@@ -673,6 +678,29 @@ mod tests {
         let db = Db::new(&uri).unwrap();
         let resolver = setup_resolver_with_db(db, 0, InitgroupsMode::Named, Vec::new()).await;
         (resolver, conn)
+    }
+
+    #[tokio::test]
+    async fn directory_lookup_user_is_cached_for_reverse_nss_resolution() {
+        let resolver = setup_resolver().await;
+        resolver
+            .delete_cache_usertoken(test_token().uuid)
+            .await
+            .unwrap();
+        resolver.client.user_get_error.store(8, Ordering::Release);
+
+        let user = resolver
+            .get_nssaccount_name("testuser@example.com", OnExpiry::Refresh)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!user.cacheable);
+        assert_eq!(resolver.get_cached_usertokens().await.unwrap().len(), 1);
+        assert!(resolver
+            .get_nssaccount_gid(user.uid, OnExpiry::Refresh)
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
@@ -3240,47 +3268,6 @@ where
         }
     }
 
-    fn resolve_usertoken_lookup_id(account_id: &Id) -> Id {
-        match account_id {
-            Id::Gid(gid) => StaticIdCache::new(ID_MAP_CACHE, false)
-                .ok()
-                .and_then(|cache| cache.get_user_by_uid(*gid))
-                .map(|user| Id::Name(user.name))
-                .unwrap_or_else(|| account_id.clone()),
-            other => other.clone(),
-        }
-    }
-
-    fn resolve_grouptoken_lookup_id(grp_id: &Id) -> Id {
-        match grp_id {
-            Id::Gid(gid) => StaticIdCache::new(ID_MAP_CACHE, false)
-                .ok()
-                .and_then(|cache| cache.get_group_by_gid(*gid))
-                .map(|group| Id::Name(group.name))
-                .unwrap_or_else(|| grp_id.clone()),
-            other => other.clone(),
-        }
-    }
-
-    fn persist_idmap_for_usertoken(token: &UserToken) {
-        if let Ok(idmap) = StaticIdCache::new(ID_MAP_CACHE, true) {
-            let _ = idmap.insert_user(&StaticUser {
-                name: token.spn.clone(),
-                uid: token.gidnumber,
-                gid: token.real_gidnumber.unwrap_or(token.gidnumber),
-            });
-        }
-    }
-
-    fn persist_idmap_for_grouptoken(token: &GroupToken) {
-        if let Ok(idmap) = StaticIdCache::new(ID_MAP_CACHE, true) {
-            let _ = idmap.insert_group(&StaticGroup {
-                name: token.spn.clone(),
-                gid: token.gidnumber,
-            });
-        }
-    }
-
     async fn set_cache_usertoken_guarded(
         &self,
         token: &mut UserToken,
@@ -3376,14 +3363,23 @@ where
         token: &mut UserToken,
         clear_password: bool,
     ) -> ResolverResult<()> {
-        // Set an expiry
         let ex_time = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
-        let offset = ex_time
+        let expire = ex_time
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| {
                 error!("time conversion error - ex_time less than epoch? {:?}", e);
-            })?;
+            })?
+            .as_secs();
+        self.set_cache_usertoken_expiring(token, clear_password, expire)
+            .await
+    }
 
+    async fn set_cache_usertoken_expiring(
+        &self,
+        token: &mut UserToken,
+        clear_password: bool,
+        expire: u64,
+    ) -> ResolverResult<()> {
         // Check if requested `shell` exists on the system, else use `default_shell`
         let requested_shell_exists: bool = token
             .shell
@@ -3428,11 +3424,10 @@ where
             .groups
             .iter()
             // We need to add the groups first
-            .try_for_each(|g| dbtxn.update_group(g, offset.as_secs()))
+            .try_for_each(|g| dbtxn.update_group(g, expire))
             .and_then(|_|
                 // So that when we add the account it can make the relationships.
-                dbtxn
-                    .update_account(token, offset.as_secs()))
+                dbtxn.update_account(token, expire))
             .and_then(|_| {
                 if clear_password {
                     // Commit invalidation with the authenticated identity so
@@ -3444,9 +3439,6 @@ where
             })
             .and_then(|_| dbtxn.commit())
             .map_err(|_| ResolverError)
-            .map(|_| {
-                Self::persist_idmap_for_usertoken(token);
-            })
     }
 
     async fn set_cache_grouptoken(&self, token: &GroupToken) -> ResolverResult<()> {
@@ -3463,9 +3455,6 @@ where
             .update_group(token, offset.as_secs())
             .and_then(|_| dbtxn.commit())
             .map_err(|_| ResolverError)
-            .map(|_| {
-                Self::persist_idmap_for_grouptoken(token);
-            })
     }
 
     async fn delete_cache_usertoken(&self, a_uuid: Uuid) -> ResolverResult<()> {
@@ -3517,18 +3506,13 @@ where
         account_id: &Id,
         token: Option<(UserToken, bool)>,
     ) -> ResolverResult<Option<(UserToken, bool)>> {
-        let lookup_id = match account_id {
-            Id::Gid(_) if token.is_none() => Self::resolve_usertoken_lookup_id(account_id),
-            _ => account_id.clone(),
-        };
-
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
 
         let user_get_result = self
             .client
             .unix_user_get(
-                &lookup_id,
+                account_id,
                 token.as_ref().map(|(token, _)| token),
                 &mut dbtxn,
                 hsm_lock.deref_mut(),
@@ -3558,7 +3542,11 @@ where
                 }
             }
             Ok(UserTokenState::LookupOnly(n_tok)) => {
-                Self::persist_idmap_for_usertoken(&n_tok);
+                if n_tok.directory_lookup {
+                    let mut tok = n_tok.clone();
+                    self.set_cache_usertoken_expiring(&mut tok, false, 0)
+                        .await?;
+                }
                 Ok(Some((n_tok, false)))
             }
             Ok(UserTokenState::NotFound) => {
@@ -3590,16 +3578,11 @@ where
         grp_id: &Id,
         token: Option<GroupToken>,
     ) -> ResolverResult<Option<GroupToken>> {
-        let lookup_id = match grp_id {
-            Id::Gid(_) if token.is_none() => Self::resolve_grouptoken_lookup_id(grp_id),
-            _ => grp_id.clone(),
-        };
-
         let mut hsm_lock = self.hsm.lock().await;
 
         let group_get_result = self
             .client
-            .unix_group_get(&lookup_id, hsm_lock.deref_mut())
+            .unix_group_get(grp_id, hsm_lock.deref_mut())
             .await;
 
         drop(hsm_lock);
@@ -3878,19 +3861,12 @@ where
             trace!("get_usertoken error -> {:?}", e);
         })?;
 
-        let state_lookup_name = match &account_id {
-            Id::Name(name) => Some(name.clone()),
-            Id::Gid(_) => item.as_ref().map(|token| token.spn.clone()).or_else(|| {
-                match Self::resolve_usertoken_lookup_id(&account_id) {
-                    Id::Name(name) => Some(name),
-                    _ => None,
-                }
-            }),
-        };
-
-        let state = match state_lookup_name.as_deref() {
-            Some(name) => self.get_cachestate(Some(name)).await,
-            None => self.get_cachestate(None).await,
+        let state = match account_id {
+            Id::Name(ref name) => self.get_cachestate(Some(name)).await,
+            Id::Gid(_) => match &item {
+                Some(token) => self.get_cachestate(Some(&token.spn)).await,
+                None => self.get_cachestate(None).await,
+            },
         };
 
         // Expired records remain available for offline use, but must not

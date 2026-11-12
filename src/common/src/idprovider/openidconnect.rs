@@ -2992,6 +2992,7 @@ impl IdProvider for OidcProvider {
             }],
             tenant_id: Some(tenant_id),
             valid: true,
+            directory_lookup: false,
         }))
     }
 

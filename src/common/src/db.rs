@@ -1315,6 +1315,7 @@ mod tests {
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            directory_lookup: false,
         }
     }
 
@@ -1412,6 +1413,7 @@ mod tests {
             groups: vec![group.clone()],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            directory_lookup: false,
         };
         let authenticated = UserToken {
             name: "authenticated".to_string(),
@@ -1540,6 +1542,7 @@ mod tests {
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            directory_lookup: false,
         };
 
         let id_name = Id::Name("testuser".to_string());
@@ -1712,6 +1715,7 @@ mod tests {
             groups: vec![gt1.clone(), gt2],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            directory_lookup: false,
         };
 
         // First, add the groups.
@@ -1782,6 +1786,7 @@ mod tests {
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            directory_lookup: false,
         };
 
         // Test that with no account, is false
@@ -1905,6 +1910,7 @@ mod tests {
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            directory_lookup: false,
         };
 
         let ut2 = UserToken {
@@ -1918,6 +1924,7 @@ mod tests {
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            directory_lookup: false,
         };
 
         let id_name = Id::Name("testuser".to_string());
