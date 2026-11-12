@@ -388,9 +388,9 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
         CONFIDENTIAL_CLIENT_SECRET_TAG,
     };
     use crate::idprovider::interface::IdpError;
-    use kanidm_lib_crypto::x509_cert::der::asn1::Utf8StringRef;
-    use kanidm_lib_crypto::x509_cert::der::Decode;
     use serde_json::Value;
+    use x509_cert::der::asn1::Utf8StringRef;
+    use x509_cert::der::Decode;
 
     let secret_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_SECRET_TAG);
     if let Ok(Some(sealed_secret)) = keystore.get_tagged_hsm_key(&secret_tag) {
@@ -432,7 +432,7 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
 
         let cert_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_TAG);
         if let Ok(Some(sealed_cert)) = keystore.get_tagged_hsm_key(&cert_tag) {
-            let cert = kanidm_lib_crypto::x509_cert::Certificate::from_der(
+            let cert = x509_cert::Certificate::from_der(
                 &hsm.unseal_data(machine_key, &sealed_cert).map_err(|e| {
                     error!("Failed to unseal certificate: {:?}", e);
                     IdpError::KeyStore
@@ -444,11 +444,9 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
             })?;
 
             let client_id = cert
-                .tbs_certificate
-                .subject
-                .as_ref()
+                .tbs_certificate()
+                .subject()
                 .iter()
-                .flat_map(|rdn| rdn.0.iter())
                 .find_map(|attr| {
                     (attr.oid.to_string() == "2.5.4.3")
                         .then(|| attr.value.decode_as::<Utf8StringRef>().ok())
