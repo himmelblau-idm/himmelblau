@@ -64,6 +64,16 @@ user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
 end = "2027-08-04"
 
+[[audits.aead]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.5.2 -> 0.6.1"
+
+[[audits.aes-gcm]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.10.3 -> 0.11.1"
+
 [[audits.asn1-rs]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -114,6 +124,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.5 -> 0.5.5"
 
+[[audits.base16ct]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.2.0 -> 1.0.0"
+
 [[audits.base64]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -128,6 +143,11 @@ delta = "0.23.0 -> 0.23.1"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.0.2"
+
+[[audits.base64urlsafedata]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.6.1-dev -> 0.6.2"
 
 [[audits.binrw]]
 who = "David Mulder <dmulder@samba.org>"
@@ -159,6 +179,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.11.0 -> 0.12.0"
 
+[[audits.block-padding]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.3.3 -> 0.4.2"
+
 [[audits.bluer]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -188,6 +213,11 @@ version = "0.11.8"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.10.1 -> 1.11.0"
+
+[[audits.cbc]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.1.2 -> 0.2.1"
 
 [[audits.cbor-smol]]
 who = "David Mulder <dmulder@samba.org>"
@@ -314,6 +344,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.5.0-rc.1"
 
+[[audits.cipher]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.5.0-rc.1 -> 0.5.2"
+
 [[audits.clap]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -374,6 +409,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.6.8"
 
+[[audits.crypto-bigint]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.7.10 -> 0.7.11"
+
 [[audits.crypto-common]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -394,6 +434,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.4.0"
 
+[[audits.ctr]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.9.2 -> 0.10.1"
+
 [[audits.ctutils]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -403,6 +448,11 @@ version = "0.4.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.0 -> 0.4.7"
+
+[[audits.ctutils]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.4.7 -> 0.4.8"
 
 [[audits.darling]]
 who = "David Mulder <dmulder@samba.org>"
@@ -498,6 +548,11 @@ delta = "0.3.0 -> 0.2.8"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "5.4.0 -> 5.4.2"
+
+[[audits.ff]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.14.0-pre.0 -> 0.14.0"
 
 [[audits.find-msvc-tools]]
 who = "David Mulder <dmulder@samba.org>"
@@ -699,6 +754,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.26.0"
 
+[[audits.ghash]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.5.1 -> 0.6.0"
+
 [[audits.hash32]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -718,6 +778,11 @@ version = "0.3.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "2.6.5"
+
+[[audits.hkdf]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.12.4 -> 0.13.0"
 
 [[audits.hmac]]
 who = "David Mulder <dmulder@samba.org>"
@@ -768,6 +833,11 @@ delta = "2.2.1 -> 2.3.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.25.6 -> 0.25.10"
+
+[[audits.inout]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.2.2 -> 0.2.6"
 
 [[audits.iso7816]]
 who = "David Mulder <dmulder@samba.org>"
@@ -878,6 +948,11 @@ delta = "0.36.1 -> 0.39.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.7.3 -> 0.8.4"
+
+[[audits.md4]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.10.2 -> 0.11.0"
 
 [[audits.md5]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1059,10 +1134,25 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.31.0 -> 0.32.1"
 
+[[audits.p256]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.13.2 -> 0.14.0"
+
+[[audits.p384]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.13.1 -> 0.14.0"
+
 [[audits.p521]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.13.3"
+
+[[audits.p521]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.13.3 -> 0.14.0"
 
 [[audits.pastey]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1073,6 +1163,11 @@ delta = "0.1.1 -> 0.2.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.2.0 -> 0.2.1"
+
+[[audits.pbkdf2]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.13.0-rc.10 -> 0.13.0"
 
 [[audits.peg]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1093,6 +1188,26 @@ delta = "0.8.5 -> 0.8.6"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.0.6"
+
+[[audits.pem-rfc7468]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.7.0 -> 1.0.0"
+
+[[audits.pest_derive]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+version = "2.9.6"
+
+[[audits.pest_generator]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+version = "2.9.6"
+
+[[audits.pest_stack_guard]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+version = "1.0.1"
 
 [[audits.picky-asn1-der]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1129,6 +1244,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.7.2"
 
+[[audits.polyval]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.6.2 -> 0.7.3"
+
 [[audits.portable-atomic]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1138,6 +1258,16 @@ version = "1.13.1"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.2.7"
+
+[[audits.primefield]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+version = "0.14.0"
+
+[[audits.psm]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+version = "0.1.32"
 
 [[audits.quinn-proto]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1199,6 +1329,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.11.0"
 
+[[audits.rsa]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.10.0-rc.15 -> 0.10.0-rc.19"
+
 [[audits.rustc-hash]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1259,6 +1394,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.103.6 -> 0.103.10"
 
+[[audits.salsa20]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+version = "0.11.0"
+
 [[audits.schemars_derive]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1278,6 +1418,11 @@ delta = "0.25.0 -> 0.27.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.5 -> 0.5.0"
+
+[[audits.sec1]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.7.3 -> 0.8.1"
 
 [[audits.secrecy]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1474,6 +1619,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.3.0 -> 2.0.1"
 
+[[audits.signature]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "2.2.0 -> 3.0.0"
+
 [[audits.snap]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1483,6 +1633,11 @@ version = "1.1.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.9.8 -> 0.9.9"
+
+[[audits.spki]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.7.3 -> 0.8.1"
 
 [[audits.sshkeys]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1708,6 +1863,16 @@ delta = "0.26.2 -> 0.28.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.18.0 -> 1.20.1"
+
+[[audits.ucd-trie]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+version = "0.1.7"
+
+[[audits.universal-hash]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "0.5.1 -> 0.6.1"
 
 [[audits.url]]
 who = "David Mulder <dmulder@samba.org>"
@@ -2635,6 +2800,12 @@ criteria = "safe-to-deploy"
 user-id = 127515
 start = "2023-10-31"
 end = "2026-10-15"
+
+[[trusted.ldap3_lber]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2026-06-23"
+end = "2027-11-13"
 
 [[trusted.ldap3_proto]]
 criteria = "safe-to-deploy"

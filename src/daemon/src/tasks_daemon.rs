@@ -20,7 +20,7 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 #![allow(unexpected_cfgs)]
 
-use std::ffi::CString;
+use std::ffi::{CString, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
@@ -574,14 +574,17 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
     // which will be '0' (root) for the tasks daemon because it runs as root. Force
     // the ccache name.
     // TODO: Add a new himmelblau.conf option to define the ccache name
-    let ccname = Some(format!("KEYRING:persistent:{}", uid));
+    let ccname = OsString::from(format!("KEYRING:persistent:{}", uid));
 
     debug!(?ccname, "Storing kerberos ticket in credential cache");
 
     let guard = uzers::switch::switch_user_group(uid, gid)
         .map_err(|e| format!("Failed to switch user/group: {}", e))?;
 
-    let mut ccache = match libkrimes::ccache::resolve(ccname.as_deref()) {
+    let mut ccache = match libkrimes::ccache::resolve(Some(&ccname)).and_then(|cache| match cache {
+        libkrimes::ccache::ResolvedCredentialCache::Subsidiary(cache) => Ok(cache),
+        libkrimes::ccache::ResolvedCredentialCache::Collection(collection) => collection.primary(),
+    }) {
         Ok(ccache) => ccache,
         Err(e) => {
             drop(guard);

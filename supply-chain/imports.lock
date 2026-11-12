@@ -65,7 +65,7 @@ user-login = "jschanck"
 user-name = "John Schanck"
 
 [[publisher.base64urlsafedata]]
-version = "0.5.5"
+version = "0.6.1-dev"
 when = "2026-04-30"
 user-id = 31100
 user-login = "Firstyear"
@@ -133,8 +133,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.compact_jwt]]
-version = "0.5.7"
-when = "2026-08-12"
+version = "0.6.0"
+when = "2026-08-25"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -154,8 +154,8 @@ user-login = "tarcieri"
 user-name = "Tony Arcieri"
 
 [[publisher.crypto-glue]]
-version = "0.1.13"
-when = "2026-02-13"
+version = "0.2.2"
+when = "2026-10-08"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -258,6 +258,13 @@ user-id = 6289
 user-login = "str4d"
 user-name = "Jack Grigg"
 
+[[publisher.ff]]
+version = "0.14.0-pre.0"
+when = "2025-04-17"
+user-id = 6289
+user-login = "str4d"
+user-name = "Jack Grigg"
+
 [[publisher.filetime]]
 version = "0.2.25"
 when = "2024-08-27"
@@ -282,6 +289,13 @@ user-name = "Sebastian Thiel"
 [[publisher.group]]
 version = "0.12.0"
 when = "2022-05-04"
+user-id = 1244
+user-login = "ebfull"
+user-name = "Sean Bowe"
+
+[[publisher.group]]
+version = "0.14.0"
+when = "2026-06-01"
 user-id = 1244
 user-login = "ebfull"
 user-name = "Sean Bowe"
@@ -383,36 +397,22 @@ user-id = 55123
 user-login = "rust-lang-owner"
 
 [[publisher.kanidm-hsm-crypto]]
-version = "0.3.6"
-when = "2026-04-30"
+version = "0.4.0"
+when = "2026-08-25"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
 
-[[publisher.kanidm_lib_crypto]]
-version = "1.9.1"
-when = "2026-02-24"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
-
-[[publisher.kanidm_lib_file_permissions]]
-version = "1.11.2"
-when = "2026-09-11"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
-
-[[publisher.kanidm_utils_users]]
-version = "1.11.2"
-when = "2026-09-11"
+[[publisher.ldap3_lber]]
+version = "0.8.1"
+when = "2026-08-14"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.ldap3_proto]]
-version = "0.7.1"
-when = "2026-04-30"
+version = "0.8.1"
+when = "2026-08-14"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -431,15 +431,15 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.45"
-when = "2026-10-30"
+version = "0.8.46"
+when = "2026-11-12"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
 
 [[publisher.libkrimes]]
-version = "0.1.0"
-when = "2026-01-08"
+version = "0.2.0"
+when = "2026-11-05"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -515,8 +515,8 @@ user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
 
 [[publisher.pbkdf2]]
-version = "0.12.2"
-when = "2023-07-08"
+version = "0.13.0-rc.10"
+when = "2026-03-20"
 user-id = 267
 user-login = "tarcieri"
 user-name = "Tony Arcieri"
@@ -2336,6 +2336,92 @@ who = "David Cook <dcook@divviup.org>"
 criteria = "safe-to-deploy"
 delta = "0.2.17 -> 0.3.0"
 
+[[audits.isrg.audits.fiat-crypto]]
+who = "David Cook <dcook@divviup.org>"
+criteria = "safe-to-deploy"
+version = "0.1.17"
+notes = """
+This crate does not contain any unsafe code, and does not use any items from
+the standard library or other crates, aside from operations backed by
+`std::ops`. All paths with array indexing use integer literals for indexes, so
+there are no panics due to indexes out of bounds (as rustc would catch an
+out-of-bounds literal index). I did not check whether arithmetic overflows
+could cause a panic, and I am relying on the Coq code having satisfied the
+necessary preconditions to ensure panics due to overflows are unreachable.
+"""
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "Brandon Pitman <bran@bran.land>"
+criteria = "safe-to-deploy"
+delta = "0.1.17 -> 0.1.18"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "David Cook <dcook@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.18 -> 0.1.19"
+notes = """
+This release renames many items and adds a new module. The code in the new
+module is entirely composed of arithmetic and array accesses.
+"""
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "David Cook <dcook@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.19 -> 0.1.20"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "David Cook <dcook@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.20 -> 0.2.0"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "Brandon Pitman <bran@bran.land>"
+criteria = "safe-to-deploy"
+delta = "0.2.0 -> 0.2.1"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "Tim Geoghegan <timg@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.1 -> 0.2.2"
+notes = "No changes to `unsafe` code, or any functional changes that I can detect at all."
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "Brandon Pitman <bran@bran.land>"
+criteria = "safe-to-deploy"
+delta = "0.2.2 -> 0.2.4"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "David Cook <dcook@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.4 -> 0.2.5"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "Brandon Pitman <bran@bran.land>"
+criteria = "safe-to-deploy"
+delta = "0.2.5 -> 0.2.6"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "Brandon Pitman <bran@bran.land>"
+criteria = "safe-to-deploy"
+delta = "0.2.6 -> 0.2.7"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "David Cook <dcook@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.7 -> 0.2.8"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "Tim Geoghegan <timg@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.8 -> 0.2.9"
+notes = "No changes to Rust code between 0.2.8 and 0.2.9"
+
+[[audits.isrg.audits.fiat-crypto]]
+who = "Tim Geoghegan <timg@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.9 -> 0.3.0"
+notes = "The diff is huge, but that's because it introduces a wrapper around indexing into arrays which is used in many many places. There is no new unsafe code and no change to build scripts I can detect."
+
 [[audits.isrg.audits.getrandom]]
 who = "David Cook <dcook@divviup.org>"
 criteria = "safe-to-deploy"
@@ -2350,6 +2436,11 @@ delta = "0.2.14 -> 0.2.15"
 who = "David Cook <dcook@divviup.org>"
 criteria = "safe-to-deploy"
 version = "0.12.1"
+
+[[audits.isrg.audits.inout]]
+who = "David Cook <dcook@divviup.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.4 -> 0.2.2"
 
 [[audits.isrg.audits.once_cell]]
 who = "Brandon Pitman <bran@bran.land>"
