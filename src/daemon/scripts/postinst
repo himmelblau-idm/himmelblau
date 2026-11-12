@@ -36,6 +36,13 @@ selinux_policy_loaded() {
     semodule -l 2>/dev/null | awk '{print $1}' | grep -qx himmelblaud
 }
 
+# The encrypted HSM PIN helper requires systemd-creds (systemd 250+). Older
+# service files intentionally omit the helper dependency and let the daemon use
+# its existing PIN-file initialization path instead.
+hsm_pin_initializer_supported() {
+    command -v systemd-creds >/dev/null 2>&1
+}
+
 skip_start=0
 if ! selinux_policy_loaded; then
     skip_start=1
@@ -130,6 +137,14 @@ elif command -v systemctl >/dev/null 2>&1; then
     # Reload systemd to pick up the new service files from /usr/lib/systemd/system/
     systemctl daemon-reload || true
 
+    if hsm_pin_initializer_supported; then
+        systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
+    else
+        # Remove a stale Wants= symlink left by an affected older package before
+        # restarting the daemon. Legacy systemd does not consume this credential.
+        systemctl disable himmelblau-hsm-pin-init.service 2>/dev/null || true
+    fi
+
     # Enable and start Himmelblau daemons if systemd is available
     # On Live systems, skip service start - the HSM PIN will be generated at first boot
     # via the himmelblau-hsm-pin-init.service oneshot when deployed to real hardware.
@@ -137,13 +152,9 @@ elif command -v systemctl >/dev/null 2>&1; then
         echo "Live system detected - skipping service start (HSM PIN will be initialized at first boot)"
         # Only enable services so they start on first real boot
         systemctl enable himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
-        # Enable HSM PIN init service separately (may not exist on older systemd)
-        systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
     else
         echo "Enabling and starting Himmelblau services..."
         systemctl enable himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
-        # Enable HSM PIN init service separately (may not exist on older systemd)
-        systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
         if [ "$skip_start" -eq 1 ]; then
             echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
         else

@@ -73,13 +73,17 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	$(MAKE) $$TARGET; \
 	echo "Packages written to ./packaging/"
 
-test: dockerfiles ## Run cargo tests in a container
+test: test-daemon-postinst dockerfiles ## Run shell regressions and cargo tests in a container
 	mkdir -p target/test
 	$(DOCKER) build -t himmelblau-test-build -f images/Dockerfile.test .
 	$(DOCKER) run --rm --security-opt label=disable -it \
                 -v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/test:/himmelblau/target \
                 himmelblau-test-build
+
+.PHONY: test-daemon-postinst
+test-daemon-postinst: ## Run isolated daemon post-install regressions
+	python3 scripts/test_daemon_postinst.py
 
 test-selinux: ## Test the SELinux policy to ensure it builds
 	./scripts/test_selinux_policy.py --fix -v --distros rocky8,rocky9,rocky10,fedora43,fedora44,tumbleweed,sle16
