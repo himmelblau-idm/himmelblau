@@ -6852,11 +6852,48 @@ class RecoveryMaintenanceTests(unittest.TestCase):
                             self.assertLessEqual(len((instructions + data).encode()), sm.MAX_BACKPORT_INPUT_BYTES)
 
 
+def _unittest_explicit_test_selectors(argv):
+    """Return whether argv names unittest targets beyond flags such as ``-v``."""
+    args = argv[1:]
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "-k":
+            index += 2
+            continue
+        if arg.startswith("-") and not arg.startswith("--"):
+            index += 1
+            continue
+        if arg.startswith("--"):
+            if "=" in arg:
+                index += 1
+                continue
+            index += 1
+            continue
+        return True
+    return False
+
+
 def premutation_quick_argv(argv):
     """Honor explicit unittest selectors; otherwise run resume-stage suites in quick mode."""
-    if os.environ.get("MAINTENANCE_PREMUTATION_QUICK") == "1" and len(argv) == 1:
-        return [*argv, *PREMUTATION_RESUME_TEST_CLASSES]
-    return argv
+    if os.environ.get("MAINTENANCE_PREMUTATION_QUICK") != "1":
+        return argv
+    if _unittest_explicit_test_selectors(argv):
+        return argv
+    return [*argv, *PREMUTATION_RESUME_TEST_CLASSES]
+
+
+class PremutationQuickArgvTests(unittest.TestCase):
+    def test_verbose_flag_still_uses_quick_default_classes(self):
+        with mock.patch.dict(os.environ, {"MAINTENANCE_PREMUTATION_QUICK": "1"}):
+            argv = premutation_quick_argv(["test_stable_maintenance.py", "-v"])
+        self.assertEqual(argv[:2], ["test_stable_maintenance.py", "-v"])
+        self.assertEqual(argv[2:], list(PREMUTATION_RESUME_TEST_CLASSES))
+
+    def test_explicit_test_class_skips_quick_injection(self):
+        with mock.patch.dict(os.environ, {"MAINTENANCE_PREMUTATION_QUICK": "1"}):
+            argv = premutation_quick_argv(["test_stable_maintenance.py", "GuardTests"])
+        self.assertEqual(argv, ["test_stable_maintenance.py", "GuardTests"])
 
 
 if __name__ == "__main__":
