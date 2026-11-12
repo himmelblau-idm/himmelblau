@@ -5101,6 +5101,21 @@ class CheckpointMaintenanceTests(unittest.TestCase):
             subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, check=True, timeout=5)
             self.assertEqual(dict(line.split("=", 1) for line in output.read_text().splitlines()), values)
 
+    def test_branch_workflow_falls_back_to_canonical_checkpoint_artifact_names(self):
+        branch = BRANCH_WORKFLOW.read_text()
+        stages = (*sm.CHECKPOINT_STAGES, "final")
+        for previous, current in zip(stages, stages[1:]):
+            block = branch.split(f"\n  {current}:\n", 1)[1].split("\n\n", 1)[0]
+            self.assertIn(
+                f"checkpoint-artifact: ${{{{ needs.{previous}.outputs.artifact || format('maintenance-checkpoint-{{0}}-{{1}}-{{2}}-{previous}', github.run_id, github.run_attempt, inputs.branch) }}}}",
+                block,
+            )
+
+    def test_stage_download_uses_canonical_checkpoint_name_when_input_missing(self):
+        stage = STAGE_WORKFLOW.read_text()
+        download = stage.split("      - name: Download this run's exact previous-stage progress", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("inputs.checkpoint-artifact || format('maintenance-checkpoint-{0}-{1}-{2}-{3}'", download)
+
     def test_workflow_has_ordered_fresh_jobs_and_only_final_publication(self):
         branch = BRANCH_WORKFLOW.read_text()
         stage = STAGE_WORKFLOW.read_text()

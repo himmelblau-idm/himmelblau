@@ -52,6 +52,8 @@ Only allowlisted structured progress is uploaded as `checkpoint.json`; raw
 captures, model responses, credentials and final-gate claims are not transferred.
 The next job downloads the named artifact from the same workflow run, checks its
 SHA-256 against its predecessor's job output, and verifies the run, stage,
+When a reusable-workflow artifact output is missing, the download falls back to the
+canonical `maintenance-checkpoint-<run>-<attempt>-<branch>-<stage>` name.
 immutable trusted main/tooling SHA, expected source commit, stable base and Git
 ancestry. A changed staging ref or advanced stable branch stops the pipeline.
 All scripts, reusable workflows and the pinned image definition come from the
