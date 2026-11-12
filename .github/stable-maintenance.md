@@ -103,6 +103,20 @@ errors remain explicit failures: recovery never substitutes an unverified tree.
 The durable checkpoint source parent remains available for manual recovery when
 runner failure or a GitHub outage makes publication impossible.
 
+The select job and dependencies stage run the full tooling test suite. Later
+stages run the guard, checkpoint, mutation-boundary, recovery and version-policy
+checks with `MAINTENANCE_PREMUTATION_QUICK=1`; all stages retain the same pinned
+tooling SHA and checkpoint verification. Explicit unittest selectors still take
+precedence over quick mode. Pre-mutation tests have a ten-minute step limit,
+unbuffered output and Python stack dumps every five minutes to diagnose hangs.
+These bounds help when the runner remains alive; runner loss still requires a
+retry or manual recovery from the last completed checkpoint.
+
+Stage outputs expose checkpoint metadata only after its artifact upload succeeds.
+An upload failure leaves no resumable output for downstream jobs, even if the
+checkpoint ref was pushed. Existing phase failures can still propagate a fully
+uploaded recovered checkpoint for draft publication.
+
 Use Actions' **Re-run failed jobs** to resume a failed, pre-publication stage
 from its predecessor without repeating successful earlier stages. Reruns keep the original trusted
 tooling snapshot; checkpoints from earlier attempts of the same run are allowed,

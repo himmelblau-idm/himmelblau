@@ -52,10 +52,10 @@ jobs:
       pull-requests: read
     outputs:
       proceed: ${{ steps.guard.outputs.proceed }}
-      head: ${{ steps.checkpoint.outputs.head }}
-      digest: ${{ steps.checkpoint.outputs.digest }}
-      ref: ${{ steps.checkpoint.outputs.ref }}
-      artifact: ${{ steps.checkpoint.outputs.artifact }}
+      head: ${{ steps.available.outputs.head }}
+      digest: ${{ steps.available.outputs.digest }}
+      ref: ${{ steps.available.outputs.ref }}
+      artifact: ${{ steps.available.outputs.artifact }}
     env:
       MAINTENANCE_BUILD_IMAGE: himmelblau-stable-maintenance:local
       TARGET_BRANCH: ${{ inputs.branch }}
@@ -130,9 +130,16 @@ jobs:
           set-safe-directory: false
 
       - name: Test trusted automation before repository mutation
+        timeout-minutes: 10
         # Temporary Git fixtures own their main refs; the job's immutable
         # snapshot applies to real maintenance phases, not fixture repositories.
-        run: env -u MAINTENANCE_TOOLING_COMMIT python3 tooling/.github/scripts/test_stable_maintenance.py
+        # Select and dependencies run the full suite on this exact tooling SHA.
+        # Resume jobs retain guard, checkpoint, mutation and recovery checks.
+        env:
+          MAINTENANCE_PREMUTATION_QUICK: ${{ inputs.stage != 'dependencies' && '1' || '' }}
+        run: >-
+          env -u MAINTENANCE_TOOLING_COMMIT PYTHONDONTWRITEBYTECODE=1
+          python3 -u tooling/.github/scripts/test_stable_maintenance.py
 
       - name: Initialize hardened Git configuration and exact refs
         shell: bash
@@ -395,6 +402,7 @@ jobs:
             --branch "$TARGET_BRANCH" --stage "$MAINTENANCE_STAGE"
 
       - name: Preserve exact checkpoint state for the next job
+        id: checkpoint-upload
         if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage != 'final' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -402,6 +410,18 @@ jobs:
           path: ${{ env.STATE_DIR }}/checkpoint.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Expose only successfully uploaded checkpoint metadata
+        id: available
+        if: ${{ !cancelled() && steps.checkpoint-upload.outcome == 'success' }}
+        env:
+          CHECKPOINT_HEAD: ${{ steps.checkpoint.outputs.head }}
+          CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
+          CHECKPOINT_REF: ${{ steps.checkpoint.outputs.ref }}
+          CHECKPOINT_ARTIFACT: ${{ steps.checkpoint.outputs.artifact }}
+        run: |
+          printf 'head=%s\ndigest=%s\nref=%s\nartifact=%s\n' \
+            "$CHECKPOINT_HEAD" "$CHECKPOINT_DIGEST" "$CHECKPOINT_REF" "$CHECKPOINT_ARTIFACT" >> "$GITHUB_OUTPUT"
 
       - name: Report — summarize results and failures
         if: always()
