@@ -3278,10 +3278,22 @@ where
     }
 
     pub async fn pam_account_allowed(&self, account_id: &str) -> Result<Option<bool>, ()> {
+        if self.pam_allow_groups.is_empty() {
+            if self.check_nxset(Some(account_id), None).await {
+                return Ok(None);
+            }
+
+            let id = Id::Name(account_id.to_string());
+            if let (_, Some(_)) = self.get_cached_usertoken(&id).await? {
+                return Ok(Some(true));
+            }
+
+            return Ok(self.get_usertoken(id).await?.map(|_| true));
+        }
+
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
 
         if self.pam_allow_groups.is_empty() {
-            // An empty allow list permits all users
             Ok(Some(true))
         } else {
             Ok(token.map(|tok| {
