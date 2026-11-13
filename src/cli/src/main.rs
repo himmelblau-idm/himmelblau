@@ -149,28 +149,9 @@ fn insert_module_line(
     let original = std::fs::read_to_string(pam_file)?;
     let mut lines: Vec<String> = original.lines().map(|l| l.to_string()).collect();
 
-    // Extract the options that follow "pam_himmelblau.so" in the desired module_line.
-    let desired_opts: std::collections::HashSet<&str> = module_line
-        .split("pam_himmelblau.so")
-        .nth(1)
-        .unwrap_or("")
-        .split_whitespace()
-        .collect();
-    let stack_type = module_line.split_whitespace().next().unwrap_or("");
     let normalized_module_line = module_line.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    if let Some(existing_index) = lines.iter().position(|l| {
-        if !l.contains("pam_himmelblau.so") || !l.trim_start().starts_with(stack_type) {
-            return false;
-        }
-        let existing_opts: std::collections::HashSet<&str> = l
-            .split("pam_himmelblau.so")
-            .nth(1)
-            .unwrap_or("")
-            .split_whitespace()
-            .collect();
-        existing_opts == desired_opts
-    }) {
+    if let Some(existing_index) = lines.iter().position(|l| same_module_line(l, module_line)) {
         if !replace_same_options
             || lines[existing_index]
                 .split_whitespace()
@@ -243,14 +224,96 @@ fn insert_module_line(
     Ok(())
 }
 
+fn module_options(line: &str) -> std::collections::HashSet<&str> {
+    line.split("pam_himmelblau.so")
+        .nth(1)
+        .unwrap_or("")
+        .split_whitespace()
+        .collect()
+}
+
+fn same_module_line(line: &str, module_line: &str) -> bool {
+    let stack_type = module_line.split_whitespace().next().unwrap_or("");
+    line.contains("pam_himmelblau.so")
+        && line.trim_start().starts_with(stack_type)
+        && module_options(line) == module_options(module_line)
+}
+
+fn is_generated_line(line: &str, generated: &[&str]) -> bool {
+    let normalized = |l: &str| l.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = normalized(line);
+    generated.iter().any(|g| normalized(g) == line)
+}
+
+/// Lines an earlier configure-pam wrote to the superseded files, as `file: line`.
+fn leftover_generated_lines(files: &PamFiles, generated: &[&str]) -> anyhow::Result<Vec<String>> {
+    let stack_type = generated
+        .first()
+        .and_then(|l| l.split_whitespace().next())
+        .unwrap_or("");
+    let mut leftovers = vec![];
+    for pam_file in &files.superseded {
+        for line in fs::read_to_string(pam_file)?.lines() {
+            if is_generated_line(line, generated) {
+                leftovers.push(format!("{}: {}", pam_file, line.trim()));
+            } else if line.contains("pam_himmelblau.so")
+                && line
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_start_matches('-')
+                    == stack_type
+            {
+                warn!(
+                    "{} includes a file configure-pam configures, and has its own \
+                     pam_himmelblau line, which is left as it is: {}",
+                    pam_file,
+                    line.trim()
+                );
+            }
+        }
+    }
+    Ok(leftovers)
+}
+
+#[derive(Debug, PartialEq)]
+struct PamFiles {
+    configure: Vec<String>,
+    superseded: Vec<String>,
+}
+
+fn configure_stage(
+    files: &PamFiles,
+    generated: &[&str],
+    after_pred: Option<&dyn Fn(&str) -> bool>,
+    before_pred: Option<&dyn Fn(&str) -> bool>,
+    replace_same_options: bool,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    for pam_file in &files.configure {
+        insert_module_line(
+            pam_file,
+            generated[0],
+            after_pred,
+            before_pred,
+            replace_same_options,
+            dry_run,
+        )?;
+    }
+    Ok(())
+}
+
 #[instrument]
 fn detect_pam_files(
     explicit: Option<&str>,
     candidates: &[&str],
     role: &str,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<PamFiles> {
     if let Some(path) = explicit {
-        return Ok(vec![path.to_owned()]);
+        return Ok(PamFiles {
+            configure: vec![path.to_owned()],
+            superseded: vec![],
+        });
     }
 
     let mut found: Vec<String> = candidates
@@ -272,7 +335,110 @@ fn detect_pam_files(
         );
     }
 
-    Ok(found)
+    // Leave out a file that already includes another detected one: on Arch, system-login
+    // includes system-auth, and configuring both runs pam_himmelblau twice.
+    let detected: Vec<PathBuf> = found.iter().map(|p| canonical(Path::new(p))).collect();
+    let (superseded, configure): (Vec<String>, Vec<String>) =
+        found.into_iter().partition(|pam_file| {
+            let start = canonical(Path::new(pam_file));
+            reachable_pam_files(Path::new(pam_file), role)
+                .iter()
+                .any(|reached| *reached != start && detected.contains(reached))
+        });
+    for pam_file in &superseded {
+        debug!(%pam_file, %role, "not configuring, it includes another detected PAM file");
+    }
+
+    if configure.is_empty() {
+        anyhow::bail!(
+            "The PAM files for {} include each other: {}. \
+             Consider using --auth-file/--account-file/--session-file/--password-file.",
+            role,
+            superseded.join(", "),
+        );
+    }
+
+    Ok(PamFiles {
+        configure,
+        superseded,
+    })
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+const VENDOR_PAM_DIR: &str = "/usr/lib/pam.d";
+
+/// Files that `pam_file`'s `role` stack reaches through include or substack, at any depth.
+fn reachable_pam_files(pam_file: &Path, role: &str) -> Vec<PathBuf> {
+    let dirs = [
+        pam_file.parent().unwrap_or_else(|| Path::new("/")),
+        Path::new(VENDOR_PAM_DIR),
+    ];
+    let mut seen = vec![canonical(pam_file)];
+    let mut queue = vec![pam_file.to_path_buf()];
+    let mut reached = vec![];
+    while let Some(file) = queue.pop() {
+        let Ok(bytes) = fs::read(&file) else {
+            continue;
+        };
+        for included in included_pam_files(&dirs, &String::from_utf8_lossy(&bytes), role) {
+            let resolved = canonical(&included);
+            if !seen.contains(&resolved) {
+                seen.push(resolved.clone());
+                reached.push(resolved);
+                queue.push(included);
+            }
+        }
+    }
+    reached
+}
+
+fn included_pam_files(dirs: &[&Path], content: &str, role: &str) -> Vec<PathBuf> {
+    pam_directives(content)
+        .iter()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let keyword = |i: usize| fields.get(i).map(|f| f.to_ascii_lowercase());
+            let (first, second) = (keyword(0)?, keyword(1));
+            let target = if first == "@include" {
+                fields.get(1)?
+            } else if first.trim_start_matches('-') == role
+                && matches!(second.as_deref(), Some("include" | "substack"))
+            {
+                fields.get(2)?
+            } else {
+                return None;
+            };
+            let found = dirs.iter().map(|dir| dir.join(target)).find(|p| p.exists());
+            Some(found.unwrap_or_else(|| dirs.first().unwrap_or(&Path::new("/")).join(target)))
+        })
+        .collect()
+}
+
+/// The directives in a PAM file, read the way libpam reads them: `#` starts a comment and a
+/// trailing backslash continues the directive, unless the line has a comment.
+fn pam_directives(content: &str) -> Vec<String> {
+    let mut directives = vec![];
+    let mut current = String::new();
+    for line in content.lines() {
+        let text = line.split('#').next().unwrap_or("").trim_end();
+        match text.strip_suffix('\\').filter(|_| !line.contains('#')) {
+            Some(part) => {
+                current.push_str(part);
+                current.push(' ');
+            }
+            None => {
+                current.push_str(text);
+                directives.push(std::mem::take(&mut current));
+            }
+        }
+    }
+    if !current.is_empty() {
+        directives.push(current);
+    }
+    directives
 }
 
 #[instrument]
@@ -284,126 +450,150 @@ fn configure_pam(
     password_file: Option<&str>,
     try_unseal: bool,
 ) -> anyhow::Result<()> {
-    let auth_files = detect_pam_files(
+    configure_pam_in(
+        Path::new("/etc/pam.d"),
+        dry_run,
         auth_file,
-        &[
-            "/etc/pam.d/common-auth",
-            "/etc/pam.d/system-auth",
-            "/etc/pam.d/password-auth",
-            "/etc/pam.d/system-login",
-        ],
-        "auth",
-    )?;
-
-    let account_files = detect_pam_files(
         account_file,
-        &[
-            "/etc/pam.d/common-account",
-            "/etc/pam.d/system-auth",
-            "/etc/pam.d/password-auth",
-            "/etc/pam.d/system-login",
-        ],
-        "account",
-    )?;
-
-    let session_files = detect_pam_files(
         session_file,
-        &[
-            "/etc/pam.d/common-session",
-            "/etc/pam.d/system-auth",
-            "/etc/pam.d/password-auth",
-            "/etc/pam.d/system-login",
-        ],
-        "session",
-    )?;
-
-    let password_files = detect_pam_files(
         password_file,
-        &[
-            "/etc/pam.d/common-password",
-            "/etc/pam.d/system-auth",
-            "/etc/pam.d/password-auth",
-            "/etc/pam.d/system-login",
-        ],
-        "password",
-    )?;
+        try_unseal,
+    )
+}
 
-    // AUTH
-    for auth_file in &auth_files {
-        if try_unseal {
-            // --try-unseal: only add the optional try_unseal line, nothing else
-            insert_module_line(
-                auth_file,
-                "auth\toptional\tpam_himmelblau.so try_unseal",
-                None,
-                None,
-                false,
-                dry_run,
-            )?;
-        } else {
-            insert_module_line(
-                auth_file,
-                // Set PAM_AUTHTOK from Hello PIN so downstream modules (e.g. gnome-keyring)
-                // can unlock using use_authtok.
-                "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
-                None,
-                // pam_himmelblau should always come first on the auth stack
-                Some(&|_: &str| true),
-                false,
-                dry_run,
-            )?;
-        }
+fn configure_pam_in(
+    pam_dir: &Path,
+    dry_run: bool,
+    auth_file: Option<&str>,
+    account_file: Option<&str>,
+    session_file: Option<&str>,
+    password_file: Option<&str>,
+    try_unseal: bool,
+) -> anyhow::Result<()> {
+    let detect = |explicit: Option<&str>, role: &str| {
+        let candidates: Vec<String> = [
+            format!("common-{}", role),
+            "system-auth".to_string(),
+            "password-auth".to_string(),
+            "system-login".to_string(),
+        ]
+        .iter()
+        .map(|file| pam_dir.join(file).to_string_lossy().into_owned())
+        .collect();
+        let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
+        detect_pam_files(explicit, &candidates, role)
+    };
+    let auth_files = detect(auth_file, "auth")?;
+    let account_files = detect(account_file, "account")?;
+    let session_files = detect(session_file, "session")?;
+    let password_files = detect(password_file, "password")?;
+
+    // Refuse while lines earlier releases wrote to an including file remain. Removing them
+    // here could change where a [...=N] jump in that stage lands.
+    let unseal_check: Vec<&str> = TRY_UNSEAL_LINES
+        .iter()
+        .chain(&AUTH_LINES)
+        .copied()
+        .collect();
+    let stages: Vec<(&PamFiles, &[&str])> = if try_unseal {
+        vec![(&auth_files, &unseal_check)]
+    } else {
+        vec![
+            (&auth_files, &AUTH_LINES),
+            (&account_files, &ACCOUNT_LINES),
+            (&session_files, &SESSION_LINES),
+            (&password_files, &PASSWORD_LINES),
+        ]
+    };
+    let mut leftovers = vec![];
+    for (files, generated) in stages {
+        leftovers.extend(leftover_generated_lines(files, generated)?);
+    }
+    if !leftovers.is_empty() {
+        anyhow::bail!(
+            "These lines were written by an earlier configure-pam to files that include a file \
+             it now configures, where they run ahead of that file's own checks (such as \
+             pam_shells and pam_nologin) and run pam_himmelblau twice. Remove them, check that \
+             any [...=N] jumps in the same stage still land where intended, and run \
+             configure-pam again:\n  {}",
+            leftovers.join("\n  ")
+        );
     }
 
+    // AUTH
     if try_unseal {
+        // --try-unseal: only add the optional try_unseal line, nothing else
+        configure_stage(&auth_files, &TRY_UNSEAL_LINES, None, None, false, dry_run)?;
         return Ok(());
     }
 
+    configure_stage(
+        &auth_files,
+        // Set PAM_AUTHTOK from Hello PIN so downstream modules (e.g. gnome-keyring)
+        // can unlock using use_authtok.
+        &AUTH_LINES,
+        None,
+        // pam_himmelblau should always come first on the auth stack
+        Some(&|_: &str| true),
+        false,
+        dry_run,
+    )?;
+
     // ACCOUNT
-    for account_file in &account_files {
-        insert_module_line(
-            account_file,
-            "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user",
-            None,
-            Some(&|l: &str| {
-                (l.contains("pam_unix.so") && l.contains("account"))
-                    || (l.contains("pam_faillock.so") && l.contains("account"))
-            }),
-            true,
-            dry_run,
-        )?;
-    }
+    configure_stage(
+        &account_files,
+        &ACCOUNT_LINES,
+        None,
+        Some(&|l: &str| {
+            (l.contains("pam_unix.so") && l.contains("account"))
+                || (l.contains("pam_faillock.so") && l.contains("account"))
+        }),
+        true,
+        dry_run,
+    )?;
 
     // SESSION
-    for session_file in &session_files {
-        insert_module_line(
-            session_file,
-            "session\toptional\tpam_himmelblau.so",
-            None,
-            None,
-            false,
-            dry_run,
-        )?;
-    }
+    configure_stage(&session_files, &SESSION_LINES, None, None, false, dry_run)?;
 
     // PASSWORD
-    for password_file in &password_files {
-        insert_module_line(
-            password_file,
-            "password\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
-            None,
-            Some(&|l: &str| {
-                (l.contains("pam_unix.so") && l.contains("password"))
-                    || (l.contains("pam_cracklib.so") && l.contains("password"))
-                    || (l.contains("pam_pwquality.so") && l.contains("password"))
-            }),
-            false,
-            dry_run,
-        )?;
-    }
+    configure_stage(
+        &password_files,
+        &PASSWORD_LINES,
+        None,
+        Some(&|l: &str| {
+            (l.contains("pam_unix.so") && l.contains("password"))
+                || (l.contains("pam_cracklib.so") && l.contains("password"))
+                || (l.contains("pam_pwquality.so") && l.contains("password"))
+        }),
+        false,
+        dry_run,
+    )?;
 
     Ok(())
 }
+
+// The current line for each stage, then the exact lines earlier releases wrote.
+const AUTH_LINE: &str = "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok";
+const ACCOUNT_LINE: &str =
+    "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";
+const SESSION_LINE: &str = "session\toptional\tpam_himmelblau.so";
+const PASSWORD_LINE: &str =
+    "password\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok";
+const AUTH_LINES: [&str; 2] = [
+    AUTH_LINE,
+    "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+];
+const ACCOUNT_LINES: [&str; 3] = [
+    ACCOUNT_LINE,
+    "account\t[success=end auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user",
+    "account\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+];
+const SESSION_LINES: [&str; 1] = [SESSION_LINE];
+const PASSWORD_LINES: [&str; 2] = [
+    PASSWORD_LINE,
+    "password\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+];
+const TRY_UNSEAL_LINES: [&str; 1] = ["auth\toptional\tpam_himmelblau.so try_unseal"];
 
 #[instrument(skip(app, account_id))]
 async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserToken> {
@@ -1874,7 +2064,10 @@ async fn main() -> ExitCode {
                 try_unseal,
             ) {
                 Ok(_) => ExitCode::SUCCESS,
-                _ => ExitCode::FAILURE,
+                Err(err) => {
+                    error!("{:#}", err);
+                    ExitCode::FAILURE
+                }
             }
         }
         HimmelblauUnixOpt::Enumerate {
@@ -2516,7 +2709,11 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::HimmelblauUnixParser;
-    use super::{insert_module_line, preserve_numeric_account_success};
+    use super::{
+        canonical, configure_pam_in, detect_pam_files, included_pam_files, insert_module_line,
+        preserve_numeric_account_success, reachable_pam_files, PamFiles, ACCOUNT_LINE,
+        ACCOUNT_LINES, AUTH_LINE, AUTH_LINES, PASSWORD_LINE, PASSWORD_LINES, SESSION_LINE,
+    };
     use clap::CommandFactory;
     use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
     use himmelblau_unix_common::tpm::resolve_hsm_type;
@@ -2524,11 +2721,8 @@ mod tests {
     use kanidm_hsm_crypto::provider::{BoxedDynTpm, SoftTpm, Tpm};
     use kanidm_hsm_crypto::AuthValue;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-    const ACCOUNT_LINE: &str =
-        "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";
 
     fn temp_pam_file(name: &str, content: &str) -> anyhow::Result<PathBuf> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -2812,6 +3006,410 @@ mod tests {
             "auth required pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n"
         );
         remove_temp_file(&path)
+    }
+
+    fn temp_pam_dir(name: &str, files: &[(&str, &str)]) -> anyhow::Result<PathBuf> {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "aad-tool-{}-{}-{}",
+            name,
+            std::process::id(),
+            nanos
+        ));
+        fs::create_dir(&dir)?;
+        for (file, content) in files {
+            fs::write(dir.join(file), content)?;
+        }
+        Ok(dir)
+    }
+
+    fn detect_in(dir: &Path, role: &str) -> anyhow::Result<(Vec<String>, Vec<String>)> {
+        let candidates: Vec<String> = [
+            format!("common-{}", role),
+            "system-auth".to_string(),
+            "password-auth".to_string(),
+            "system-login".to_string(),
+        ]
+        .iter()
+        .map(|file| dir.join(file).to_string_lossy().into_owned())
+        .collect();
+        let candidates: Vec<&str> = candidates.iter().map(String::as_str).collect();
+        let found = detect_pam_files(None, &candidates, role)?;
+        let names = |paths: &[String]| -> Vec<String> {
+            paths
+                .iter()
+                .map(|path| {
+                    Path::new(path)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect()
+        };
+        Ok((names(&found.configure), names(&found.superseded)))
+    }
+
+    const ARCH_SYSTEM_AUTH: &str = "#%PAM-1.0\n\
+        auth       required                    pam_faillock.so      preauth\n\
+        auth       [success=1 default=bad]     pam_unix.so          try_first_pass nullok\n\
+        account    required                    pam_unix.so\n\
+        password   required                    pam_unix.so          try_first_pass nullok shadow\n\
+        session    required                    pam_unix.so\n";
+
+    const ARCH_SYSTEM_LOGIN: &str = "#%PAM-1.0\n\
+        auth       required   pam_shells.so\n\
+        auth       requisite  pam_nologin.so\n\
+        auth       include    system-auth\n\
+        account    required   pam_nologin.so\n\
+        account    include    system-auth\n\
+        password   include    system-auth\n\
+        session    include    system-auth\n\
+        session    required   pam_env.so\n";
+
+    fn legacy_system_login() -> String {
+        format!(
+            "{}\n{}{}\n{}\n{}\n",
+            AUTH_LINE, ARCH_SYSTEM_LOGIN, ACCOUNT_LINE, SESSION_LINE, PASSWORD_LINE
+        )
+    }
+
+    fn strs(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    fn configure_in(dir: &Path, dry_run: bool) -> anyhow::Result<()> {
+        configure_pam_in(dir, dry_run, None, None, None, None, false)
+    }
+
+    fn count(content: &str, line: &str) -> usize {
+        content.lines().filter(|l| *l == line).count()
+    }
+
+    #[test]
+    fn detection_skips_a_file_that_includes_another_detected_file() -> anyhow::Result<()> {
+        let dir = temp_pam_dir(
+            "arch",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                ("system-login", ARCH_SYSTEM_LOGIN),
+            ],
+        )?;
+        for role in ["auth", "account", "session", "password"] {
+            assert_eq!(
+                detect_in(&dir, role)?,
+                (strs(&["system-auth"]), strs(&["system-login"])),
+                "{role}"
+            );
+        }
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn detection_keeps_files_that_do_not_include_each_other() -> anyhow::Result<()> {
+        let dir = temp_pam_dir(
+            "el",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                ("password-auth", ARCH_SYSTEM_AUTH),
+            ],
+        )?;
+        for role in ["auth", "account", "session", "password"] {
+            assert_eq!(
+                detect_in(&dir, role)?,
+                (strs(&["password-auth", "system-auth"]), vec![]),
+                "{role}"
+            );
+        }
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn detection_checks_includes_per_stage() -> anyhow::Result<()> {
+        let dir = temp_pam_dir(
+            "per-stage",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                (
+                    "system-login",
+                    "-auth substack system-auth\naccount required pam_unix.so\n",
+                ),
+            ],
+        )?;
+        assert_eq!(
+            detect_in(&dir, "auth")?,
+            (strs(&["system-auth"]), strs(&["system-login"]))
+        );
+        assert_eq!(
+            detect_in(&dir, "account")?,
+            (strs(&["system-auth", "system-login"]), vec![])
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn detection_follows_includes_through_other_files() -> anyhow::Result<()> {
+        let dir = temp_pam_dir(
+            "indirect",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                ("system-login", "auth include site-auth\n"),
+                (
+                    "site-auth",
+                    "auth required pam_env.so\nauth include system-auth\n",
+                ),
+            ],
+        )?;
+        assert_eq!(
+            detect_in(&dir, "auth")?,
+            (strs(&["system-auth"]), strs(&["system-login"]))
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn detection_stops_at_include_cycles() -> anyhow::Result<()> {
+        let dir = temp_pam_dir(
+            "cycle",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                ("system-login", "auth include loop-a\n"),
+                ("loop-a", "auth include loop-b\n"),
+                ("loop-b", "auth include loop-a\nauth include system-login\n"),
+            ],
+        )?;
+        assert_eq!(
+            detect_in(&dir, "auth")?,
+            (strs(&["system-auth", "system-login"]), vec![])
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn detection_resolves_symlinks() -> anyhow::Result<()> {
+        let dir = temp_pam_dir("symlink", &[("system-login", ARCH_SYSTEM_LOGIN)])?;
+        fs::create_dir(dir.join("profile"))?;
+        fs::write(dir.join("profile/system-auth"), ARCH_SYSTEM_AUTH)?;
+        std::os::unix::fs::symlink(dir.join("profile/system-auth"), dir.join("system-auth"))?;
+        assert_eq!(
+            detect_in(&dir, "auth")?,
+            (strs(&["system-auth"]), strs(&["system-login"]))
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn included_files_resolve_relative_and_absolute_names() -> anyhow::Result<()> {
+        let content = "# auth include commented-out\n\
+            auth include system-auth\n\
+            -session substack /usr/lib/pam.d/other\n\
+            account required pam_unix.so\n\
+            password include vendor-only\n";
+        let etc = temp_pam_dir("etc", &[("system-auth", ARCH_SYSTEM_AUTH)])?;
+        let vendor = temp_pam_dir("vendor", &[("vendor-only", ARCH_SYSTEM_AUTH)])?;
+        let dirs = [etc.as_path(), vendor.as_path()];
+        assert_eq!(
+            included_pam_files(&dirs, content, "auth"),
+            vec![etc.join("system-auth")]
+        );
+        assert_eq!(
+            included_pam_files(&dirs, content, "session"),
+            vec![PathBuf::from("/usr/lib/pam.d/other")]
+        );
+        assert_eq!(
+            included_pam_files(&dirs, content, "password"),
+            vec![vendor.join("vendor-only")]
+        );
+        assert!(included_pam_files(&dirs, content, "account").is_empty());
+        fs::remove_dir_all(&etc)?;
+        fs::remove_dir_all(&vendor)?;
+        Ok(())
+    }
+
+    #[test]
+    fn included_files_are_read_like_libpam_reads_them() -> anyhow::Result<()> {
+        let etc = temp_pam_dir("continued", &[("system-auth", ARCH_SYSTEM_AUTH)])?;
+        let dirs = [etc.as_path()];
+        let continued = "auth include \\\n    system-auth\n\
+            # auth include \\\n\
+            auth required pam_deny.so\n\
+            auth include other \\ # a comment ends the directive\n\
+            auth include system-login\n";
+        assert_eq!(
+            included_pam_files(&dirs, continued, "auth"),
+            vec![
+                etc.join("system-auth"),
+                etc.join("other"),
+                etc.join("system-login")
+            ]
+        );
+        assert_eq!(
+            included_pam_files(&dirs, "@include system-auth\n", "session"),
+            vec![etc.join("system-auth")]
+        );
+        assert_eq!(
+            included_pam_files(&dirs, "-ACCOUNT Include system-auth\n", "account"),
+            vec![etc.join("system-auth")]
+        );
+        fs::write(
+            etc.join("site-auth"),
+            b"# caf\xe9\nauth include system-auth\n",
+        )?;
+        fs::write(etc.join("system-login"), "auth include site-auth\n")?;
+        assert!(reachable_pam_files(&etc.join("system-login"), "auth")
+            .contains(&canonical(&etc.join("system-auth"))));
+        fs::remove_dir_all(&etc)?;
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_file_is_used_as_given() -> anyhow::Result<()> {
+        assert_eq!(
+            detect_pam_files(Some("/etc/pam.d/system-login"), &[], "auth")?,
+            PamFiles {
+                configure: strs(&["/etc/pam.d/system-login"]),
+                superseded: vec![],
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn arch_fresh_install_configures_system_auth_only() -> anyhow::Result<()> {
+        let dir = temp_pam_dir(
+            "arch-fresh",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                ("system-login", ARCH_SYSTEM_LOGIN),
+            ],
+        )?;
+        configure_in(&dir, false)?;
+        let system_auth = fs::read_to_string(dir.join("system-auth"))?;
+        for line in [AUTH_LINE, ACCOUNT_LINE, SESSION_LINE, PASSWORD_LINE] {
+            assert_eq!(count(&system_auth, line), 1, "{line}");
+        }
+        assert_eq!(
+            fs::read_to_string(dir.join("system-login"))?,
+            ARCH_SYSTEM_LOGIN
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn arch_rerun_refuses_while_lines_earlier_versions_wrote_remain() -> anyhow::Result<()> {
+        let legacy = legacy_system_login();
+        let dir = temp_pam_dir(
+            "arch-legacy",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                ("system-login", legacy.as_str()),
+            ],
+        )?;
+
+        for dry_run in [true, false] {
+            let err = configure_in(&dir, dry_run)
+                .err()
+                .ok_or_else(|| anyhow::anyhow!("configure-pam accepted leftover lines"))?
+                .to_string();
+            for line in [AUTH_LINE, ACCOUNT_LINE, SESSION_LINE, PASSWORD_LINE] {
+                let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+                assert!(
+                    err.split('\n').any(|l| l
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .ends_with(&line)),
+                    "{line} missing from: {err}"
+                );
+            }
+            assert_eq!(fs::read_to_string(dir.join("system-login"))?, legacy);
+            assert_eq!(
+                fs::read_to_string(dir.join("system-auth"))?,
+                ARCH_SYSTEM_AUTH
+            );
+        }
+
+        fs::write(dir.join("system-login"), ARCH_SYSTEM_LOGIN)?;
+        configure_in(&dir, false)?;
+        let system_auth = fs::read_to_string(dir.join("system-auth"))?;
+        for line in [AUTH_LINE, ACCOUNT_LINE, SESSION_LINE, PASSWORD_LINE] {
+            assert_eq!(count(&system_auth, line), 1, "{line}");
+        }
+        configure_in(&dir, false)?;
+        assert_eq!(fs::read_to_string(dir.join("system-auth"))?, system_auth);
+        assert_eq!(
+            fs::read_to_string(dir.join("system-login"))?,
+            ARCH_SYSTEM_LOGIN
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn arch_rerun_refuses_lines_earlier_releases_wrote() -> anyhow::Result<()> {
+        for line in [
+            AUTH_LINES[1],
+            ACCOUNT_LINES[1],
+            ACCOUNT_LINES[2],
+            PASSWORD_LINES[1],
+        ] {
+            let legacy = format!("{}{}\n", ARCH_SYSTEM_LOGIN, line);
+            let dir = temp_pam_dir(
+                "arch-older",
+                &[
+                    ("system-auth", ARCH_SYSTEM_AUTH),
+                    ("system-login", legacy.as_str()),
+                ],
+            )?;
+            assert!(configure_in(&dir, false).is_err(), "{line}");
+            assert_eq!(fs::read_to_string(dir.join("system-login"))?, legacy);
+            fs::remove_dir_all(&dir)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn arch_try_unseal_refuses_while_an_earlier_auth_line_remains() -> anyhow::Result<()> {
+        let legacy = format!("{}\n{}", AUTH_LINE, ARCH_SYSTEM_LOGIN);
+        let dir = temp_pam_dir(
+            "arch-unseal",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                ("system-login", legacy.as_str()),
+            ],
+        )?;
+        assert!(configure_pam_in(&dir, false, None, None, None, None, true).is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join("system-auth"))?,
+            ARCH_SYSTEM_AUTH
+        );
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn arch_rerun_keeps_pam_himmelblau_lines_it_did_not_write() -> anyhow::Result<()> {
+        let kept = "auth required pam_himmelblau.so ignore_unknown_user set_authtok\n\
+            auth optional pam_himmelblau.so try_unseal\n";
+        let system_login = format!("{}{}", kept, ARCH_SYSTEM_LOGIN);
+        let dir = temp_pam_dir(
+            "arch-foreign",
+            &[
+                ("system-auth", ARCH_SYSTEM_AUTH),
+                ("system-login", system_login.as_str()),
+            ],
+        )?;
+        configure_in(&dir, false)?;
+        assert_eq!(fs::read_to_string(dir.join("system-login"))?, system_login);
+        fs::remove_dir_all(&dir)?;
+        Ok(())
     }
 
     const DONATIONS_URL: &str = "https://himmelblau-idm.org/donations/";
