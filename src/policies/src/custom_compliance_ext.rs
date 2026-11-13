@@ -23,6 +23,7 @@ use base64::Engine;
 use himmelblau::intune::{ComplianceState, IntuneStatus, PolicyStatus};
 use himmelblau_unix_common::{
     config::HimmelblauConfig,
+    journal,
     systemd_api::{Systemd, TransientUnit, UnitOutput, Variant},
 };
 use std::fs::Permissions;
@@ -32,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tempfile::{NamedTempFile, TempPath};
 use tokio::sync::Mutex;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(75);
@@ -116,7 +117,7 @@ fn compliance_unit(
     Ok(unit)
 }
 
-fn prepare_script(script: &[u8], directory: &Path) -> Result<(TempPath, bool)> {
+fn prepare_script(script: &[u8], directory: &Path) -> Result<(TempPath, bool, Vec<u8>)> {
     let (contents, has_shebang) = match std::str::from_utf8(script) {
         Ok(text) => {
             let normalized = text.replace("\r\n", "\n");
@@ -136,18 +137,41 @@ fn prepare_script(script: &[u8], directory: &Path) -> Result<(TempPath, bool)> {
         .set_permissions(Permissions::from_mode(0o500))?;
 
     // Close the writable descriptor before PID 1 executes the script (ETXTBSY).
-    Ok((file.into_temp_path(), has_shebang))
+    Ok((file.into_temp_path(), has_shebang, contents))
 }
 
-async fn execute_script(script: Vec<u8>, directory: PathBuf) -> Result<String> {
+async fn execute_script(script: Vec<u8>, directory: PathBuf, policy_id: &str) -> Result<String> {
     let _guard = COMPLIANCE_UNIT_LOCK.lock().await;
     let systemd = Systemd::default();
     let version = systemd.version().await?;
-    let (temp_path, has_shebang) =
+    let (temp_path, has_shebang, contents) =
         tokio::task::spawn_blocking(move || prepare_script(&script, &directory))
             .await
             .context("Compliance script preparation failed")??;
     let unit = compliance_unit(&temp_path, has_shebang, version)?;
+    let journal_policy_id = policy_id.to_string();
+    let journal_result = tokio::task::spawn_blocking(move || {
+        journal::send(&[
+            ("MESSAGE", b"Executing custom compliance discovery script"),
+            ("MESSAGE_ID", b"014b381a3d0042a8a098c78eea0f52c0"),
+            ("PRIORITY", b"6"),
+            ("SYSLOG_IDENTIFIER", b"himmelblaud_tasks"),
+            ("HIMMELBLAU_POLICY_ID", journal_policy_id.as_bytes()),
+            ("HIMMELBLAU_SCRIPT_UNIT", COMPLIANCE_UNIT.as_bytes()),
+            ("HIMMELBLAU_SCRIPT", &contents),
+        ])
+    })
+    .await
+    .context("Journal logging task failed")
+    .and_then(|result| result.context("Failed to submit script journal entry"));
+    if let Err(e) = journal_result {
+        warn!(
+            policy_id = %policy_id,
+            unit = COMPLIANCE_UNIT,
+            error = %format!("{e:#}"),
+            "Executing custom compliance discovery script without journal attachment"
+        );
+    }
     let started = Instant::now();
     let outcome = systemd.run_with_output(unit, CLIENT_TIMEOUT).await;
     let cleanup = temp_path
@@ -264,28 +288,11 @@ impl CustomComplianceCSE {
             expected_value_len = detail.expected_value.len(),
             "CustomComplianceCSE: found discovery script, decoding and executing"
         );
-        let decoded = (|| -> Result<Vec<u8>> {
-            let decoded = STANDARD
-                .decode(detail.expected_value.clone())
-                .map_err(|e| anyhow!("Failed to decode CSE: {}", e))?;
-            if let Ok(script) = std::str::from_utf8(&decoded) {
-                debug!(
-                    policy_id = %policy.policy_id,
-                    script = %script,
-                    "CustomComplianceCSE: decoded discovery CSE content"
-                );
-            } else {
-                debug!(
-                    policy_id = %policy.policy_id,
-                    len = decoded.len(),
-                    "CustomComplianceCSE: decoded binary discovery CSE content"
-                );
+        let result = match STANDARD.decode(&detail.expected_value) {
+            Ok(decoded) => {
+                execute_script(decoded, self.script_directory.clone(), &policy.policy_id).await
             }
-            Ok(decoded)
-        })();
-        let result = match decoded {
-            Ok(decoded) => execute_script(decoded, self.script_directory.clone()).await,
-            Err(e) => Err(e),
+            Err(e) => Err(anyhow!("Failed to decode CSE: {}", e)),
         };
         match result {
             Ok(output) => {
@@ -398,13 +405,17 @@ mod tests {
     #[test]
     fn discovery_tempfile_is_shared_executable_and_normalized() {
         let dir = tempdir().expect("tempdir");
-        let (path, shebang) =
+        let (path, shebang, contents) =
             prepare_script(b"#!/bin/sh\r\necho '{}'\r\n", dir.path()).expect("prepare");
         assert!(shebang);
         assert_eq!(path.parent(), Some(dir.path()));
         assert_eq!(
             fs::read(&path).expect("contents"),
             b"#!/bin/sh\necho '{}'\n"
+        );
+        assert_eq!(
+            contents,
+            fs::read(&path).expect("journal attachment matches script")
         );
         assert_eq!(
             fs::metadata(&path).expect("metadata").permissions().mode() & 0o777,
