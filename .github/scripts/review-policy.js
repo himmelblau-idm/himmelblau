@@ -40,7 +40,8 @@ function manifestTable(line) {
 
 function dependencyTable(section) {
   if (!section) return false;
-  return /^(?:dev-|build-)?dependencies(?:\.|$)/i.test(section)
+  return /^workspace\.(?:dev-|build-)?dependencies(?:\.|$)/i.test(section)
+    || /^(?:dev-|build-)?dependencies(?:\.|$)/i.test(section)
     || /^target\.[^.]+\.(?:dev-|build-)?dependencies(?:\.|$)/i.test(section);
 }
 
@@ -49,7 +50,7 @@ function manifestKey(line) {
   return match ? match[1].toLowerCase() : null;
 }
 
-function normalizeManifestDiffLine(line, inDependencyTable) {
+function normalizeManifestDiffLine(line, inDependencyTable, inPackageSection = false) {
   const trimmed = line.trim();
   const key = manifestKey(trimmed);
   if (key && (MANIFEST_NON_DEP_KEYS.has(key) || /^\d/.test(key))) return trimmed;
@@ -61,7 +62,7 @@ function normalizeManifestDiffLine(line, inDependencyTable) {
     if (inDependencyTable === true) {
       normalized = normalized.replace(depVersion, '$1 = "VERSION"');
     } else if (inDependencyTable === false) {
-      return trimmed;
+      if (!(inPackageSection && key === 'version')) return trimmed;
     } else if (key && !MANIFEST_NON_DEP_KEYS.has(key) && !/^\d/.test(key)) {
       // Minimal patches without section context: keep shorthand dependency bumps.
       normalized = normalized.replace(depVersion, '$1 = "VERSION"');
@@ -74,17 +75,24 @@ function normalizeManifestDiffLine(line, inDependencyTable) {
 function versionBumpOnly(patch) {
   const removed = [], added = [];
   let inDependencyTable = null;
+  let inPackageSection = false;
   for (const line of patch.split('\n')) {
     if (/^ /.test(line)) {
       const table = manifestTable(line.slice(1));
-      if (table) inDependencyTable = dependencyTable(table);
+      if (table) {
+        inDependencyTable = dependencyTable(table);
+        inPackageSection = table === 'package';
+      }
       continue;
     }
     if (!/^[+-](?![+-])/.test(line)) continue;
     const content = line.slice(1);
     const table = manifestTable(content);
-    if (table) inDependencyTable = dependencyTable(table);
-    const normalized = normalizeManifestDiffLine(content, inDependencyTable);
+    if (table) {
+      inDependencyTable = dependencyTable(table);
+      inPackageSection = table === 'package';
+    }
+    const normalized = normalizeManifestDiffLine(content, inDependencyTable, inPackageSection);
     (line[0] === '+' ? added : removed).push(normalized);
   }
   return removed.length > 0 && JSON.stringify(removed) === JSON.stringify(added);

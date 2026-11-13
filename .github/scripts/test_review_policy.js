@@ -355,6 +355,10 @@ test('security dependencies and source changes require humans, ordinary version 
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: ' [dependencies]\n-clap = "4.5"\n+clap = "4.6"' }]), []);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
+    patch: ' [workspace.dependencies]\n-clap = "4.5"\n+clap = "4.6"' }]), []);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'src/fxhash/Cargo.toml',
+    patch: ' [package]\n-version = "0.1.0"\n+version = "0.1.1"' }]), []);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: '-resolver = "2"\n+resolver = "3"' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: '-edition = "2021"\n+edition = "2024"' }]), ['Cargo.toml']);
