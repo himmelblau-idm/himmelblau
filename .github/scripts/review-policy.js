@@ -26,24 +26,65 @@ const SENSITIVE_FILES = new Set([
   'scripts/cargo_vet_review.py', 'scripts/cargo-patch-config.toml',
 ]);
 const SECURITY_DEP = /\b(?:libhimmelblau|identity_dbus_broker|broker-client|okta(?:-auth-rs)?|openidconnect|oauth2|libkrimes|kanidm[\w-]*|crypto[\w-]*|rsa|rustls[\w-]*|openssl[\w-]*|ring|aws-lc[\w-]*|webpki[\w-]*|zeroize|secrecy|webauthn[\w-]*|sha2|authenticator|libwebauthn)\b/i;
+const MANIFEST_NON_DEP_KEYS = new Set([
+  'resolver', 'edition', 'features', 'default-features', 'build', 'workspace',
+  'post_install_script', 'pre_install_script', 'post_uninstall_script',
+  'pre_uninstall_script', 'post_trans_script', 'pre_trans_script',
+  'rpm_post_install_script', 'rpm_pre_uninstall_script',
+]);
 
-function normalizeManifestDiffLine(line) {
+function manifestTable(line) {
+  const match = /^\[([^\]]+)\]/.exec(line.trim());
+  return match ? match[1] : null;
+}
+
+function dependencyTable(section) {
+  if (!section) return false;
+  return /^(?:dev-|build-)?dependencies(?:\.|$)/i.test(section)
+    || /^target\.[^.]+\.(?:dev-|build-)?dependencies(?:\.|$)/i.test(section);
+}
+
+function manifestKey(line) {
+  const match = /^([\w.-]+)\s*=/i.exec(line.trim());
+  return match ? match[1].toLowerCase() : null;
+}
+
+function normalizeManifestDiffLine(line, inDependencyTable) {
   const trimmed = line.trim();
+  const key = manifestKey(trimmed);
+  if (key && (MANIFEST_NON_DEP_KEYS.has(key) || /^\d/.test(key))) return trimmed;
   if (/^(?:edition|features|default-features)\s*=/i.test(trimmed)) return trimmed;
   let normalized = trimmed;
   normalized = normalized.replace(/^version\s*=\s*"[^"]*"/, 'version = "VERSION"');
-  // Only plain dependency version requirements (digit-led quoted values), not
-  // packaging hooks or other manifest strings.
-  normalized = normalized.replace(/^([\w.-]+)\s*=\s*"[0-9][^"]*"/, '$1 = "VERSION"');
+  const depVersion = /^([\w.-]+)\s*=\s*"[0-9][^"]*"/;
+  if (depVersion.test(trimmed)) {
+    if (inDependencyTable === true) {
+      normalized = normalized.replace(depVersion, '$1 = "VERSION"');
+    } else if (inDependencyTable === false) {
+      return trimmed;
+    } else if (key && !MANIFEST_NON_DEP_KEYS.has(key) && !/^\d/.test(key)) {
+      // Minimal patches without section context: keep shorthand dependency bumps.
+      normalized = normalized.replace(depVersion, '$1 = "VERSION"');
+    }
+  }
   normalized = normalized.replace(/\bversion\s*=\s*"[^"]*"/g, 'version = "VERSION"');
   return normalized;
 }
 
 function versionBumpOnly(patch) {
   const removed = [], added = [];
+  let inDependencyTable = null;
   for (const line of patch.split('\n')) {
+    if (/^ /.test(line)) {
+      const table = manifestTable(line.slice(1));
+      if (table) inDependencyTable = dependencyTable(table);
+      continue;
+    }
     if (!/^[+-](?![+-])/.test(line)) continue;
-    const normalized = normalizeManifestDiffLine(line.slice(1));
+    const content = line.slice(1);
+    const table = manifestTable(content);
+    if (table) inDependencyTable = dependencyTable(table);
+    const normalized = normalizeManifestDiffLine(content, inDependencyTable);
     (line[0] === '+' ? added : removed).push(normalized);
   }
   return removed.length > 0 && JSON.stringify(removed) === JSON.stringify(added);
