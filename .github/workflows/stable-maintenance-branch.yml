@@ -28,7 +28,7 @@ jobs:
       checkpoint-head: ${{ needs.dependencies.outputs.head }}
       checkpoint-digest: ${{ needs.dependencies.outputs.digest }}
       checkpoint-ref: ${{ needs.dependencies.outputs.ref }}
-      checkpoint-artifact: ${{ needs.dependencies.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-dependencies', github.run_id, github.run_attempt, inputs.branch) }}
+      checkpoint-artifact: ${{ needs.dependencies.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-dependencies', github.run_id, split(needs.dependencies.outputs.ref, '/')[4], inputs.branch) }}
     secrets: inherit
 
   backports-1:
@@ -42,7 +42,7 @@ jobs:
       checkpoint-head: ${{ needs.vet.outputs.head }}
       checkpoint-digest: ${{ needs.vet.outputs.digest }}
       checkpoint-ref: ${{ needs.vet.outputs.ref }}
-      checkpoint-artifact: ${{ needs.vet.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-vet', github.run_id, github.run_attempt, inputs.branch) }}
+      checkpoint-artifact: ${{ needs.vet.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-vet', github.run_id, split(needs.vet.outputs.ref, '/')[4], inputs.branch) }}
     secrets: inherit
 
   backports-2:
@@ -56,7 +56,7 @@ jobs:
       checkpoint-head: ${{ needs.backports-1.outputs.head }}
       checkpoint-digest: ${{ needs.backports-1.outputs.digest }}
       checkpoint-ref: ${{ needs.backports-1.outputs.ref }}
-      checkpoint-artifact: ${{ needs.backports-1.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-1', github.run_id, github.run_attempt, inputs.branch) }}
+      checkpoint-artifact: ${{ needs.backports-1.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-1', github.run_id, split(needs.backports-1.outputs.ref, '/')[4], inputs.branch) }}
     secrets: inherit
 
   backports-3:
@@ -70,7 +70,7 @@ jobs:
       checkpoint-head: ${{ needs.backports-2.outputs.head }}
       checkpoint-digest: ${{ needs.backports-2.outputs.digest }}
       checkpoint-ref: ${{ needs.backports-2.outputs.ref }}
-      checkpoint-artifact: ${{ needs.backports-2.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-2', github.run_id, github.run_attempt, inputs.branch) }}
+      checkpoint-artifact: ${{ needs.backports-2.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-2', github.run_id, split(needs.backports-2.outputs.ref, '/')[4], inputs.branch) }}
     secrets: inherit
 
   backports-4:
@@ -84,7 +84,7 @@ jobs:
       checkpoint-head: ${{ needs.backports-3.outputs.head }}
       checkpoint-digest: ${{ needs.backports-3.outputs.digest }}
       checkpoint-ref: ${{ needs.backports-3.outputs.ref }}
-      checkpoint-artifact: ${{ needs.backports-3.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-3', github.run_id, github.run_attempt, inputs.branch) }}
+      checkpoint-artifact: ${{ needs.backports-3.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-3', github.run_id, split(needs.backports-3.outputs.ref, '/')[4], inputs.branch) }}
     secrets: inherit
 
   final:
@@ -98,6 +98,6 @@ jobs:
       checkpoint-head: ${{ needs.backports-4.outputs.head }}
       checkpoint-digest: ${{ needs.backports-4.outputs.digest }}
       checkpoint-ref: ${{ needs.backports-4.outputs.ref }}
-      checkpoint-artifact: ${{ needs.backports-4.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-4', github.run_id, github.run_attempt, inputs.branch) }}
+      checkpoint-artifact: ${{ needs.backports-4.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-4', github.run_id, split(needs.backports-4.outputs.ref, '/')[4], inputs.branch) }}
     secrets: inherit
 

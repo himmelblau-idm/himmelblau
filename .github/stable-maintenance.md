@@ -52,10 +52,13 @@ Only allowlisted structured progress is uploaded as `checkpoint.json`; raw
 captures, model responses, credentials and final-gate claims are not transferred.
 The next job downloads the named artifact from the same workflow run, checks its
 SHA-256 against its predecessor's job output, and verifies the run, stage,
-When a reusable-workflow artifact output is missing, the download falls back to the
-canonical `maintenance-checkpoint-<run>-<attempt>-<branch>-<stage>` name.
 immutable trusted main/tooling SHA, expected source commit, stable base and Git
-ancestry. A changed staging ref or advanced stable branch stops the pipeline.
+ancestry. When a reusable-workflow artifact output is missing, the download falls
+back to the canonical `maintenance-checkpoint-<run>-<attempt>-<branch>-<stage>`
+name, using the producer attempt encoded in the checkpoint ref (not necessarily the
+consumer's `run_attempt`). Resume downloads use the GitHub REST API via `gh run
+download` with bounded retries to absorb transient Actions Results `ECONNREFUSED`
+outages. A changed staging ref or advanced stable branch stops the pipeline.
 All scripts, reusable workflows and the pinned image definition come from the
 original trusted workflow commit, never from the mutable staged tree. Each fresh
 runner fetches only locked dependency payloads into a new private Cargo cache.
@@ -120,12 +123,17 @@ checkpoint ref was pushed. Existing phase failures can still propagate a fully
 uploaded recovered checkpoint for draft publication.
 
 Use Actions' **Re-run failed jobs** to resume a failed, pre-publication stage
-from its predecessor without repeating successful earlier stages. Reruns keep the original trusted
-tooling snapshot; checkpoints from earlier attempts of the same run are allowed,
-but another run's state is not. A full new dispatch starts from stable again and
-does not automatically trust an abandoned staging branch. Checkpoint artifacts
-expire after seven days; after expiration, start a new dispatch. Checkpoint refs
-are retained for inspection (no automatic branch deletion in this change).
+from its predecessor without repeating successful earlier stages. Reruns keep the
+original trusted tooling snapshot; checkpoints from earlier attempts of the same
+run are allowed, but another run's state is not. A **re-run failed jobs** resume
+only applies workflow fixes that were already present when that run started; merge
+new maintenance workflow changes on `main`, then either **workflow_dispatch** a
+fresh run (preferred) or re-run failed jobs only after confirming the retained
+workflow snapshot already contains the fix. A full new dispatch starts from stable
+again and does not automatically trust an abandoned staging branch. Checkpoint
+artifacts expire after seven days; after expiration, start a new dispatch.
+Checkpoint refs are retained for inspection (no automatic branch deletion in this
+change).
 
 Each hosted job still has a six-hour hard limit. A persistently unavailable
 service or an individually oversized non-backport phase can still fail closed;

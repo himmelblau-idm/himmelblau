@@ -5107,7 +5107,11 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         for previous, current in zip(stages, stages[1:]):
             block = branch.split(f"\n  {current}:\n", 1)[1].split("\n\n", 1)[0]
             self.assertIn(
-                f"checkpoint-artifact: ${{{{ needs.{previous}.outputs.artifact || format('maintenance-checkpoint-{{0}}-{{1}}-{{2}}-{previous}', github.run_id, github.run_attempt, inputs.branch) }}}}",
+                f"split(needs.{previous}.outputs.ref, '/')[4]",
+                block,
+            )
+            self.assertIn(
+                f"checkpoint-artifact: ${{{{ needs.{previous}.outputs.artifact || format('maintenance-checkpoint-{{0}}-{{1}}-{{2}}-{previous}', github.run_id, split(needs.{previous}.outputs.ref, '/')[4], inputs.branch) }}}}",
                 block,
             )
 
@@ -5115,6 +5119,9 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         stage = STAGE_WORKFLOW.read_text()
         download = stage.split("      - name: Download this run's exact previous-stage progress", 1)[1].split("\n      - name:", 1)[0]
         self.assertIn("inputs.checkpoint-artifact || format('maintenance-checkpoint-{0}-{1}-{2}-{3}'", download)
+        self.assertIn("split(inputs.checkpoint-ref, '/')[4]", download)
+        self.assertIn('gh run download "$GITHUB_RUN_ID"', download)
+        self.assertIn("artifact-download: exhausted retries", download)
 
     def test_workflow_has_ordered_fresh_jobs_and_only_final_publication(self):
         branch = BRANCH_WORKFLOW.read_text()
