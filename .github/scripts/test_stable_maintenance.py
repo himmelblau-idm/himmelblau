@@ -5166,7 +5166,15 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("python3 -u", premutation)
         self.assertNotIn("if:", premutation)
         self.assertNotIn("workflow_run:", stage + branch + WORKFLOW.read_text())
-        self.assertNotIn("continue-on-error:", stage + branch)
+        for artifact_step in (
+            "Preserve exact checkpoint state for the next job",
+            "Preserve sanitized maintenance results",
+        ):
+            block = stage.split(f"      - name: {artifact_step}", 1)[1].split("\n      - name:", 1)[0]
+            if "continue-on-error: true" in block:
+                self.assertIn("Retry", stage.split(block, 1)[1][:200])
+        branch_yaml = branch + WORKFLOW.read_text()
+        self.assertNotIn("continue-on-error:", branch_yaml)
         for name in ("Release —", "Validate —", "Create scoped publication token", "Publish —"):
             block = stage.split("      - name: " + name, 1)[1].split("\n      - name:", 1)[0]
             self.assertIn("inputs.stage == 'final'", block)
