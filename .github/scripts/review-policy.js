@@ -11,6 +11,124 @@ const AI = new Map([
 ]);
 const DELEGATED = /^<!-- review-policy:ai:(coderabbit|copilot|codex) -->\s*$/m;
 
+// These rules come from trusted main, never the candidate PR. Test both
+// names of a rename so moving code cannot shed its review requirement.
+const SENSITIVE_DIRS = [
+  '.github', 'src/pam', 'src/nss', 'src/daemon', 'src/common', 'src/idmap',
+  'src/broker', 'src/broker-client', 'src/sso', 'src/cli', 'src/policies',
+  'src/sshd-config', 'platform/systemd', 'nix/modules', 'src/overrides',
+  'supply-chain',
+];
+const SENSITIVE_FILES = new Set([
+  'scripts/gen_authselect.py', 'scripts/gen_servicefiles.py',
+  'scripts/obs_update.py', 'scripts/backport.py', 'scripts/fix-bugs.py',
+  'scripts/dependabot_automerge_check.sh', 'scripts/dependabot_rollup.py',
+  'scripts/cargo_vet_review.py', 'scripts/cargo-patch-config.toml',
+]);
+const SECURITY_DEP = /\b(?:libhimmelblau|identity_dbus_broker|broker-client|okta(?:-auth-rs)?|openidconnect|oauth2|libkrimes|kanidm[\w-]*|crypto[\w-]*|rsa|rustls[\w-]*|openssl[\w-]*|ring|aws-lc[\w-]*|webpki[\w-]*|zeroize|secrecy|webauthn[\w-]*)\b/i;
+
+function versionBumpOnly(patch) {
+  const removed = [], added = [];
+  for (const line of patch.split('\n')) {
+    if (!/^[+-](?![+-])/.test(line)) continue;
+    const normalized = line.slice(1).trim().replace(/"[~^<>= ]*\d[^"\n]*"/g, '"VERSION"');
+    (line[0] === '+' ? added : removed).push(normalized);
+  }
+  return removed.length > 0 && JSON.stringify(removed) === JSON.stringify(added);
+}
+
+function sensitiveChanges(pr, files) {
+  if (!Array.isArray(files) || !Number.isInteger(pr.changed_files)
+      || files.length !== pr.changed_files) return ['Changed-file list is incomplete.'];
+  const sensitive = [];
+  for (const file of files) {
+    const paths = [file.filename, file.previous_filename].filter(Boolean);
+    if (!paths.length) return ['Changed-file metadata is incomplete.'];
+    if (paths.some(p => SENSITIVE_DIRS.some(d => p === d || p.startsWith(`${d}/`))
+        || SENSITIVE_FILES.has(p) || /^platform\/[^/]+\/(?:pam-config[^/]*|sshd_config)$/.test(p)
+        || /(?:^|\/)build\.rs$/.test(p))) {
+      sensitive.push(file.filename);
+      continue;
+    }
+    // Sources/features/build hooks and security dependency changes need a
+    // human. Ordinary non-security version bumps remain AI-eligible.
+    if (paths.some(p => /(?:^|\/)(?:Cargo\.toml|Cargo\.lock|Cargo\.nix|flake\.lock|flake\.nix|sources\.nix|default\.nix|Makefile)$/.test(p)
+        || p.startsWith('.cargo/'))) {
+      const patch = file.patch;
+      const changed = patch?.split('\n').filter(l => /^[+-](?![+-])/.test(l)).join('\n');
+      if (!patch || SECURITY_DEP.test(patch)
+          || (paths.some(p => /(?:^|\/)Cargo\.toml$/.test(p)) && !versionBumpOnly(patch))
+          || /\b(?:git|path|registry|source|patch|replace|build|features|default-features)\s*[=:]/i.test(changed)
+          || /(?:https?:\/\/|git\+|ExecStart|chmod|chown|setcap)/i.test(changed)) {
+        sensitive.push(file.filename);
+      }
+    }
+  }
+  return sensitive;
+}
+
+// Commands must be the entire comment, not quoted text or a substring of a
+// conversation. Full SHAs ensure a new push invalidates every attestation.
+function command(comment, sha) {
+  if (comment.user?.type !== 'User') return null;
+  const match = /^\/(confirm-tested|revoke-tested|sponsor-ai|revoke-sponsor) ([a-f0-9]{40})(?: (https:\/\/github\.com\/[^\s]+))?$/.exec((comment.body || '').trim());
+  if (!match || match[2] !== sha || (match[3] && match[1] !== 'confirm-tested')) return null;
+  return { action: match[1], evidence: match[3], comment };
+}
+
+function latestCommand(comments, permissions, sha, actions) {
+  return comments.map(c => command(c, sha))
+    .filter(c => c && permissions[c.comment.user.login] === true && actions.includes(c.action))
+    .sort((a, b) => (Date.parse(a.comment.updated_at || a.comment.created_at) || 0)
+      - (Date.parse(b.comment.updated_at || b.comment.created_at) || 0)
+      || Number(a.comment.id) - Number(b.comment.id)).at(-1);
+}
+
+async function testingConfirmation({ github, owner, repo, pr, comments, permissions }) {
+  const latest = latestCommand(comments, permissions, pr.head.sha, ['confirm-tested', 'revoke-tested']);
+  if (latest?.action !== 'confirm-tested') return null;
+  if (!latest.evidence) return { by: latest.comment.user.login, url: latest.comment.html_url };
+  const url = new URL(latest.evidence);
+  const match = /^\/([^/]+)\/([^/]+)\/(issues|pull)\/(\d+)$/.exec(url.pathname);
+  const anchor = /^#issuecomment-(\d+)$/.exec(url.hash);
+  if (!match || !anchor || url.search || url.origin !== 'https://github.com'
+      || match[1].toLowerCase() !== owner.toLowerCase() || match[2].toLowerCase() !== repo.toLowerCase()) return null;
+  const number = Number(match[4]);
+  if (match[3] === 'pull' ? number !== pr.number : !await linkedIssue(github, owner, repo, pr, number)) return null;
+  let evidence;
+  try {
+    ({ data: evidence } = await github.rest.issues.getComment({ owner, repo, comment_id: Number(anchor[1]) }));
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
+  }
+  if (evidence.issue_url !== `https://api.github.com/repos/${owner}/${repo}/issues/${number}`
+      || evidence.user?.type !== 'User' || !evidence.body?.trim()) return null;
+  // The writer attests that the linked human comment reports successful
+  // testing of this head and resolution of the bug; no prose classifier.
+  return { by: latest.comment.user.login, url: latest.evidence, tester: evidence.user.login };
+}
+
+async function linkedIssue(github, owner, repo, pr, number) {
+  const explicit = new RegExp(`https://github\\.com/${owner}/${repo}/issues/${number}(?![0-9])`, 'i');
+  if (explicit.test(pr.body || '')) return true;
+  let cursor = null;
+  do {
+    const result = await github.graphql(`query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
+      repository(owner:$owner,name:$repo) { pullRequest(number:$number) {
+        closingIssuesReferences(first:100,after:$cursor) {
+          nodes { number repository { nameWithOwner } } pageInfo { hasNextPage endCursor }
+        }
+      } }
+    }`, { owner, repo, number: pr.number, cursor });
+    const connection = result.repository.pullRequest.closingIssuesReferences;
+    if (connection.nodes.some(i => i.number === number
+        && i.repository.nameWithOwner.toLowerCase() === `${owner}/${repo}`.toLowerCase())) return true;
+    cursor = connection.pageInfo.hasNextPage ? connection.pageInfo.endCursor : null;
+  } while (cursor);
+  return false;
+}
+
 function latestBy(items, key) {
   const result = new Map();
   for (const item of [...items].sort((a, b) => Number(a.id) - Number(b.id))) {
@@ -73,7 +191,7 @@ function cleanCodexComment(comments, reviews, sha) {
     && Date.parse(r.submitted_at) > Date.parse(latest.updated_at || latest.created_at));
 }
 
-function evaluate({ pr, authorCanWrite, permissions, reviews, threads, checks, comments }) {
+function evaluate({ pr, authorCanWrite, permissions, reviews, threads, checks, comments, files, tested = null }) {
   const reasons = [];
   if (pr.base.ref !== 'main') return { eligible: false, reasons: ['Only main is eligible.'] };
   if (pr.state !== 'open' || pr.draft) reasons.push('PR must be open and ready for review.');
@@ -110,11 +228,24 @@ function evaluate({ pr, authorCanWrite, permissions, reviews, threads, checks, c
     votes.set('ai:codex', 'ai');
   }
   const humanCount = [...votes.values()].filter(v => v === 'human').length;
-  if (authorCanWrite ? votes.size < 1 : votes.size < 2 || humanCount < 1) {
-    reasons.push(authorCanWrite ? 'Need one current human or AI approval.'
+  const sponsorship = latestCommand(comments, permissions, pr.head.sha, ['sponsor-ai', 'revoke-sponsor']);
+  const sponsoredBot = pr.user.type === 'Bot' && sponsorship?.action === 'sponsor-ai';
+  const teamAuthor = authorCanWrite || sponsoredBot;
+  const sensitive = sensitiveChanges(pr, files);
+  if (sensitive.length && humanCount < 1) reasons.push(`Human approval required for sensitive changes: ${sensitive.join(', ')}.`);
+  if (teamAuthor ? votes.size < 1 : votes.size < 2 || humanCount < 1) {
+    reasons.push(teamAuthor ? 'Need one current human or AI approval.'
       : 'Need two distinct current reviewers, including a human with write access.');
   }
-  return { eligible: reasons.length === 0, reasons, reviewers: [...votes.keys()] };
+  // Incomplete API results block manual eligibility too, not just automation.
+  if (!Array.isArray(files) || files.length !== pr.changed_files) reasons.push('Cannot verify all changed files.');
+  const autoReasons = [];
+  if (!teamAuthor) autoReasons.push('Outside-contributor PRs require manual merging by a writer.');
+  if (sensitive.length) autoReasons.push('Sensitive changes require manual merging, even with human approval.');
+  if (!tested) autoReasons.push('Waiting for a writer to confirm successful testing and bug resolution on this head.');
+  return { eligible: reasons.length === 0, reasons, reviewers: [...votes.keys()], sensitive,
+    teamAuthor, sponsoredBy: sponsoredBot ? sponsorship.comment.user.login : null,
+    autoEligible: reasons.length === 0 && autoReasons.length === 0, autoReasons };
 }
 
 function ciReasons(checks, statuses) {
@@ -186,9 +317,14 @@ async function run({ github, context, core, merge = false }) {
       }
       const threads = await reviewThreads(github, owner, repo, pr.number);
       const comments = await github.paginate(github.rest.issues.listComments, { ...args, issue_number: pr.number });
+      for (const comment of comments) {
+        if (command(comment, sha)) await canWrite(comment.user.login);
+      }
+      const files = await github.paginate(github.rest.pulls.listFiles, { ...args, pull_number: pr.number });
+      const tested = await testingConfirmation({ github, owner, repo, pr, comments, permissions });
       const checks = await github.paginate(github.rest.checks.listForRef, { ...args, ref: sha, filter: 'all' });
       const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: sha });
-      const policy = evaluate({ pr, authorCanWrite, permissions, reviews, threads,
+      const policy = evaluate({ pr, authorCanWrite, permissions, reviews, threads, files, tested,
         checks: latestBy(checks, c => `${c.app?.id}:${c.name}`), comments });
       const ci = ciReasons(checks, statuses);
       // PR workflows may report on the synthetic merge SHA instead of head.
@@ -207,12 +343,15 @@ async function run({ github, context, core, merge = false }) {
         core.info(`#${pr.number}: PR changed during evaluation; retry on next event.`);
         continue;
       }
-      const description = [...policy.reasons, ...ci];
+      const description = [...policy.reasons, ...ci, ...policy.autoReasons];
       const existing = checks.find(c => c.name === CHECK && c.app?.id === ACTIONS_APP
         && c.external_id === `main-review-policy:${pr.number}`);
       const output = {
         title: policy.eligible ? 'Review requirements satisfied' : 'Waiting for reviews or discussion resolution',
         summary: [`Author has write access: ${authorCanWrite}.`,
+          `AI companion sponsor: ${policy.sponsoredBy || 'none'}.`,
+          `Sensitive paths: ${(policy.sensitive || []).join(', ') || 'none'}.`,
+          `Testing confirmed by: ${tested?.by || 'nobody'}${tested?.url ? ` (${tested.url})` : ''}.`,
           `Current reviewers: ${(policy.reviewers || []).join(', ') || 'none'}.`,
           ...description, merge ? 'Automatic squash merge enabled.' : 'Report only; automatic merging disabled.'].join('\n\n'),
       };
@@ -230,8 +369,45 @@ async function run({ github, context, core, merge = false }) {
       core.info(`#${pr.number}: ${description.join(' ') || 'Ready to merge.'}`);
       // GitHub enforces protections again at merge time; never use an admin
       // bypass. Unknown/blocked/behind states wait instead of forcing merge.
-      if (merge && policy.eligible && ci.length === 0 && fresh.mergeable === true
+      if (merge && policy.autoEligible && ci.length === 0 && fresh.mergeable === true
           && fresh.mergeable_state === 'clean') {
+        // Re-read reviews, threads, permissions and attestations at the merge
+        // boundary. GitHub's SHA lease and native protections remain the final
+        // guard; reads and a merge cannot be made atomic through this API.
+        const finalReviews = await github.paginate(github.rest.pulls.listReviews, { ...args, pull_number: pr.number });
+        const finalComments = await github.paginate(github.rest.issues.listComments, { ...args, issue_number: pr.number });
+        const finalThreads = await reviewThreads(github, owner, repo, pr.number);
+        for (const login of Object.keys(permissions)) delete permissions[login];
+        const finalAuthorCanWrite = pr.user.type === 'User' && await canWrite(pr.user.login);
+        for (const review of finalReviews) {
+          if (review.user.type === 'User') await canWrite(review.user.login);
+        }
+        for (const comment of finalComments) {
+          if (command(comment, sha)) await canWrite(comment.user.login);
+        }
+        const finalTested = await testingConfirmation({ github, owner, repo, pr, comments: finalComments, permissions });
+        const finalChecks = await github.paginate(github.rest.checks.listForRef, { ...args, ref: sha, filter: 'all' });
+        const finalStatuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: sha });
+        const finalCIChecks = [...finalChecks];
+        if (pr.merge_commit_sha && pr.merge_commit_sha !== sha) {
+          finalCIChecks.push(...await github.paginate(github.rest.checks.listForRef, { ...args, ref: pr.merge_commit_sha, filter: 'all' }));
+          finalStatuses.push(...await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: pr.merge_commit_sha }));
+        }
+        const finalCI = ciReasons(finalCIChecks, finalStatuses);
+        const finalPolicy = evaluate({ pr, authorCanWrite: finalAuthorCanWrite, permissions,
+          reviews: finalReviews, comments: finalComments, threads: finalThreads, files, tested: finalTested,
+          checks: latestBy(finalChecks, c => `${c.app?.id}:${c.name}`) });
+        if (!finalPolicy.autoEligible || finalCI.length) {
+          await github.rest.checks.update({ ...check, check_run_id: checkId,
+            conclusion: finalPolicy.eligible ? 'success' : 'failure',
+            output: { title: 'Automatic merge deferred after revalidation',
+              summary: [...finalPolicy.reasons, ...finalPolicy.autoReasons, ...finalCI].join('\n\n') } });
+          continue;
+        }
+        const finalPR = (await github.rest.pulls.get({ owner, repo, pull_number: pr.number })).data;
+        if (finalPR.head.sha !== sha || finalPR.base.ref !== 'main' || finalPR.base.sha !== pr.base.sha
+            || finalPR.state !== 'open' || finalPR.draft || finalPR.mergeable !== true
+            || finalPR.mergeable_state !== 'clean') continue;
         const result = await github.rest.pulls.merge({ owner, repo, pull_number: pr.number,
           merge_method: 'squash', sha });
         core.info(`#${pr.number}: ${result.data.message}`);
@@ -251,4 +427,6 @@ async function run({ github, context, core, merge = false }) {
   if (errors) core.setFailed(`${errors} PR policy evaluation(s) failed.`);
 }
 
-module.exports = { run, evaluate, ciReasons, cleanBotReview, REQUIRED_CI, CHECK };
+module.exports = { run, evaluate, ciReasons, cleanBotReview, sensitiveChanges,
+  testingConfirmation, command, REQUIRED_CI, CHECK };
+

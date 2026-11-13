@@ -4,18 +4,20 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { run, evaluate, ciReasons, REQUIRED_CI } = require('./review-policy.js');
+const { run, evaluate, ciReasons, sensitiveChanges, testingConfirmation, command, REQUIRED_CI } = require('./review-policy.js');
 
 const SHA = 'a'.repeat(40);
 const OLD = 'b'.repeat(40);
 const user = login => ({ login, type: 'User' });
 const bot = login => ({ login, type: 'Bot' });
 const pr = () => ({ number: 1, state: 'open', draft: false, user: user('author'),
-  head: { sha: SHA }, base: { ref: 'main', sha: OLD }, mergeable: true, mergeable_state: 'clean' });
+  head: { sha: SHA }, base: { ref: 'main', sha: OLD }, changed_files: 1, mergeable: true, mergeable_state: 'clean' });
 const review = (login = 'maintainer', extra = {}) => ({ id: 1, user: user(login), state: 'APPROVED', commit_id: SHA, body: '', ...extra });
 const check = (name, extra = {}) => ({ id: 1, name, app: { id: 15368 }, status: 'completed', conclusion: 'success', ...extra });
 const snapshot = () => ({ pr: pr(), authorCanWrite: true, permissions: { maintainer: true },
-  reviews: [review()], threads: [], checks: [], comments: [] });
+  reviews: [review()], threads: [], checks: [], comments: [], files: [{ filename: 'src/selinux/src/himmelblaud.te' }] });
+const confirmation = (extra = {}) => ({ id: 10, user: user('maintainer'), body: `/confirm-tested ${SHA}`,
+  html_url: 'https://github.com/himmelblau-idm/himmelblau/pull/1#issuecomment-10', ...extra });
 const coderabbitCheck = () => check('CodeRabbit', { app: { id: 347564, slug: 'coderabbitai' } });
 const coderabbitReview = () => review('coderabbitai[bot]', { user: bot('coderabbitai[bot]'), state: 'COMMENTED' });
 const coderabbitSummary = () => ({ id: 1, user: bot('coderabbitai[bot]'), body:
@@ -173,10 +175,12 @@ test('latest CI rerun wins; running policy jobs do not block themselves', () => 
 
 // API mocks exercise the side effects and boundaries, not just the vote count.
 function harness({ changeHead = false, changeBase = false, mergeState = 'clean', permissionError = false,
-  unresolved = false, ciFailure = false, syntheticCI = false, latestRabbitPending = false } = {}) {
+  unresolved = false, ciFailure = false, syntheticCI = false, latestRabbitPending = false,
+  outside = false, sensitive = false, confirmed = true, sponsored = false, filesIncomplete = false } = {}) {
   const calls = [];
   const initial = pr();
   initial.mergeable_state = mergeState;
+  if (sponsored) initial.user = bot('companion[bot]');
   if (syntheticCI) initial.merge_commit_sha = 'c'.repeat(40);
   let reads = 0;
   const github = {
@@ -185,17 +189,23 @@ function harness({ changeHead = false, changeBase = false, mergeState = 'clean',
         list: async () => [initial],
         get: async () => ({ data: { ...initial, head: { sha: changeHead && ++reads > 1 ? OLD : SHA },
           base: { ...initial.base, ref: changeBase && ++reads > 1 ? 'stable-4.x' : 'main' } } }),
-        listReviews: async () => latestRabbitPending ? [coderabbitReview()] : [review()],
+        listReviews: async () => latestRabbitPending ? [coderabbitReview()]
+          : outside ? [review(), review('other', { id: 2 })] : [review()],
+        listFiles: async () => filesIncomplete ? [] : [{ filename: sensitive ? '.github/workflows/ci.yml' : 'src/selinux/src/himmelblaud.te' }],
         merge: async args => { calls.push(['merge', args]); return { data: { merged: true, message: 'merged' } }; },
       },
       repos: {
-        getCollaboratorPermissionLevel: async () => {
+        getCollaboratorPermissionLevel: async ({ username }) => {
           if (permissionError) throw Object.assign(new Error('forbidden'), { status: 403 });
-          return { data: { permission: 'write' } };
+          return { data: { permission: outside && username === 'author' ? 'read' : 'write' } };
         },
         listCommitStatusesForRef: async () => [],
       },
-      issues: { listComments: async () => latestRabbitPending ? [coderabbitSummary()] : [] },
+      issues: { listComments: async () => [
+        ...(latestRabbitPending ? [coderabbitSummary()] : []),
+        ...(confirmed ? [confirmation()] : []),
+        ...(sponsored ? [confirmation({ id: 11, body: `/sponsor-ai ${SHA}` })] : []),
+      ] },
       checks: {
         listForRef: async args => syntheticCI && args.ref === SHA ? []
           : [...REQUIRED_CI.map(name => check(name, { conclusion: ciFailure && name === 'Build' ? 'failure' : 'success' })),
@@ -218,7 +228,7 @@ function harness({ changeHead = false, changeBase = false, mergeState = 'clean',
 }
 test('coordinator merges with expected SHA and squash only after reloading PR', async () => {
   const h = harness(); await run({ ...h, merge: true });
-  assert.equal(h.calls.filter(c => c[0] === 'threads').length, 2);
+  assert.equal(h.calls.filter(c => c[0] === 'threads').length, 4);
   const merge = h.calls.find(c => c[0] === 'merge')[1];
   assert.equal(merge.sha, SHA); assert.equal(merge.merge_method, 'squash');
 });
@@ -229,10 +239,15 @@ test('coordinator report-only mode never merges', async () => {
 });
 test('race, blocked state, failed CI, permission errors and paginated unresolved threads prevent merge', async () => {
   for (const options of [{ changeHead: true }, { changeBase: true }, { mergeState: 'behind' },
-    { mergeState: 'blocked' }, { permissionError: true }, { unresolved: true }, { ciFailure: true }, { latestRabbitPending: true }]) {
+    { mergeState: 'blocked' }, { permissionError: true }, { unresolved: true }, { ciFailure: true }, { latestRabbitPending: true },
+    { outside: true }, { sensitive: true }, { confirmed: false }, { filesIncomplete: true }]) {
     const h = harness(options); await run({ ...h, merge: true });
     assert.equal(h.calls.some(c => c[0] === 'merge'), false, JSON.stringify(options));
   }
+});
+test('explicitly writer-sponsored bot can automerge after review and testing', async () => {
+  const h = harness({ sponsored: true }); await run({ ...h, merge: true });
+  assert.equal(h.calls.some(c => c[0] === 'merge'), true);
 });
 test('CI attached to the current synthetic merge satisfies mandatory jobs', async () => {
   const h = harness({ syntheticCI: true }); await run({ ...h, merge: true });
@@ -251,3 +266,159 @@ test('workflow uses main checkout and no untrusted code or credentials persisten
   assert.match(workflow, /MAIN_REVIEW_POLICY_AUTOMERGE/);
   assert.doesNotMatch(workflow, /pull_request\.head|download-artifact|secrets\./);
 });
+
+test('sensitive runtime, configuration and all GitHub paths require human review', () => {
+  const protectedPaths = ['src/pam/src/lib.rs', 'src/nss/scripts/postinst', 'src/daemon/src/daemon.rs',
+    'src/common/docs-xml/example.xml', 'src/idmap/src/lib.rs', 'src/broker/src/main.rs',
+    'src/broker-client/src/lib.rs', 'src/sso/src/main.rs', 'src/cli/src/main.rs',
+    'src/policies/src/scripts_ext.rs', '.github/ISSUE_TEMPLATE/bug_report.yml',
+    '.github/scripts/review-policy.js', '.github/workflows/ci.yml',
+    'platform/debian/pam-config-unseal', 'platform/opensuse/pam-config', 'platform/el/sshd_config',
+    'src/sshd-config/scripts/postinst', 'scripts/gen_authselect.py', 'scripts/gen_servicefiles.py',
+    'platform/systemd/himmelblaud.socket', 'nix/modules/himmelblau.nix',
+    'scripts/obs_update.py', 'src/overrides/reqwest/0.12.24/src/lib.rs',
+    'src/o365/build.rs', 'supply-chain/audits.toml'];
+  for (const filename of protectedPaths) {
+    const s = { ...snapshot(), files: [{ filename }], tested: { by: 'maintainer' },
+      reviews: [review('chatgpt-codex-connector[bot]', { user: bot('chatgpt-codex-connector[bot]') })] };
+    assert.equal(evaluate(s).eligible, false, filename);
+    s.reviews.push(review('maintainer', { id: 2 }));
+    assert.equal(evaluate(s).eligible, true, filename);
+    assert.equal(evaluate(s).autoEligible, false, filename);
+  }
+});
+test('SELinux, experimental orchestrator and Collabora remain AI eligible', () => {
+  for (const filename of ['src/selinux/src/himmelblaud.te', 'src/orchestrator/src/communication.rs',
+    'src/collabora/src/server.rs', 'README.md', 'scripts/gen_dockerfiles.py', 'src/sso-policies/src/firefox/policies.json']) {
+    const s = { ...snapshot(), files: [{ filename }], tested: { by: 'maintainer' },
+      reviews: [review('chatgpt-codex-connector[bot]', { user: bot('chatgpt-codex-connector[bot]') })] };
+    assert.equal(evaluate(s).autoEligible, true, filename);
+  }
+});
+test('renames out of protected code stay sensitive; incomplete file enumeration blocks even humans', () => {
+  const s = { ...snapshot(), tested: { by: 'maintainer' },
+    files: [{ filename: 'src/collabora/src/moved.rs', previous_filename: 'src/common/src/auth.rs' }] };
+  assert.equal(evaluate(s).eligible, true);
+  assert.equal(evaluate(s).autoEligible, false);
+  for (const files of [undefined, []]) {
+    assert.equal(evaluate({ ...s, files }).eligible, false);
+  }
+  assert.equal(evaluate({ ...s, pr: { ...s.pr, changed_files: 3001 } }).eligible, false);
+});
+test('security dependencies and source changes require humans, ordinary version bumps do not', () => {
+  for (const patch of [undefined, '-libhimmelblau = "0.8.44"\n+libhimmelblau = "0.8.45"',
+    '+newdep = { git = "https://example.com/dep" }', '+build = "script.rs"',
+    '+newdep = "1.0"', '-olddep = "1.0"\n+newdep = "1.0"',
+    '+dep = { version = "1", features = ["danger"] }']) {
+    assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml', patch }]), ['Cargo.toml']);
+  }
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
+    patch: '-clap = "4.5"\n+clap = "4.6"' }]), []);
+});
+test('manual eligibility does not require testing, but automatic eligibility does', () => {
+  const s = snapshot();
+  assert.equal(evaluate(s).eligible, true);
+  assert.equal(evaluate(s).autoEligible, false);
+  s.tested = { by: 'maintainer' };
+  assert.equal(evaluate(s).autoEligible, true);
+  s.authorCanWrite = false;
+  s.reviews.push(review('other', { id: 2 })); s.permissions.other = true;
+  assert.equal(evaluate(s).eligible, true);
+  assert.equal(evaluate(s).autoEligible, false);
+});
+test('only a writer can sponsor a bot, for the current head, without relaxing outside human PR rules', () => {
+  const s = { ...snapshot(), authorCanWrite: false, tested: { by: 'maintainer' },
+    pr: { ...pr(), user: bot('companion[bot]') },
+    comments: [confirmation({ body: `/sponsor-ai ${SHA}` })] };
+  assert.equal(evaluate(s).autoEligible, true);
+  s.comments.push(confirmation({ id: 11, body: `/revoke-sponsor ${SHA}` }));
+  assert.equal(evaluate(s).eligible, false);
+  s.comments.pop(); s.comments[0].user = user('stranger');
+  assert.equal(evaluate(s).eligible, false);
+  s.comments[0].user = user('maintainer'); s.comments[0].body = `/sponsor-ai ${OLD}`;
+  assert.equal(evaluate(s).eligible, false);
+  s.comments[0].body = `/sponsor-ai ${SHA}`; s.pr.user = user('outside-human');
+  assert.equal(evaluate(s).eligible, false);
+});
+
+function evidenceHarness(comments, options = {}) {
+  return { owner: 'himmelblau-idm', repo: 'himmelblau', pr: pr(), comments,
+    permissions: { maintainer: true }, github: {
+      rest: { issues: { getComment: async () => {
+        if (options.missing) throw Object.assign(new Error('deleted'), { status: 404 });
+        return { data: { user: options.bot ? bot('tester[bot]') : user('tester'),
+          body: options.empty ? '' : 'Tested this build on Rocky 8; SSH now works.',
+          issue_url: `https://api.github.com/repos/himmelblau-idm/himmelblau/issues/${options.wrongIssue ? 999 : options.issue || 1}` } };
+      } } },
+      graphql: async (_query, args) => ({ repository: { pullRequest: { closingIssuesReferences: {
+        nodes: args.cursor && options.linked ? [{ number: options.issue,
+          repository: { nameWithOwner: 'himmelblau-idm/himmelblau' } }] : [],
+        pageInfo: { hasNextPage: !args.cursor, endCursor: 'page2' },
+      } } } }),
+    } };
+}
+test('testing confirmation requires explicit writer command and exact current SHA', async () => {
+  assert.ok(await testingConfirmation(evidenceHarness([confirmation()])));
+  for (const extra of [{ user: user('stranger') }, { user: bot('maintainer') },
+    { body: `/confirm-tested ${OLD}` }, { body: `/confirm-tested ${SHA.slice(0, 10)}` },
+    { body: `> /confirm-tested ${SHA}` }, { body: `\u0060\u0060\u0060\n/confirm-tested ${SHA}\n\u0060\u0060\u0060` },
+    { body: 'Works now!' }]) {
+    assert.equal(await testingConfirmation(evidenceHarness([confirmation(extra)])), null);
+  }
+  assert.equal(command(confirmation({ body: `/sponsor-ai ${SHA} https://example.com` }), SHA), null);
+});
+test('latest writer testing revocation wins, including edits; deleting confirmation leaves no grant', async () => {
+  const comments = [confirmation({ updated_at: '2026-11-13T10:00:00Z' }),
+    confirmation({ id: 11, body: `/revoke-tested ${SHA}`, updated_at: '2026-11-13T11:00:00Z' })];
+  assert.equal(await testingConfirmation(evidenceHarness(comments)), null);
+  comments[0].updated_at = '2026-11-13T12:00:00Z';
+  assert.ok(await testingConfirmation(evidenceHarness(comments)));
+  assert.equal(await testingConfirmation(evidenceHarness([])), null);
+});
+test('testing evidence may come from this PR or a linked issue, including paginated closing links', async () => {
+  for (const [kind, issue, linked] of [['pull', 1, false], ['issues', 42, true]]) {
+    const c = confirmation({ body: `/confirm-tested ${SHA} https://github.com/himmelblau-idm/himmelblau/${kind}/${issue}#issuecomment-20` });
+    const result = await testingConfirmation(evidenceHarness([c], { issue, linked }));
+    assert.equal(result.tester, 'tester');
+  }
+  const c = confirmation({ body: `/confirm-tested ${SHA} https://github.com/himmelblau-idm/himmelblau/issues/42#issuecomment-20` });
+  const h = evidenceHarness([c], { issue: 42 }); h.pr.body = 'Bug report: https://github.com/himmelblau-idm/himmelblau/issues/42';
+  assert.ok(await testingConfirmation(h));
+});
+test('unrelated, foreign, bot-authored, deleted or mismatched evidence cannot authorize automatic merging', async () => {
+  const base = `https://github.com/himmelblau-idm/himmelblau/pull/1#issuecomment-20`;
+  for (const url of [base.replace('/pull/1', '/pull/2'), base.replace('/pull/1', '/issues/42'),
+    base.replace('himmelblau-idm', 'someone-else'), base.replace('github.com', 'github.com.evil.example'),
+    base.replace('#issuecomment-20', '#discussion_r20'), `${base}&extra`,
+    base.replace('/pull/1#', '/pull/1?x=y#')]) {
+    assert.equal(await testingConfirmation(evidenceHarness([confirmation({ body: `/confirm-tested ${SHA} ${url}` })])), null);
+  }
+  for (const options of [{ bot: true }, { missing: true }, { wrongIssue: true }, { empty: true }]) {
+    assert.equal(await testingConfirmation(evidenceHarness([confirmation({ body: `/confirm-tested ${SHA} ${base}` })], options)), null);
+  }
+});
+test('revoked testing or sponsorship, new findings, and CI reruns at final evaluation prevent merging', async () => {
+  for (const type of ['testing', 'sponsorship', 'review', 'ci', 'permissions']) {
+    const h = harness({ sponsored: type === 'sponsorship' });
+    let reads = 0;
+    if (type === 'testing' || type === 'sponsorship') {
+      const original = h.github.rest.issues.listComments;
+      h.github.rest.issues.listComments = async () => ++reads === 1 ? original() : [];
+    } else if (type === 'review') {
+      h.github.rest.pulls.listReviews = async () => ++reads === 1 ? [review()] : [review('maintainer', { state: 'CHANGES_REQUESTED' })];
+    } else if (type === 'permissions') {
+      const original = h.github.rest.issues.listComments;
+      h.github.rest.issues.listComments = async () => {
+        if (++reads > 1) h.github.rest.repos.getCollaboratorPermissionLevel = async () => ({ data: { permission: 'read' } });
+        return original();
+      };
+    } else {
+      const original = h.github.rest.checks.listForRef;
+      h.github.rest.checks.listForRef = async args => ++reads === 1 ? original(args)
+        : [check('Build', { status: 'queued', conclusion: null })];
+    }
+    await run({ ...h, merge: true });
+    assert.equal(h.calls.some(c => c[0] === 'merge'), false, type);
+  }
+});
+
