@@ -25,7 +25,7 @@ const SENSITIVE_FILES = new Set([
   'scripts/dependabot_automerge_check.sh', 'scripts/dependabot_rollup.py',
   'scripts/cargo_vet_review.py', 'scripts/cargo-patch-config.toml',
 ]);
-const SECURITY_DEP = /\b(?:libhimmelblau|identity_dbus_broker|broker-client|okta(?:-auth-rs)?|openidconnect|oauth2|libkrimes|kanidm[\w-]*|crypto[\w-]*|rsa|rustls[\w-]*|openssl[\w-]*|ring|aws-lc[\w-]*|webpki[\w-]*|zeroize|secrecy|webauthn[\w-]*)\b/i;
+const SECURITY_DEP = /\b(?:libhimmelblau|identity_dbus_broker|broker-client|okta(?:-auth-rs)?|openidconnect|oauth2|libkrimes|kanidm[\w-]*|crypto[\w-]*|rsa|rustls[\w-]*|openssl[\w-]*|ring|aws-lc[\w-]*|webpki[\w-]*|zeroize|secrecy|webauthn[\w-]*|sha2|authenticator|libwebauthn)\b/i;
 
 function versionBumpOnly(patch) {
   const removed = [], added = [];
@@ -50,16 +50,21 @@ function sensitiveChanges(pr, files) {
       sensitive.push(file.filename);
       continue;
     }
-    // Sources/features/build hooks and security dependency changes need a
-    // human. Ordinary non-security version bumps remain AI-eligible.
-    if (paths.some(p => /(?:^|\/)(?:Cargo\.toml|Cargo\.lock|Cargo\.nix|flake\.lock|flake\.nix|sources\.nix|default\.nix|Makefile)$/.test(p)
-        || p.startsWith('.cargo/'))) {
-      const patch = file.patch;
-      const changed = patch?.split('\n').filter(l => /^[+-](?![+-])/.test(l)).join('\n');
+    const patch = file.patch;
+    const changed = patch?.split('\n').filter(l => /^[+-](?![+-])/.test(l)).join('\n');
+    const buildFile = paths.some(p => /(?:^|\/)(?:Cargo\.nix|flake\.lock|flake\.nix|sources\.nix|default\.nix|Makefile)$/.test(p)
+        || p.startsWith('.cargo/'));
+    // Build orchestration files need a human until a version-only allowlist
+    // exists. Cargo manifests/locks keep the narrower rules below.
+    if (buildFile) {
+      sensitive.push(file.filename);
+      continue;
+    }
+    if (paths.some(p => /(?:^|\/)(?:Cargo\.toml|Cargo\.lock)$/.test(p))) {
       if (!patch || SECURITY_DEP.test(patch)
           || (paths.some(p => /(?:^|\/)Cargo\.toml$/.test(p)) && !versionBumpOnly(patch))
           || /\b(?:git|path|registry|source|patch|replace|build|features|default-features)\s*[=:]/i.test(changed)
-          || /(?:https?:\/\/|git\+|ExecStart|chmod|chown|setcap)/i.test(changed)) {
+          || /(?:https?:\/\/|git\+|ExecStart|chmod|chown|setcap|rustc-workspace-wrapper)/i.test(changed)) {
         sensitive.push(file.filename);
       }
     }
@@ -146,8 +151,8 @@ function delegated(review) {
 function cleanBotReview(review, checks, comments, sha) {
   const provider = review.user?.type === 'Bot' && AI.get(review.user.login);
   if (!provider || review.commit_id !== sha) return null;
-  if (review.state === 'APPROVED') return provider;
-  if (review.state !== 'COMMENTED') return null;
+  if (provider !== 'coderabbit' && review.state === 'APPROVED') return provider;
+  if (!['COMMENTED', 'APPROVED'].includes(review.state)) return null;
   const body = review.body || '';
   if (provider === 'coderabbit') {
     // The app's success check means publication completed, not that there
@@ -219,6 +224,7 @@ function evaluate({ pr, authorCanWrite, permissions, reviews, threads, checks, c
   const latestBotReviews = latestBy(reviews.filter(r => r.state !== 'PENDING'
     && r.user.type === 'Bot' && AI.has(r.user.login)), r => r.user.login);
   for (const review of latestBotReviews) {
+    if (review.commit_id !== pr.head.sha) continue;
     const provider = AI.get(review.user.login);
     votes.delete(`ai:${provider}`);
     const clean = cleanBotReview(review, checks, comments, pr.head.sha);
@@ -248,23 +254,27 @@ function evaluate({ pr, authorCanWrite, permissions, reviews, threads, checks, c
     autoEligible: reasons.length === 0 && autoReasons.length === 0, autoReasons };
 }
 
-function ciReasons(checks, statuses) {
+function ciReasons(headChecks, headStatuses, mergeChecks = [], mergeStatuses = []) {
   const reasons = [];
-  const latest = latestBy(checks, c => `${c.app?.id}:${c.name}`);
+  const headLatest = latestBy(headChecks, c => `${c.app?.id}:${c.name}`);
+  const mergeLatest = latestBy(mergeChecks, c => `${c.app?.id}:${c.name}`);
+  const mandatory = [...headLatest, ...mergeLatest];
   for (const name of REQUIRED_CI) {
-    if (!latest.some(c => c.name === name && c.app?.id === ACTIONS_APP
+    if (!mandatory.some(c => c.name === name && c.app?.id === ACTIONS_APP
       && c.status === 'completed' && c.conclusion === 'success')) reasons.push(`Waiting for successful ${name}.`);
   }
-  for (const check of latest) {
-    // The coordinator and its read-only wakeup are not CI. Counting the
-    // running coordinator would prevent it ever reaching the merge call.
-    if (check.app?.id === ACTIONS_APP
-        && [CHECK, 'Evaluate main reviews', 'Review policy wakeup'].includes(check.name)) continue;
-    if (check.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(check.conclusion)) {
-      reasons.push(`Check ${check.name} is ${check.conclusion || check.status}.`);
+  for (const latest of [headLatest, mergeLatest]) {
+    for (const check of latest) {
+      // The coordinator and its read-only wakeup are not CI. Counting the
+      // running coordinator would prevent it ever reaching the merge call.
+      if (check.app?.id === ACTIONS_APP
+          && [CHECK, 'Evaluate main reviews', 'Review policy wakeup'].includes(check.name)) continue;
+      if (check.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(check.conclusion)) {
+        reasons.push(`Check ${check.name} is ${check.conclusion || check.status}.`);
+      }
     }
   }
-  for (const status of latestBy(statuses, s => s.context)) {
+  for (const status of latestBy([...headStatuses, ...mergeStatuses], s => `${s.sha || ''}:${s.context}`)) {
     if (status.state !== 'success') reasons.push(`Status ${status.context} is ${status.state}.`);
   }
   return reasons;
@@ -326,17 +336,16 @@ async function run({ github, context, core, merge = false }) {
       const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: sha });
       const policy = evaluate({ pr, authorCanWrite, permissions, reviews, threads, files, tested,
         checks: latestBy(checks, c => `${c.app?.id}:${c.name}`), comments });
-      const ci = ciReasons(checks, statuses);
-      // PR workflows may report on the synthetic merge SHA instead of head.
-      // If present, failures/pending checks on that SHA also prevent merging.
+      let mergeChecks = [];
+      let mergeStatuses = [];
       if (pr.merge_commit_sha && pr.merge_commit_sha !== sha) {
-        const mergeChecks = await github.paginate(github.rest.checks.listForRef, { ...args, ref: pr.merge_commit_sha, filter: 'all' });
-        const mergeStatuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: pr.merge_commit_sha });
-        // Mandatory names may be satisfied on either current head or current
-        // synthetic merge; do not require duplicate CI executions.
-        const combined = ciReasons([...checks, ...mergeChecks], [...statuses, ...mergeStatuses]);
-        ci.splice(0, ci.length, ...combined);
+        mergeChecks = await github.paginate(github.rest.checks.listForRef, { ...args, ref: pr.merge_commit_sha, filter: 'all' });
+        mergeStatuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: pr.merge_commit_sha });
       }
+      // PR workflows may report on the synthetic merge SHA instead of head.
+      // Mandatory names may succeed on either ref; other checks and statuses
+      // are evaluated per ref so one cannot hide a failure on the other.
+      const ci = ciReasons(checks, statuses, mergeChecks, mergeStatuses);
       const fresh = (await github.rest.pulls.get({ owner, repo, pull_number: pr.number })).data;
       if (fresh.head.sha !== sha || fresh.base.ref !== 'main' || fresh.base.sha !== pr.base.sha
           || fresh.state !== 'open' || fresh.draft !== pr.draft) {
@@ -388,12 +397,13 @@ async function run({ github, context, core, merge = false }) {
         const finalTested = await testingConfirmation({ github, owner, repo, pr, comments: finalComments, permissions });
         const finalChecks = await github.paginate(github.rest.checks.listForRef, { ...args, ref: sha, filter: 'all' });
         const finalStatuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: sha });
-        const finalCIChecks = [...finalChecks];
+        let finalMergeChecks = [];
+        let finalMergeStatuses = [];
         if (pr.merge_commit_sha && pr.merge_commit_sha !== sha) {
-          finalCIChecks.push(...await github.paginate(github.rest.checks.listForRef, { ...args, ref: pr.merge_commit_sha, filter: 'all' }));
-          finalStatuses.push(...await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: pr.merge_commit_sha }));
+          finalMergeChecks = await github.paginate(github.rest.checks.listForRef, { ...args, ref: pr.merge_commit_sha, filter: 'all' });
+          finalMergeStatuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: pr.merge_commit_sha });
         }
-        const finalCI = ciReasons(finalCIChecks, finalStatuses);
+        const finalCI = ciReasons(finalChecks, finalStatuses, finalMergeChecks, finalMergeStatuses);
         const finalPolicy = evaluate({ pr, authorCanWrite: finalAuthorCanWrite, permissions,
           reviews: finalReviews, comments: finalComments, threads: finalThreads, files, tested: finalTested,
           checks: latestBy(finalChecks, c => `${c.app?.id}:${c.name}`) });

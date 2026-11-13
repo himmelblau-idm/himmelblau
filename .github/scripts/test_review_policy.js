@@ -104,6 +104,36 @@ test('unresolved outdated threads, drafts, closed PRs and other bases block', ()
     assert.equal(evaluate({ ...snapshot(), pr: { ...pr(), ...patch } }).eligible, false);
   }
 });
+test('CodeRabbit APPROVED still requires check and clean summary', () => {
+  const s = { ...snapshot(), reviews: [review('coderabbitai[bot]', {
+    user: bot('coderabbitai[bot]'), state: 'APPROVED' })] };
+  assert.equal(evaluate(s).eligible, false);
+  s.checks = [coderabbitCheck()];
+  assert.equal(evaluate(s).eligible, false);
+  s.comments = [coderabbitSummary()];
+  assert.equal(evaluate(s).eligible, true);
+});
+test('stale bot review does not erase a current delegated approval', () => {
+  const s = { ...snapshot(), reviews: [
+    review('maintainer', { body: '<!-- review-policy:ai:codex -->' }),
+    review('chatgpt-codex-connector[bot]', { id: 2, user: bot('chatgpt-codex-connector[bot]'),
+      commit_id: OLD, state: 'COMMENTED', body: "Codex Review: Didn't find any major issues." }),
+  ] };
+  assert.equal(evaluate(s).eligible, true);
+  assert.ok(evaluate(s).reviewers.includes('ai:codex'));
+});
+test('head and synthetic merge CI are evaluated independently', () => {
+  const checks = REQUIRED_CI.map(name => check(name));
+  const merge = 'c'.repeat(40);
+  const mergeChecks = REQUIRED_CI.map((name, i) => check(name, { id: 10 + i, head_sha: merge }));
+  assert.deepEqual(ciReasons(checks, [], mergeChecks, []), []);
+  const failingHead = [...checks, check('optional', { id: 99, conclusion: 'failure' })];
+  const passingMerge = [...mergeChecks, check('optional', { id: 100, conclusion: 'success', head_sha: merge })];
+  assert.notEqual(ciReasons(failingHead, [], passingMerge, []).length, 0);
+  const headStatuses = [{ id: 1, sha: SHA, context: 'ext', state: 'failure' }];
+  const mergeStatuses = [{ id: 2, sha: merge, context: 'ext', state: 'success' }];
+  assert.notEqual(ciReasons(checks, headStatuses, mergeChecks, mergeStatuses).length, 0);
+});
 test('CodeRabbit completion alone, wrong app, stale summary and findings fail closed', () => {
   const s = { ...snapshot(), reviews: [coderabbitReview()], checks: [coderabbitCheck()], comments: [] };
   assert.equal(evaluate(s).eligible, false);
@@ -307,6 +337,7 @@ test('renames out of protected code stay sensitive; incomplete file enumeration 
 });
 test('security dependencies and source changes require humans, ordinary version bumps do not', () => {
   for (const patch of [undefined, '-libhimmelblau = "0.8.44"\n+libhimmelblau = "0.8.45"',
+    '-sha2 = "0.10.8"\n+sha2 = "0.10.9"',
     '+newdep = { git = "https://example.com/dep" }', '+build = "script.rs"',
     '+newdep = "1.0"', '-olddep = "1.0"\n+newdep = "1.0"',
     '+dep = { version = "1", features = ["danger"] }']) {
@@ -314,6 +345,9 @@ test('security dependencies and source changes require humans, ordinary version 
   }
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: '-clap = "4.5"\n+clap = "4.6"' }]), []);
+  for (const filename of ['Makefile', 'flake.nix', 'default.nix']) {
+    assert.deepEqual(sensitiveChanges(pr(), [{ filename, patch: '+EXTRA = value' }]), [filename]);
+  }
 });
 test('manual eligibility does not require testing, but automatic eligibility does', () => {
   const s = snapshot();

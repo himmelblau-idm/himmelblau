@@ -159,15 +159,17 @@ PR head, but **does not merge anything**. It always runs trusted code from
 
 After the workflow has run, configure the rule(s) covering **only `main`**:
 
-1. Keep requiring a pull request and the existing CI checks. Set the native
+1. Require the **Review policy** check, selecting **GitHub Actions** as its
+   expected source. Keep `Build`,
+   `Test`, `Clippy`, and `Vet Dependencies` required; those four CI names are
+   explicitly checked by the coordinator as well.
+2. Keep requiring a pull request and the existing CI checks. Set the native
    required approval count to **0**: the custom check implements review counts
    and sensitive-path human requirements.
    Remove conflicting required-human/team/code-owner approval requirements
    only on main if they would independently prevent the AI-only path.
-2. Require the **Review policy** check, selecting **GitHub Actions** as its
-   expected source. Keep `Build`,
-   `Test`, `Clippy`, and `Vet Dependencies` required; those four CI names are
-   explicitly checked by the coordinator as well.
+   Do this only after step 1 is in place so main is never left without a
+   review gate.
 3. Enable **Require conversation resolution before merging** (rulesets call
    this **Require all conversations to be resolved before merging**).
    This also enforces resolution at the actual merge boundary.
