@@ -146,6 +146,12 @@ NIXOS_EXEC_START_PATHS = {
         "{aadTool}/bin/aad-tool",
     ),
 }
+NIXOS_EXEC_START_PRE_PATHS = {
+    "himmelblaud.service": (
+        "+/usr/sbin/himmelblaud_tasks --prepare-provider-cache",
+        "+{daemon}/bin/himmelblaud_tasks --prepare-provider-cache --config {config}",
+    ),
+}
 # NixOS-provided environment paths and service-specific tool packages.
 NIXOS_ENVIRONMENT_PATHS = (
     "LOCALE_ARCHIVE={localeArchive}",
@@ -319,6 +325,14 @@ def nixos_expected_units(generated, paths):
         if command != packaged and not command.startswith(packaged + " "):
             raise ValueError(f"Review the NixOS command mapping for {command}")
         unit["Service"]["ExecStart"] = nixos + command[len(packaged):]
+
+    for name, (packaged, template) in NIXOS_EXEC_START_PRE_PATHS.items():
+        unit = units[name]
+        nixos = template.format(**paths)
+        command = unit["Service"]["ExecStartPre"]
+        if command != packaged and not command.startswith(packaged + " "):
+            raise ValueError(f"Review the NixOS pre-start command mapping for {command}")
+        unit["Service"]["ExecStartPre"] = nixos + command[len(packaged):]
 
     # NixOS supplies these variables to both system and user services.
     # Tool lists are independent fixture inputs, not read from the tested units.

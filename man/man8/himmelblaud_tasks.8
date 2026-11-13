@@ -3,10 +3,15 @@
 himmelblaud_tasks \- Home directory creation daemon for Himmelblau
 .SH SYNOPSIS
 .B himmelblaud_tasks
+.RI [ --prepare-provider-cache [ --config " path" ] ]
 .SH DESCRIPTION
 The `himmelblaud-tasks` daemon is responsible for managing user accounts and authentication tasks in a Linux environment. Upon successful authentication via Azure Entra ID, it automatically creates home directories for users, adds them to configured local groups, executes the configured logon script, and handles the caching of Kerberos ccache files. This service requires root privileges to perform actions such as creating directories in system locations and managing group memberships.
 
-The daemon operates as a background service and does not accept any command-line arguments. It is automatically invoked by the system when required.
+With
+.B --prepare-provider-cache
+the program prepares provider-scoped identity caches before the authentication daemon starts, then exits. The system service runs this mode as root.
+
+Without that option, the daemon operates as a background service.
 
 .SS Intune policy scripts
 Configuration scripts run in transient system units named
@@ -23,7 +28,7 @@ requests a full policy check (so that it originates from the user) via
 .BR "aad-tool compliance-check" .
 
 .SH USAGE
-The `himmelblaud-tasks` daemon must be run as the root user. If the daemon is started without root privileges, it will fail with an error. No user interaction is needed beyond ensuring the daemon is active and running correctly.
+The daemon and its cache-preparation mode must be run as root. If either is started without root privileges, it will fail with an error. No user interaction is needed beyond ensuring the daemon is active and running correctly.
 
 .SH EXAMPLES
 .TP

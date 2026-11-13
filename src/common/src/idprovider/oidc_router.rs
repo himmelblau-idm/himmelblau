@@ -1,4 +1,4 @@
-//! One conclusive OIDC backend selection per daemon lifetime. The standard
+//! One conclusive OIDC backend selection per provider lifetime. The standard
 //! provider supplies shared offline state while selection is pending.
 use super::common::oidc_issuer_matches;
 use super::interface::*;
@@ -29,6 +29,7 @@ pub(crate) struct OidcRouter {
     standard: Arc<OidcProvider>,
     native: Result<Arc<OktaProvider>, okta::OktaError>,
     config: Arc<Mutex<HimmelblauConfig>>,
+    domain: String,
     selection: Mutex<Selection>,
     selecting: Mutex<()>,
 }
@@ -107,6 +108,30 @@ fn discovery_trust_failure(error: &reqwest::Error) -> bool {
 }
 
 impl OidcRouter {
+    pub(crate) fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
+    pub(crate) async fn for_test(
+        config: &Arc<Mutex<HimmelblauConfig>>,
+        domain: &str,
+        idmap: &Arc<Mutex<Idmap>>,
+        state: CacheState,
+    ) -> Self {
+        let standard = Arc::new(OidcProvider::new(config, domain, idmap).unwrap());
+        *standard.state.lock().await = state;
+        Self {
+            standard,
+            native: Err(okta::OktaError::Configuration),
+            config: config.clone(),
+            domain: domain.to_string(),
+            selection: Mutex::new(Selection::StandardOidc),
+            selecting: Mutex::new(()),
+        }
+    }
+
     pub(crate) async fn new(
         config: &Arc<Mutex<HimmelblauConfig>>,
         domain: &str,
@@ -120,6 +145,7 @@ impl OidcRouter {
             standard,
             native,
             config: config.clone(),
+            domain: domain.to_string(),
             selection: Mutex::new(Selection::Pending),
             selecting: Mutex::new(()),
         };
@@ -151,12 +177,13 @@ impl OidcRouter {
             _ => (),
         }
         let cfg = self.config.lock().await;
-        let Some(issuer) = cfg.get_oidc_issuer_url() else {
+        let Some(issuer) = cfg.get_oidc_issuer_url(Some(&self.domain)) else {
             *selection = Selection::Failed;
             return;
         };
-        let forced = cfg.get_oidc_force_interaction_code();
-        let configured_device_endpoint = cfg.get_oidc_device_authorization_endpoint();
+        let forced = cfg.get_oidc_force_interaction_code(Some(&self.domain));
+        let configured_device_endpoint =
+            cfg.get_oidc_device_authorization_endpoint(Some(&self.domain));
         let request_timeout = Duration::from_secs(cfg.get_request_timeout());
         drop(cfg);
         let client = match reqwest::Client::builder()
@@ -692,6 +719,7 @@ mod tests {
             standard,
             native,
             config,
+            domain: "oidc".to_string(),
             selection: Mutex::new(Selection::Pending),
             selecting: Mutex::new(()),
         }

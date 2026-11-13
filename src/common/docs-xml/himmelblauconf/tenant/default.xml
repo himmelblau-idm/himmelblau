@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="default" section="tenant" type="bool" rust_type="bool" order="120">
+<description>Serve bare account names with this provider. Exactly one provider must be the default in a multi-provider configuration.</description>
+<default>false</default>
+<example>default = true</example>
+<handler>parse_providers</handler>
+</parameter>

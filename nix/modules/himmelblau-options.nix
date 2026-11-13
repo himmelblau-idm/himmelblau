@@ -23,11 +23,14 @@ in
         
         In most cases, this will be the primary domain of your Azure Entra ID tenant. If your organization uses multiple verified domains or aliases, choose the one that your users actually use to sign in.
         
-        Only a single Entra ID domain is supported. If several domains are listed (comma-separated, or through additional domain sections), only the first one is used and the others are ignored. If
+        This legacy format selects one provider. If several domains are listed
+        (comma-separated or through additional domain sections), the first is used and a
+        warning is logged. Use one [tenant.<label>] section per provider for multi-tenant
+        setups. If
         **oidc_issuer_url**
         is set, this option is ignored.
         
-        If not specified, the domain is extracted from the UPN of the first user to authenticate and looked up in Entra ID.
+        Configure a provider before starting the daemon.
       '';
       example = [ "example.com" ];
     };
@@ -172,9 +175,8 @@ in
         This is useful when the selected OIDC claim is scoped, such as
         **user@example.com,**
         but the desired Linux account name is only the local portion.
-        Only enable this when the remaining local portion is unique across all accepted
-        OIDC issuers/domains; otherwise distinct identities that differ only by suffix
-        can collide on the same Linux account name.
+        The remaining local portion must be unique within the provider. Tenant sections
+        append their local provider label after this transformation.
       '';
       example = true;
     };
@@ -1155,6 +1157,328 @@ in
         '';
       };
 
+    };
+
+    tenant = mkOption {
+      default = { };
+      description = "Named Entra ID and OIDC identity providers.";
+      type = types.attrsOf (types.submodule {
+        options = {
+          app_id = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              When oidc_issuer_url is configured, this is the OIDC public client identifier.
+              Native Interaction Code authentication requires that grant to be enabled for
+              the authorization server and application, and oidc_redirect_uri to be registered
+              on the application. No client secret is used.
+
+              Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
+              the
+              **gidNumber**
+              attribute used in RFC 2307 idmapping).
+
+              If
+              **logon_token_app_id**
+              is not set, this application ID is also used when requesting access tokens for the user logon script.
+
+              **Note:** In the Azure Portal for the application corresponding to **app_id**, ensure that the redirect URI
+              *himmelblau://Himmelblau.EntraId.BrokerPlugin*
+              is enabled under "Mobile and desktop applications" in the Authentication section.
+              This allows Himmelblau to correctly handle interactive token redirection.
+            '';
+            example = "d023f7aa-d214-4b59-911d-6074de623765";
+          };
+          authority_host = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Specifies the hostname for Microsoft authentication.
+            '';
+            example = "login.microsoftonline.us";
+          };
+          default = mkOption {
+            type = types.nullOr (types.bool);
+            default = null;
+            description = ''
+              Serve bare account names with this provider. Exactly one provider must be the default in a multi-provider configuration.
+            '';
+            example = true;
+          };
+          domain = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Primary Microsoft Entra ID domain and persistent storage key. Set domain for an Entra provider, or oidc_issuer_url for an OIDC provider.
+            '';
+            example = "example.com";
+          };
+          home_alias = mkOption {
+            type = types.nullOr (types.enum [ "uuid" "spn" "cn" ]);
+            default = null;
+            description = ''
+              The symlinked alias for the user's home directory. Available options include:
+
+              - UUID
+
+              - SPN
+
+              - CN
+            '';
+            example = "SPN";
+          };
+          home_attr = mkOption {
+            type = types.nullOr (types.enum [ "uuid" "spn" "cn" ]);
+            default = null;
+            description = ''
+              The attribute used to create a home directory for a user. Available options include:
+
+              - UUID
+
+              - SPN
+
+              - CN
+            '';
+            example = "UUID";
+          };
+          home_prefix = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              The prefix to use for user home directories.
+              On SELinux systems, a custom prefix must have a persistent file-context
+              equivalence to /home before users' homes are created. This labels the prefix
+              home_root_t and applies the normal home/content contexts to its whole subtree.
+              For example:
+              sudo mkdir -p /home/entra
+              sudo semanage fcontext -a -e /home "$(readlink -f /home/entra)"
+              sudo restorecon -R "$(readlink -f /home/entra)"
+              Resolve the destination when /home is a symlink, such as on Aurora; retain
+              /home as the equivalence source. Use the same setup for prefixes outside /home.
+              Relabel only the configured prefix. Changing just its directory label with
+              chcon does not provide the descendant file-context rules.
+            '';
+            example = "/home/entra/";
+          };
+          idmap_range = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Specifies the range of IDs to be used for the user and group mappings.
+
+              When this option is modified, you
+              **SHOULD**
+              run:
+              sudo aad-tool cache-clear --full
+              To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data. Afterwards, restart himmelblaud.
+            '';
+            example = "10000000-10999999";
+          };
+          logon_token_app_id = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Specifies an alternate Azure Entra ID application (client) ID to be used exclusively for acquiring
+              **ACCESS_TOKEN**
+              values on behalf of the user during logon script execution.
+              If not set, the value of
+              **app_id**
+              will be used instead.
+
+              This option allows using a separate application registration that carries the specific API permissions required by logon scripts.
+
+              **Note:** In the Azure Portal for the application corresponding to **logon_token_app_id**, ensure that the redirect URI
+              *https://login.microsoftonline.com/common/oauth2/nativeclient*
+              is enabled under "Mobile and desktop applications" in the Authentication section.
+              This is required for Himmelblau to obtain tokens via the public client flow.
+            '';
+            example = "544e695f-5d78-442e-b14e-e114e95e640c";
+          };
+          oidc_account_id_claims = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            description = ''
+              A comma-separated, ordered list of OIDC userinfo claim names to use as the
+              Linux account name for generic OIDC providers.
+
+              When this option is set, Himmelblau tries each named claim in order and uses
+              the first claim that is present as a non-empty string. The claim names are not
+              limited to standard OpenID Connect claims; provider-specific userinfo claims
+              may also be listed.
+
+              If none of the configured claims match a non-empty string claim in userinfo,
+              Himmelblau logs a warning and falls back to the default account-name selection:
+              **preferred_username**
+              first, then
+              **email.**
+            '';
+            example = [ "uid" "username" "preferred_username" "email" ];
+          };
+          oidc_account_id_strip_at_suffix = mkOption {
+            type = types.nullOr (types.bool);
+            default = null;
+            description = ''
+              A boolean option that removes any suffix beginning with
+              **@**
+              from the OIDC account name selected by
+              **oidc_account_id_claims**
+              or by the default
+              **preferred_username**
+              then
+              **email**
+              fallback.
+
+              This is useful when the selected OIDC claim is scoped, such as
+              **user@example.com,**
+              but the desired Linux account name is only the local portion.
+              The remaining local portion must be unique within the provider. Tenant sections
+              append their local provider label after this transformation.
+            '';
+            example = true;
+          };
+          oidc_device_authorization_endpoint = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Optional device authorization endpoint for generic OIDC providers that omit
+              **device_authorization_endpoint**
+              from their discovery metadata. The discovered endpoint is preferred when it
+              is present. This option is used only when
+              **oidc_issuer_url**
+              is configured.
+            '';
+            example = "https://idp.example.com/device/code";
+          };
+          oidc_force_interaction_code = mkOption {
+            type = types.nullOr (types.bool);
+            default = null;
+            description = ''
+              Require native Interaction Code (IDX) authentication for the configured OIDC
+              issuer. When true, Himmelblau never falls back to device authorization or the
+              browser orchestrator. The server must implement the compatible IDX protocol,
+              and the configured public client must permit Interaction Code.
+
+              When false, Himmelblau probes likely compatible providers (including Okta) and
+              issuers without device authorization, then falls back quietly when native
+              authentication is unavailable. Selection is fixed until daemon restart;
+              selection during a network outage is deferred until connectivity returns.
+            '';
+          };
+          oidc_issuer_url = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Specifies the OpenID Connect (OIDC) issuer URL used by Himmelblau to discover
+              OIDC provider metadata and endpoints.
+
+              This option enables generic OIDC authentication support and allows Himmelblau
+              to authenticate against any standards-compliant OIDC provider, rather than
+              using the built-in Microsoft Entra ID defaults.
+
+              Himmelblau prefers native Interaction Code authentication when supported by the
+              configured client. It probes issuers with Okta metadata or hostname hints,
+              issuers advertising the interaction_code grant, and issuers without a usable
+              device authorization flow. Otherwise it uses the existing OIDC device flow.
+              Selection lasts until daemon restart. Temporary outages defer selection.
+              The absence of interaction_code in discovery does not prove it is disabled.
+              Use oidc_force_interaction_code to require native authentication and
+              oidc_redirect_uri to configure its registered redirect URI.
+
+              If
+              **enable_hello**
+              is set to true (the default), the client application must allow refresh tokens
+              and include the
+              **offline_access**
+              scope for Hello enrollment to function with OIDC providers.
+
+              When this option is set, the following option is
+              **REQUIRED**
+              and must be configured consistently:
+
+              - **app_id**
+              - Used as the OIDC client identifier
+
+              The issuer URL
+              **MUST**
+              exactly match the issuer value advertised by the OIDC provider, including
+              any required path components.
+              Incorrect issuer URLs will cause provider discovery to fail.
+
+              If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
+              authentication flow.
+
+              When the standard OIDC backend is selected, if
+              **allow_console_password_only**
+              is enabled and the OIDC provider advertises the
+              **password**
+              grant type in its discovery document, local console logins are offered
+              password-only (single-factor) authentication via the Resource Owner Password
+              Credentials (ROPC) grant instead of the device-authorization (browser) flow.
+              Providers that do not advertise the
+              **password**
+              grant continue to use the device flow.
+            '';
+            example = "https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0";
+          };
+          oidc_redirect_uri = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              Redirect URI supplied to native OIDC Interaction Code requests. Register this
+              exact URI on the public OIDC application identified by app_id, or configure
+              the URI already registered there. A URI without a fragment or embedded
+              credentials is required.
+
+              Native PAM flows do not open a callback listener. Policies requiring a browser
+              redirect or external callback must offer another supported native method;
+              otherwise authentication reports that the external step is unsupported.
+            '';
+          };
+          pam_allow_groups = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            description = ''
+              A comma-separated list of users and groups permitted to access the system.
+              For Entra ID, users should be specified by UPN. Entra ID groups MUST be specified using their Object ID GUID. Group names may not be used because these names are not guaranteed to be unique in Entra ID.
+              For generic OIDC providers, group and role entries may be specified by the exact value emitted in the userinfo groups, realm_access.roles, or resource_access roles claim.
+
+              If not set, all users are permitted to authenticate.
+
+              This restriction is enforced during PAM account management: a user who is not
+              permitted causes pam_himmelblau to return PAM_AUTH_ERR from its account phase.
+              A PAM stack that discards that result (for example an account line whose
+              control maps every non-success return to ignore) silently admits users that the
+              allow list is meant to reject, because a later module such as pam_unix then
+              succeeds for any resolvable user. When composing an account stack by hand,
+              make sure the denial is terminal.
+            '';
+            example = [ "f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12" "5ba4ef1d-e454-4f43-ba7c-6fe6f1601915" "admin@himmelblau-idm.org" ];
+          };
+          shell = mkOption {
+            type = types.nullOr (types.str);
+            default = null;
+            description = ''
+              The default shell for users. This will be assigned when the user logs in.
+            '';
+            example = "/bin/zsh";
+          };
+          sudo_groups = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            description = ''
+              A comma-separated list of Azure Entra ID group object IDs whose members should be granted
+              **sudo**
+              access on this system.
+              If
+              **local_sudo_group**
+              is not defined, the local group
+              **sudo**
+              will be used.
+            '';
+            example = [ "f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12" "5ba4ef1d-e454-4f43-ba7c-6fe6f1601915" ];
+          };
+        };
+      });
     };
 
   };

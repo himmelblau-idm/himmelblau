@@ -30,15 +30,18 @@ use std::time::Duration;
 use std::{fs, io};
 
 use bytes::{BufMut, BytesMut};
+use clap::{Arg, ArgAction, Command as ClapCommand};
 use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
 use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_policies::scripts_ext::restore_configuration_policies;
-use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
+use himmelblau_unix_common::config::{HimmelblauConfig, ProviderKind};
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR};
+use himmelblau_unix_common::db::Db;
+use himmelblau_unix_common::idprovider::IdProviderProxy;
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use himmelblau_unix_common::user_map::UserMap;
-use kanidm_utils_users::{get_effective_gid, get_effective_uid};
+use kanidm_utils_users::{get_current_uid, get_effective_gid, get_effective_uid};
 use libc::uid_t;
 use libc::{lchown, umask};
 use libkrimes::proto::KerberosCredentials;
@@ -126,6 +129,26 @@ fn chown(path: &Path, uid: u32, gid: u32) -> Result<(), String> {
         return Err("Unable to set ownership".to_string());
     }
     Ok(())
+}
+
+fn home_prefix_for_provider(
+    cfg: &HimmelblauConfig,
+    provider_domain: Option<&str>,
+) -> Result<String, String> {
+    let providers = cfg.parse_providers().map_err(|errors| errors.join("; "))?;
+    let provider = match provider_domain {
+        Some(domain) => cfg.provider_for_domain(domain),
+        None if providers.len() == 1 => providers.into_iter().next(),
+        None => None,
+    };
+    provider
+        .map(|provider| provider.get_home_prefix(cfg))
+        .ok_or_else(|| {
+            provider_domain.map_or_else(
+                || "No provider selected for home directory".to_string(),
+                |domain| format!("No configured provider for domain {domain}"),
+            )
+        })
 }
 
 fn create_home_directory(
@@ -519,9 +542,11 @@ async fn load_profile_photo(
         ));
     }
 
-    let domain = split_username(upn)
-        .map(|(_, domain)| domain)
-        .ok_or_else(|| format!("Couldn't parse domain from UPN '{upn}'"))?;
+    let provider = cfg
+        .provider_for_account(upn)
+        .filter(|p| p.kind == ProviderKind::Entra)
+        .ok_or_else(|| format!("No configured Entra provider for '{upn}'"))?;
+    let domain = provider.domain.as_str();
 
     // Resolve mapped UPNs back to the local account that owns the avatar.
     let account_id = resolve_profile_photo_account_id(cfg, upn);
@@ -688,22 +713,35 @@ fn write_kerberos_config_snippet_to(
 
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
+    let mut current_cfg = cfg.clone();
 
     loop {
         let next_req = reqs.next().await;
+        if matches!(next_req, Some(Ok(_))) {
+            if let Err(message) = current_cfg.reload_server_cache() {
+                error!(%message, "Failed to reload the server cache");
+                if reqs.send(TaskResponse::Error(message)).await.is_err() {
+                    return;
+                }
+                continue;
+            }
+        }
+        let cfg = &current_cfg;
         let span = span!(Level::INFO, "TaskRequest");
         let _ = span.enter();
         match next_req {
             Some(Ok(TaskRequest::HomeDirectory(info))) => {
                 debug!("Received task -> HomeDirectory(...)");
-                let domain = split_username(&info.name).map(|(_, domain)| domain);
-
-                let resp = match create_home_directory(
-                    &info,
-                    &cfg.get_home_prefix(domain),
-                    cfg.get_use_etc_skel(),
-                    cfg.get_selinux(),
-                ) {
+                let result = home_prefix_for_provider(cfg, info.provider_domain.as_deref())
+                    .and_then(|prefix| {
+                        create_home_directory(
+                            &info,
+                            &prefix,
+                            cfg.get_use_etc_skel(),
+                            cfg.get_selinux(),
+                        )
+                    });
+                let resp = match result {
                     Ok(()) => TaskResponse::Success(0),
                     Err(msg) => TaskResponse::Error(msg),
                 };
@@ -908,8 +946,49 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     }
 }
 
+async fn prepare_provider_caches(cfg: &HimmelblauConfig) -> Result<(), String> {
+    let db_path = cfg.get_db_path();
+    let Some(db) = Db::open_existing_read_write(&db_path)
+        .map_err(|error| format!("Failed opening cache database {db_path}: {error:?}"))?
+    else {
+        return Ok(());
+    };
+
+    let mut txn = db.read().await;
+    if !txn
+        .is_initialized()
+        .map_err(|error| format!("Failed checking cache database: {error:?}"))?
+    {
+        return Ok(());
+    }
+    let accounts = txn
+        .get_accounts()
+        .map_err(|error| format!("Failed reading cached accounts: {error:?}"))?;
+    drop(txn);
+
+    IdProviderProxy::prepare_provider_caches(cfg, &accounts)
+        .map_err(|error| format!("Failed preparing provider caches: {error:#}"))
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    let args = ClapCommand::new("himmelblaud_tasks")
+        .version(env!("CARGO_PKG_VERSION"))
+        .about("Himmelblau privileged task daemon")
+        .arg(
+            Arg::new("prepare-provider-cache")
+                .long("prepare-provider-cache")
+                .help("Prepare provider-scoped identity caches before daemon startup")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("config")
+                .long("config")
+                .short('c')
+                .help("Set the config file path")
+                .action(ArgAction::Set),
+        )
+        .get_matches();
     // let cuid = get_current_uid();
     // let cgid = get_current_gid();
     // We only need to check effective id
@@ -917,7 +996,19 @@ async fn main() -> ExitCode {
     let cegid = get_effective_gid();
     let systemd_booted = sd_notify::booted().unwrap_or(false);
 
-    let config_path = Path::new(DEFAULT_CONFIG_PATH);
+    let prepare_provider_cache = args.get_flag("prepare-provider-cache");
+    let config_path_str = if prepare_provider_cache {
+        args.get_one::<String>("config")
+            .map(String::as_str)
+            .unwrap_or(DEFAULT_CONFIG_PATH)
+    } else {
+        if args.get_one::<String>("config").is_some() {
+            error!("--config is only valid with --prepare-provider-cache");
+            return ExitCode::FAILURE;
+        }
+        DEFAULT_CONFIG_PATH
+    };
+    let config_path = Path::new(config_path_str);
     let config_path_str = match config_path.to_str() {
         Some(cps) => cps,
         None => {
@@ -957,6 +1048,20 @@ async fn main() -> ExitCode {
             if ceuid != 0 || cegid != 0 {
                 error!("Refusing to run - this process *MUST* operate as root.");
                 return ExitCode::FAILURE;
+            }
+
+            if prepare_provider_cache {
+                if get_current_uid() != 0 {
+                    error!("Provider cache preparation requires a real root user");
+                    return ExitCode::FAILURE;
+                }
+                return match prepare_provider_caches(&cfg).await {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(message) => {
+                        error!(%message, "Provider cache preparation failed");
+                        ExitCode::FAILURE
+                    }
+                };
             }
 
             let task_sock_path = cfg.get_task_socket_path();
@@ -1107,6 +1212,38 @@ mod tests {
     /// The exact payload from GHSA-x259-23ph-65m5.
     const ADVISORY_PAYLOAD: &str = "padding:100000:65536\nattacker:0:65536\npadding";
     const TENANT_ID: &str = "11111111-2222-3333-4444-555555555555";
+
+    #[test]
+    fn home_prefix_uses_resolved_provider_and_preserves_single_provider_rfc2307() {
+        let directory = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).unwrap();
+        let path = directory.path().join("himmelblau.conf");
+        fs::write(
+            &path,
+            "[tenant.a]\ndomain=a.example\ndefault=true\nidmap_range=1000-1999\nhome_prefix=/home/a/\n\
+             [tenant.b]\ndomain=b.example\nidmap_range=2000-2999\nhome_prefix=/home/b/\n",
+        )
+        .unwrap();
+        let cfg = HimmelblauConfig::new(path.to_str()).unwrap();
+        assert_eq!(
+            home_prefix_for_provider(&cfg, Some("a.example")).unwrap(),
+            "/home/a/"
+        );
+        assert_eq!(
+            home_prefix_for_provider(&cfg, Some("b.example")).unwrap(),
+            "/home/b/"
+        );
+        assert!(home_prefix_for_provider(&cfg, Some("unknown.example")).is_err());
+        assert!(home_prefix_for_provider(&cfg, None).is_err());
+
+        fs::write(
+            &path,
+            "[global]\ndomain=a.example\nid_attr_map=rfc2307\nidmap_range=1000-1999\n\
+             [a.example]\nhome_prefix=/home/a/\n",
+        )
+        .unwrap();
+        let cfg = HimmelblauConfig::new(path.to_str()).unwrap();
+        assert_eq!(home_prefix_for_provider(&cfg, None).unwrap(), "/home/a/");
+    }
 
     #[test]
     fn validate_subid_username_accepts_legitimate_names() {

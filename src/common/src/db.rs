@@ -95,6 +95,10 @@ pub trait CacheTxn {
 
     fn update_account(&mut self, account: &UserToken, expire: u64) -> Result<(), CacheError>;
 
+    /// Delete accounts that `account` replaces because they share its name, SPN or UID.
+    fn delete_replaced_accounts(&mut self, account: &UserToken) -> Result<(), CacheError>;
+
+    /// Delete an account together with its synthetic primary group.
     fn delete_account(&mut self, a_uuid: Uuid) -> Result<(), CacheError>;
 
     fn clear_account_password(&mut self, a_uuid: Uuid) -> Result<(), CacheError>;
@@ -136,6 +140,43 @@ pub trait KeyStoreTxn {
         -> Result<(), CacheError>;
 
     fn delete_tagged_hsm_key(&mut self, tag: &str) -> Result<(), CacheError>;
+}
+
+pub(crate) struct ScopedKeyStore<'a, D> {
+    inner: &'a mut D,
+    scope: Option<Uuid>,
+}
+
+impl<'a, D> ScopedKeyStore<'a, D> {
+    pub(crate) fn new(inner: &'a mut D, scope: Option<Uuid>) -> Self {
+        Self { inner, scope }
+    }
+
+    fn tag(&self, tag: &str) -> String {
+        self.scope
+            .map_or_else(|| tag.to_string(), |scope| format!("oidc/{scope}/{tag}"))
+    }
+}
+
+impl<D: KeyStoreTxn> KeyStoreTxn for ScopedKeyStore<'_, D> {
+    fn get_tagged_hsm_key<K: DeserializeOwned>(
+        &mut self,
+        tag: &str,
+    ) -> Result<Option<K>, CacheError> {
+        self.inner.get_tagged_hsm_key(&self.tag(tag))
+    }
+
+    fn insert_tagged_hsm_key<K: Serialize>(
+        &mut self,
+        tag: &str,
+        key: &K,
+    ) -> Result<(), CacheError> {
+        self.inner.insert_tagged_hsm_key(&self.tag(tag), key)
+    }
+
+    fn delete_tagged_hsm_key(&mut self, tag: &str) -> Result<(), CacheError> {
+        self.inner.delete_tagged_hsm_key(&self.tag(tag))
+    }
 }
 
 pub struct Db {
@@ -210,6 +251,19 @@ impl Db {
 
     pub fn open_read_only(path: &str) -> Result<Option<Self>, DbError> {
         match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(conn) => Ok(Some(Self::from_connection(conn, None))),
+            Err(e) => match Path::new(path).try_exists() {
+                Ok(false) => Ok(None),
+                _ => {
+                    error!(err = ?e, "rusqulite error");
+                    Err(DbError::Sqlite)
+                }
+            },
+        }
+    }
+
+    pub fn open_existing_read_write(path: &str) -> Result<Option<Self>, DbError> {
+        match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE) {
             Ok(conn) => Ok(Some(Self::from_connection(conn, None))),
             Err(e) => match Path::new(path).try_exists() {
                 Ok(false) => Ok(None),
@@ -311,6 +365,30 @@ impl<'a> DbTxn<'a> {
         );
         // TODO: one day figure out if there's an easy way to dump the transaction without the token...
         CacheError::Sqlite
+    }
+
+    /// Delete an account, its memberships and its synthetic primary group, which
+    /// shares the account UUID.
+    fn delete_account_rows(&self, account_uuid: &str) -> Result<(), CacheError> {
+        self.conn
+            .execute(
+                "DELETE FROM memberof_t WHERE a_uuid = :uuid OR g_uuid = :uuid",
+                named_params! { ":uuid": account_uuid },
+            )
+            .map_err(|e| self.sqlite_error("account_t memberof_t cascade delete", &e))?;
+        self.conn
+            .execute(
+                "DELETE FROM group_t WHERE uuid = :uuid",
+                named_params! { ":uuid": account_uuid },
+            )
+            .map_err(|e| self.sqlite_error("account_t primary group delete", &e))?;
+        self.conn
+            .execute(
+                "DELETE FROM account_t WHERE uuid = :uuid",
+                named_params! { ":uuid": account_uuid },
+            )
+            .map(|_| ())
+            .map_err(|e| self.sqlite_error("account_t delete", &e))
     }
 
     fn get_db_version(&self, key: &str) -> i64 {
@@ -594,7 +672,34 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 .map_err(|e| self.sqlite_error("invalidate legacy accounts", &e))?;
         }
 
-        self.set_db_version(DBV_MAIN, 2)?;
+        if db_version < 3 {
+            // Directory display names are not unique; identity and membership use UUIDs.
+            self.conn
+                .execute_batch(
+                    "CREATE TEMP TABLE memberof_migration_v3 AS
+                     SELECT g_uuid, a_uuid FROM memberof_t;
+                DELETE FROM memberof_t;
+                CREATE TABLE group_new (
+                    uuid TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    spn TEXT NOT NULL,
+                    gidnumber INTEGER NOT NULL UNIQUE,
+                    token BLOB NOT NULL,
+                    expiry NUMERIC NOT NULL
+                );
+                INSERT INTO group_new SELECT * FROM group_t;
+                DROP TABLE group_t;
+                ALTER TABLE group_new RENAME TO group_t;
+                CREATE INDEX group_name_idx ON group_t(name);
+                CREATE INDEX group_spn_idx ON group_t(spn);
+                INSERT INTO memberof_t (g_uuid, a_uuid)
+                    SELECT g_uuid, a_uuid FROM memberof_migration_v3;
+                DROP TABLE memberof_migration_v3;",
+                )
+                .map_err(|e| self.sqlite_error("migrate group names", &e))?;
+        }
+
+        self.set_db_version(DBV_MAIN, 3)?;
 
         Ok(())
     }
@@ -853,19 +958,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
         // to manually manage the update or insert :( :(
         let account_uuid = account.uuid.as_hyphenated().to_string();
 
-        // Find anything conflicting and purge it.
-        self.conn.execute("DELETE FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)",
-            named_params!{
-                ":uuid": &account_uuid,
-                ":name": &account.name,
-                ":spn": &account.spn,
-                ":gidnumber": &account.gidnumber,
-            }
-            )
-            .map_err(|e| {
-                self.sqlite_error("delete account_t duplicate", &e)
-            })
-            .map(|_| ())?;
+        self.delete_replaced_accounts(account)?;
 
         let updated = self.conn.execute(
                 "UPDATE account_t SET name=:name, spn=:spn, gidnumber=:gidnumber, token=:token, expiry=:expiry WHERE uuid = :uuid",
@@ -934,24 +1027,43 @@ impl<'a> CacheTxn for DbTxn<'a> {
         })
     }
 
+    fn delete_replaced_accounts(&mut self, account: &UserToken) -> Result<(), CacheError> {
+        let replaced: Vec<(String, Vec<u8>)> = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT uuid, token FROM account_t WHERE NOT uuid = :uuid AND (name = :name COLLATE NOCASE OR spn = :spn COLLATE NOCASE OR gidnumber = :gidnumber)",
+                )
+                .map_err(|e| self.sqlite_error("select prepare", &e))?;
+            let rows = stmt
+                .query_map(
+                    named_params! {
+                        ":uuid": &account.uuid.as_hyphenated().to_string(),
+                        ":name": &account.name,
+                        ":spn": &account.spn,
+                        ":gidnumber": &account.gidnumber,
+                    },
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|e| self.sqlite_error("query_map", &e))?;
+            rows.collect::<Result<_, _>>()
+                .map_err(|e| self.sqlite_error("map", &e))?
+        };
+        for (_, data) in &replaced {
+            let cached: UserToken =
+                serde_json::from_slice(data).map_err(|_| CacheError::SerdeJson)?;
+            if cached.tenant_id != account.tenant_id {
+                error!(existing = %cached.uuid, incoming = %account.uuid, "Account collision between providers");
+                return Err(CacheError::TooManyResults);
+            }
+        }
+        replaced
+            .iter()
+            .try_for_each(|(uuid, _)| self.delete_account_rows(uuid))
+    }
+
     fn delete_account(&mut self, a_uuid: Uuid) -> Result<(), CacheError> {
-        let account_uuid = a_uuid.as_hyphenated().to_string();
-
-        self.conn
-            .execute(
-                "DELETE FROM memberof_t WHERE a_uuid = :a_uuid",
-                params![&account_uuid],
-            )
-            .map(|_| ())
-            .map_err(|e| self.sqlite_error("account_t memberof_t cascade delete", &e))?;
-
-        self.conn
-            .execute(
-                "DELETE FROM account_t WHERE uuid = :a_uuid",
-                params![&account_uuid],
-            )
-            .map(|_| ())
-            .map_err(|e| self.sqlite_error("account_t delete", &e))
+        self.delete_account_rows(&a_uuid.as_hyphenated().to_string())
     }
 
     fn clear_account_password(&mut self, a_uuid: Uuid) -> Result<(), CacheError> {
@@ -1154,7 +1266,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
         })?;
 
         let mut stmt = self.conn
-            .prepare("INSERT OR REPLACE INTO group_t (uuid, name, spn, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry)")
+            .prepare("INSERT INTO group_t (uuid, name, spn, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry) ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, spn=excluded.spn, gidnumber=excluded.gidnumber, token=excluded.token, expiry=excluded.expiry")
             .map_err(|e| {
                 self.sqlite_error("prepare", &e)
             })?;
@@ -1210,6 +1322,24 @@ impl<'a> Drop for DbTxn<'a> {
 }
 
 impl DbReadTxn<'_> {
+    pub fn is_initialized(&self) -> Result<bool, CacheError> {
+        self.txn
+            .conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'db_version_t'
+                )",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| self.txn.sqlite_error("check database initialization", &e))
+    }
+
+    pub fn get_accounts(&mut self) -> Result<Vec<UserToken>, CacheError> {
+        self.txn.get_accounts()
+    }
+
     pub fn get_account(&mut self, account_id: &Id) -> Result<Option<(UserToken, u64)>, CacheError> {
         self.txn.get_account(account_id)
     }
@@ -1262,6 +1392,8 @@ mod tests {
     use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn, TestDbFile, DBV_MAIN};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
     use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::Tpm, AuthValue};
+    use rusqlite::Connection;
+    use std::path::Path;
 
     const TESTACCOUNT1_PASSWORD_A: &str = "password a for account1 test";
     const TESTACCOUNT1_PASSWORD_B: &str = "password b for account1 test";
@@ -1303,6 +1435,71 @@ mod tests {
         assert!(matches!(db.get_loadable_hsm_key().await, Ok(None)));
     }
 
+    #[test]
+    fn existing_read_write_open_does_not_create_database() {
+        let file = TestDbFile::new();
+        assert!(!Path::new(&file.0).exists());
+
+        assert!(Db::open_existing_read_write(&file.0)
+            .expect("open existing database")
+            .is_none());
+        assert!(!Path::new(&file.0).exists());
+    }
+
+    #[tokio::test]
+    async fn existing_read_write_open_recovers_hot_journal() {
+        const HOT_JOURNAL_PATH: &str = "HIMMELBLAU_TEST_HOT_JOURNAL_PATH";
+
+        if let Ok(path) = std::env::var(HOT_JOURNAL_PATH) {
+            let conn = Connection::open(&path).expect("open recovery test database");
+            conn.execute_batch(
+                "PRAGMA journal_mode = DELETE;
+                 BEGIN EXCLUSIVE;
+                 UPDATE recovery_test SET value = 2;",
+            )
+            .expect("create hot rollback journal");
+            assert!(Path::new(&format!("{path}-journal")).exists());
+            std::process::exit(0);
+        }
+
+        let file = TestDbFile::new();
+        let conn = Connection::open(&file.0).expect("create recovery test database");
+        conn.execute_batch(
+            "PRAGMA journal_mode = DELETE;
+             CREATE TABLE recovery_test (value INTEGER NOT NULL);
+             INSERT INTO recovery_test VALUES (1);",
+        )
+        .expect("initialize recovery test database");
+        drop(conn);
+
+        let status = std::process::Command::new(
+            std::env::current_exe().expect("get current test executable"),
+        )
+        .args([
+            "--exact",
+            "db::tests::existing_read_write_open_recovers_hot_journal",
+            "--nocapture",
+        ])
+        .env(HOT_JOURNAL_PATH, &file.0)
+        .status()
+        .expect("run hot-journal child process");
+        assert!(status.success(), "hot-journal child failed: {status}");
+        assert!(Path::new(&format!("{}-journal", file.0)).exists());
+
+        let db = Db::open_existing_read_write(&file.0)
+            .expect("open existing database for recovery")
+            .expect("database exists");
+        let txn = db.read().await;
+        let value = txn
+            .txn
+            .conn
+            .query_row("SELECT value FROM recovery_test", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("read recovered database");
+        assert_eq!(value, 1);
+    }
+
     fn test_account() -> UserToken {
         UserToken {
             name: "testuser".to_string(),
@@ -1314,6 +1511,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         }
     }
@@ -1411,6 +1609,7 @@ mod tests {
             shell: None,
             groups: vec![group.clone()],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
         let authenticated = UserToken {
@@ -1439,7 +1638,7 @@ mod tests {
 
         let mut dbtxn = db.write().await;
         dbtxn.migrate().unwrap();
-        assert_eq!(dbtxn.get_db_version(DBV_MAIN), 2);
+        assert_eq!(dbtxn.get_db_version(DBV_MAIN), 3);
         assert!(dbtxn.get_unexpired_accounts(100).unwrap().is_empty());
         for account in [&lookup_only, &authenticated] {
             let (stored, expiry) = dbtxn
@@ -1486,6 +1685,43 @@ mod tests {
         let accounts = dbtxn.get_unexpired_accounts(100).unwrap();
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].uuid, authenticated.uuid);
+        dbtxn.commit().unwrap();
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn test_cache_db_migrate_preserves_memberships_with_foreign_keys() {
+        let db = Db::new("").expect("failed to create.");
+        db.conn
+            .lock()
+            .await
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
+
+        let group = GroupToken {
+            name: "testgroup".to_string(),
+            spn: "testgroup@example.com".to_string(),
+            gidnumber: 2001,
+            uuid: uuid::uuid!("b500be97-8552-42a5-aca0-668bc5625705"),
+        };
+        let mut account = test_account();
+        account.groups = vec![group.clone()];
+
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        dbtxn.update_group(&group, 300).unwrap();
+        dbtxn.update_account(&account, 300).unwrap();
+        dbtxn.commit().unwrap();
+
+        let dbtxn = db.write().await;
+        dbtxn.set_db_version(DBV_MAIN, 2).unwrap();
+        dbtxn.commit().unwrap();
+
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        let members = dbtxn.get_group_members(group.uuid).unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].spn, account.spn);
         dbtxn.commit().unwrap();
     }
 
@@ -1539,6 +1775,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 
@@ -1711,6 +1948,7 @@ mod tests {
             shell: None,
             groups: vec![gt1.clone(), gt2],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 
@@ -1781,6 +2019,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 
@@ -1871,8 +2110,22 @@ mod tests {
         gt1.spn = "testgroup2@example.com".to_string();
         // Now, add gt2 which dups on gt1 name/spn.
         dbtxn.update_group(&gt2, 0).unwrap();
-        let r2 = dbtxn.get_group(&id_name).unwrap();
-        assert!(r2.unwrap().0.uuid == uuid::uuid!("799123b2-3802-4b19-b0b8-1ffae2aa9a4b"));
+        assert!(dbtxn.get_group(&id_name).is_err());
+        assert_eq!(
+            dbtxn.get_group(&Id::Gid(2000)).unwrap().unwrap().0.uuid,
+            gt1.uuid
+        );
+        assert_eq!(
+            dbtxn.get_group(&Id::Gid(2001)).unwrap().unwrap().0.uuid,
+            gt2.uuid
+        );
+        let mut colliding = gt2.clone();
+        colliding.gidnumber = gt1.gidnumber;
+        assert!(dbtxn.update_group(&colliding, 0).is_err());
+        assert_eq!(
+            dbtxn.get_group(&Id::Gid(2000)).unwrap().unwrap().0.uuid,
+            gt1.uuid
+        );
         let r3 = dbtxn.get_group(&id_name2).unwrap();
         assert!(r3.is_none());
 
@@ -1904,6 +2157,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 
@@ -1917,6 +2171,7 @@ mod tests {
             shell: None,
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         };
 
@@ -1951,6 +2206,60 @@ mod tests {
         let r5 = dbtxn.get_account(&id_name2).unwrap();
         assert!(r5.unwrap().0.uuid == uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"));
 
+        assert!(dbtxn.commit().is_ok());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn test_cache_db_account_replacement_removes_synthetic_primary_group() {
+        let db = Db::new("").expect("failed to create.");
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+
+        let primary = |account: &UserToken| GroupToken {
+            name: account.spn.clone(),
+            spn: account.spn.clone(),
+            uuid: account.uuid,
+            gidnumber: account.gidnumber,
+        };
+        fn replace(dbtxn: &mut super::DbTxn<'_>, account: &UserToken) -> Result<(), CacheError> {
+            dbtxn.delete_replaced_accounts(account)?;
+            account
+                .groups
+                .iter()
+                .try_for_each(|g| dbtxn.update_group(g, 0))?;
+            dbtxn.update_account(account, 0)
+        }
+        let mut old = test_account();
+        old.groups = vec![primary(&old)];
+        replace(&mut dbtxn, &old).unwrap();
+
+        let mut recreated = old.clone();
+        recreated.uuid = uuid::uuid!("6f1c2a14-3b8e-4d0a-9f6e-2c7b5d1e8a90");
+        recreated.groups = vec![primary(&recreated)];
+        replace(&mut dbtxn, &recreated).unwrap();
+
+        let (account, _) = dbtxn
+            .get_account(&Id::Name(old.spn.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(account.uuid, recreated.uuid);
+        let (group, _) = dbtxn.get_group(&Id::Gid(old.gidnumber)).unwrap().unwrap();
+        assert_eq!(group.uuid, recreated.uuid);
+        assert!(dbtxn.get_group_members(old.uuid).unwrap().is_empty());
+
+        let unrelated = GroupToken {
+            name: "unrelated".to_string(),
+            spn: "unrelated@example.com".to_string(),
+            uuid: uuid::uuid!("a3d5e7f9-1b2c-4d6e-8f0a-1b3c5d7e9f01"),
+            gidnumber: recreated.gidnumber,
+        };
+        assert!(dbtxn.update_group(&unrelated, 0).is_err());
+        let (group, _) = dbtxn.get_group(&Id::Gid(old.gidnumber)).unwrap().unwrap();
+        assert_eq!(group.uuid, recreated.uuid);
+
+        dbtxn.delete_account(recreated.uuid).unwrap();
+        assert!(dbtxn.get_group(&Id::Gid(old.gidnumber)).unwrap().is_none());
         assert!(dbtxn.commit().is_ok());
     }
 }

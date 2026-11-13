@@ -93,6 +93,9 @@ pub struct UserToken {
     pub groups: Vec<GroupToken>,
     #[serde(default)]
     pub tenant_id: Option<Uuid>,
+    /// Original OIDC account claim, independent of the local provider label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oidc_account_id: Option<String>,
     // Defaults to false.
     pub valid: bool,
 }
@@ -300,6 +303,32 @@ pub trait IdProvider {
     }
 
     async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, _now: SystemTime) -> bool;
+
+    fn provider_config(&self) -> Option<&crate::config::HimmelblauConfig> {
+        None
+    }
+
+    async fn provider_for_account(&self, account: &str) -> Option<crate::config::ProviderConfig> {
+        self.provider_config()?.provider_for_account(account)
+    }
+
+    /// Provider that owns a cached token, resolved without network access.
+    async fn provider_for_token(&self, token: &UserToken) -> Option<crate::config::ProviderConfig> {
+        self.provider_config()?.provider_for_token(token)
+    }
+
+    async fn provider_status(&self) -> Vec<(String, bool)> {
+        Vec::new()
+    }
+
+    async fn check_online_for_account(
+        &self,
+        _account: &str,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        now: SystemTime,
+    ) -> bool {
+        self.check_online(tpm, now).await
+    }
 
     /// Like `check_online`, but needs no HSM and re-verifies an `Online` state, which
     /// can be stale after resume. Providers without a probe report true.

@@ -48,6 +48,14 @@ def read_unit(path):
 
 
 class GeneratorTests(unittest.TestCase):
+    def test_daemon_prepares_provider_cache_before_start(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            unit = read_unit(generate(Path(tmp), 257) / "himmelblaud.service")
+            self.assertEqual(
+                unit["Service"].get("ExecStartPre"),
+                "+/usr/sbin/himmelblaud_tasks --prepare-provider-cache",
+            )
+
     def test_fd_store_version_gating(self):
         for version in (239, 249, 252, 253, 254, 255, 256, 257, 260):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:

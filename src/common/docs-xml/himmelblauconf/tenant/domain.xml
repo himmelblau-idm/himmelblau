@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="domain" section="tenant" type="string" rust_type="String" order="100">
+<description>Primary Microsoft Entra ID domain and persistent storage key. Set domain for an Entra provider, or oidc_issuer_url for an OIDC provider.</description>
+<example>domain = example.com</example>
+<handler>parse_providers</handler>
+</parameter>

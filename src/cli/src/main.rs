@@ -41,7 +41,9 @@ use himmelblau::{ConfidentialClientApplication, UserToken};
 use himmelblau_unix_common::auth::{authenticate_async, SimpleMessagePrinter};
 use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client::call_daemon;
-use himmelblau_unix_common::config::{parse_ttl_to_seconds, split_username, HimmelblauConfig};
+use himmelblau_unix_common::config::{
+    parse_ttl_to_seconds, HimmelblauConfig, ProviderConfig, ProviderKind,
+};
 use himmelblau_unix_common::constants::{
     CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
     DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, DEFAULT_HSM_PIN_PATH_ENC, DEFAULT_ODC_PROVIDER,
@@ -582,6 +584,61 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
     Some(token)
 }
 
+fn select_entra_provider(
+    cfg: &HimmelblauConfig,
+    account: Option<&str>,
+    domain: Option<&str>,
+) -> Result<ProviderConfig, &'static str> {
+    let account_provider = account
+        .map(|a| {
+            cfg.provider_for_account(a)
+                .ok_or("Account does not belong to a configured provider")
+        })
+        .transpose()?;
+    let domain_provider = domain
+        .map(|d| {
+            cfg.provider_for_domain(d)
+                .ok_or("Domain does not belong to a configured provider")
+        })
+        .transpose()?;
+    if let (Some(a), Some(d)) = (&account_provider, &domain_provider) {
+        if a.domain != d.domain {
+            return Err("Account and --domain select different providers");
+        }
+    }
+    account_provider
+        .or(domain_provider)
+        .or_else(|| cfg.default_provider())
+        .filter(|p| p.kind == ProviderKind::Entra)
+        .ok_or("An Entra provider is required")
+}
+
+fn canonical_entra_account(cfg: &HimmelblauConfig, account: &str) -> String {
+    cfg.canonical_account_name(account)
+        .unwrap_or_else(|| account.to_string())
+}
+
+/// First broker account matching `account_id` that belongs to the selected Entra provider.
+fn select_broker_account(
+    cfg: &HimmelblauConfig,
+    accounts: Vec<Value>,
+    account_id: Option<&str>,
+    domain: Option<&str>,
+) -> Option<(Value, String)> {
+    let provider = select_entra_provider(cfg, account_id, domain).ok()?;
+    let account_id = account_id.map(|account| canonical_entra_account(cfg, account).to_lowercase());
+    accounts.into_iter().find_map(|account| {
+        let Account { username } = serde_json::from_value(account.clone()).ok()?;
+        let requested = account_id
+            .as_ref()
+            .is_none_or(|id| *id == username.to_lowercase());
+        let matches_provider = cfg
+            .provider_for_account(&username)
+            .is_some_and(|account_provider| account_provider == provider);
+        (requested && matches_provider).then_some((account, username))
+    })
+}
+
 #[instrument(skip(client_id, account_id, domain))]
 async fn confidential_client_access_token(
     client_id: Option<String>,
@@ -600,24 +657,8 @@ async fn confidential_client_access_token(
         }
     };
 
-    let domain = if let Some(account_id) = &account_id {
-        match split_username(account_id) {
-            Some((_, domain)) => domain.to_string(),
-            None => {
-                error!("Could not split domain from input username");
-                return None;
-            }
-        }
-    } else if let Some(domain) = domain {
-        domain
-    } else if let Some(domain) = cfg.get_configured_entra_domain() {
-        // Attempt using the default domain
-        debug!(?domain, "Using default domain");
-        domain
-    } else {
-        error!("No domain is configured");
-        return None;
-    };
+    let provider = select_entra_provider(&cfg, account_id.as_deref(), domain.as_deref()).ok()?;
+    let domain = provider.domain;
 
     let db = match Db::new(&cfg.get_db_path()) {
         Ok(db) => db,
@@ -683,6 +724,7 @@ async fn confidential_client_access_token(
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let opt = HimmelblauUnixParser::parse();
+    let selected_domain = opt.domain.clone();
 
     let debug = match opt.commands {
         HimmelblauUnixOpt::Cred(CredOpt::Cert {
@@ -809,20 +851,18 @@ async fn main() -> ExitCode {
 
     macro_rules! init {
         ($cfg:expr, $account_id:expr, $domain:expr) => {{
-            let domain = if let Some(account_id) = $account_id {
-                match split_username(&account_id) {
-                    Some((_, domain)) => domain.to_string(),
-                    None => {
-                        error!("Could not split domain from input username");
-                        return ExitCode::FAILURE;
-                    }
+            let account: Option<String> = $account_id;
+            let domain: Option<String> = $domain;
+            let domain = domain.or_else(|| selected_domain.clone());
+            let provider = match select_entra_provider(&$cfg, account.as_deref(), domain.as_deref())
+            {
+                Ok(provider) => provider,
+                Err(error) => {
+                    error!(error, "Cannot select provider");
+                    return ExitCode::FAILURE;
                 }
-            } else if let Some(domain) = $domain {
-                domain
-            } else {
-                error!("No domain input provided.");
-                return ExitCode::FAILURE;
             };
+            let domain = provider.domain;
 
             let ip_versions = $cfg.get_ip_versions();
             let graph = match Graph::new(
@@ -850,6 +890,19 @@ async fn main() -> ExitCode {
             let authority = format!("https://{}/{}", $cfg.get_authority_host(&domain), tenant_id);
 
             (graph, domain, authority)
+        }};
+    }
+
+    macro_rules! credential_domain {
+        ($cfg:expr, $domain:expr) => {{
+            let domain = $domain.or_else(|| selected_domain.clone());
+            match select_entra_provider(&$cfg, None, domain.as_deref()) {
+                Ok(provider) => provider.domain,
+                Err(error) => {
+                    error!(error, "Cannot select credential provider");
+                    return ExitCode::FAILURE;
+                }
+            }
         }};
     }
 
@@ -971,7 +1024,7 @@ async fn main() -> ExitCode {
             if result.is_none() && !$skip_confidential && unsafe { libc::geteuid() } == 0 {
                 debug!("Attempting confidential client auth ...");
                 if let Some((domain, access_token)) = confidential_client_access_token(
-                    $client_id.clone(), $account_id.clone(), None
+                    $client_id.clone(), $account_id.clone(), selected_domain.clone()
                 ).await {
                     let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
                         Ok(c) => c,
@@ -999,7 +1052,10 @@ async fn main() -> ExitCode {
             // 2. Try SSO Broker
             if result.is_none() && unsafe { libc::geteuid() } != 0 {
                 debug!("Attempting SSO Broker auth ...");
-                if let Ok(broker) = BrokerClient::new().await {
+                if let (Ok(broker), Ok(cfg)) = (
+                    BrokerClient::new().await,
+                    HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)),
+                ) {
                     let session_id = Uuid::new_v4().to_string();
                     let client_ids_to_try: Vec<String> = match &$client_id {
                         Some(cid) => vec![cid.clone()],
@@ -1015,33 +1071,29 @@ async fn main() -> ExitCode {
                             &json!({"clientId": client_id.clone(), "redirectUri": session_id.clone()})
                         ).await {
                             if let Ok(accounts) = serde_json::from_value::<Accounts>(account_val) {
-                                if let Some(account) = accounts.accounts.into_iter().next() {
-                                    if let Ok(Account { username, .. }) = serde_json::from_value::<Account>(account.clone()) {
-                                        if $account_id.is_none() || $account_id.clone().map(|s| s.to_lowercase()).as_ref().unwrap_or(&"".to_string()) == &username.to_lowercase() {
-                                            if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                                                let (graph, domain, authority) = init!(cfg, Some(username), None);
-                                                let sso_url = format!("https://{}/", cfg.get_authority_host(&domain));
-                                                if let Ok(token_val) = broker.acquire_token_silently(
-                                                    "0.0", &session_id,
-                                                    &json!({
-                                                        "account": account,
-                                                        "authParameters": {
-                                                            "account": account,
-                                                            "additionalQueryParametersForAuthorization": {},
-                                                            "authority": authority,
-                                                            "authorizationType": 8,
-                                                            "clientId": client_id,
-                                                            "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
-                                                            "requestedScopes": $scopes,
-                                                            "ssoUrl": sso_url
-                                                        }
-                                                    })
-                                                ).await {
-                                                    if let Ok(token) = serde_json::from_value::<Token>(token_val) {
-                                                        result = Some((graph, token.response.access_token));
-                                                    }
-                                                }
+                                if let Some((account, username)) = select_broker_account(
+                                    &cfg, accounts.accounts, $account_id.as_deref(), selected_domain.as_deref()
+                                ) {
+                                    let (graph, domain, authority) = init!(cfg, Some(username), None);
+                                    let sso_url = format!("https://{}/", cfg.get_authority_host(&domain));
+                                    if let Ok(token_val) = broker.acquire_token_silently(
+                                        "0.0", &session_id,
+                                        &json!({
+                                            "account": account,
+                                            "authParameters": {
+                                                "account": account,
+                                                "additionalQueryParametersForAuthorization": {},
+                                                "authority": authority,
+                                                "authorizationType": 8,
+                                                "clientId": client_id,
+                                                "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
+                                                "requestedScopes": $scopes,
+                                                "ssoUrl": sso_url
                                             }
+                                        })
+                                    ).await {
+                                        if let Ok(token) = serde_json::from_value::<Token>(token_val) {
+                                            result = Some((graph, token.response.access_token));
                                         }
                                     }
                                 }
@@ -1057,6 +1109,8 @@ async fn main() -> ExitCode {
                     if unsafe { libc::geteuid() } == 0 {
                         debug!("Attempting broker on-behalf-of flow auth ...");
                         if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                            let canonical_account_id =
+                                canonical_entra_account(&cfg, &account_id);
                             let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
                             let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
                                 obtain_host_data!(domain, cfg);
@@ -1066,7 +1120,7 @@ async fn main() -> ExitCode {
                                 Some(loadable_transport_key),
                                 Some(loadable_cert_key)
                             );
-                            let user_token = auth(&app, &account_id).await;
+                            let user_token = auth(&app, &canonical_account_id).await;
                             if let Some(user_token) = &user_token {
                                 let token = on_behalf_of_token!(
                                     app, user_token, tpm, machine_key,
@@ -1123,6 +1177,7 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let domain = credential_domain!(cfg, domain);
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -1326,6 +1381,7 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let domain = credential_domain!(cfg, domain);
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -1399,6 +1455,7 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let domain = credential_domain!(cfg, domain);
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -1453,6 +1510,7 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let domain = credential_domain!(cfg, domain);
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -2290,24 +2348,36 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let req = ClientRequest::Status;
+            let req = ClientRequest::ProviderStatus;
 
             let spath = PathBuf::from(cfg.get_socket_path());
             if !spath.exists() {
                 error!(
                     "himmelblaud socket {} does not exist - is the service running?",
                     cfg.get_socket_path()
-                )
+                );
+                return ExitCode::FAILURE;
             } else {
                 match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
                     Ok(r) => match r {
-                        ClientResponse::Ok => println!("working!"),
+                        ClientResponse::ProviderStatus(providers) => {
+                            let mut all_online = !providers.is_empty();
+                            for (domain, online) in providers {
+                                println!("{domain}: {}", if online { "online" } else { "offline" });
+                                all_online &= online;
+                            }
+                            if !all_online {
+                                return ExitCode::FAILURE;
+                            }
+                        }
                         _ => {
                             error!("Error: unexpected response -> {:?}", r);
+                            return ExitCode::FAILURE;
                         }
                     },
                     Err(e) => {
                         error!("Error -> {:?}", e);
+                        return ExitCode::FAILURE;
                     }
                 }
             }
@@ -2517,7 +2587,7 @@ async fn main() -> ExitCode {
 mod tests {
     use super::HimmelblauUnixParser;
     use super::{insert_module_line, preserve_numeric_account_success};
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
     use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
     use himmelblau_unix_common::tpm::resolve_hsm_type;
     use himmelblau_unix_common::unix_config::HsmType;
@@ -2526,6 +2596,95 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn credential_domain_accepts_root_subcommand_and_default_selection() {
+        use super::{CredOpt, HimmelblauUnixOpt};
+        for (args, root, local) in [
+            (
+                vec!["aad-tool", "--domain", "a.example", "cred", "list"],
+                Some("a.example"),
+                None,
+            ),
+            (
+                vec!["aad-tool", "cred", "list", "--domain", "b.example"],
+                None,
+                Some("b.example"),
+            ),
+            (vec!["aad-tool", "cred", "list"], None, None),
+        ] {
+            let parsed = HimmelblauUnixParser::try_parse_from(args).unwrap();
+            assert_eq!(parsed.domain.as_deref(), root);
+            let HimmelblauUnixOpt::Cred(CredOpt::List { domain, .. }) = parsed.commands else {
+                panic!("expected cred list");
+            };
+            assert_eq!(domain.as_deref(), local);
+        }
+    }
+
+    #[test]
+    fn tenant_selection_resolves_aliases_and_rejects_mismatched_accounts() {
+        use super::{select_entra_provider, HimmelblauConfig};
+        let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join(format!("cli-tenants-{}.conf", uuid::Uuid::new_v4()));
+        fs::write(
+            &path,
+            "[tenant.a]\ndomain=a.example\ndefault=true\nidmap_range=200000-300000\n\
+                         [tenant.b]\ndomain=b.example\nidmap_range=300001-400000\n",
+        )
+        .unwrap();
+        let mut cfg = HimmelblauConfig::new(path.to_str()).unwrap();
+        cfg.set("a.example", "domain_aliases", "alias.example");
+        fs::remove_file(path).unwrap();
+        assert_eq!(
+            select_entra_provider(&cfg, None, None).unwrap().domain,
+            "a.example"
+        );
+        assert_eq!(
+            select_entra_provider(&cfg, None, Some("ALIAS.EXAMPLE"))
+                .unwrap()
+                .domain,
+            "a.example"
+        );
+        assert_eq!(
+            select_entra_provider(&cfg, Some("bob@b.example"), None)
+                .unwrap()
+                .domain,
+            "b.example"
+        );
+        assert!(select_entra_provider(&cfg, Some("bob@b.example"), Some("a.example")).is_err());
+        assert!(select_entra_provider(&cfg, None, Some("unknown.example")).is_err());
+
+        let accounts = vec![
+            serde_json::json!({"username": "bob@b.example"}),
+            serde_json::json!({}),
+            serde_json::json!({"username": "alice@a.example"}),
+            serde_json::json!({"username": "Carol@b.example"}),
+            serde_json::json!({"username": "riley@a.example"}),
+        ];
+        assert_eq!(
+            super::canonical_entra_account(&cfg, "riley@a"),
+            "riley@a.example"
+        );
+        let select = |account, domain| {
+            super::select_broker_account(&cfg, accounts.clone(), account, domain)
+                .map(|(_, username)| username)
+        };
+        assert_eq!(select(None, None).unwrap(), "alice@a.example");
+        assert_eq!(select(None, Some("b.example")).unwrap(), "bob@b.example");
+        assert_eq!(
+            select(Some("CAROL@B.EXAMPLE"), Some("b.example")).unwrap(),
+            "Carol@b.example"
+        );
+        assert_eq!(select(Some("riley@a"), None).unwrap(), "riley@a.example");
+        assert_eq!(
+            select(Some("riley@a"), Some("a.example")).unwrap(),
+            "riley@a.example"
+        );
+        assert!(select(Some("alice@a.example"), Some("b.example")).is_none());
+        assert!(select(Some("riley@a"), Some("b.example")).is_none());
+    }
 
     const ACCOUNT_LINE: &str =
         "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";

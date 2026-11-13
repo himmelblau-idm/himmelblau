@@ -9,9 +9,9 @@ mod error;
 mod forms;
 
 use super::common::{
-    flip_displayname_comma, oidc_issuer_matches, oidc_user_token_from_claims,
-    should_block_hello_pin_attempts, BadPinCounter, KeyType, RefreshCache, RefreshCacheEntry,
-    TotpEnrollmentRecord,
+    flip_displayname_comma, oidc_issuer_matches, oidc_provider_config, oidc_user_ids,
+    oidc_user_token_from_claims, should_block_hello_pin_attempts, BadPinCounter, KeyType,
+    RefreshCache, RefreshCacheEntry, TotpEnrollmentRecord,
 };
 use super::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -52,7 +52,6 @@ use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const OIDC_NAMESPACE: Uuid = uuid::uuid!("e669513b-1345-4853-96a7-596243184319");
 const SESSION_LIFETIME: Duration = Duration::from_secs(10 * 60);
 
 fn with_password_cache_action(
@@ -122,6 +121,7 @@ mod tests {
                 shell: None,
                 groups: vec![],
                 tenant_id: None,
+                oidc_account_id: None,
                 valid: true,
             },
         }
@@ -333,9 +333,11 @@ impl OktaProvider {
         standard: &OidcProvider,
     ) -> Result<Self, OktaError> {
         let cfg = config.lock().await;
-        let issuer = cfg.get_oidc_issuer_url().ok_or(OktaError::Configuration)?;
+        let issuer = cfg
+            .get_oidc_issuer_url(Some(domain))
+            .ok_or(OktaError::Configuration)?;
         let client_id = cfg.get_app_id(domain).ok_or(OktaError::Configuration)?;
-        let redirect_uri = cfg.get_oidc_redirect_uri();
+        let redirect_uri = cfg.get_oidc_redirect_uri(Some(domain));
         let origin = reqwest::Url::parse(&issuer)
             .map_err(|_| OktaError::Configuration)?
             .origin()
@@ -360,7 +362,7 @@ impl OktaProvider {
             client_id,
             redirect_uri,
             origin,
-            tenant_id: Uuid::new_v5(&OIDC_NAMESPACE, issuer.as_bytes()),
+            tenant_id: crate::config::oidc_tenant_id(&issuer),
             issuer,
             initialized: OnceCell::new(),
             refresh_locks: Mutex::new(HashMap::new()),
@@ -475,10 +477,11 @@ impl OktaProvider {
             return Err(diagnostics::invalid("subject_mismatch"));
         }
         let cfg = self.config.lock().await;
+        let provider = oidc_provider_config(&cfg, &self.domain)?;
         let (shell, account_claims, strip) = (
-            cfg.get_shell(None),
-            cfg.get_oidc_account_id_claims(),
-            cfg.get_oidc_account_id_strip_at_suffix(),
+            cfg.get_shell(Some(&self.domain)),
+            cfg.get_oidc_account_id_claims(Some(&self.domain)),
+            cfg.get_oidc_account_id_strip_at_suffix(Some(&self.domain)),
         );
         drop(cfg);
         let identity = oidc_user_token_from_claims(
@@ -486,6 +489,7 @@ impl OktaProvider {
             shell,
             &self.idmap,
             &self.tenant_id,
+            provider.as_ref(),
             &account_claims,
             strip,
         )
@@ -1192,19 +1196,13 @@ impl IdProvider for OktaProvider {
         // Match ordinary OIDC's pre-authentication NSS placeholder. This cannot
         // overwrite authenticated groups; those take the refresh branch above.
         let object_id = Uuid::new_v4();
+        let config = self.config.lock().await;
+        let provider = oidc_provider_config(&config, &self.domain)?;
+        drop(config);
         let cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|_| IdpError::BadRequest)?;
-        let (uid, gid) = match cache.get_user_by_name(account) {
-            Some(user) => (user.uid, user.gid),
-            None => {
-                let id = self
-                    .idmap
-                    .lock()
-                    .await
-                    .gen_to_unix(&self.tenant_id.to_string(), account)
-                    .map_err(|_| IdpError::BadRequest)?;
-                (id, id)
-            }
-        };
+        let idmap = self.idmap.lock().await;
+        let (uid, gid) =
+            oidc_user_ids(&cache, &idmap, provider.as_ref(), &self.tenant_id, account)?;
         Ok(UserTokenState::LookupOnly(UserToken {
             name: account.into(),
             spn: account.into(),
@@ -1212,7 +1210,7 @@ impl IdProvider for OktaProvider {
             real_gidnumber: Some(uid),
             gidnumber: gid,
             displayname: flip_displayname_comma(""),
-            shell: Some(self.config.lock().await.get_shell(None)),
+            shell: Some(self.config.lock().await.get_shell(Some(&self.domain))),
             groups: vec![GroupToken {
                 name: account.into(),
                 spn: account.into(),
@@ -1220,6 +1218,7 @@ impl IdProvider for OktaProvider {
                 gidnumber: gid,
             }],
             tenant_id: Some(self.tenant_id),
+            oidc_account_id: None,
             valid: true,
         }))
     }

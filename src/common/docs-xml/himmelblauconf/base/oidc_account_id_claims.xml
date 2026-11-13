@@ -4,7 +4,7 @@
            type="string_list"
            rust_type="Vec&lt;String&gt;"
            documented="true"
-           domain_specific="false"
+           domain_specific="true"
            order="210">
 <description>
 A comma-separated, ordered list of OIDC userinfo claim names to use as the
