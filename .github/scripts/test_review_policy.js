@@ -356,6 +356,8 @@ test('security dependencies and source changes require humans, ordinary version 
     patch: '-edition = "2021"\n+edition = "2024"' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: '-dep = { version = "1", features = ["32bit"] }\n+dep = { version = "1", features = ["64bit"] }' }]), ['Cargo.toml']);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'src/o365/Cargo.toml',
+    patch: '-post_install_script = "scripts/postinst"\n+post_install_script = "scripts/postrm"' }]), ['src/o365/Cargo.toml']);
   for (const filename of ['Makefile', 'flake.nix', 'default.nix']) {
     assert.deepEqual(sensitiveChanges(pr(), [{ filename, patch: '+EXTRA = value' }]), [filename]);
   }

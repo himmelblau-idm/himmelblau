@@ -32,7 +32,9 @@ function normalizeManifestDiffLine(line) {
   if (/^(?:edition|features|default-features)\s*=/i.test(trimmed)) return trimmed;
   let normalized = trimmed;
   normalized = normalized.replace(/^version\s*=\s*"[^"]*"/, 'version = "VERSION"');
-  normalized = normalized.replace(/^([\w.-]+)\s*=\s*"[^"]*"/, '$1 = "VERSION"');
+  // Only plain dependency version requirements (digit-led quoted values), not
+  // packaging hooks or other manifest strings.
+  normalized = normalized.replace(/^([\w.-]+)\s*=\s*"[0-9][^"]*"/, '$1 = "VERSION"');
   normalized = normalized.replace(/\bversion\s*=\s*"[^"]*"/g, 'version = "VERSION"');
   return normalized;
 }

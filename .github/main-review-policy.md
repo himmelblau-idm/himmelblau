@@ -165,8 +165,11 @@ After the workflow has run, configure the rule(s) covering **only `main`**:
    explicitly checked by the coordinator as well.
    Confirm the gate is satisfied only by the trusted `Evaluate main reviews`
    workflow on `main` (`.github/workflows/main-review-policy.yml`), not by
-   same-named jobs from a PR branch or fork workflow. Rulesets that can scope
-   required workflows to specific files are safer than a name-only requirement.
+   same-named jobs from a PR branch or fork workflow. Use a ruleset or branch
+   protection control that scopes the required check to that workflow file when
+   GitHub offers one. A check name or GitHub Actions expected source alone cannot
+   prove workflow isolation; if no workflow-scoping control is available, skip
+   step 2 and keep the existing native required approval count until one is.
 2. Keep requiring a pull request and the existing CI checks. Set the native
    required approval count to **0**: the custom check implements review counts
    and sensitive-path human requirements.
