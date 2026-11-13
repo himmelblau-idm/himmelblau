@@ -7592,6 +7592,10 @@ rec {
         ];
         devDependencies = [
           {
+            name = "tempfile";
+            packageId = "tempfile";
+          }
+          {
             name = "tracing-subscriber";
             packageId = "tracing-subscriber";
           }
