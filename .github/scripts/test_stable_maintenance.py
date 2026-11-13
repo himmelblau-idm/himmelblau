@@ -5122,6 +5122,25 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("split(inputs.checkpoint-ref, '/')[4]", download)
         self.assertIn('gh run download "$GITHUB_RUN_ID"', download)
         self.assertIn("artifact-download: exhausted retries", download)
+        fallback = download.split("CHECKPOINT_ARTIFACT:", 1)[1]
+        self.assertNotIn("github.run_attempt", fallback)
+
+    def test_checkpoint_artifact_fallback_uses_producer_not_consumer_attempt(self):
+        """Re-run failed jobs can leave attempt-1 artifacts while run_attempt is 2."""
+        ref = f"{sm.AUTOMATION_PREFIX}checkpoints/43279859768/1/stable-4.x/backports-3"
+        producer_attempt = ref.split("/")[4]
+        self.assertEqual(producer_attempt, "1")
+        canonical = f"maintenance-checkpoint-43279859768-{producer_attempt}-stable-4.x-backports-3"
+        consumer_attempt = "2"
+        self.assertNotEqual(
+            canonical,
+            f"maintenance-checkpoint-43279859768-{consumer_attempt}-stable-4.x-backports-3",
+        )
+        branch = BRANCH_WORKFLOW.read_text()
+        backports_4 = branch.split("\n  backports-4:\n", 1)[1].split("\n\n", 1)[0]
+        artifact_line = next(line for line in backports_4.splitlines() if "checkpoint-artifact:" in line)
+        self.assertIn("split(needs.backports-3.outputs.ref, '/')[4]", artifact_line)
+        self.assertNotIn("github.run_attempt", artifact_line)
 
     def test_workflow_has_ordered_fresh_jobs_and_only_final_publication(self):
         branch = BRANCH_WORKFLOW.read_text()
