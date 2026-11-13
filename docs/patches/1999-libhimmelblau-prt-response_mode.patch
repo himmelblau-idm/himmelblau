@@ -1,0 +1,10 @@
+--- a/src/auth.rs
++++ b/src/auth.rs
+@@ -8412,6 +8412,7 @@
+             ("response_type", "code"),
+             ("redirect_uri", redirect_uri.as_str()),
+             ("client-request-id", request_id),
++            ("response_mode", "query"),
+         ];
+         if v2_endpoint {
+             params.push(("scope", &scope));
