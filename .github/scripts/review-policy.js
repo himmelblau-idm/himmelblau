@@ -45,6 +45,10 @@ function dependencyTable(section) {
     || /^target\.[^.]+\.(?:dev-|build-)?dependencies(?:\.|$)/i.test(section);
 }
 
+function packageSection(section) {
+  return section === 'package' || section === 'workspace.package';
+}
+
 function manifestKey(line) {
   const match = /^([\w.-]+)\s*=/i.exec(line.trim());
   return match ? match[1].toLowerCase() : null;
@@ -81,7 +85,7 @@ function versionBumpOnly(patch) {
       const table = manifestTable(line.slice(1));
       if (table) {
         inDependencyTable = dependencyTable(table);
-        inPackageSection = table === 'package';
+        inPackageSection = packageSection(table);
       }
       continue;
     }
@@ -90,7 +94,7 @@ function versionBumpOnly(patch) {
     const table = manifestTable(content);
     if (table) {
       inDependencyTable = dependencyTable(table);
-      inPackageSection = table === 'package';
+      inPackageSection = packageSection(table);
     }
     const normalized = normalizeManifestDiffLine(content, inDependencyTable, inPackageSection);
     (line[0] === '+' ? added : removed).push(normalized);
