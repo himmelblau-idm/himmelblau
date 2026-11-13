@@ -5088,7 +5088,11 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         expose = stage.split("      - name: Expose only successfully uploaded checkpoint metadata", 1)[1].split("\n      - name:", 1)[0]
         # Explicit cancellation checks let recovered failures publish outputs,
         # while failure, skipped and cancelled uploads leave them unavailable.
-        self.assertIn("if: ${{ !cancelled() && steps.checkpoint-upload.outcome == 'success' }}", expose)
+        self.assertIn("steps.checkpoint-upload-retry.outcome == 'success'", expose)
+        self.assertIn("steps.checkpoint-upload.outcome == 'success'", expose)
+        self.assertIn("Retry checkpoint upload after transient artifact outage", stage)
+        self.assertIn("pipelines.actions.githubusercontent.com:443", stage)
+        self.assertIn("results-rests.actions.githubusercontent.com:443", stage)
         script = expose.split("        run: |\n", 1)[1]
         script = "\n".join(line[10:] for line in script.splitlines())
         with tempfile.TemporaryDirectory() as tmp:
@@ -5100,6 +5104,48 @@ class CheckpointMaintenanceTests(unittest.TestCase):
                    **{f"CHECKPOINT_{key.upper()}": value for key, value in values.items()}}
             subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, check=True, timeout=5)
             self.assertEqual(dict(line.split("=", 1) for line in output.read_text().splitlines()), values)
+
+    def test_branch_workflow_falls_back_to_canonical_checkpoint_artifact_names(self):
+        branch = BRANCH_WORKFLOW.read_text()
+        stages = (*sm.CHECKPOINT_STAGES, "final")
+        for previous, current in zip(stages, stages[1:]):
+            block = branch.split(f"\n  {current}:\n", 1)[1].split("\n\n", 1)[0]
+            self.assertIn(
+                f"split(needs.{previous}.outputs.ref, '/')[4]",
+                block,
+            )
+            self.assertIn(
+                f"checkpoint-artifact: ${{{{ needs.{previous}.outputs.artifact || format('maintenance-checkpoint-{{0}}-{{1}}-{{2}}-{previous}', github.run_id, split(needs.{previous}.outputs.ref, '/')[4], inputs.branch) }}}}",
+                block,
+            )
+
+    def test_stage_download_uses_canonical_checkpoint_name_when_input_missing(self):
+        stage = STAGE_WORKFLOW.read_text()
+        download = stage.split("      - name: Download this run's exact previous-stage progress", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("inputs.checkpoint-artifact || format('maintenance-checkpoint-{0}-{1}-{2}-{3}'", download)
+        self.assertIn("split(inputs.checkpoint-ref, '/')[4]", download)
+        self.assertIn('gh run download "$GITHUB_RUN_ID"', download)
+        self.assertIn("artifact-download: exhausted retries", download)
+        fallback = download.split("CHECKPOINT_ARTIFACT:", 1)[1]
+        self.assertNotIn("github.run_attempt", fallback)
+        self.assertIn("Retry sanitized maintenance results upload", stage)
+
+    def test_checkpoint_artifact_fallback_uses_producer_not_consumer_attempt(self):
+        """Re-run failed jobs can leave attempt-1 artifacts while run_attempt is 2."""
+        ref = f"{sm.AUTOMATION_PREFIX}checkpoints/43279859768/1/stable-4.x/backports-3"
+        producer_attempt = ref.split("/")[4]
+        self.assertEqual(producer_attempt, "1")
+        canonical = f"maintenance-checkpoint-43279859768-{producer_attempt}-stable-4.x-backports-3"
+        consumer_attempt = "2"
+        self.assertNotEqual(
+            canonical,
+            f"maintenance-checkpoint-43279859768-{consumer_attempt}-stable-4.x-backports-3",
+        )
+        branch = BRANCH_WORKFLOW.read_text()
+        backports_4 = branch.split("\n  backports-4:\n", 1)[1].split("\n\n", 1)[0]
+        artifact_line = next(line for line in backports_4.splitlines() if "checkpoint-artifact:" in line)
+        self.assertIn("split(needs.backports-3.outputs.ref, '/')[4]", artifact_line)
+        self.assertNotIn("github.run_attempt", artifact_line)
 
     def test_workflow_has_ordered_fresh_jobs_and_only_final_publication(self):
         branch = BRANCH_WORKFLOW.read_text()
@@ -5120,7 +5166,15 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("python3 -u", premutation)
         self.assertNotIn("if:", premutation)
         self.assertNotIn("workflow_run:", stage + branch + WORKFLOW.read_text())
-        self.assertNotIn("continue-on-error:", stage + branch)
+        for artifact_step in (
+            "Preserve exact checkpoint state for the next job",
+            "Preserve sanitized maintenance results",
+        ):
+            block = stage.split(f"      - name: {artifact_step}", 1)[1].split("\n      - name:", 1)[0]
+            if "continue-on-error: true" in block:
+                self.assertIn("Retry", stage.split(block, 1)[1][:200])
+        branch_yaml = branch + WORKFLOW.read_text()
+        self.assertNotIn("continue-on-error:", branch_yaml)
         for name in ("Release —", "Validate —", "Create scoped publication token", "Publish —"):
             block = stage.split("      - name: " + name, 1)[1].split("\n      - name:", 1)[0]
             self.assertIn("inputs.stage == 'final'", block)
