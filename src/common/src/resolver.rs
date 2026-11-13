@@ -74,6 +74,8 @@ struct PasswordCacheGeneration {
     password_generation: Option<u64>,
     uuid: Uuid,
     tenant_id: Option<Uuid>,
+    // Retain the revocation fence even after later successful writes.
+    revocation_generation: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -322,6 +324,7 @@ mod tests {
                     Ok(UserTokenState::LookupOnly(test_token()))
                 }
                 6 => Ok(UserTokenState::Update(self.auth_token())),
+                8 => Ok(UserTokenState::NotFound),
                 _ => Ok(UserTokenState::UseCached),
             }
         }
@@ -2150,6 +2153,357 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_not_found_cannot_delete_a_newer_refresh() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        let mut refreshed = token.clone();
+        refreshed.groups.clear();
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut refreshed, 2, None)
+                .await
+                .unwrap(),
+            CacheUpdateResult::Updated
+        );
+        assert!(!resolver
+            .delete_cache_usertoken_guarded(&token, 1)
+            .await
+            .unwrap());
+        let cached = resolver.get_cached_usertokens().await.unwrap();
+        assert_eq!(cached.len(), 1);
+        assert!(cached[0].groups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_not_found_does_not_tombstone_replacement_name() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver.delete_cache_usertoken(token.uuid).await.unwrap();
+        let mut replacement = token.clone();
+        replacement.uuid = uuid::Uuid::new_v4();
+        resolver
+            .set_cache_usertoken(&mut replacement, false)
+            .await
+            .unwrap();
+
+        assert!(!resolver
+            .delete_cache_usertoken_guarded(&token, 1)
+            .await
+            .unwrap());
+        assert_eq!(
+            resolver.get_cached_usertokens().await.unwrap()[0].uuid,
+            replacement.uuid
+        );
+    }
+
+    #[tokio::test]
+    async fn authoritative_deletion_denies_older_staged_authentication() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        let mut session = stage_test_pin(&resolver, true).await;
+        let generation = resolver.password_generation.fetch_add(1, Ordering::Relaxed);
+        assert!(resolver
+            .delete_cache_usertoken_guarded(&token, generation)
+            .await
+            .unwrap());
+        let response = resolver
+            .pam_account_authenticate_step(
+                &mut session,
+                PamAuthRequest::SetupPin {
+                    pin: "123456".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, PamAuthResponse::Denied(_)));
+        assert!(matches!(session, AuthSession::Denied));
+        assert!(resolver.get_cached_usertokens().await.unwrap().is_empty());
+
+        // A genuinely later successful authentication can repopulate the row.
+        let mut reauthenticated = token.clone();
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut reauthenticated, generation + 1, Some("new"))
+                .await
+                .unwrap(),
+            CacheUpdateResult::Updated
+        );
+        assert!(resolver
+            .check_cache_userpassword(token.uuid, "new")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn authoritative_deletion_still_denies_staged_auth_after_repopulation() {
+        for direct_totp in [false, true] {
+            for staged_password in [false, true] {
+                for repopulation in ["password", "passwordless", "refresh"] {
+                    let resolver = setup_resolver().await;
+                    let token = test_token();
+                    let mut session =
+                        stage_test_local_auth(&resolver, staged_password, direct_totp).await;
+                    let generation = resolver.password_generation.fetch_add(1, Ordering::Relaxed);
+                    assert!(resolver
+                        .delete_cache_usertoken_guarded(&token, generation)
+                        .await
+                        .unwrap());
+                    if repopulation == "refresh" {
+                        resolver.client.user_get_error.store(6, Ordering::Release);
+                        resolver
+                            .refresh_usertoken(&Id::Name(token.spn.clone()), Some(token.clone()))
+                            .await
+                            .unwrap();
+                    } else {
+                        complete_test_auth(&resolver, repopulation == "password").await;
+                    }
+                    resolver.client.user_get_error.store(4, Ordering::Release);
+                    let response = resolver
+                        .pam_account_authenticate_step(
+                            &mut session,
+                            if direct_totp {
+                                PamAuthRequest::HelloTOTP {
+                                    cred: "cache-password".to_string(),
+                                }
+                            } else {
+                                PamAuthRequest::SetupPin {
+                                    pin: "123456".to_string(),
+                                }
+                            },
+                        )
+                        .await
+                        .unwrap();
+                    assert!(matches!(response, PamAuthResponse::Denied(_)));
+                    assert!(matches!(session, AuthSession::Denied));
+                    let cached = resolver.get_cached_usertokens().await.unwrap();
+                    assert_eq!(cached.len(), 1);
+                    assert_eq!(cached[0].uuid, token.uuid);
+                    for password in ["staged-secret", "late-secret"] {
+                        assert!(!resolver
+                            .check_cache_userpassword(token.uuid, password)
+                            .await
+                            .unwrap());
+                    }
+                    assert_eq!(
+                        resolver
+                            .check_cache_userpassword(token.uuid, "new-secret")
+                            .await
+                            .unwrap(),
+                        repopulation == "password"
+                    );
+                    // Retaining the fence must not block a genuinely new login.
+                    complete_test_auth(&resolver, true).await;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn authoritative_deletion_revokes_staged_auth_after_alias_eviction() {
+        for alias in ["gid", "name", "spn"] {
+            for direct_totp in [false, true] {
+                let resolver = setup_resolver().await;
+                let snapshot = test_token();
+                resolver.client.user_get_error.store(4, Ordering::Release);
+                let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+                let (mut session, _) = resolver
+                    .pam_account_authenticate_init(&snapshot.spn, "sshd", false, false, shutdown_rx)
+                    .await
+                    .unwrap();
+                let mut replacement = snapshot.clone();
+                replacement.uuid = uuid::Uuid::new_v4();
+                replacement.name = "replacement".to_string();
+                replacement.spn = "replacement@example.com".to_string();
+                replacement.gidnumber += 1;
+                let lookup = match alias {
+                    "gid" => {
+                        replacement.gidnumber = snapshot.gidnumber;
+                        Id::Gid(snapshot.gidnumber)
+                    }
+                    "name" => {
+                        replacement.name = snapshot.name.clone();
+                        Id::Name(snapshot.name.clone())
+                    }
+                    _ => {
+                        replacement.spn = snapshot.spn.clone();
+                        Id::Name(snapshot.spn.clone())
+                    }
+                };
+                let replacement_generation =
+                    resolver.password_generation.fetch_add(1, Ordering::Relaxed);
+                assert_eq!(
+                    resolver
+                        .set_cache_usertoken_guarded(
+                            &mut replacement,
+                            replacement_generation,
+                            Some("b-secret"),
+                        )
+                        .await
+                        .unwrap(),
+                    CacheUpdateResult::Updated
+                );
+                assert!(resolver
+                    .get_cached_usertoken(&Id::Name(snapshot.uuid.hyphenated().to_string()))
+                    .await
+                    .unwrap()
+                    .1
+                    .is_none());
+                // The already-open A session accepts credentials AFTER B's write.
+                let response = resolver
+                    .pam_account_authenticate_step(
+                        &mut session,
+                        PamAuthRequest::Password {
+                            cred: if direct_totp {
+                                "direct-totp"
+                            } else {
+                                "staged-secret"
+                            }
+                            .to_string(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    response,
+                    PamAuthResponse::SetupPin { .. } | PamAuthResponse::HelloTOTP { .. }
+                ));
+                resolver.client.user_get_error.store(8, Ordering::Release);
+                let refreshed = resolver
+                    .refresh_usertoken(&lookup, Some(snapshot.clone()))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(refreshed.uuid, replacement.uuid);
+                assert!(resolver.check_nxcache(&lookup).await.is_none());
+                resolver.client.user_get_error.store(4, Ordering::Release);
+                let response = resolver
+                    .pam_account_authenticate_step(
+                        &mut session,
+                        if direct_totp {
+                            PamAuthRequest::HelloTOTP {
+                                cred: "cache-password".to_string(),
+                            }
+                        } else {
+                            PamAuthRequest::SetupPin {
+                                pin: "123456".to_string(),
+                            }
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert!(matches!(response, PamAuthResponse::Denied(_)));
+                assert!(matches!(session, AuthSession::Denied));
+                let cached = resolver.get_cached_usertokens().await.unwrap();
+                assert_eq!(cached.len(), 1);
+                assert_eq!(cached[0].uuid, replacement.uuid);
+                assert!(resolver
+                    .check_cache_userpassword(replacement.uuid, "b-secret")
+                    .await
+                    .unwrap());
+                for password in ["staged-secret", "late-secret"] {
+                    assert!(!resolver
+                        .check_cache_userpassword(snapshot.uuid, password)
+                        .await
+                        .unwrap());
+                }
+                // The UUID-only fence must not be copied to B's shared alias.
+                assert_eq!(
+                    resolver
+                        .set_cache_usertoken_guarded(
+                            &mut replacement,
+                            replacement_generation,
+                            Some("b-secret")
+                        )
+                        .await
+                        .unwrap(),
+                    CacheUpdateResult::Superseded
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn authoritative_deletion_uses_current_aliases_after_reassignment() {
+        for alias in ["gid", "name", "spn"] {
+            // An update to B after the deletion observation must not protect A.
+            for replacement_generation in [2, 4] {
+                let resolver = setup_resolver().await;
+                let snapshot = test_token();
+                let mut current = snapshot.clone();
+                let mut replacement = snapshot.clone();
+                replacement.uuid = uuid::Uuid::new_v4();
+                replacement.name = "replacement".to_string();
+                replacement.spn = "replacement@example.com".to_string();
+                replacement.gidnumber += 2;
+                let lookup = match alias {
+                    "gid" => {
+                        current.gidnumber += 1;
+                        replacement.gidnumber = snapshot.gidnumber;
+                        Id::Gid(snapshot.gidnumber)
+                    }
+                    "name" => {
+                        current.name = "renamed".to_string();
+                        replacement.name = snapshot.name.clone();
+                        Id::Name(snapshot.name.clone())
+                    }
+                    _ => {
+                        current.spn = "renamed@example.com".to_string();
+                        replacement.spn = snapshot.spn.clone();
+                        Id::Name(snapshot.spn.clone())
+                    }
+                };
+                resolver
+                    .set_cache_usertoken_guarded(&mut current, 1, Some("a-secret"))
+                    .await
+                    .unwrap();
+                resolver
+                    .set_cache_usertoken_guarded(
+                        &mut replacement,
+                        replacement_generation,
+                        Some("b-secret"),
+                    )
+                    .await
+                    .unwrap();
+                resolver.password_generation.store(3, Ordering::Relaxed);
+                resolver.client.user_get_error.store(8, Ordering::Release);
+                let refreshed = resolver
+                    .refresh_usertoken(&lookup, Some(snapshot.clone()))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(refreshed.uuid, replacement.uuid);
+                assert!(resolver.check_nxcache(&lookup).await.is_none());
+                let cached = resolver.get_cached_usertokens().await.unwrap();
+                assert_eq!(cached.len(), 1);
+                assert_eq!(cached[0].uuid, replacement.uuid);
+                assert!(!resolver
+                    .check_cache_userpassword(snapshot.uuid, "a-secret")
+                    .await
+                    .unwrap());
+                assert!(resolver
+                    .check_cache_userpassword(replacement.uuid, "b-secret")
+                    .await
+                    .unwrap());
+                // B's aliases must not inherit A's newer deletion tombstone.
+                assert_eq!(
+                    resolver
+                        .set_cache_usertoken_guarded(&mut replacement, 2, Some("older-b"))
+                        .await
+                        .unwrap(),
+                    CacheUpdateResult::Superseded
+                );
+                assert_eq!(
+                    resolver
+                        .set_cache_usertoken_guarded(&mut current, 2, Some("stale-a"))
+                        .await
+                        .unwrap(),
+                    CacheUpdateResult::IdentityChanged
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn cache_generation_guard_does_not_block_unrelated_identities() {
         let resolver = setup_resolver().await;
         let mut unrelated = test_token();
@@ -3255,6 +3609,14 @@ where
         let same_identity = |latest: &&PasswordCacheGeneration| {
             latest.uuid == token.uuid && latest.tenant_id == token.tenant_id
         };
+        let revocation_generation = keys
+            .iter()
+            .filter_map(|key| generations.get(key))
+            .filter_map(|latest| latest.revocation_generation)
+            .max();
+        if revocation_generation.is_some_and(|revoked| revoked >= generation) {
+            return Ok(CacheUpdateResult::IdentityChanged);
+        }
         if keys
             .iter()
             .filter_map(|key| generations.get(key))
@@ -3315,6 +3677,7 @@ where
             },
             uuid: token.uuid,
             tenant_id: token.tenant_id,
+            revocation_generation,
         };
         generations.extend(keys.into_iter().map(|key| (key, latest)));
         if let Some(password) = password {
@@ -3428,6 +3791,85 @@ where
             .map_err(|_| ResolverError)
     }
 
+    async fn delete_cache_usertoken_guarded(
+        &self,
+        token: &UserToken,
+        generation: u64,
+    ) -> ResolverResult<bool> {
+        let mut generations = self.password_cache_generations.lock().await;
+        let mut dbtxn = self.db.write().await;
+        let current = dbtxn
+            .get_account(&Id::Name(token.uuid.hyphenated().to_string()))
+            .map_err(|_| ResolverError)?;
+        if current.as_ref().is_some_and(|(current, _)| {
+            current.uuid != token.uuid || current.tenant_id != token.tenant_id
+        }) {
+            return Ok(false);
+        }
+        let tombstone = PasswordCacheGeneration {
+            identity_generation: generation,
+            password_generation: Some(generation),
+            uuid: token.uuid,
+            tenant_id: token.tenant_id,
+            revocation_generation: Some(generation),
+        };
+        if current.is_none() {
+            // An alias-conflicting write may already have evicted this row.
+            // Revoke its outstanding sessions without touching the replacement's
+            // aliases or allowing the caller to negative-cache those aliases.
+            let key = PasswordCacheKey::Uuid(token.uuid);
+            if generations.get(&key).is_some_and(|latest| {
+                latest.identity_generation > generation || latest.tenant_id != token.tenant_id
+            }) {
+                return Ok(false);
+            }
+            dbtxn.commit().map_err(|_| ResolverError)?;
+            generations.insert(key, tombstone);
+            return Ok(false);
+        }
+        // The provider lookup may have snapshotted aliases which have since
+        // moved to another account. Delete by the current UUID row and fence its
+        // current aliases, never the aliases now owned by that other account.
+        let current_token = current.as_ref().map_or(token, |(current, _)| current);
+        let keys = [
+            PasswordCacheKey::Uuid(current_token.uuid),
+            PasswordCacheKey::Name(current_token.name.clone()),
+            PasswordCacheKey::Spn(current_token.spn.clone()),
+            PasswordCacheKey::Gid(current_token.gidnumber),
+        ];
+        if keys
+            .iter()
+            .filter_map(|key| generations.get(key))
+            .any(|latest| latest.identity_generation > generation)
+        {
+            return Ok(false);
+        }
+        for key in [
+            Id::Name(current_token.name.clone()),
+            Id::Name(current_token.spn.clone()),
+            Id::Gid(current_token.gidnumber),
+        ] {
+            if dbtxn
+                .get_account(&key)
+                .map_err(|_| ResolverError)?
+                .is_some_and(|(current, _)| {
+                    current.uuid != token.uuid || current.tenant_id != token.tenant_id
+                })
+            {
+                return Ok(false);
+            }
+        }
+        if current.is_some() {
+            dbtxn
+                .delete_account(token.uuid)
+                .map_err(|_| ResolverError)?;
+        }
+        dbtxn.commit().map_err(|_| ResolverError)?;
+
+        generations.extend(keys.into_iter().map(|key| (key, tombstone)));
+        Ok(true)
+    }
+
     async fn delete_cache_grouptoken(&self, g_uuid: Uuid) -> ResolverResult<()> {
         let mut dbtxn = self.db.write().await;
         dbtxn
@@ -3508,8 +3950,23 @@ where
             Ok(UserTokenState::NotFound) => {
                 // It previously existed, so now purge it.
                 if let Some((tok, _)) = token {
-                    self.delete_cache_usertoken(tok.uuid).await?;
+                    if !self
+                        .delete_cache_usertoken_guarded(&tok, generation)
+                        .await?
+                    {
+                        return self
+                            .get_cached_usertoken(account_id)
+                            .await
+                            .map(|(expired, token)| token.map(|token| (token, !expired)));
+                    }
                 };
+                // Deleting the snapshotted identity can leave this lookup's
+                // alias owned by a different account. Return that account rather
+                // than reporting it absent or publishing a negative entry.
+                let (expired, current) = self.get_cached_usertoken(account_id).await?;
+                if let Some(current) = current {
+                    return Ok(Some((current, !expired)));
+                }
                 // Cache the NX here.
                 self.set_nxcache(account_id).await;
                 Ok(None)
