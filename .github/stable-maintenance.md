@@ -137,17 +137,12 @@ checkpoint ref was pushed. Existing phase failures can still propagate a fully
 uploaded recovered checkpoint for draft publication.
 
 Use Actions' **Re-run failed jobs** to resume a failed, pre-publication stage
-from its predecessor without repeating successful earlier stages. Reruns keep the
-original trusted tooling snapshot; checkpoints from earlier attempts of the same
-run are allowed, but another run's state is not. A **re-run failed jobs** resume
-only applies workflow fixes that were already present when that run started; merge
-new maintenance workflow changes on `main`, then either **workflow_dispatch** a
-fresh run (preferred) or re-run failed jobs only after confirming the retained
-workflow snapshot already contains the fix. A full new dispatch starts from stable
-again and does not automatically trust an abandoned staging branch. Checkpoint
-artifacts expire after seven days; after expiration, start a new dispatch.
-Checkpoint refs are retained for inspection (no automatic branch deletion in this
-change).
+from its predecessor without repeating successful earlier stages. Reruns keep the original trusted
+tooling snapshot; checkpoints from earlier attempts of the same run are allowed,
+but another run's state is not. A full new dispatch starts from stable again and
+does not automatically trust an abandoned staging branch. Checkpoint artifacts
+expire after seven days; after expiration, start a new dispatch. Checkpoint refs
+are retained for inspection (no automatic branch deletion in this change).
 
 Each hosted job still has a six-hour hard limit. A persistently unavailable
 service or an individually oversized non-backport phase can still fail closed;

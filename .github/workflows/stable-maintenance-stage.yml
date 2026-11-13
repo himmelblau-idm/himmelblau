@@ -9,6 +9,9 @@ on:
       stage:
         type: string
         required: true
+      incomplete-stages:
+        type: string
+        default: ''
       previous-stage:
         type: string
         default: ''
@@ -24,6 +27,9 @@ on:
       checkpoint-artifact:
         type: string
         default: ''
+      failure-cooldowns:
+        type: string
+        default: ''
     outputs:
       proceed:
         value: ${{ jobs.maintain.outputs.proceed }}
@@ -35,6 +41,8 @@ on:
         value: ${{ jobs.maintain.outputs.ref }}
       artifact:
         value: ${{ jobs.maintain.outputs.artifact }}
+      network-not-before:
+        value: ${{ jobs.maintain.outputs.network-not-before }}
 permissions:
   contents: read
   pull-requests: read
@@ -57,10 +65,13 @@ jobs:
       digest: ${{ steps.available.outputs.digest }}
       ref: ${{ steps.available.outputs.ref }}
       artifact: ${{ steps.available.outputs.artifact }}
+      network-not-before: ${{ steps.network-cooldown.outputs.deadline }}
     env:
       MAINTENANCE_BUILD_IMAGE: himmelblau-stable-maintenance:local
       TARGET_BRANCH: ${{ inputs.branch }}
       MAINTENANCE_STAGE: ${{ inputs.stage }}
+      MAINTENANCE_INCOMPLETE_STAGES: ${{ inputs.incomplete-stages }}
+      MAINTENANCE_FAILURE_COOLDOWNS: ${{ inputs.failure-cooldowns }}
       MAINTENANCE_TOOLING_COMMIT: ${{ github.sha }}
     steps:
       - name: Harden the runner (block unapproved outbound calls)
@@ -141,6 +152,7 @@ jobs:
         # Resume jobs retain guard, checkpoint, mutation and recovery checks.
         env:
           MAINTENANCE_PREMUTATION_QUICK: ${{ inputs.stage != 'dependencies' && '1' || '' }}
+          MAINTENANCE_INCOMPLETE_STAGES: ''
         run: >-
           env -u MAINTENANCE_TOOLING_COMMIT PYTHONDONTWRITEBYTECODE=1
           python3 -u tooling/.github/scripts/test_stable_maintenance.py
@@ -183,7 +195,7 @@ jobs:
 
 
       - name: Download this run's exact previous-stage progress
-        if: inputs.stage != 'dependencies'
+        if: inputs.checkpoint-ref != ''
         env:
           CHECKPOINT_ARTIFACT: >-
             ${{ inputs.checkpoint-artifact || format('maintenance-checkpoint-{0}-{1}-{2}-{3}',
@@ -207,7 +219,7 @@ jobs:
           done
 
       - name: Resume — verify state digest, trusted snapshot and exact staged commit
-        if: inputs.stage != 'dependencies'
+        if: inputs.checkpoint-ref != ''
         env:
           PREVIOUS_STAGE: ${{ inputs.previous-stage }}
           CHECKPOINT_HEAD: ${{ inputs.checkpoint-head }}
@@ -239,7 +251,7 @@ jobs:
           guard --branch "$TARGET_BRANCH"
 
       - name: Initialize — snapshot trusted refs and backport cutoff
-        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage == 'dependencies' }}
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.checkpoint-ref == '' }}
         run: >-
           python3 tooling/.github/scripts/stable_maintenance.py
           --repo-dir source --state-dir "$STATE_DIR"
@@ -471,6 +483,14 @@ jobs:
           python3 tooling/.github/scripts/stable_maintenance.py
           --repo-dir source --state-dir "$STATE_DIR"
           report --branch "$TARGET_BRANCH"
+
+      - name: Expose network cooldown for downstream continuation
+        id: network-cooldown
+        if: always()
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          emit-cooldown --branch "$TARGET_BRANCH"
 
       - name: Preserve sanitized maintenance results
         id: report-upload

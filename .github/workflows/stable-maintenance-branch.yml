@@ -18,86 +18,93 @@ jobs:
     secrets: inherit
 
   vet:
-    needs: dependencies
-    if: ${{ !cancelled() && needs.dependencies.outputs.proceed == 'true' && needs.dependencies.outputs.head != '' }}
+    needs: [dependencies]
+    # Attempt later stages after failure; use the newest available checkpoint.
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
       stage: vet
-      previous-stage: dependencies
-      checkpoint-head: ${{ needs.dependencies.outputs.head }}
-      checkpoint-digest: ${{ needs.dependencies.outputs.digest }}
-      checkpoint-ref: ${{ needs.dependencies.outputs.ref }}
-      checkpoint-artifact: ${{ needs.dependencies.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-dependencies', github.run_id, split(needs.dependencies.outputs.ref, '/')[4], inputs.branch) }}
+      failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }}
+      previous-stage: ${{ (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      checkpoint-head: ${{ needs.dependencies.outputs.head || '' }}
+      checkpoint-digest: ${{ needs.dependencies.outputs.digest || '' }}
+      checkpoint-ref: ${{ needs.dependencies.outputs.ref || '' }}
+      checkpoint-artifact: ${{ needs.dependencies.outputs.artifact || '' }}
     secrets: inherit
 
   backports-1:
-    needs: vet
-    if: ${{ !cancelled() && needs.vet.outputs.proceed == 'true' && needs.vet.outputs.head != '' }}
+    needs: [dependencies, vet]
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
       stage: backports-1
-      previous-stage: vet
-      checkpoint-head: ${{ needs.vet.outputs.head }}
-      checkpoint-digest: ${{ needs.vet.outputs.digest }}
-      checkpoint-ref: ${{ needs.vet.outputs.ref }}
-      checkpoint-artifact: ${{ needs.vet.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-vet', github.run_id, split(needs.vet.outputs.ref, '/')[4], inputs.branch) }}
+      failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }}
+      previous-stage: ${{ (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      checkpoint-head: ${{ needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
+      checkpoint-digest: ${{ needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
+      checkpoint-ref: ${{ needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
+      checkpoint-artifact: ${{ needs.vet.outputs.artifact || needs.dependencies.outputs.artifact || '' }}
     secrets: inherit
 
   backports-2:
-    needs: backports-1
-    if: ${{ !cancelled() && needs.backports-1.outputs.proceed == 'true' && needs.backports-1.outputs.head != '' }}
+    needs: [dependencies, vet, backports-1]
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
       stage: backports-2
-      previous-stage: backports-1
-      checkpoint-head: ${{ needs.backports-1.outputs.head }}
-      checkpoint-digest: ${{ needs.backports-1.outputs.digest }}
-      checkpoint-ref: ${{ needs.backports-1.outputs.ref }}
-      checkpoint-artifact: ${{ needs.backports-1.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-1', github.run_id, split(needs.backports-1.outputs.ref, '/')[4], inputs.branch) }}
+      failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }},${{ needs.backports-1.outputs.network-not-before }}
+      previous-stage: ${{ (needs.backports-1.outputs.artifact != '' && 'backports-1') || (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      checkpoint-head: ${{ needs.backports-1.outputs.head || needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
+      checkpoint-digest: ${{ needs.backports-1.outputs.digest || needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
+      checkpoint-ref: ${{ needs.backports-1.outputs.ref || needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
+      checkpoint-artifact: ${{ needs.backports-1.outputs.artifact || needs.vet.outputs.artifact || needs.dependencies.outputs.artifact || '' }}
     secrets: inherit
 
   backports-3:
-    needs: backports-2
-    if: ${{ !cancelled() && needs.backports-2.outputs.proceed == 'true' && needs.backports-2.outputs.head != '' }}
+    needs: [dependencies, vet, backports-1, backports-2]
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
       stage: backports-3
-      previous-stage: backports-2
-      checkpoint-head: ${{ needs.backports-2.outputs.head }}
-      checkpoint-digest: ${{ needs.backports-2.outputs.digest }}
-      checkpoint-ref: ${{ needs.backports-2.outputs.ref }}
-      checkpoint-artifact: ${{ needs.backports-2.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-2', github.run_id, split(needs.backports-2.outputs.ref, '/')[4], inputs.branch) }}
+      failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }},${{ needs.backports-1.outputs.network-not-before }},${{ needs.backports-2.outputs.network-not-before }}
+      previous-stage: ${{ (needs.backports-2.outputs.artifact != '' && 'backports-2') || (needs.backports-1.outputs.artifact != '' && 'backports-1') || (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      checkpoint-head: ${{ needs.backports-2.outputs.head || needs.backports-1.outputs.head || needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
+      checkpoint-digest: ${{ needs.backports-2.outputs.digest || needs.backports-1.outputs.digest || needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
+      checkpoint-ref: ${{ needs.backports-2.outputs.ref || needs.backports-1.outputs.ref || needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
+      checkpoint-artifact: ${{ needs.backports-2.outputs.artifact || needs.backports-1.outputs.artifact || needs.vet.outputs.artifact || needs.dependencies.outputs.artifact || '' }}
     secrets: inherit
 
   backports-4:
-    needs: backports-3
-    if: ${{ !cancelled() && needs.backports-3.outputs.proceed == 'true' && needs.backports-3.outputs.head != '' }}
+    needs: [dependencies, vet, backports-1, backports-2, backports-3]
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
       stage: backports-4
-      previous-stage: backports-3
-      checkpoint-head: ${{ needs.backports-3.outputs.head }}
-      checkpoint-digest: ${{ needs.backports-3.outputs.digest }}
-      checkpoint-ref: ${{ needs.backports-3.outputs.ref }}
-      checkpoint-artifact: ${{ needs.backports-3.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-3', github.run_id, split(needs.backports-3.outputs.ref, '/')[4], inputs.branch) }}
+      failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }},${{ needs.backports-1.outputs.network-not-before }},${{ needs.backports-2.outputs.network-not-before }},${{ needs.backports-3.outputs.network-not-before }}
+      previous-stage: ${{ (needs.backports-3.outputs.artifact != '' && 'backports-3') || (needs.backports-2.outputs.artifact != '' && 'backports-2') || (needs.backports-1.outputs.artifact != '' && 'backports-1') || (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      checkpoint-head: ${{ needs.backports-3.outputs.head || needs.backports-2.outputs.head || needs.backports-1.outputs.head || needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
+      checkpoint-digest: ${{ needs.backports-3.outputs.digest || needs.backports-2.outputs.digest || needs.backports-1.outputs.digest || needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
+      checkpoint-ref: ${{ needs.backports-3.outputs.ref || needs.backports-2.outputs.ref || needs.backports-1.outputs.ref || needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
+      checkpoint-artifact: ${{ needs.backports-3.outputs.artifact || needs.backports-2.outputs.artifact || needs.backports-1.outputs.artifact || needs.vet.outputs.artifact || needs.dependencies.outputs.artifact || '' }}
     secrets: inherit
 
   final:
-    needs: backports-4
-    if: ${{ !cancelled() && needs.backports-4.outputs.proceed == 'true' && needs.backports-4.outputs.head != '' }}
+    needs: [dependencies, vet, backports-1, backports-2, backports-3, backports-4]
+    if: ${{ always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false') }}
     uses: ./.github/workflows/stable-maintenance-stage.yml
     with:
       branch: ${{ inputs.branch }}
       stage: final
-      previous-stage: backports-4
-      checkpoint-head: ${{ needs.backports-4.outputs.head }}
-      checkpoint-digest: ${{ needs.backports-4.outputs.digest }}
-      checkpoint-ref: ${{ needs.backports-4.outputs.ref }}
-      checkpoint-artifact: ${{ needs.backports-4.outputs.artifact || format('maintenance-checkpoint-{0}-{1}-{2}-backports-4', github.run_id, split(needs.backports-4.outputs.ref, '/')[4], inputs.branch) }}
+      failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }},${{ needs.backports-1.outputs.network-not-before }},${{ needs.backports-2.outputs.network-not-before }},${{ needs.backports-3.outputs.network-not-before }},${{ needs.backports-4.outputs.network-not-before }}
+      incomplete-stages: "${{ needs.dependencies.outputs.artifact == '' && 'dependencies,' || '' }}${{ needs.vet.outputs.artifact == '' && 'vet,' || '' }}${{ needs.backports-1.outputs.artifact == '' && 'backports-1,' || '' }}${{ needs.backports-2.outputs.artifact == '' && 'backports-2,' || '' }}${{ needs.backports-3.outputs.artifact == '' && 'backports-3,' || '' }}${{ needs.backports-4.outputs.artifact == '' && 'backports-4,' || '' }}"
+      previous-stage: ${{ (needs.backports-4.outputs.artifact != '' && 'backports-4') || (needs.backports-3.outputs.artifact != '' && 'backports-3') || (needs.backports-2.outputs.artifact != '' && 'backports-2') || (needs.backports-1.outputs.artifact != '' && 'backports-1') || (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      checkpoint-head: ${{ needs.backports-4.outputs.head || needs.backports-3.outputs.head || needs.backports-2.outputs.head || needs.backports-1.outputs.head || needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
+      checkpoint-digest: ${{ needs.backports-4.outputs.digest || needs.backports-3.outputs.digest || needs.backports-2.outputs.digest || needs.backports-1.outputs.digest || needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
+      checkpoint-ref: ${{ needs.backports-4.outputs.ref || needs.backports-3.outputs.ref || needs.backports-2.outputs.ref || needs.backports-1.outputs.ref || needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
+      checkpoint-artifact: ${{ needs.backports-4.outputs.artifact || needs.backports-3.outputs.artifact || needs.backports-2.outputs.artifact || needs.backports-1.outputs.artifact || needs.vet.outputs.artifact || needs.dependencies.outputs.artifact || '' }}
     secrets: inherit
-
