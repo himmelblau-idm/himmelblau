@@ -198,12 +198,22 @@ jobs:
       - name: Download this run's exact previous-stage progress
         if: inputs.checkpoint-ref != ''
         env:
-          CHECKPOINT_ARTIFACT: >-
-            ${{ inputs.checkpoint-artifact || format('maintenance-checkpoint-{0}-{1}-{2}-{3}',
-            github.run_id, split(inputs.checkpoint-ref, '/')[4], inputs.branch, inputs.previous-stage) }}
+          CHECKPOINT_ARTIFACT: ${{ inputs.checkpoint-artifact }}
+          CHECKPOINT_REF: ${{ inputs.checkpoint-ref }}
+          PREVIOUS_STAGE: ${{ inputs.previous-stage }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Actions expressions have no split function. Resolve a missing name
+          # from the producer ref, never the consumer's rerun attempt.
+          if [ -z "$CHECKPOINT_ARTIFACT" ]; then
+            if [[ ! "$CHECKPOINT_REF" =~ ^automation/stable-maintenance/checkpoints/([1-9][0-9]*)/([1-9][0-9]*)/(stable-[34]\.x)/(dependencies|vet|backports-[1-4])$ ]] ||
+               [[ "${BASH_REMATCH[1]}" != "$GITHUB_RUN_ID" || "${BASH_REMATCH[3]}" != "$TARGET_BRANCH" || "${BASH_REMATCH[4]}" != "$PREVIOUS_STAGE" ]]; then
+              echo "::error::Invalid producer checkpoint ref for artifact fallback"
+              exit 2
+            fi
+            CHECKPOINT_ARTIFACT="maintenance-checkpoint-${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-${BASH_REMATCH[4]}"
+          fi
           mkdir -p "$STATE_DIR"
           for attempt in 1 2 3 4 5; do
             if gh run download "$GITHUB_RUN_ID" --name "$CHECKPOINT_ARTIFACT" \

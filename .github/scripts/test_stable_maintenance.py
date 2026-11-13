@@ -5105,30 +5105,50 @@ class CheckpointMaintenanceTests(unittest.TestCase):
             subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, check=True, timeout=5)
             self.assertEqual(dict(line.split("=", 1) for line in output.read_text().splitlines()), values)
 
-    def test_stage_download_uses_canonical_checkpoint_name_when_input_missing(self):
+    def test_checkpoint_download_resolves_producer_attempt_before_network(self):
+        """Execute the actual download shell with a recording gh, including reruns."""
         stage = STAGE_WORKFLOW.read_text()
         download = stage.split("      - name: Download this run's exact previous-stage progress", 1)[1].split("\n      - name:", 1)[0]
-        self.assertIn("inputs.checkpoint-artifact || format('maintenance-checkpoint-{0}-{1}-{2}-{3}'", download)
-        self.assertIn("split(inputs.checkpoint-ref, '/')[4]", download)
-        self.assertIn('gh run download "$GITHUB_RUN_ID"', download)
-        self.assertIn("artifact-download: exhausted retries", download)
-        self.assertIn("inputs.checkpoint-ref != ''", download)
-        fallback = download.split("CHECKPOINT_ARTIFACT:", 1)[1]
-        self.assertNotIn("github.run_attempt", fallback)
-        self.assertIn("Retry sanitized maintenance results upload", stage)
-
-    def test_checkpoint_artifact_fallback_uses_producer_not_consumer_attempt(self):
-        ref = f"{sm.AUTOMATION_PREFIX}checkpoints/43279859768/1/stable-4.x/backports-3"
-        producer_attempt = ref.split("/")[4]
-        self.assertEqual(producer_attempt, "1")
-        canonical = f"maintenance-checkpoint-43279859768-{producer_attempt}-stable-4.x-backports-3"
-        self.assertNotEqual(
-            canonical,
-            f"maintenance-checkpoint-43279859768-2-stable-4.x-backports-3",
-        )
-        stage = STAGE_WORKFLOW.read_text()
-        download = stage.split("      - name: Download this run's exact previous-stage progress", 1)[1].split("\n      - name:", 1)[0]
-        self.assertIn("split(inputs.checkpoint-ref, '/')[4]", download)
+        self.assertIn("CHECKPOINT_ARTIFACT: ${{ inputs.checkpoint-artifact }}", download)
+        self.assertIn("CHECKPOINT_REF: ${{ inputs.checkpoint-ref }}", download)
+        self.assertIn("PREVIOUS_STAGE: ${{ inputs.previous-stage }}", download)
+        self.assertNotIn("split(", stage + BRANCH_WORKFLOW.read_text())
+        script = download.split("        run: |\n", 1)[1]
+        script = "\n".join(line[10:] for line in script.splitlines())
+        ref = sm.AUTOMATION_PREFIX + "checkpoints/43279859768/1/stable-4.x/backports-3"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gh = root / "gh"
+            gh.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$GH_RECORD"\n')
+            gh.chmod(0o755)
+            record = root / "args"
+            base = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                    "GH_RECORD": str(record), "STATE_DIR": str(root / "state"),
+                    "GITHUB_RUN_ID": "43279859768", "GITHUB_RUN_ATTEMPT": "2",
+                    "GITHUB_REPOSITORY": "himmelblau-idm/himmelblau",
+                    "TARGET_BRANCH": "stable-4.x", "PREVIOUS_STAGE": "backports-3",
+                    "CHECKPOINT_REF": ref, "CHECKPOINT_ARTIFACT": ""}
+            cases = [({}, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3"),
+                     ({"CHECKPOINT_ARTIFACT": "explicit-artifact"}, "explicit-artifact")]
+            cases += [({"CHECKPOINT_REF": bad}, None) for bad in (
+                ref.replace("43279859768", "999"), ref.replace("/1/", "/0/"),
+                ref.replace("stable-4.x", "stable-3.x"), ref.replace("backports-3", "vet"),
+                ref + "/extra", ref + "\n", "$(touch NEVER_EXECUTE)", "")]
+            for overrides, expected in cases:
+                with self.subTest(overrides=overrides):
+                    record.unlink(missing_ok=True)
+                    result = subprocess.run(["bash", "-euo", "pipefail", "-c", script],
+                                            env={**base, **overrides}, capture_output=True,
+                                            text=True, timeout=5, cwd=root)
+                    if expected is None:
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertFalse(record.exists(), "invalid ref must not reach gh")
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(record.read_text().splitlines(), [
+                            "run", "download", "43279859768", "--name", expected,
+                            "--dir", str(root / "state"), "--repo", "himmelblau-idm/himmelblau"])
+            self.assertFalse((root / "NEVER_EXECUTE").exists())
 
     def test_workflow_has_ordered_fresh_jobs_and_only_final_publication(self):
         branch = BRANCH_WORKFLOW.read_text()
