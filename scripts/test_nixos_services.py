@@ -127,7 +127,7 @@ NIXOS_DIRECTIVE_DIFFERENCES = {
 NIXOS_EXEC_START_PATHS = {
     "himmelblaud.service": (
         "/usr/sbin/himmelblaud",
-        "{daemon}/bin/himmelblaud --config {config}",
+        "{daemon}/bin/himmelblaud",
     ),
     "himmelblaud-tasks.service": (
         "/usr/sbin/himmelblaud_tasks",
@@ -518,13 +518,22 @@ class NixosServiceTests(unittest.TestCase):
         }
 
     def nixos_scoped_units(self):
-        return {
-            **{f"system/{name}": unit for name, unit in self.units.items()},
+        units = {
+            **{
+                f"system/{name}": copy.deepcopy(unit)
+                for name, unit in self.units.items()
+            },
             **{
                 f"user/{name}": parse_unit(text)
                 for name, text in self.evaluated["userUnits"].items()
             },
         }
+        # restartTriggers renders a Nix-store helper file whose hash is not
+        # meaningful to the packaged-unit comparison. Its exact source values
+        # are checked separately below.
+        for name in ["himmelblaud.service", "himmelblaud-tasks.service"]:
+            units[f"system/{name}"]["Unit"].pop("X-Restart-Triggers", None)
+        return units
 
     def test_unit_inventory_has_only_documented_gaps(self):
         differences = inventory_differences(
@@ -547,6 +556,51 @@ class NixosServiceTests(unittest.TestCase):
             GENERATED_ONLY,
         )
         self.assertEqual(differences, [], "\n".join(differences))
+
+    def test_daemons_share_the_default_configuration_hierarchy(self):
+        config = self.evaluated["paths"]["config"]
+        daemon = self.units["himmelblaud.service"]
+        tasks = self.units["himmelblaud-tasks.service"]
+
+        self.assertNotIn("--config", daemon["Service"]["ExecStart"])
+        self.assertNotIn("--config", tasks["Service"]["ExecStart"])
+        daemon_triggers = set(self.evaluated["restartTriggers"]["daemon"])
+        tasks_triggers = set(self.evaluated["restartTriggers"]["tasks"])
+        self.assertEqual(daemon_triggers, tasks_triggers)
+        self.assertIn(config, daemon_triggers)
+        self.assertEqual(len(daemon_triggers), 2)
+        self.assertIn("X-Restart-Triggers", daemon["Unit"])
+        self.assertIn("X-Restart-Triggers", tasks["Unit"])
+
+    def test_drop_in_target_changes_restart_trigger(self):
+        renamed = evaluate(
+            dropInTarget="himmelblau/himmelblau.conf.d/10-renamed.conf"
+        )
+        self.assertEqual(
+            renamed["paths"]["dropIn"],
+            self.evaluated["paths"]["dropIn"],
+        )
+        self.assertNotEqual(
+            set(renamed["restartTriggers"]["daemon"]),
+            set(self.evaluated["restartTriggers"]["daemon"]),
+        )
+
+    def test_drop_in_directory_target_is_tracked(self):
+        directory = evaluate(dropInTarget="himmelblau/himmelblau.conf.d")
+        outside = evaluate(dropInTarget="himmelblau/unrelated.conf")
+        self.assertEqual(
+            directory["paths"]["dropIn"],
+            outside["paths"]["dropIn"],
+        )
+        self.assertEqual(
+            set(directory["restartTriggers"]["daemon"]),
+            set(directory["restartTriggers"]["tasks"]),
+        )
+        self.assertEqual(len(set(directory["restartTriggers"]["daemon"])), 2)
+        self.assertNotEqual(
+            set(directory["restartTriggers"]["daemon"]),
+            set(outside["restartTriggers"]["daemon"]),
+        )
 
     def test_comparison_rejects_drift_in_evaluated_units(self):
         expected = self.scoped_units(

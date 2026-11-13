@@ -7,6 +7,7 @@
   tssGroup ? "tss",
   pinPath ? "/var/lib/himmelblaud/hsm-pin",
   tryUnseal ? false,
+  dropInTarget ? "himmelblau/himmelblau.conf.d/90-test.conf",
 }:
 let
   pkgs = import nixpkgs { };
@@ -34,6 +35,13 @@ let
         programs.chromium = pkgs.lib.mkIf (chromiumEnable != null) {
           enable = chromiumEnable;
         };
+        environment.etc."fixture-drop-in" = {
+          target = dropInTarget;
+          text = ''
+            [global]
+            logon_script = /run/current-system/sw/bin/false
+          '';
+        };
       }
     ];
   };
@@ -49,6 +57,10 @@ in
   };
   nscdEnabled = cfg.services.nscd.enable;
   hsmPinPath = cfg.services.himmelblau.settings.hsm_pin_path;
+  restartTriggers = {
+    daemon = map toString cfg.systemd.services.himmelblaud.restartTriggers;
+    tasks = map toString cfg.systemd.services.himmelblaud-tasks.restartTriggers;
+  };
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
   chromiumPolicies = pkgs.lib.genAttrs [
     "chromium/policies/managed/default.json"
@@ -64,6 +76,8 @@ in
     aadTool = toString cfg.services.himmelblau.aadToolPackage;
     broker = toString cfg.services.himmelblau.brokerPackage;
     config = toString cfg.environment.etc."himmelblau/himmelblau.conf".source;
+    dropIn = toString cfg.environment.etc."fixture-drop-in".source;
+    dropInTarget = cfg.environment.etc."fixture-drop-in".target;
     localeArchive = "${cfg.i18n.glibcLocales}/lib/locale/locale-archive";
     timezone = "${pkgs.tzdata}/share/zoneinfo";
     nssModules = cfg.system.nssModules.path;
