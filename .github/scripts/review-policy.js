@@ -117,7 +117,7 @@ function sensitiveChanges(pr, files) {
     }
     const patch = file.patch;
     const changed = patch?.split('\n').filter(l => /^[+-](?![+-])/.test(l)).join('\n');
-    const buildFile = paths.some(p => /(?:^|\/)(?:Cargo\.nix|flake\.lock|flake\.nix|sources\.nix|default\.nix|Makefile)$/.test(p)
+    const buildFile = paths.some(p => /(?:^|\/)(?:Cargo\.nix|flake\.lock|flake\.nix|sources\.nix|default\.nix|shell\.nix|Makefile)$/.test(p)
         || p.startsWith('.cargo/'));
     // Build orchestration files need a human until a version-only allowlist
     // exists. Cargo manifests/locks keep the narrower rules below.
@@ -287,9 +287,8 @@ function evaluate({ pr, authorCanWrite, permissions, reviews, threads, checks, c
   // Use the most recent submitted review by each bot, not an earlier clean
   // assessment superseded by findings on the same head.
   const latestBotReviews = latestBy(reviews.filter(r => r.state !== 'PENDING'
-    && r.user.type === 'Bot' && AI.has(r.user.login)), r => r.user.login);
+    && r.user.type === 'Bot' && AI.has(r.user.login) && r.commit_id === pr.head.sha), r => r.user.login);
   for (const review of latestBotReviews) {
-    if (review.commit_id !== pr.head.sha) continue;
     const provider = AI.get(review.user.login);
     votes.delete(`ai:${provider}`);
     const clean = cleanBotReview(review, checks, comments, pr.head.sha);
