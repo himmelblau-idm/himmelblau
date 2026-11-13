@@ -425,6 +425,7 @@ jobs:
       - name: Preserve exact checkpoint state for the next job
         id: checkpoint-upload
         if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage != 'final' }}
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.checkpoint.outputs.artifact }}
@@ -432,9 +433,29 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Retry checkpoint upload after transient artifact outage
+        id: checkpoint-upload-retry
+        if: ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage != 'final' && steps.checkpoint-upload.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.checkpoint.outputs.artifact }}
+          path: ${{ env.STATE_DIR }}/checkpoint.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify checkpoint upload succeeded
+        if: >-
+          ${{ !cancelled() && steps.guard.outputs.proceed == 'true' && inputs.stage != 'final' &&
+          steps.checkpoint-upload.outcome != 'success' && steps.checkpoint-upload-retry.outcome != 'success' }}
+        run: |
+          echo "::error::checkpoint upload failed after retry"
+          exit 1
+
       - name: Expose only successfully uploaded checkpoint metadata
         id: available
-        if: ${{ !cancelled() && steps.checkpoint-upload.outcome == 'success' }}
+        if: >-
+          ${{ !cancelled() && (steps.checkpoint-upload.outcome == 'success' ||
+          steps.checkpoint-upload-retry.outcome == 'success') }}
         env:
           CHECKPOINT_HEAD: ${{ steps.checkpoint.outputs.head }}
           CHECKPOINT_DIGEST: ${{ steps.checkpoint.outputs.digest }}
@@ -452,7 +473,21 @@ jobs:
           report --branch "$TARGET_BRANCH"
 
       - name: Preserve sanitized maintenance results
+        id: report-upload
         if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stable-maintenance-${{ inputs.branch }}-${{ inputs.stage }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.STATE_DIR }}/report.md
+            ${{ env.STATE_DIR }}/report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Retry sanitized maintenance results upload
+        id: report-upload-retry
+        if: ${{ always() && steps.report-upload.outcome == 'failure' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: stable-maintenance-${{ inputs.branch }}-${{ inputs.stage }}-${{ github.run_attempt }}

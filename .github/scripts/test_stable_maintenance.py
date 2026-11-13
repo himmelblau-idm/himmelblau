@@ -5088,7 +5088,11 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         expose = stage.split("      - name: Expose only successfully uploaded checkpoint metadata", 1)[1].split("\n      - name:", 1)[0]
         # Explicit cancellation checks let recovered failures publish outputs,
         # while failure, skipped and cancelled uploads leave them unavailable.
-        self.assertIn("if: ${{ !cancelled() && steps.checkpoint-upload.outcome == 'success' }}", expose)
+        self.assertIn("steps.checkpoint-upload-retry.outcome == 'success'", expose)
+        self.assertIn("steps.checkpoint-upload.outcome == 'success'", expose)
+        self.assertIn("Retry checkpoint upload after transient artifact outage", stage)
+        self.assertIn("pipelines.actions.githubusercontent.com:443", stage)
+        self.assertIn("results-rests.actions.githubusercontent.com:443", stage)
         script = expose.split("        run: |\n", 1)[1]
         script = "\n".join(line[10:] for line in script.splitlines())
         with tempfile.TemporaryDirectory() as tmp:
@@ -5124,6 +5128,7 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("artifact-download: exhausted retries", download)
         fallback = download.split("CHECKPOINT_ARTIFACT:", 1)[1]
         self.assertNotIn("github.run_attempt", fallback)
+        self.assertIn("Retry sanitized maintenance results upload", stage)
 
     def test_checkpoint_artifact_fallback_uses_producer_not_consumer_attempt(self):
         """Re-run failed jobs can leave attempt-1 artifacts while run_attempt is 2."""
