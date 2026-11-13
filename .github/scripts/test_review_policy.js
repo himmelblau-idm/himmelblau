@@ -130,8 +130,8 @@ test('head and synthetic merge CI are evaluated independently', () => {
   const failingHead = [...checks, check('optional', { id: 99, conclusion: 'failure' })];
   const passingMerge = [...mergeChecks, check('optional', { id: 100, conclusion: 'success', head_sha: merge })];
   assert.notEqual(ciReasons(failingHead, [], passingMerge, []).length, 0);
-  const headStatuses = [{ id: 1, sha: SHA, context: 'ext', state: 'failure' }];
-  const mergeStatuses = [{ id: 2, sha: merge, context: 'ext', state: 'success' }];
+  const headStatuses = [{ id: 1, context: 'ext', state: 'failure' }];
+  const mergeStatuses = [{ id: 2, context: 'ext', state: 'success' }];
   assert.notEqual(ciReasons(checks, headStatuses, mergeChecks, mergeStatuses).length, 0);
 });
 test('CodeRabbit completion alone, wrong app, stale summary and findings fail closed', () => {
@@ -288,6 +288,13 @@ test('coordinator rejects stable PRs even if API list unexpectedly returns one',
   await run({ ...h, merge: true });
   assert.deepEqual(h.calls, []);
 });
+test('failed PR reload publishes a blocking policy check using the list summary head', async () => {
+  const h = harness();
+  h.github.rest.pulls.get = async () => { throw Object.assign(new Error('api down'), { status: 500 }); };
+  await run(h);
+  assert.equal(h.calls.find(c => c[0] === 'check')?.[1]?.conclusion, 'failure');
+  assert.equal(h.calls.find(c => c[0] === 'error')?.[1], '1 PR policy evaluation(s) failed.');
+});
 test('workflow uses main checkout and no untrusted code or credentials persistence', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../workflows/main-review-policy.yml'), 'utf8');
   assert.match(workflow, /ref: main/);
@@ -345,6 +352,10 @@ test('security dependencies and source changes require humans, ordinary version 
   }
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: '-clap = "4.5"\n+clap = "4.6"' }]), []);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
+    patch: '-edition = "2021"\n+edition = "2024"' }]), ['Cargo.toml']);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
+    patch: '-dep = { version = "1", features = ["32bit"] }\n+dep = { version = "1", features = ["64bit"] }' }]), ['Cargo.toml']);
   for (const filename of ['Makefile', 'flake.nix', 'default.nix']) {
     assert.deepEqual(sensitiveChanges(pr(), [{ filename, patch: '+EXTRA = value' }]), [filename]);
   }
@@ -437,7 +448,11 @@ test('revoked testing or sponsorship, new findings, and CI reruns at final evalu
     let reads = 0;
     if (type === 'testing' || type === 'sponsorship') {
       const original = h.github.rest.issues.listComments;
-      h.github.rest.issues.listComments = async () => ++reads === 1 ? original() : [];
+      h.github.rest.issues.listComments = async () => {
+        if (++reads === 1) return original();
+        if (type === 'testing') return [];
+        return (await original()).filter(c => !(c.body || '').startsWith('/sponsor-ai '));
+      };
     } else if (type === 'review') {
       h.github.rest.pulls.listReviews = async () => ++reads === 1 ? [review()] : [review('maintainer', { state: 'CHANGES_REQUESTED' })];
     } else if (type === 'permissions') {

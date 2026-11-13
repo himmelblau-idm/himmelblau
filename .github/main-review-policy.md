@@ -163,6 +163,10 @@ After the workflow has run, configure the rule(s) covering **only `main`**:
    expected source. Keep `Build`,
    `Test`, `Clippy`, and `Vet Dependencies` required; those four CI names are
    explicitly checked by the coordinator as well.
+   Confirm the gate is satisfied only by the trusted `Evaluate main reviews`
+   workflow on `main` (`.github/workflows/main-review-policy.yml`), not by
+   same-named jobs from a PR branch or fork workflow. Rulesets that can scope
+   required workflows to specific files are safer than a name-only requirement.
 2. Keep requiring a pull request and the existing CI checks. Set the native
    required approval count to **0**: the custom check implements review counts
    and sensitive-path human requirements.

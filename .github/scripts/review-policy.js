@@ -27,11 +27,21 @@ const SENSITIVE_FILES = new Set([
 ]);
 const SECURITY_DEP = /\b(?:libhimmelblau|identity_dbus_broker|broker-client|okta(?:-auth-rs)?|openidconnect|oauth2|libkrimes|kanidm[\w-]*|crypto[\w-]*|rsa|rustls[\w-]*|openssl[\w-]*|ring|aws-lc[\w-]*|webpki[\w-]*|zeroize|secrecy|webauthn[\w-]*|sha2|authenticator|libwebauthn)\b/i;
 
+function normalizeManifestDiffLine(line) {
+  const trimmed = line.trim();
+  if (/^(?:edition|features|default-features)\s*=/i.test(trimmed)) return trimmed;
+  let normalized = trimmed;
+  normalized = normalized.replace(/^version\s*=\s*"[^"]*"/, 'version = "VERSION"');
+  normalized = normalized.replace(/^([\w.-]+)\s*=\s*"[^"]*"/, '$1 = "VERSION"');
+  normalized = normalized.replace(/\bversion\s*=\s*"[^"]*"/g, 'version = "VERSION"');
+  return normalized;
+}
+
 function versionBumpOnly(patch) {
   const removed = [], added = [];
   for (const line of patch.split('\n')) {
     if (!/^[+-](?![+-])/.test(line)) continue;
-    const normalized = line.slice(1).trim().replace(/"[~^<>= ]*\d[^"\n]*"/g, '"VERSION"');
+    const normalized = normalizeManifestDiffLine(line.slice(1));
     (line[0] === '+' ? added : removed).push(normalized);
   }
   return removed.length > 0 && JSON.stringify(removed) === JSON.stringify(added);
@@ -274,8 +284,10 @@ function ciReasons(headChecks, headStatuses, mergeChecks = [], mergeStatuses = [
       }
     }
   }
-  for (const status of latestBy([...headStatuses, ...mergeStatuses], s => `${s.sha || ''}:${s.context}`)) {
-    if (status.state !== 'success') reasons.push(`Status ${status.context} is ${status.state}.`);
+  for (const statuses of [headStatuses, mergeStatuses]) {
+    for (const status of latestBy(statuses, s => s.context)) {
+      if (status.state !== 'success') reasons.push(`Status ${status.context} is ${status.state}.`);
+    }
   }
   return reasons;
 }
@@ -426,11 +438,13 @@ async function run({ github, context, core, merge = false }) {
       errors++;
       core.error(`#${summary.number}: ${error.message}`);
       // Revoke an earlier success if a later evaluation cannot complete.
-      if (pr?.head?.sha && pr.base.ref === 'main') {
+      const headSha = pr?.head?.sha || summary.head?.sha;
+      const baseRef = pr?.base?.ref || summary.base?.ref;
+      if (headSha && baseRef === 'main') {
         const failure = { owner, repo, name: CHECK, status: 'completed', conclusion: 'failure',
           output: { title: 'Policy evaluation failed', summary: 'Inspect the Main review policy workflow logs. No automatic merge was attempted after this error.' } };
         if (checkId) await github.rest.checks.update({ ...failure, check_run_id: checkId });
-        else await github.rest.checks.create({ ...failure, head_sha: pr.head.sha, external_id: `main-review-policy:${summary.number}` });
+        else await github.rest.checks.create({ ...failure, head_sha: headSha, external_id: `main-review-policy:${summary.number}` });
       }
     }
   }
