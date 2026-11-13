@@ -4762,6 +4762,7 @@ def run_best_effort_phase(args: argparse.Namespace, state: State, runner: Runner
     if args.command not in RECOVERABLE_PHASES:
         PHASES[args.command](args, state, runner)
         return
+    record_incomplete_stages(state)
     before = state.load()
     if args.command == "prepare":
         before.pop("cache_prepared", None)
@@ -4823,7 +4824,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         verify_tooling_integrity()
         state = State(Path(args.state_dir))
         runner = Runner(Path(args.repo_dir))
-        restore_network_cooldown(state.load())
+        progress = state.load()
+        merge_failure_network_cooldowns(progress)
+        state.save(progress)
+        restore_network_cooldown(progress)
         try:
             # A guard skip is a successful no-op for every later phase. Report is
             # still allowed so the reason remains visible in the Actions summary.

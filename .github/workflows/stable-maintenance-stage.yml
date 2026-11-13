@@ -153,6 +153,7 @@ jobs:
         env:
           MAINTENANCE_PREMUTATION_QUICK: ${{ inputs.stage != 'dependencies' && '1' || '' }}
           MAINTENANCE_INCOMPLETE_STAGES: ''
+          MAINTENANCE_FAILURE_COOLDOWNS: ''
         run: >-
           env -u MAINTENANCE_TOOLING_COMMIT PYTHONDONTWRITEBYTECODE=1
           python3 -u tooling/.github/scripts/test_stable_maintenance.py

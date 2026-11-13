@@ -5192,6 +5192,25 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertLess(stage.index("      - name: Initialize —"), stage.index("      - name: Prepare exact locked"))
         tests = stage.split("      - name: Test trusted automation", 1)[1].split("      - name:", 1)[0]
         self.assertIn("MAINTENANCE_INCOMPLETE_STAGES: ''", tests)
+        self.assertIn("MAINTENANCE_FAILURE_COOLDOWNS: ''", tests)
+
+    def test_blocked_release_preserves_incomplete_stages_for_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state = sm.State(Path(tmp) / "state")
+            state.save({
+                "branch": "stable-4.x",
+                "original_head": head,
+                "cutoff": head,
+                "main_head": head,
+                "prerequisites_ready": False,
+                "phase_failures": [{"phase": "prerequisites", "reason": "prerequisite-failed", "gate": "image"}],
+            })
+            args = mock.Mock(command="release")
+            with mock.patch.dict(os.environ, {"MAINTENANCE_INCOMPLETE_STAGES": "dependencies,backports-1,"}):
+                sm.run_best_effort_phase(args, state, runner)
+            self.assertEqual(state.load()["incomplete_stages"], ["dependencies", "backports-1"])
 
     def test_resume_merges_failure_cooldown_from_prior_stages(self):
         with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}), \
