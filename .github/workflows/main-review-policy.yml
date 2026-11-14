@@ -1,0 +1,59 @@
+name: Main review policy
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited]
+  issue_comment:
+    types: [created, edited, deleted]
+  check_run:
+    types: [completed]
+  status:
+  workflow_run:
+    workflows: [CI, Review policy wakeup]
+    types: [completed]
+  # Thread resolution has no Actions trigger. Polling also catches missed
+  # fork events, review deletions, permission changes and CI reruns.
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+# Serialize all evaluations, including event-driven and scheduled runs.
+concurrency:
+  group: main-review-policy
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    name: Evaluate main reviews
+    # Issue comments can contain testing evidence referenced from a main PR.
+    # Always reload main PRs; never execute or trust event comment contents.
+    if: github.repository == 'himmelblau-idm/himmelblau'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+      statuses: read
+      issues: read
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      # Explicit main checkout is essential for privileged fork events.
+      # Never execute PR files, commands, artifacts, or comment contents.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          AUTOMERGE: ${{ vars.MAIN_REVIEW_POLICY_AUTOMERGE }}
+        with:
+          script: |
+            const { run } = require('./.github/scripts/review-policy.js');
+            await run({ github, context, core, merge: process.env.AUTOMERGE === 'true' });
+
