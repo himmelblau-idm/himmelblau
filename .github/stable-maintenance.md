@@ -58,8 +58,9 @@ ancestry.
 Two distinct resume failures are easy to confuse from logs alone:
 
 1. **Empty artifact output** — reusable workflows sometimes omit the predecessor's
-   `artifact` job output even when head/digest/ref propagate. Branch inputs and the
-   stage download step fall back to the canonical
+   `artifact` job output even when head/digest/ref propagate. Branch callers key
+   `previous-stage` and `incomplete-stages` off checkpoint `ref`, not artifact name.
+   The stage download step falls back to the canonical
    `maintenance-checkpoint-<run>-<attempt>-<branch>-<stage>` name, using the
    producer attempt encoded in the checkpoint ref (not necessarily the consumer's
    `run_attempt`). The download shell validates that ref's run, stable branch and

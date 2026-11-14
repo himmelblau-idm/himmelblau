@@ -5129,6 +5129,7 @@ class CheckpointMaintenanceTests(unittest.TestCase):
                     "TARGET_BRANCH": "stable-4.x", "PREVIOUS_STAGE": "backports-3",
                     "CHECKPOINT_REF": ref, "CHECKPOINT_ARTIFACT": ""}
             cases = [({}, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3"),
+                     ({"PREVIOUS_STAGE": ""}, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3"),
                      ({"CHECKPOINT_ARTIFACT": "explicit-artifact"}, "explicit-artifact")]
             cases += [({"CHECKPOINT_REF": bad}, None) for bad in (
                 ref.replace("43279859768", "999"), ref.replace("/1/", "/0/"),
@@ -5158,7 +5159,7 @@ class CheckpointMaintenanceTests(unittest.TestCase):
             block = branch.split(f"\n  {current}:\n", 1)[1].split("\n\n", 1)[0]
             self.assertIn(f"needs: [{', '.join(stages[:index])}]", block)
             self.assertIn("always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false')", block)
-            self.assertIn(f"needs.{previous}.outputs.artifact != '' && '{previous}'", block)
+            self.assertIn(f"needs.{previous}.outputs.ref != '' && '{previous}'", block)
             for field in ("head", "digest", "ref", "artifact"):
                 fallback = " || ".join(f"needs.{name}.outputs.{field}" for name in reversed(stages[:index]))
                 self.assertIn(f"checkpoint-{field}: ${{{{ {fallback} || '' }}}}", block)
