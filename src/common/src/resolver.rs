@@ -704,6 +704,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn directory_lookup_cache_does_not_supersede_newer_authenticated_identity() {
+        let resolver = setup_resolver().await;
+        let mut authenticated = test_token();
+        authenticated.displayname = "Authenticated".to_string();
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut authenticated, 2, None, None)
+                .await
+                .unwrap(),
+            CacheUpdateResult::Updated
+        );
+        let mut directory = test_token();
+        directory.displayname = "Directory stale".to_string();
+        directory.directory_lookup = true;
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut directory, 1, None, Some(0))
+                .await
+                .unwrap(),
+            CacheUpdateResult::Superseded
+        );
+        assert_eq!(
+            resolver.get_cached_usertokens().await.unwrap()[0].displayname,
+            "Authenticated"
+        );
+    }
+
+    #[tokio::test]
     async fn lookup_only_user_is_not_cached_before_first_login() {
         let resolver = setup_resolver().await;
         resolver
@@ -2160,14 +2188,14 @@ mod tests {
         newer.uuid = uuid::Uuid::new_v4();
         assert_eq!(
             resolver
-                .set_cache_usertoken_guarded(&mut newer, 2, None)
+                .set_cache_usertoken_guarded(&mut newer, 2, None, None)
                 .await
                 .unwrap(),
             CacheUpdateResult::Updated
         );
         assert_eq!(
             resolver
-                .set_cache_usertoken_guarded(&mut test_token(), 1, None)
+                .set_cache_usertoken_guarded(&mut test_token(), 1, None, None)
                 .await
                 .unwrap(),
             CacheUpdateResult::IdentityChanged
@@ -2188,14 +2216,14 @@ mod tests {
         unrelated.gidnumber += 1;
         assert_eq!(
             resolver
-                .set_cache_usertoken_guarded(&mut unrelated, 2, Some("other-secret"))
+                .set_cache_usertoken_guarded(&mut unrelated, 2, Some("other-secret"), None)
                 .await
                 .unwrap(),
             CacheUpdateResult::Updated
         );
         assert_eq!(
             resolver
-                .set_cache_usertoken_guarded(&mut test_token(), 1, Some("original-secret"))
+                .set_cache_usertoken_guarded(&mut test_token(), 1, Some("original-secret"), None)
                 .await
                 .unwrap(),
             CacheUpdateResult::Updated
@@ -3273,6 +3301,7 @@ where
         token: &mut UserToken,
         generation: u64,
         password: Option<&str>,
+        expire: Option<u64>,
     ) -> ResolverResult<CacheUpdateResult> {
         let keys = [
             PasswordCacheKey::Uuid(token.uuid),
@@ -3324,7 +3353,15 @@ where
             };
             *token = current;
         }
-        self.set_cache_usertoken(token, password.is_some()).await?;
+        match expire {
+            Some(expire) => {
+                self.set_cache_usertoken_expiring(token, password.is_some(), expire)
+                    .await?;
+            }
+            None => {
+                self.set_cache_usertoken(token, password.is_some()).await?;
+            }
+        }
         let keys = [
             PasswordCacheKey::Uuid(token.uuid),
             PasswordCacheKey::Name(token.name.clone()),
@@ -3528,7 +3565,7 @@ where
         match user_get_result {
             Ok(UserTokenState::Update(mut n_tok)) => {
                 match self
-                    .set_cache_usertoken_guarded(&mut n_tok, generation, None)
+                    .set_cache_usertoken_guarded(&mut n_tok, generation, None, None)
                     .await?
                 {
                     CacheUpdateResult::Updated => Ok(Some((n_tok, true))),
@@ -3544,8 +3581,13 @@ where
             Ok(UserTokenState::LookupOnly(n_tok)) => {
                 if n_tok.directory_lookup {
                     let mut tok = n_tok.clone();
-                    self.set_cache_usertoken_expiring(&mut tok, false, 0)
-                        .await?;
+                    match self
+                        .set_cache_usertoken_guarded(&mut tok, generation, None, Some(0))
+                        .await?
+                    {
+                        CacheUpdateResult::Updated => {}
+                        CacheUpdateResult::Superseded | CacheUpdateResult::IdentityChanged => {}
+                    }
                 }
                 Ok(Some((n_tok, false)))
             }
@@ -4703,7 +4745,12 @@ where
                         _ => return Err(ResolverError),
                     };
                     if self
-                        .set_cache_usertoken_guarded(&mut token, generation, pending_password)
+                        .set_cache_usertoken_guarded(
+                            &mut token,
+                            generation,
+                            pending_password,
+                            None,
+                        )
                         .await?
                         == CacheUpdateResult::IdentityChanged
                     {
