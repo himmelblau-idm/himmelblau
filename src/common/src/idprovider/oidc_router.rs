@@ -5,7 +5,7 @@ use super::interface::*;
 use super::okta::OktaProvider;
 use super::openidconnect::OidcProvider;
 use crate::config::HimmelblauConfig;
-use crate::db::KeyStoreTxn;
+use crate::db::{KeyStore, KeyStoreTxn};
 use crate::i18n::tr;
 use crate::unix_proto::PamAuthRequest;
 use async_trait::async_trait;
@@ -361,11 +361,12 @@ impl IdProvider for OidcRouter {
         }
     }
 
-    async fn unix_user_get<D: KeyStoreTxn + Send>(
+    /// Resolves a user through the selected OIDC provider, or uses the cache while selection is pending.
+    async fn unix_user_get<D: KeyStore + Sync>(
         &self,
         id: &Id,
         token: Option<&UserToken>,
-        keystore: &mut D,
+        keystore: &D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {

@@ -376,9 +376,10 @@ macro_rules! tpm_machine_key {
     };
 }
 
-pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
+/// Loads a domain's confidential-client credentials before performing TPM operations.
+pub async fn confidential_client_creds<D: crate::db::KeyStore + Sync>(
     hsm: &mut kanidm_hsm_crypto::provider::BoxedDynTpm,
-    keystore: &mut D,
+    keystore: &D,
     machine_key: &kanidm_hsm_crypto::structures::StorageKey,
     domain: &str,
 ) -> Result<Option<(String, himmelblau::ClientCredential)>, crate::idprovider::interface::IdpError>
@@ -387,13 +388,24 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
         CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG,
         CONFIDENTIAL_CLIENT_SECRET_TAG,
     };
+    use crate::db::KeyStoreTxn;
     use crate::idprovider::interface::IdpError;
     use kanidm_lib_crypto::x509_cert::der::asn1::Utf8StringRef;
     use kanidm_lib_crypto::x509_cert::der::Decode;
     use serde_json::Value;
 
     let secret_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_SECRET_TAG);
-    if let Ok(Some(sealed_secret)) = keystore.get_tagged_hsm_key(&secret_tag) {
+    let key_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_KEY_TAG);
+    let cert_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_TAG);
+    let (sealed_secret, loadable_cert_key, sealed_cert) = {
+        let mut txn = keystore.write_keystore().await;
+        (
+            txn.get_tagged_hsm_key(&secret_tag).ok().flatten(),
+            txn.get_tagged_hsm_key(&key_tag).ok().flatten(),
+            txn.get_tagged_hsm_key(&cert_tag).ok().flatten(),
+        )
+    };
+    if let Some(sealed_secret) = sealed_secret {
         if let Ok(secret_info) = hsm.unseal_data(machine_key, &sealed_secret) {
             let value: Value =
                 serde_json::from_str(&String::from_utf8(secret_info.to_vec()).map_err(|e| {
@@ -421,8 +433,7 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
         }
     }
 
-    let key_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_KEY_TAG);
-    if let Ok(Some(loadable_cert_key)) = keystore.get_tagged_hsm_key(&key_tag) {
+    if let Some(loadable_cert_key) = loadable_cert_key {
         let key = hsm
             .msoapxbc_rsa_key_load(machine_key, &loadable_cert_key)
             .map_err(|e| {
@@ -430,8 +441,7 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
                 IdpError::KeyStore
             })?;
 
-        let cert_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_TAG);
-        if let Ok(Some(sealed_cert)) = keystore.get_tagged_hsm_key(&cert_tag) {
+        if let Some(sealed_cert) = sealed_cert {
             let cert = kanidm_lib_crypto::x509_cert::Certificate::from_der(
                 &hsm.unseal_data(machine_key, &sealed_cert).map_err(|e| {
                     error!("Failed to unseal certificate: {:?}", e);
@@ -472,10 +482,103 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_hsm_type;
+    use super::{confidential_client_creds, resolve_hsm_type};
+    use crate::constants::{
+        CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG,
+        CONFIDENTIAL_CLIENT_SECRET_TAG,
+    };
+    use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
+    use crate::idprovider::interface::IdpError;
     use crate::unix_config::HsmType;
+    use kanidm_hsm_crypto::provider::{BoxedDynTpm, SoftTpm, Tpm};
     use kanidm_hsm_crypto::structures::LoadableStorageKey;
+    use kanidm_hsm_crypto::AuthValue;
     use zeroize::Zeroizing;
+
+    /// Verifies sealed-secret loading, malformed payload errors, and domain isolation.
+    #[tokio::test]
+    async fn confidential_creds_read_sealed_material_and_preserve_errors() {
+        let db = Db::new("").unwrap();
+        let mut txn = db.write().await;
+        txn.migrate().unwrap();
+        txn.commit().unwrap();
+        let mut hsm = BoxedDynTpm::new(SoftTpm::new());
+        let auth = AuthValue::ephemeral().unwrap();
+        let loadable = hsm.root_storage_key_create(&auth).unwrap();
+        let key = hsm.root_storage_key_load(&auth, &loadable).unwrap();
+        assert!(
+            confidential_client_creds(&mut hsm, &db, &key, "example.com")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        for (payload, valid) in [
+            (r#"{"client_id":"test-app","secret":"test-secret"}"#, true),
+            (r#"{"client_id":"test-app"}"#, false),
+            ("not-json", false),
+        ] {
+            let sealed = hsm
+                .seal_data(&key, payload.as_bytes().to_vec().into())
+                .unwrap();
+            let mut txn = db.write().await;
+            txn.insert_tagged_hsm_key(
+                &format!("example.com/{CONFIDENTIAL_CLIENT_SECRET_TAG}"),
+                &sealed,
+            )
+            .unwrap();
+            txn.commit().unwrap();
+            let result = confidential_client_creds(&mut hsm, &db, &key, "example.com").await;
+            if valid {
+                assert_eq!(result.unwrap().unwrap().0, "test-app");
+            } else {
+                assert!(matches!(result, Err(IdpError::KeyStore)));
+            }
+            assert!(
+                confidential_client_creds(&mut hsm, &db, &key, "other.example")
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn confidential_creds_preserve_missing_and_invalid_certificate_handling() {
+        let db = Db::new("").unwrap();
+        let mut hsm = BoxedDynTpm::new(SoftTpm::new());
+        let auth = AuthValue::ephemeral().unwrap();
+        let loadable = hsm.root_storage_key_create(&auth).unwrap();
+        let key = hsm.root_storage_key_load(&auth, &loadable).unwrap();
+        let cert_key = hsm.msoapxbc_rsa_key_create(&key).unwrap();
+        let mut txn = db.write().await;
+        txn.migrate().unwrap();
+        txn.insert_tagged_hsm_key(
+            &format!("example.com/{CONFIDENTIAL_CLIENT_CERT_KEY_TAG}"),
+            &cert_key,
+        )
+        .unwrap();
+        txn.commit().unwrap();
+        assert!(
+            confidential_client_creds(&mut hsm, &db, &key, "example.com")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let sealed = hsm.seal_data(&key, b"not-der".to_vec().into()).unwrap();
+        let mut txn = db.write().await;
+        txn.insert_tagged_hsm_key(
+            &format!("example.com/{CONFIDENTIAL_CLIENT_CERT_TAG}"),
+            &sealed,
+        )
+        .unwrap();
+        txn.commit().unwrap();
+        assert!(matches!(
+            confidential_client_creds(&mut hsm, &db, &key, "example.com").await,
+            Err(IdpError::KeyStore)
+        ));
+    }
 
     fn soft_machine_key() -> LoadableStorageKey {
         LoadableStorageKey::SoftAes256GcmV1 {

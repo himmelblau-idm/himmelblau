@@ -8,7 +8,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use crate::db::KeyStoreTxn;
+use crate::db::{KeyStore, KeyStoreTxn};
 use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
 use himmelblau::{AuthOption, MFAAuthContinue, UserToken as UnixUserToken};
@@ -307,11 +307,12 @@ pub trait IdProvider {
         true
     }
 
-    async fn unix_user_get<D: KeyStoreTxn + Send>(
+    /// Resolves or refreshes a user's provider identity, using the supplied keystore for credentials.
+    async fn unix_user_get<D: KeyStore + Sync>(
         &self,
         _id: &Id,
         _token: Option<&UserToken>,
-        _keystore: &mut D,
+        _keystore: &D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError>;
