@@ -311,6 +311,7 @@ test('sensitive runtime, configuration and all GitHub paths require human review
     'src/policies/src/scripts_ext.rs', '.github/ISSUE_TEMPLATE/bug_report.yml',
     '.github/scripts/review-policy.js', '.github/workflows/ci.yml',
     'platform/debian/pam-config-unseal', 'platform/opensuse/pam-config', 'platform/el/sshd_config',
+    'platform/debian/himmelblaud.service', 'platform/opensuse/himmelblaud-tasks.socket',
     'src/sshd-config/scripts/postinst', 'scripts/gen_authselect.py', 'scripts/gen_servicefiles.py',
     'platform/systemd/himmelblaud.socket', 'nix/modules/himmelblau.nix',
     'scripts/obs_update.py', 'src/overrides/reqwest/0.12.24/src/lib.rs',
@@ -377,6 +378,9 @@ test('security dependencies and source changes require humans, ordinary version 
     patch: '-dep = { version = "1", features = ["32bit"] }\n+dep = { version = "1", features = ["64bit"] }' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'src/o365/Cargo.toml',
     patch: '-post_install_script = "scripts/postinst"\n+post_install_script = "scripts/postrm"' }]), ['src/o365/Cargo.toml']);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'src/daemon/Cargo.toml',
+    patch: '-maintainer-scripts = "scripts"\n+maintainer-scripts = "evil"' }]), ['src/daemon/Cargo.toml']);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'platform/debian/himmelblaud.service' }]), ['platform/debian/himmelblaud.service']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: '-rustc-workspace-wrapper = "none"\n+rustc-workspace-wrapper = "sccache"' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',

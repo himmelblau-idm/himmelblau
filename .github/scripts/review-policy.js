@@ -32,6 +32,7 @@ const MANIFEST_NON_DEP_KEYS = new Set([
   'post_install_script', 'pre_install_script', 'post_uninstall_script',
   'pre_uninstall_script', 'post_trans_script', 'pre_trans_script',
   'rpm_post_install_script', 'rpm_pre_uninstall_script',
+  'assets', 'maintainer-scripts',
 ]);
 
 function manifestTable(line) {
@@ -114,7 +115,7 @@ function sensitiveChanges(pr, files) {
     const paths = [file.filename, file.previous_filename].filter(Boolean);
     if (!paths.length) return ['Changed-file metadata is incomplete.'];
     if (paths.some(p => SENSITIVE_DIRS.some(d => p === d || p.startsWith(`${d}/`))
-        || SENSITIVE_FILES.has(p) || /^platform\/[^/]+\/(?:pam-config[^/]*|sshd_config)$/.test(p)
+        || SENSITIVE_FILES.has(p) || /^platform\/[^/]+\/(?:pam-config[^/]*|sshd_config|[^/]+\.(?:service|socket|timer|path|mount))$/.test(p)
         || /(?:^|\/)build\.rs$/.test(p))) {
       sensitive.push(file.filename);
       continue;

@@ -41,8 +41,8 @@ Human approval and manual merging are required for:
 * **Everything in `.github/`**, including templates, documentation and tests.
 * Login configuration: `platform/*/pam-config*`, `platform/*/sshd_config`,
   `src/sshd-config/`, and `scripts/gen_authselect.py`.
-* Service privileges: `scripts/gen_servicefiles.py`, `platform/systemd/`,
-  and `nix/modules/`.
+* Service privileges: `scripts/gen_servicefiles.py`, generated or hand-edited
+  systemd units under `platform/*/`, `platform/systemd/`, and `nix/modules/`.
 * Dependency overrides and trust records: `src/overrides/`, `supply-chain/`,
   `scripts/cargo-patch-config.toml`, and `scripts/cargo_vet_review.py`.
 * Supporting publication/automation scripts: `scripts/obs_update.py`,
