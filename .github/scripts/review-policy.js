@@ -33,6 +33,7 @@ const MANIFEST_NON_DEP_KEYS = new Set([
   'pre_uninstall_script', 'post_trans_script', 'pre_trans_script',
   'rpm_post_install_script', 'rpm_pre_uninstall_script',
   'assets', 'maintainer-scripts',
+  'description', 'name', 'authors', 'license', 'repository', 'homepage',
 ]);
 
 function manifestTable(line) {
@@ -82,6 +83,11 @@ function versionBumpOnly(patch) {
   let inPackageSection = false;
   let sawSection = false;
   for (const line of patch.split('\n')) {
+    if (/^@@/.test(line)) {
+      inDependencyTable = null;
+      inPackageSection = false;
+      continue;
+    }
     if (/^ /.test(line)) {
       const table = manifestTable(line.slice(1));
       if (table) {
