@@ -97,6 +97,19 @@ pub struct UserToken {
     pub valid: bool,
 }
 
+impl Id {
+    pub(crate) fn refresh_account_id<'a>(
+        &'a self,
+        token: Option<&'a UserToken>,
+    ) -> Option<&'a str> {
+        match (self, token) {
+            (_, Some(token)) => Some(token.spn.as_str()),
+            (Id::Name(account_id), None) => Some(account_id.as_str()),
+            _ => None,
+        }
+    }
+}
+
 pub enum AuthCredHandler {
     /// Native IDX state is owned by this PAM session, never an Entra MFA flow.
     InteractionCode(Box<super::okta::NativeAuthSession>),
@@ -130,6 +143,7 @@ pub enum AuthCredHandler {
         /// Sealed TOTP secret pending validation - only set during initial setup.
         /// Will be saved to HSM after successful TOTP validation.
         pending_sealed_totp: Option<SealedData>,
+        validated_token: Option<Box<UserToken>>,
     },
     ChangePassword {
         old_cred: String,
@@ -454,6 +468,10 @@ pub trait IdProvider {
     async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState;
 
     async fn offline_break_glass(&self, _ttl: Option<u64>) -> Result<(), IdpError>;
+
+    async fn validate_offline_token(&self, token: UserToken) -> Result<UserToken, IdpError> {
+        Ok(token)
+    }
 
     /// Export broker PRTs as a serialised blob (for fdstore persistence).
     /// Providers that don't hold broker PRTs return an empty JSON object.

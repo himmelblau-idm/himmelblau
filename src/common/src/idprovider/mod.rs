@@ -17,13 +17,14 @@
 */
 use crate::config::{split_username, HimmelblauConfig};
 use crate::db::KeyStoreTxn;
+use crate::idprovider::common::TaskChannel;
 use crate::idprovider::himmelblau::HimmelblauProvider;
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
     IdProvider, IdpError, UserToken, UserTokenState,
 };
 use crate::idprovider::oidc_router::OidcRouter;
-use crate::unix_proto::PamAuthRequest;
+use crate::unix_proto::{PamAuthRequest, TaskSender};
 use ::himmelblau::auth::UserToken as UnixUserToken;
 use ::himmelblau::graph::Graph;
 use ::himmelblau::BrokerClientApplication;
@@ -36,7 +37,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{broadcast, Mutex};
 
-pub(crate) mod common;
+pub mod common;
 pub mod himmelblau;
 pub(crate) mod oidc_router;
 pub mod okta;
@@ -53,6 +54,7 @@ enum Providers {
 pub struct IdProviderProxy {
     config: Arc<Mutex<HimmelblauConfig>>,
     provider: Arc<Providers>,
+    task_channel: TaskChannel,
 }
 
 impl IdProviderProxy {
@@ -68,6 +70,7 @@ impl IdProviderProxy {
             Ok(idmap) => Arc::new(Mutex::new(idmap)),
             Err(e) => return Err(anyhow!("{:?}", e)),
         };
+        let task_channel = TaskChannel::new();
 
         let domain = config.lock().await.get_configured_entra_domain();
         let oidc_issuer_url = config.lock().await.get_oidc_issuer_url();
@@ -83,7 +86,7 @@ impl IdProviderProxy {
                         domain
                     );
                 }
-                let provider = OidcRouter::new(&config, "oidc", &idmap)
+                let provider = OidcRouter::new(&config, "oidc", &idmap, &task_channel)
                     .await
                     .map_err(|e| {
                         error!("Failed initializing OIDC provider: {:?}", e);
@@ -146,11 +149,12 @@ impl IdProviderProxy {
                     error!("Failed initializing provider: {:?}", e);
                     anyhow!("{:?}", e)
                 })?;
-                let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
-                    .map_err(|e| {
-                        error!("Failed to initialize the provider: {:?}", e);
-                        anyhow!("Failed to initialize the provider")
-                    })?;
+                let provider =
+                    HimmelblauProvider::new(app, &config, &domain, graph, &idmap, &task_channel)
+                        .map_err(|e| {
+                            error!("Failed to initialize the provider: {:?}", e);
+                            anyhow!("Failed to initialize the provider")
+                        })?;
                 {
                     // A client write lock is required here.
                     let mut client = provider.client().lock().await;
@@ -170,6 +174,7 @@ impl IdProviderProxy {
         let proxy = IdProviderProxy {
             config: config.clone(),
             provider: Arc::new(provider),
+            task_channel,
         };
 
         // Spawn periodic cookie clearing loop (Fixes bugs #591 and #491)
@@ -189,6 +194,13 @@ impl IdProviderProxy {
         });
 
         Ok(proxy)
+    }
+
+    /// Set the task channel sender so the provider can dispatch work to tasksd.
+    /// Called from the daemon after both the provider and the task channel are
+    /// created.
+    pub async fn set_task_tx(&self, tx: TaskSender) {
+        self.task_channel.set(tx).await;
     }
     async fn find_provider(&self, domain: Option<&str>) -> Result<&Providers, IdpError> {
         let provider = self.provider.as_ref();
@@ -636,6 +648,14 @@ impl IdProvider for IdProviderProxy {
         match provider {
             Providers::Oidc(provider) => provider.get_cachestate(account_id).await,
             Providers::Himmelblau(provider) => provider.get_cachestate(account_id).await,
+        }
+    }
+
+    async fn validate_offline_token(&self, token: UserToken) -> Result<UserToken, IdpError> {
+        let domain = upn_domain(&token.spn);
+        match self.find_provider(domain).await? {
+            Providers::Oidc(provider) => provider.validate_offline_token(token).await,
+            Providers::Himmelblau(provider) => provider.validate_offline_token(token).await,
         }
     }
 

@@ -29,7 +29,7 @@ use crate::idprovider::common::{
     build_online_probe_client, oidc_group_claims_from_value, oidc_user_token_from_claims,
     OidcUserInfoClaims,
 };
-use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
+use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry, TaskChannel};
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
     IdProvider, IdpError, UserToken, UserTokenState,
@@ -1038,6 +1038,40 @@ mod tests {
                 UserTokenState::UseCached
             ));
         }
+    }
+
+    #[test]
+    fn id_refresh_account_id_resolves_spn_with_username_override() {
+        let token = crate::idprovider::interface::UserToken {
+            name: "local_user".to_string(),
+            spn: "user@example.com".to_string(),
+            uuid: uuid::Uuid::new_v4(),
+            real_gidnumber: Some(1001),
+            gidnumber: 1000,
+            displayname: "Test User".to_string(),
+            shell: None,
+            groups: vec![],
+            tenant_id: None,
+            valid: true,
+        };
+        assert_eq!(
+            crate::idprovider::interface::Id::Name("local_user".into())
+                .refresh_account_id(Some(&token)),
+            Some("user@example.com")
+        );
+        assert_eq!(
+            crate::idprovider::interface::Id::Gid(1000).refresh_account_id(Some(&token)),
+            Some("user@example.com")
+        );
+        assert_eq!(
+            crate::idprovider::interface::Id::Name("fallback@example.com".into())
+                .refresh_account_id(None),
+            Some("fallback@example.com")
+        );
+        assert_eq!(
+            crate::idprovider::interface::Id::Gid(1000).refresh_account_id(None),
+            None
+        );
     }
 
     #[test]
@@ -2370,6 +2404,7 @@ impl OidcApplication {
         tenant_id: &Uuid,
         account_id_claims: &[String],
         strip_at_suffix: bool,
+        idmap_task: Option<&TaskChannel>,
     ) -> Result<UserToken, IdpError> {
         let access_token = token.access_token();
         let (userinfo, mut group_claims): (OidcUserInfoClaims, Vec<String>) =
@@ -2391,6 +2426,8 @@ impl OidcApplication {
             tenant_id,
             account_id_claims,
             strip_at_suffix,
+            idmap_task,
+            Some(access_token.secret().as_str()),
         )
         .await
     }
@@ -2409,6 +2446,7 @@ pub struct OidcProvider {
     client: OidcApplication,
     pub(crate) refresh_cache: Arc<RefreshCache>,
     pub(crate) bad_pin_counter: Arc<BadPinCounter>,
+    pub(crate) task_channel: TaskChannel,
     domain: String,
 }
 
@@ -2418,6 +2456,7 @@ impl OidcProvider {
         cfg: &Arc<Mutex<HimmelblauConfig>>,
         domain: &str,
         idmap: &Arc<Mutex<Idmap>>,
+        task_channel: &TaskChannel,
     ) -> Result<Self, IdpError> {
         Ok(Self {
             config: cfg.clone(),
@@ -2426,6 +2465,7 @@ impl OidcProvider {
             client: OidcApplication::new(),
             refresh_cache: Arc::new(RefreshCache::new()),
             bad_pin_counter: Arc::new(BadPinCounter::new()),
+            task_channel: task_channel.clone(),
             domain: domain.to_string(),
         })
     }
@@ -2766,12 +2806,13 @@ impl OidcProvider {
         token: &OidcTokenResponse,
     ) -> Result<AuthResult, IdpError> {
         let tenant_id = self.tenant_id().await?;
-        let (shell, account_id_claims, strip_at_suffix) = {
+        let (shell, account_id_claims, strip_at_suffix, idmap_script) = {
             let config = self.config.lock().await;
             (
                 config.get_shell(None),
                 config.get_oidc_account_id_claims(),
                 config.get_oidc_account_id_strip_at_suffix(),
+                config.get_idmap_script(),
             )
         };
         let token2 = self
@@ -2783,9 +2824,10 @@ impl OidcProvider {
                 &tenant_id,
                 &account_id_claims,
                 strip_at_suffix,
+                idmap_script.as_ref().map(|_| &self.task_channel),
             )
             .await?;
-        if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
+        if account_id.to_string().to_lowercase() != token2.spn.to_string().to_lowercase() {
             let msg = tr_fmt(
                 "Authenticated user {uuid} does not match requested user",
                 &[("uuid", token2.uuid.to_string())],
@@ -2839,14 +2881,8 @@ impl IdProvider for OidcProvider {
             return Ok(UserTokenState::UseCached);
         }
 
-        let account_id = match id {
-            Id::Name(account_id) => account_id,
-            _ => match token {
-                Some(tok) => &tok.name,
-                None => {
-                    return Ok(UserTokenState::UseCached);
-                }
-            },
+        let Some(account_id) = id.refresh_account_id(token) else {
+            return Ok(UserTokenState::UseCached);
         };
 
         // Existing OIDC users must only be refreshed from authenticated
@@ -2980,8 +3016,8 @@ impl IdProvider for OidcProvider {
             name: account_id.to_string(),
             spn: account_id.to_string(),
             uuid: object_id,
-            real_gidnumber: Some(uid),
-            gidnumber: gid,
+            real_gidnumber: Some(gid),
+            gidnumber: uid,
             displayname,
             shell: Some(self.config.lock().await.get_shell(None)),
             groups: vec![GroupToken {
@@ -3250,8 +3286,7 @@ impl IdProvider for OidcProvider {
                         Err(MsalError::RequestFailed(msg)) => {
                             let url = extract_base_url!(msg);
                             info!(?url, "Network down detected");
-                            let mut state = self.state.lock().await;
-                            *state =
+                            *self.state.lock().await =
                                 CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                             if $require_hello_totp {
                                 if !check_hello_totp_setup!(self, account_id, keystore) {
@@ -3259,7 +3294,7 @@ impl IdProvider for OidcProvider {
                                         self,
                                         account_id,
                                         keystore,
-                                        old_token,
+                                        None,
                                         $cred,
                                         tpm,
                                         machine_key,
@@ -3269,16 +3304,16 @@ impl IdProvider for OidcProvider {
                                     *cred_handler = AuthCredHandler::HelloTOTP {
                                         cred: $cred.clone(),
                                         pending_sealed_totp: None,
+                                        validated_token: None,
                                     };
                                     return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                         msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                     }), AuthCacheAction::None));
                                 }
                             } else {
+                                let token = self.validate_offline_token(old_token.clone()).await?;
                                 return Ok((
-                                    AuthResult::Success {
-                                        token: old_token.clone(),
-                                    },
+                                    AuthResult::Success { token },
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -3359,6 +3394,7 @@ impl IdProvider for OidcProvider {
                         &tenant_id,
                         &account_id_claims,
                         strip_at_suffix,
+                        None,
                     )
                     .await?;
                 tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
@@ -3384,7 +3420,7 @@ impl IdProvider for OidcProvider {
                                     self,
                                     account_id,
                                     keystore,
-                                    old_token,
+                                    Some(Box::new(token)),
                                     $cred,
                                     tpm,
                                     machine_key,
@@ -3394,6 +3430,7 @@ impl IdProvider for OidcProvider {
                                 *cred_handler = AuthCredHandler::HelloTOTP {
                                     cred: $cred.clone(),
                                     pending_sealed_totp: None,
+                                    validated_token: Some(Box::new(token)),
                                 };
                                 return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                     msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
@@ -3984,6 +4021,7 @@ impl IdProvider for OidcProvider {
                 AuthCredHandler::HelloTOTP {
                     cred: hello_pin,
                     pending_sealed_totp,
+                    validated_token,
                 },
                 PamAuthRequest::HelloTOTP { cred },
             ) => {
@@ -3992,6 +4030,7 @@ impl IdProvider for OidcProvider {
                     account_id,
                     keystore,
                     old_token,
+                    validated_token.as_deref().cloned(),
                     cred,
                     hello_pin,
                     tpm,
@@ -4169,5 +4208,11 @@ impl IdProvider for OidcProvider {
         _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
         Err(IdpError::BadRequest)
+    }
+
+    async fn validate_offline_token(&self, token: UserToken) -> Result<UserToken, IdpError> {
+        self.task_channel
+            .validate_offline_token(&self.config, token, false)
+            .await
     }
 }

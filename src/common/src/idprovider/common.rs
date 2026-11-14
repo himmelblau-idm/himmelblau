@@ -15,10 +15,14 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use crate::config::{split_username, HimmelblauConfig};
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
-use crate::idmap_cache::StaticIdCache;
+use crate::idmap_cache::{StaticIdCache, StaticUser};
 use crate::idprovider::interface::{GroupToken, IdpError, UserToken};
+use crate::reserved_ids::is_systemd_dynamic_id;
+use crate::unix_proto::{TaskOutcome, TaskRequest, TaskSender};
+use crate::user_map::UserMap;
 use idmap::Idmap;
 use kanidm_hsm_crypto::provider::{BoxedDynTpm, Tpm};
 use kanidm_hsm_crypto::structures::{SealedData, StorageKey};
@@ -30,15 +34,400 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::HashMap,
+    io,
+    process::{Output, Stdio},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
-use tokio::sync::RwLock;
+use tokio::io::AsyncReadExt;
+use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 /// When a cached PRT is older than 4h, opportunistically issue an
 /// `exchange_prt_for_prt` before using it for access-token acquisition.
 pub const PRT_REFRESH_AGE: Duration = Duration::from_secs(4 * 3600);
+
+#[derive(Debug, PartialEq)]
+pub struct IdmapScriptResult {
+    pub username: Option<String>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+}
+
+struct IdmapScriptChild(tokio::process::Child);
+
+impl IdmapScriptChild {
+    async fn output(
+        command: &mut tokio::process::Command,
+        timeout: Duration,
+    ) -> io::Result<Output> {
+        let mut child = Self(
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .process_group(0)
+                .kill_on_drop(true)
+                .spawn()?,
+        );
+        let mut stdout = child
+            .0
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("missing script stdout"))?;
+        let mut stderr = child
+            .0
+            .stderr
+            .take()
+            .ok_or_else(|| io::Error::other("missing script stderr"))?;
+        let mut stdout_bytes = Vec::new();
+        let mut stderr_bytes = Vec::new();
+        let result = tokio::time::timeout(timeout, async {
+            tokio::try_join!(
+                stdout.read_to_end(&mut stdout_bytes),
+                stderr.read_to_end(&mut stderr_bytes),
+            )?;
+            let status = child.0.wait().await?;
+            Ok(Output {
+                status,
+                stdout: stdout_bytes,
+                stderr: stderr_bytes,
+            })
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "idmap script execution deadline exceeded",
+            ))
+        });
+
+        if result.is_err() {
+            child.kill_group();
+            if let Err(e) = child.0.start_kill() {
+                error!("Failed to terminate idmap script child: {:?}", e);
+            }
+            match tokio::time::timeout(Duration::from_secs(1), child.0.wait()).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => error!("Failed to reap idmap script: {:?}", e),
+                Err(_) => error!("Timed out reaping idmap script"),
+            }
+        }
+        result
+    }
+
+    fn kill_group(&self) {
+        let Some(id) = self.0.id() else {
+            return;
+        };
+        let Ok(pgid) = libc::pid_t::try_from(id) else {
+            error!("Invalid idmap script process ID: {}", id);
+            return;
+        };
+        if unsafe { libc::killpg(pgid, libc::SIGKILL) } != 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                error!(
+                    "Failed to terminate idmap script process group: {:?}",
+                    error
+                );
+            }
+        }
+    }
+}
+
+impl Drop for IdmapScriptChild {
+    fn drop(&mut self) {
+        self.kill_group();
+    }
+}
+
+/// Run the configured idmap_script executable and parse the result.
+///
+/// The script receives environment variables USERNAME, ACCESS_TOKEN,
+/// OBJECT_ID, TENANT_ID, and DOMAIN.  It must print a single line to
+/// stdout with comma-separated key=value pairs.  Recognised keys:
+///
+///   uid=<number>     — mapped UID
+///   gid=<number>     — mapped GID
+///   username=<str>   — optional, overrides the session username
+///
+/// Order does not matter.  Only uid, gid, and username are accepted;
+/// any other key rejects the login.  Exit 0 with no output to fall
+/// back to the default UID/GID resolution.  A non-zero exit code
+/// rejects the login.
+pub async fn run_idmap_script(
+    script: &str,
+    username: &str,
+    access_token: &str,
+    object_id: &str,
+    tenant_id: &str,
+    domain: &str,
+) -> Result<Option<IdmapScriptResult>, IdpError> {
+    let mut command = tokio::process::Command::new("sh");
+    command
+        .arg("-c")
+        .arg(script)
+        .env("USERNAME", username)
+        .env("ACCESS_TOKEN", access_token)
+        .env("OBJECT_ID", object_id)
+        .env("TENANT_ID", tenant_id)
+        .env("DOMAIN", domain);
+    let output = match IdmapScriptChild::output(&mut command, Duration::from_secs(20)).await {
+        Ok(output) => output,
+        Err(e) => {
+            error!("Failed to execute idmap script: {:?}", e);
+            return Err(IdpError::BadRequest);
+        }
+    };
+
+    if !output.status.success() {
+        error!(
+            "idmap script exited with status {}",
+            output.status.code().unwrap_or(-1)
+        );
+        return Err(IdpError::BadRequest);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    if lines.len() != 1 {
+        error!("idmap script must print exactly one line");
+        return Err(IdpError::BadRequest);
+    }
+
+    let line = lines[0];
+
+    // Parse key=value pairs: uid=123,gid=456,username=jsmith
+    let mut uid_opt: Option<u32> = None;
+    let mut gid_opt: Option<u32> = None;
+    let mut username_opt: Option<String> = None;
+
+    for pair in line.split(',') {
+        let pair = pair.trim();
+        let Some((key, value)) = pair.split_once('=') else {
+            error!("idmap script: malformed field '{}'", pair);
+            return Err(IdpError::BadRequest);
+        };
+
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "uid" => {
+                uid_opt = Some(value.parse::<u32>().map_err(|e| {
+                    error!("idmap script: invalid uid '{}': {:?}", value, e);
+                    IdpError::BadRequest
+                })?);
+            }
+            "gid" => {
+                gid_opt = Some(value.parse::<u32>().map_err(|e| {
+                    error!("idmap script: invalid gid '{}': {:?}", value, e);
+                    IdpError::BadRequest
+                })?);
+            }
+            "username" => {
+                if !value.is_empty() {
+                    username_opt = Some(value.to_string());
+                }
+            }
+            _ => {
+                error!("idmap script: unknown key '{}'", key);
+                return Err(IdpError::BadRequest);
+            }
+        }
+    }
+
+    if uid_opt == Some(0) || uid_opt.is_some_and(is_systemd_dynamic_id) {
+        error!("idmap script returned reserved uid={:?}", uid_opt);
+        return Err(IdpError::BadRequest);
+    }
+
+    if gid_opt == Some(0) || gid_opt.is_some_and(is_systemd_dynamic_id) {
+        error!("idmap script returned reserved gid={:?}", gid_opt);
+        return Err(IdpError::BadRequest);
+    }
+
+    if uid_opt.is_none() && gid_opt.is_none() && username_opt.is_none() {
+        error!("idmap script output contained no recognised keys: {}", line);
+        return Err(IdpError::BadRequest);
+    }
+
+    Ok(Some(IdmapScriptResult {
+        username: username_opt,
+        uid: uid_opt,
+        gid: gid_opt,
+    }))
+}
+
+#[derive(Clone)]
+pub struct TaskChannel {
+    tx: Arc<Mutex<Option<TaskSender>>>,
+    cache_path: Arc<str>,
+}
+
+impl Default for TaskChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TaskChannel {
+    pub fn new() -> Self {
+        Self {
+            tx: Arc::new(Mutex::new(None)),
+            cache_path: Arc::from(ID_MAP_CACHE),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_cache_path(cache_path: impl Into<Arc<str>>) -> Self {
+        Self {
+            tx: Arc::new(Mutex::new(None)),
+            cache_path: cache_path.into(),
+        }
+    }
+
+    pub async fn set(&self, tx: TaskSender) {
+        *self.tx.lock().await = Some(tx);
+    }
+
+    pub(crate) async fn run_idmap_script(
+        &self,
+        spn: &str,
+        access_token: &str,
+        object_id: &str,
+        tenant_id: &str,
+        domain: &str,
+        default_ids: Option<(u32, u32)>,
+    ) -> Result<StaticUser, IdpError> {
+        let task_tx = self.tx.lock().await.clone().ok_or_else(|| {
+            error!("idmap_script configured but task channel not available");
+            IdpError::BadRequest
+        })?;
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        task_tx
+            .send_timeout(
+                (
+                    TaskRequest::IdmapScript(
+                        spn.to_string(),
+                        access_token.to_string(),
+                        object_id.to_string(),
+                        tenant_id.to_string(),
+                        domain.to_string(),
+                        default_ids,
+                    ),
+                    tx,
+                ),
+                Duration::from_millis(100),
+            )
+            .await
+            .map_err(|e| {
+                error!("Failed to dispatch idmap script task: {:?}", e);
+                IdpError::BadRequest
+            })?;
+
+        match tokio::time::timeout(Duration::from_secs(30), rx).await {
+            Ok(Ok(TaskOutcome::Status(0))) => {}
+            Ok(Ok(outcome)) => {
+                error!(
+                    "idmap script task rejected login for {}: {:?}",
+                    spn, outcome
+                );
+                return Err(IdpError::BadRequest);
+            }
+            _ => {
+                error!("idmap script task failed or timed out for {}", spn);
+                return Err(IdpError::BadRequest);
+            }
+        }
+
+        let idmap_cache = StaticIdCache::new(&self.cache_path, false).map_err(|e| {
+            error!("Failed reading idmap cache after script: {:?}", e);
+            IdpError::BadRequest
+        })?;
+        idmap_cache.get_user_by_name(spn).ok_or_else(|| {
+            error!("idmap cache empty after script for {}", spn);
+            IdpError::BadRequest
+        })
+    }
+
+    pub(crate) async fn validate_offline_token(
+        &self,
+        config: &Mutex<HimmelblauConfig>,
+        mut token: UserToken,
+        honor_user_map: bool,
+    ) -> Result<UserToken, IdpError> {
+        let (idmap_script, user_map_file) = {
+            let cfg = config.lock().await;
+            (cfg.get_idmap_script(), cfg.get_user_map_file())
+        };
+        if idmap_script.is_none() {
+            return Ok(token);
+        }
+        if honor_user_map
+            && UserMap::new(&user_map_file)
+                .get_local_from_upn(&token.spn)
+                .is_some()
+        {
+            return Ok(token);
+        }
+
+        let old_gid = token.real_gidnumber.unwrap_or(token.gidnumber);
+        let tenant_id = token.tenant_id.map(|id| id.to_string()).unwrap_or_default();
+        let domain = split_username(&token.spn).map(|(_, d)| d).unwrap_or("");
+        let user = self
+            .run_idmap_script(
+                &token.spn,
+                "",
+                &token.uuid.to_string(),
+                &tenant_id,
+                domain,
+                Some((token.gidnumber, old_gid)),
+            )
+            .await?;
+
+        token.name = user.username.unwrap_or_else(|| token.spn.clone());
+        token.gidnumber = user.uid;
+        token.real_gidnumber = Some(user.gid);
+        if old_gid != user.gid {
+            if token
+                .groups
+                .iter()
+                .any(|group| group.uuid != token.uuid && group.gidnumber == user.gid)
+            {
+                token
+                    .groups
+                    .retain(|group| !(group.uuid == token.uuid && group.gidnumber == old_gid));
+            } else if let Some(primary) = token
+                .groups
+                .iter_mut()
+                .find(|group| group.uuid == token.uuid && group.gidnumber == old_gid)
+            {
+                primary.gidnumber = user.gid;
+            }
+        }
+        if token.groups.iter().all(|group| group.gidnumber != user.gid) {
+            token.groups.push(GroupToken {
+                name: token.spn.clone(),
+                spn: token.spn.clone(),
+                uuid: token.uuid,
+                gidnumber: user.gid,
+            });
+        }
+        Ok(token)
+    }
+}
 
 /// Tolerate trailing slashes without normalizing other issuer differences.
 pub(crate) fn oidc_issuer_matches(configured: &str, reported: Option<&str>) -> bool {
@@ -776,7 +1165,7 @@ macro_rules! impl_himmelblau_offline_auth_init {
 
 #[macro_export]
 macro_rules! impl_handle_hello_pin_totp_auth {
-    ($self:ident, $account_id:expr, $keystore:expr, $token:expr, $cred:ident, $hello_pin:ident, $tpm:expr, $machine_key:expr, $pending_sealed_totp:expr, $auth_cache_action:expr) => {{
+    ($self:ident, $account_id:expr, $keystore:expr, $token:expr, $validated_token:expr, $cred:ident, $hello_pin:ident, $tpm:expr, $machine_key:expr, $pending_sealed_totp:expr, $auth_cache_action:expr) => {{
         let hello_totp_tag = $self.fetch_hello_totp_key_tag($account_id);
         // Track if this is a pending setup (need to save to HSM on success)
         let is_pending_setup = $pending_sealed_totp.is_some();
@@ -840,7 +1229,10 @@ macro_rules! impl_handle_hello_pin_totp_auth {
                     error!("Failed to verify TOTP code: {:?}", e);
                     IdpError::Tpm
                 })? {
-                    // TOTP validation succeeded - save to HSM if this was a pending setup
+                    let token = match $validated_token {
+                        Some(validated) => validated,
+                        None => $self.validate_offline_token($token.clone()).await?,
+                    };
                     if is_pending_setup {
                         $keystore
                             .insert_tagged_hsm_key(&hello_totp_tag, &sealed_totp_secret)
@@ -850,9 +1242,7 @@ macro_rules! impl_handle_hello_pin_totp_auth {
                             })?;
                     }
                     $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
-                    Ok(($auth_cache_action)(AuthResult::Success {
-                        token: $token.clone(),
-                    }))
+                    Ok(($auth_cache_action)(AuthResult::Success { token }))
                 } else {
                     handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
                         Ok(($auth_cache_action)(AuthResult::Denied(msg.to_string())))
@@ -950,13 +1340,15 @@ macro_rules! impl_himmelblau_offline_auth_step {
                                         loaded_hello_key.storage_key(),
                                         cred,
                                         $tpm,
-                                        $cred_handler
+                                        $cred_handler,
+                                        None
                                     )?;
                                 Ok(auth_result)
                             } else {
                                 *$cred_handler = AuthCredHandler::HelloTOTP {
                                     cred,
                                     pending_sealed_totp: None,
+                                    validated_token: None,
                                 };
                                 Ok(AuthResult::Next(AuthRequest::HelloTOTP {
                                     msg: tr(
@@ -966,9 +1358,8 @@ macro_rules! impl_himmelblau_offline_auth_step {
                             }
                         } else {
                             $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
-                            Ok(AuthResult::Success {
-                                token: $token.clone(),
-                            })
+                            let token = $self.validate_offline_token($token.clone()).await?;
+                            Ok(AuthResult::Success { token })
                         }
                     }
                     Err(e) => {
@@ -986,6 +1377,7 @@ macro_rules! impl_himmelblau_offline_auth_step {
                 AuthCredHandler::HelloTOTP {
                     cred: hello_pin,
                     pending_sealed_totp,
+                    validated_token,
                 },
                 PamAuthRequest::HelloTOTP { cred },
             ) => {
@@ -994,6 +1386,7 @@ macro_rules! impl_himmelblau_offline_auth_step {
                     $account_id,
                     $keystore,
                     $token,
+                    validated_token.as_deref().cloned(),
                     cred,
                     hello_pin,
                     $tpm,
@@ -1430,7 +1823,7 @@ macro_rules! impl_probe_online {
 
 #[macro_export]
 macro_rules! impl_setup_hello_totp {
-    ($self:ident, $account_id:ident, $keystore:ident, $old_token:ident, $hello_pin:ident, $tpm:ident, $machine_key:ident, $cred_handler:ident) => {{
+    ($self:ident, $account_id:ident, $keystore:ident, $validated_token:expr, $hello_pin:ident, $tpm:ident, $machine_key:ident, $cred_handler:ident) => {{
         let pin = PinValue::new(&$hello_pin).map_err(|e| {
             error!("Failed setting pin value: {:?}", e);
             IdpError::Tpm
@@ -1450,7 +1843,8 @@ macro_rules! impl_setup_hello_totp {
             &win_hello_storage_key,
             $hello_pin,
             $tpm,
-            $cred_handler
+            $cred_handler,
+            $validated_token
         )
     }};
 }
@@ -1459,7 +1853,7 @@ macro_rules! impl_setup_hello_totp {
 /// Hello key.
 #[macro_export]
 macro_rules! impl_setup_hello_totp_with_storage_key {
-    ($account_id:ident, $hello_storage_key:expr, $hello_pin:ident, $tpm:ident, $cred_handler:ident) => {{
+    ($account_id:ident, $hello_storage_key:expr, $hello_pin:ident, $tpm:ident, $cred_handler:ident, $validated_token:expr) => {{
         let hostname = hostname::get()
             .unwrap_or_default()
             .to_string_lossy()
@@ -1506,6 +1900,7 @@ macro_rules! impl_setup_hello_totp_with_storage_key {
         *$cred_handler = AuthCredHandler::HelloTOTP {
             cred: $hello_pin.clone(),
             pending_sealed_totp: Some(sealed_totp_secret),
+            validated_token: $validated_token,
         };
         let msg = format!(
             "otpauth://totp/{}:{}?secret={}&issuer={}&algorithm=SHA1&digits=6&period=30",
@@ -2324,7 +2719,8 @@ mod tests {
             hello_storage_key,
             pin,
             tpm,
-            cred_handler
+            cred_handler,
+            None
         )
     }
 
@@ -2342,7 +2738,7 @@ mod tests {
             harness,
             account_id,
             keystore,
-            _old_token,
+            None,
             pin,
             tpm,
             machine_key,
@@ -2369,6 +2765,7 @@ mod tests {
             AuthCredHandler::HelloTOTP {
                 cred,
                 pending_sealed_totp: Some(sealed_totp),
+                ..
             } if cred == TEST_HELLO_PIN => sealed_totp,
             other => anyhow::bail!("unexpected credential handler: {other:?}"),
         };
@@ -2448,6 +2845,386 @@ mod tests {
                 ..
             }
         ));
+        Ok(())
+    }
+
+    struct OfflineScriptHarness {
+        config: tokio::sync::Mutex<crate::config::HimmelblauConfig>,
+        refresh_cache: RefreshCache,
+        bad_pin_counter: BadPinCounter,
+        task_channel: super::TaskChannel,
+        honor_user_map: bool,
+    }
+
+    #[allow(dead_code)]
+    impl OfflineScriptHarness {
+        crate::impl_himmelblau_hello_key_helpers!();
+
+        async fn validate_offline_token(
+            &self,
+            token: super::UserToken,
+        ) -> Result<super::UserToken, IdpError> {
+            self.task_channel
+                .validate_offline_token(&self.config, token, self.honor_user_map)
+                .await
+        }
+
+        async fn step(
+            &self,
+            account_id: &str,
+            token: &super::UserToken,
+            cred_handler: &mut AuthCredHandler,
+            pam_next_req: crate::unix_proto::PamAuthRequest,
+            keystore: &mut RecordingKeyStore,
+            tpm: &mut BoxedDynTpm,
+            machine_key: &StorageKey,
+        ) -> Result<AuthResult, IdpError> {
+            use crate::i18n::tr;
+            use crate::unix_proto::PamAuthRequest;
+            crate::impl_himmelblau_offline_auth_step!(
+                cred_handler,
+                pam_next_req,
+                self,
+                account_id,
+                keystore,
+                tpm,
+                machine_key,
+                token,
+                load_cached_prt_no_op
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn offline_hello_pin_and_totp_enforce_idmap_script_and_preserve_validated_token(
+    ) -> anyhow::Result<()> {
+        use crate::idmap_cache::StaticIdCache;
+        use crate::idprovider::interface::GroupToken;
+        use crate::unix_proto::{PamAuthRequest, TaskOutcome, TaskRequest, TaskSender};
+
+        let db_dir = std::env::temp_dir().join(format!("offline-idmap-{}", uuid::Uuid::new_v4()));
+        let db_path = db_dir.join("idmap.cache.db");
+        let db_str = db_path.to_str().unwrap().to_string();
+        let user_map_path = db_dir.join("user-map");
+        std::fs::create_dir_all(&db_dir)?;
+
+        let script_cmd = std::sync::Arc::new(tokio::sync::Mutex::new(
+            "printf 'uid=2700,gid=2701,username=offline_alice\\n'".to_string(),
+        ));
+        let observed = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let (tx, mut rx): (TaskSender, _) = tokio::sync::mpsc::channel(8);
+        let worker_db = db_str.clone();
+        let worker_cmd = script_cmd.clone();
+        let worker_obs = observed.clone();
+        let worker = tokio::spawn(async move {
+            while let Some((req, reply)) = rx.recv().await {
+                let TaskRequest::IdmapScript(
+                    username,
+                    access_token,
+                    object_id,
+                    tenant_id,
+                    domain,
+                    default_ids,
+                ) = req
+                else {
+                    panic!("unexpected task request");
+                };
+                worker_obs
+                    .lock()
+                    .await
+                    .push((username.clone(), access_token.clone(), default_ids));
+                let cmd = worker_cmd.lock().await.clone();
+                let outcome = match super::run_idmap_script(
+                    &cmd,
+                    &username,
+                    &access_token,
+                    &object_id,
+                    &tenant_id,
+                    &domain,
+                )
+                .await
+                {
+                    Ok(res) => {
+                        let cache = StaticIdCache::open_for_test(&worker_db, true).unwrap();
+                        match cache.apply_idmap_script(&username, res.as_ref(), default_ids) {
+                            Ok(()) => TaskOutcome::Status(0),
+                            Err(_) => TaskOutcome::Status(1),
+                        }
+                    }
+                    Err(_) => TaskOutcome::Status(1),
+                };
+                let _ = reply.send(outcome);
+            }
+        });
+
+        let task_channel = super::TaskChannel::with_cache_path(db_str);
+        task_channel.set(tx).await;
+
+        let mut cfg = crate::config::HimmelblauConfig::new(Some("/dev/null"))
+            .map_err(|e| anyhow::anyhow!(e))?;
+        cfg.set("global", "idmap_script", "/etc/himmelblau/idmap.sh");
+        cfg.set("global", "user_map_file", user_map_path.to_str().unwrap());
+        let harness = OfflineScriptHarness {
+            config: tokio::sync::Mutex::new(cfg),
+            refresh_cache: RefreshCache::new(),
+            bad_pin_counter: BadPinCounter::new(),
+            task_channel,
+            honor_user_map: true,
+        };
+
+        let (mut tpm, machine_key, hello_key) = soft_tpm_with_hello_key()?;
+        let mut keystore = RecordingKeyStore::default();
+        keystore
+            .insert_tagged_hsm_key(
+                &harness.fetch_hello_key_tag(TEST_ACCOUNT_ID, true),
+                &hello_key,
+            )
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+
+        let user_uuid = uuid::Uuid::new_v4();
+        let extra_group = GroupToken {
+            name: "ops".to_string(),
+            spn: "ops@example.com".to_string(),
+            uuid: uuid::Uuid::new_v4(),
+            gidnumber: 9900,
+        };
+        let cached_token = super::UserToken {
+            name: TEST_ACCOUNT_ID.to_string(),
+            spn: TEST_ACCOUNT_ID.to_string(),
+            uuid: user_uuid,
+            real_gidnumber: Some(200_100),
+            gidnumber: 200_100,
+            displayname: "Test User".to_string(),
+            shell: Some("/bin/sh".to_string()),
+            groups: vec![
+                GroupToken {
+                    name: TEST_ACCOUNT_ID.to_string(),
+                    spn: TEST_ACCOUNT_ID.to_string(),
+                    uuid: user_uuid,
+                    gidnumber: 200_100,
+                },
+                extra_group,
+            ],
+            tenant_id: Some(uuid::Uuid::new_v4()),
+            valid: true,
+        };
+
+        let mut handler = AuthCredHandler::None;
+        let ok = harness
+            .step(
+                TEST_ACCOUNT_ID,
+                &cached_token,
+                &mut handler,
+                PamAuthRequest::Pin {
+                    cred: TEST_HELLO_PIN.to_string(),
+                },
+                &mut keystore,
+                &mut tpm,
+                &machine_key,
+            )
+            .await
+            .unwrap();
+        let AuthResult::Success { token: mapped } = ok else {
+            anyhow::bail!("expected offline PIN success");
+        };
+        assert_eq!(mapped.name, "offline_alice");
+        assert_eq!(mapped.spn, TEST_ACCOUNT_ID);
+        assert_eq!(mapped.gidnumber, 2700);
+        assert_eq!(mapped.real_gidnumber, Some(2701));
+        assert_eq!(mapped.groups.len(), 2);
+        assert_eq!(mapped.groups[0].gidnumber, 2701);
+        assert_eq!(mapped.groups[1].gidnumber, 9900);
+        assert_eq!(observed.lock().await[0].1, "");
+
+        *script_cmd.lock().await = "exit 1".to_string();
+        let failed = harness
+            .step(
+                TEST_ACCOUNT_ID,
+                &mapped,
+                &mut handler,
+                PamAuthRequest::Pin {
+                    cred: TEST_HELLO_PIN.to_string(),
+                },
+                &mut keystore,
+                &mut tpm,
+                &machine_key,
+            )
+            .await;
+        assert!(matches!(failed, Err(IdpError::BadRequest)));
+
+        *script_cmd.lock().await =
+            "printf 'uid=2799,gid=2701,username=offline_alice\\n'".to_string();
+        let mismatch = harness
+            .step(
+                TEST_ACCOUNT_ID,
+                &mapped,
+                &mut handler,
+                PamAuthRequest::Pin {
+                    cred: TEST_HELLO_PIN.to_string(),
+                },
+                &mut keystore,
+                &mut tpm,
+                &machine_key,
+            )
+            .await;
+        assert!(matches!(mismatch, Err(IdpError::BadRequest)));
+
+        *script_cmd.lock().await = "exit 0".to_string();
+        harness
+            .config
+            .lock()
+            .await
+            .set("global", "enable_hello_totp", "true");
+        let totp_prompt = harness
+            .step(
+                TEST_ACCOUNT_ID,
+                &mapped,
+                &mut handler,
+                PamAuthRequest::Pin {
+                    cred: TEST_HELLO_PIN.to_string(),
+                },
+                &mut keystore,
+                &mut tpm,
+                &machine_key,
+            )
+            .await
+            .unwrap();
+        let AuthResult::Next(AuthRequest::HelloTOTP { msg }) = totp_prompt else {
+            anyhow::bail!("expected HelloTOTP enrollment prompt");
+        };
+        let secret_b32 = msg
+            .split("secret=")
+            .nth(1)
+            .and_then(|s| s.split('&').next())
+            .ok_or_else(|| anyhow::anyhow!("missing totp secret"))?;
+        let totp = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            Secret::Encoded(secret_b32.to_string())
+                .to_bytes()
+                .map_err(|e| anyhow::anyhow!("{e:?}"))?,
+            Some("Himmelblau".to_string()),
+            TEST_ACCOUNT_ID.to_string(),
+        )
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let code = totp.generate_current()?;
+        *script_cmd.lock().await = "exit 1".to_string();
+        let rejected_totp = harness
+            .step(
+                TEST_ACCOUNT_ID,
+                &cached_token,
+                &mut handler,
+                PamAuthRequest::HelloTOTP { cred: code.clone() },
+                &mut keystore,
+                &mut tpm,
+                &machine_key,
+            )
+            .await;
+        assert!(matches!(rejected_totp, Err(IdpError::BadRequest)));
+        assert!(keystore
+            .get_tagged_hsm_key::<SealedData>(&harness.fetch_hello_totp_key_tag(TEST_ACCOUNT_ID))
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?
+            .is_none());
+
+        *script_cmd.lock().await = "exit 0".to_string();
+        let count_before_totp = observed.lock().await.len();
+        let totp_ok = harness
+            .step(
+                TEST_ACCOUNT_ID,
+                &cached_token,
+                &mut handler,
+                PamAuthRequest::HelloTOTP { cred: code.clone() },
+                &mut keystore,
+                &mut tpm,
+                &machine_key,
+            )
+            .await
+            .unwrap();
+        let AuthResult::Success { token: totp_mapped } = totp_ok else {
+            anyhow::bail!("expected offline HelloTOTP success");
+        };
+        assert_eq!(totp_mapped.name, "offline_alice");
+        assert_eq!(totp_mapped.gidnumber, 2700);
+        assert_eq!(observed.lock().await.len(), count_before_totp + 1);
+        assert!(keystore
+            .get_tagged_hsm_key::<SealedData>(&harness.fetch_hello_totp_key_tag(TEST_ACCOUNT_ID))
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?
+            .is_some());
+
+        let mut online_validated = totp_mapped.clone();
+        online_validated.name = "online_validated_name".to_string();
+        let mut online_handler = AuthCredHandler::HelloTOTP {
+            cred: TEST_HELLO_PIN.to_string(),
+            pending_sealed_totp: None,
+            validated_token: Some(Box::new(online_validated)),
+        };
+        let count_before_online_totp = observed.lock().await.len();
+        let preserved = harness
+            .step(
+                TEST_ACCOUNT_ID,
+                &cached_token,
+                &mut online_handler,
+                PamAuthRequest::HelloTOTP { cred: code },
+                &mut keystore,
+                &mut tpm,
+                &machine_key,
+            )
+            .await
+            .unwrap();
+        let AuthResult::Success { token: preserved } = preserved else {
+            anyhow::bail!("expected online-validated HelloTOTP success");
+        };
+        assert_eq!(preserved.name, "online_validated_name");
+        assert_eq!(observed.lock().await.len(), count_before_online_totp);
+
+        std::fs::write(&user_map_path, format!("local_alice:{TEST_ACCOUNT_ID}\n"))?;
+        let count_before_usermap = observed.lock().await.len();
+        let skipped = harness
+            .validate_offline_token(cached_token.clone())
+            .await
+            .unwrap();
+        assert_eq!(skipped.name, TEST_ACCOUNT_ID);
+        assert_eq!(observed.lock().await.len(), count_before_usermap);
+
+        *script_cmd.lock().await = "printf 'uid=2800,gid=9900,username=offline_bob\\n'".to_string();
+        let bob_uuid = uuid::Uuid::new_v4();
+        let bob_token = super::UserToken {
+            name: "bob@example.com".to_string(),
+            spn: "bob@example.com".to_string(),
+            uuid: bob_uuid,
+            real_gidnumber: Some(200_200),
+            gidnumber: 200_200,
+            displayname: "Bob".to_string(),
+            shell: Some("/bin/sh".to_string()),
+            groups: vec![
+                GroupToken {
+                    name: "ops".to_string(),
+                    spn: "ops@example.com".to_string(),
+                    uuid: cached_token.groups[1].uuid,
+                    gidnumber: 9900,
+                },
+                GroupToken {
+                    name: "bob@example.com".to_string(),
+                    spn: "bob@example.com".to_string(),
+                    uuid: bob_uuid,
+                    gidnumber: 200_200,
+                },
+            ],
+            tenant_id: cached_token.tenant_id,
+            valid: true,
+        };
+        let bob_mapped = harness.validate_offline_token(bob_token).await.unwrap();
+        assert_eq!(bob_mapped.gidnumber, 2800);
+        assert_eq!(bob_mapped.real_gidnumber, Some(9900));
+        assert_eq!(bob_mapped.groups.len(), 1);
+        assert_eq!(bob_mapped.groups[0].name, "ops");
+        assert_eq!(bob_mapped.groups[0].gidnumber, 9900);
+
+        drop(harness);
+        worker.await?;
+        let _ = std::fs::remove_dir_all(db_dir);
         Ok(())
     }
 }
@@ -2630,13 +3407,16 @@ pub(crate) fn oidc_group_tokens_from_claims(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn oidc_user_token_from_claims(
     claims: &serde_json::Value,
     shell: String,
-    idmap: &tokio::sync::Mutex<Idmap>,
+    idmap: &Mutex<Idmap>,
     tenant_id: &uuid::Uuid,
     account_id_claims: &[String],
     strip_at_suffix: bool,
+    idmap_task: Option<&TaskChannel>,
+    access_token: Option<&str>,
 ) -> Result<UserToken, IdpError> {
     let bytes = serde_json::to_vec(claims).map_err(|_| IdpError::BadRequest)?;
     let userinfo = OidcUserInfoClaims::from_json::<reqwest::Error>(&bytes, None)
@@ -2646,27 +3426,49 @@ pub(crate) async fn oidc_user_token_from_claims(
 
     let subject = userinfo.subject().to_string();
     let object_id = uuid::Uuid::new_v5(tenant_id, subject.as_bytes());
+    let tenant_id_str = tenant_id.to_string();
 
-    let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
-        error!("Failed reading from the idmap cache: {:?}", e);
-        IdpError::BadRequest
-    })?;
+    let (oidc_groups, default_id) = {
+        let idmap = idmap.lock().await;
+        let oidc_groups = oidc_group_tokens_from_claims(group_claims, &idmap, tenant_id);
+        let default_id = idmap.gen_to_unix(&tenant_id_str, &account_id);
+        (oidc_groups, default_id)
+    };
 
-    let idmap = idmap.lock().await;
-    let oidc_groups = oidc_group_tokens_from_claims(group_claims, &idmap, tenant_id);
-
-    let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
-        Some(user) => (user.uid, user.gid),
-        None => {
-            let gid = idmap
-                .gen_to_unix(&tenant_id.to_string(), &account_id)
-                .map_err(|e| {
+    let mut username_override: Option<String> = None;
+    let (uid, gid) = if let Some(task_channel) = idmap_task {
+        let domain = split_username(&account_id).map(|(_, d)| d).unwrap_or("");
+        let default_ids = default_id.ok().map(|id| (id, id));
+        let user = task_channel
+            .run_idmap_script(
+                &account_id,
+                access_token.unwrap_or(""),
+                &object_id.to_string(),
+                &tenant_id_str,
+                domain,
+                default_ids,
+            )
+            .await?;
+        username_override = user.username;
+        (user.uid, user.gid)
+    } else {
+        let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
+            error!("Failed reading from the idmap cache: {:?}", e);
+            IdpError::BadRequest
+        })?;
+        match idmap_cache.get_user_by_name(&account_id) {
+            Some(user) => (user.uid, user.gid),
+            None => {
+                let gid = default_id.map_err(|e| {
                     error!("{:?}", e);
                     IdpError::BadRequest
                 })?;
-            (gid, gid)
+                (gid, gid)
+            }
         }
     };
+
+    let session_name = username_override.unwrap_or_else(|| account_id.to_string());
 
     let displayname = userinfo
         .name()
@@ -2685,15 +3487,405 @@ pub(crate) async fn oidc_user_token_from_claims(
     groups.extend(oidc_groups);
 
     Ok(UserToken {
-        name: account_id.to_string(),
+        name: session_name,
         spn: account_id.to_string(),
         uuid: object_id,
-        real_gidnumber: Some(uid),
-        gidnumber: gid,
+        real_gidnumber: Some(gid),
+        gidnumber: uid,
         displayname,
         shell: Some(shell),
         groups,
         tenant_id: Some(*tenant_id),
         valid: true,
     })
+}
+
+#[cfg(test)]
+mod idmap_script_tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn create_test_script_named(filename: &str, script_content: &str) -> PathBuf {
+        let mut temp_path = std::env::temp_dir();
+        temp_path.push(filename);
+
+        let mut file = File::create(&temp_path).unwrap();
+        write!(file, "{}", script_content).unwrap();
+        drop(file);
+
+        let mut perms = fs::metadata(&temp_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&temp_path, perms).unwrap();
+
+        temp_path
+    }
+
+    fn create_test_script(script_content: &str) -> PathBuf {
+        create_test_script_named(
+            &format!("test_idmap_script_{}.sh", Uuid::new_v4()),
+            script_content,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_run_idmap_script() {
+        let temp_path = create_test_script(
+            r#"#!/bin/sh
+if [ "$USERNAME" = "testuser" ]; then
+    echo "uid=500,gid=500,username=testlogin"
+else
+    exit 1
+fi
+"#,
+        );
+
+        let result = run_idmap_script(
+            temp_path.to_str().unwrap(),
+            "testuser",
+            "token",
+            "oid",
+            "tid",
+            "example.com",
+        )
+        .await;
+
+        let _ = fs::remove_file(&temp_path);
+
+        assert!(
+            result.is_ok(),
+            "Result was {:?}, path was {}",
+            result,
+            temp_path.display()
+        );
+        let r = result.unwrap();
+        assert!(r.is_some());
+        let r = r.unwrap();
+        assert_eq!(r.username.as_deref(), Some("testlogin"));
+        assert_eq!(r.uid, Some(500));
+        assert_eq!(r.gid, Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_run_idmap_script_rejects_unknown_key() {
+        let temp_path = create_test_script(
+            r#"#!/bin/sh
+echo "uid=500,gid=500,extra=1"
+"#,
+        );
+
+        let result = run_idmap_script(
+            temp_path.to_str().unwrap(),
+            "testuser",
+            "token",
+            "oid",
+            "tid",
+            "example.com",
+        )
+        .await;
+
+        let _ = fs::remove_file(&temp_path);
+
+        assert!(result.is_err(), "Result was {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_run_idmap_script_rejects_malformed_field() {
+        let temp_path = create_test_script(
+            r#"#!/bin/sh
+echo "uid=500,gid=500,broken"
+"#,
+        );
+
+        let result = run_idmap_script(
+            temp_path.to_str().unwrap(),
+            "testuser",
+            "token",
+            "oid",
+            "tid",
+            "example.com",
+        )
+        .await;
+
+        let _ = fs::remove_file(&temp_path);
+
+        assert!(result.is_err(), "Result was {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_idmap_script_deadline_and_cancellation_clean_up_processes() {
+        for (body, has_descendant, cancelled) in [
+            ("exec sleep 10", false, false),
+            ("exec >/dev/null 2>&1\nexec sleep 10", false, false),
+            (
+                "sleep 10 &\necho $! > \"$DESCENDANT_PID_FILE\"\nwait",
+                true,
+                false,
+            ),
+            (
+                "sleep 10 &\necho $! > \"$DESCENDANT_PID_FILE\"\nexit 0",
+                true,
+                false,
+            ),
+            (
+                "sleep 10 &\necho $! > \"$DESCENDANT_PID_FILE\"\nwait",
+                true,
+                true,
+            ),
+        ] {
+            let pid_file = std::env::temp_dir().join(format!("idmap-pid-{}", Uuid::new_v4()));
+            let descendant_file = pid_file.with_extension("descendant");
+            let mut command = tokio::process::Command::new("sh");
+            command
+                .arg("-c")
+                .arg(format!("echo $$ > \"$PID_FILE\"\n{body}"))
+                .env("PID_FILE", &pid_file)
+                .env("DESCENDANT_PID_FILE", &descendant_file);
+            let started = tokio::time::Instant::now();
+            if cancelled {
+                assert!(tokio::time::timeout(
+                    Duration::from_millis(500),
+                    IdmapScriptChild::output(&mut command, Duration::from_secs(10)),
+                )
+                .await
+                .is_err());
+            } else {
+                let result =
+                    IdmapScriptChild::output(&mut command, Duration::from_millis(500)).await;
+                assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+            }
+            assert!(started.elapsed() < Duration::from_secs(3));
+            let pid: libc::pid_t = fs::read_to_string(&pid_file)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            if !cancelled {
+                assert_eq!(
+                    unsafe { libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG) },
+                    -1
+                );
+                assert_eq!(
+                    io::Error::last_os_error().raw_os_error(),
+                    Some(libc::ECHILD)
+                );
+            }
+            let mut pids = vec![pid];
+            if has_descendant {
+                pids.push(
+                    fs::read_to_string(&descendant_file)
+                        .unwrap()
+                        .trim()
+                        .parse()
+                        .unwrap(),
+                );
+                fs::remove_file(descendant_file).unwrap();
+            }
+            for pid in pids {
+                let stat_path = PathBuf::from("/proc").join(pid.to_string()).join("stat");
+                tokio::time::timeout(Duration::from_secs(1), async {
+                    loop {
+                        match fs::read_to_string(&stat_path) {
+                            Ok(stat)
+                                if stat
+                                    .rsplit_once(')')
+                                    .unwrap()
+                                    .1
+                                    .trim_start()
+                                    .starts_with('Z') =>
+                            {
+                                break
+                            }
+                            Err(e)
+                                if e.kind() == io::ErrorKind::NotFound
+                                    || e.raw_os_error() == Some(libc::ESRCH) =>
+                            {
+                                break
+                            }
+                            Ok(_) => tokio::task::yield_now().await,
+                            Err(e) => panic!("failed reading script process state: {e}"),
+                        }
+                    }
+                })
+                .await
+                .unwrap();
+            }
+            fs::remove_file(pid_file).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_idmap_script_drains_both_pipes_concurrently() {
+        let mut command = tokio::process::Command::new("sh");
+        command.arg("-c").arg(
+            "i=0; while [ \"$i\" -lt 8192 ]; do printf 1234567890; printf abcdefghij >&2; i=$((i+1)); done",
+        );
+        let output = IdmapScriptChild::output(&mut command, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"1234567890".repeat(8192));
+        assert_eq!(output.stderr, b"abcdefghij".repeat(8192));
+    }
+
+    #[tokio::test]
+    async fn test_idmap_script_accepts_empty_output_and_rejects_nonzero_exit() {
+        assert!(
+            run_idmap_script("exit 0", "testuser", "", "oid", "tid", "example.com")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            run_idmap_script("exit 7", "testuser", "", "oid", "tid", "example.com").await,
+            Err(IdpError::BadRequest)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_oidc_user_token_dispatches_idmap_script_via_task_channel() {
+        let db_dir = std::env::temp_dir().join(format!("oidc-idmap-{}", Uuid::new_v4()));
+        let db_path = db_dir.join("idmap.cache.db");
+        let db_str = db_path.to_str().unwrap().to_string();
+        let script_output = Arc::new(Mutex::new(
+            "uid=2600,gid=2601,username=alice_local".to_string(),
+        ));
+        let observed_tokens = Arc::new(Mutex::new(Vec::new()));
+
+        let (tx, mut rx): (TaskSender, _) = tokio::sync::mpsc::channel(4);
+        let worker_db = db_str.clone();
+        let worker_out = script_output.clone();
+        let worker_tokens = observed_tokens.clone();
+        let worker = tokio::spawn(async move {
+            while let Some((req, reply)) = rx.recv().await {
+                let TaskRequest::IdmapScript(
+                    username,
+                    access_token,
+                    object_id,
+                    tenant_id,
+                    domain,
+                    default_ids,
+                ) = req
+                else {
+                    panic!("unexpected task request");
+                };
+                worker_tokens.lock().await.push((
+                    username.clone(),
+                    access_token.clone(),
+                    object_id.clone(),
+                    tenant_id.clone(),
+                    domain.clone(),
+                    default_ids,
+                ));
+                let line = worker_out.lock().await.clone();
+                let cmd = if line.is_empty() {
+                    "exit 0".to_string()
+                } else {
+                    format!("printf '%s\\n' '{line}'")
+                };
+                let outcome = match run_idmap_script(
+                    &cmd,
+                    &username,
+                    &access_token,
+                    &object_id,
+                    &tenant_id,
+                    &domain,
+                )
+                .await
+                {
+                    Ok(result) => {
+                        let cache = StaticIdCache::open_for_test(&worker_db, true).unwrap();
+                        match cache.apply_idmap_script(&username, result.as_ref(), default_ids) {
+                            Ok(()) => TaskOutcome::Status(0),
+                            Err(_) => TaskOutcome::Status(1),
+                        }
+                    }
+                    Err(_) => TaskOutcome::Status(1),
+                };
+                let _ = reply.send(outcome);
+            }
+        });
+
+        let task_channel = TaskChannel::with_cache_path(db_str);
+        task_channel.set(tx).await;
+
+        let idmap = Mutex::new(Idmap::new().unwrap());
+        let tenant_id = Uuid::new_v4();
+        idmap
+            .lock()
+            .await
+            .add_gen_domain("example.com", &tenant_id.to_string(), (100_000, 200_000))
+            .unwrap();
+        let claims = serde_json::json!({
+            "sub": "subject-alice",
+            "preferred_username": "alice@example.com",
+            "name": "Alice Example",
+            "groups": [],
+        });
+        let account_claims = vec!["preferred_username".to_string()];
+
+        let token = oidc_user_token_from_claims(
+            &claims,
+            "/bin/sh".to_string(),
+            &idmap,
+            &tenant_id,
+            &account_claims,
+            false,
+            Some(&task_channel),
+            Some("oidc-access-token"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(token.spn, "alice@example.com");
+        assert_eq!(token.name, "alice_local");
+        assert_eq!(token.gidnumber, 2600);
+        assert_eq!(token.real_gidnumber, Some(2601));
+        assert_eq!(token.groups[0].gidnumber, 2601);
+
+        *script_output.lock().await = String::new();
+        let fallback_token = oidc_user_token_from_claims(
+            &claims,
+            "/bin/sh".to_string(),
+            &idmap,
+            &tenant_id,
+            &account_claims,
+            false,
+            Some(&task_channel),
+            Some("oidc-access-token-2"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fallback_token.name, "alice_local");
+        assert_eq!(fallback_token.gidnumber, 2600);
+        assert_eq!(fallback_token.real_gidnumber, Some(2601));
+
+        *script_output.lock().await = "uid=2602,gid=2601,username=alice_local".to_string();
+        let mismatch = oidc_user_token_from_claims(
+            &claims,
+            "/bin/sh".to_string(),
+            &idmap,
+            &tenant_id,
+            &account_claims,
+            false,
+            Some(&task_channel),
+            Some("oidc-access-token-3"),
+        )
+        .await;
+        assert!(matches!(mismatch, Err(IdpError::BadRequest)));
+
+        let recorded = observed_tokens.lock().await;
+        assert_eq!(recorded.len(), 3);
+        assert_eq!(recorded[0].0, "alice@example.com");
+        assert_eq!(recorded[0].1, "oidc-access-token");
+        assert_eq!(recorded[0].4, "example.com");
+        assert!(recorded[0].5.is_some());
+        drop(recorded);
+
+        drop(task_channel);
+        worker.await.unwrap();
+        let _ = fs::remove_dir_all(db_dir);
+    }
 }
