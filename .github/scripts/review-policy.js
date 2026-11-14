@@ -28,6 +28,7 @@ const SENSITIVE_FILES = new Set([
 const SECURITY_DEP = /\b(?:libhimmelblau|identity_dbus_broker|broker-client|okta(?:-auth-rs)?|openidconnect|oauth2|libkrimes|kanidm[\w-]*|crypto[\w-]*|rsa|rustls[\w-]*|openssl[\w-]*|ring|aws-lc[\w-]*|webpki[\w-]*|zeroize|secrecy|webauthn[\w-]*|sha2|authenticator|libwebauthn)\b/i;
 const MANIFEST_NON_DEP_KEYS = new Set([
   'resolver', 'edition', 'features', 'default-features', 'build', 'workspace',
+  'rust-version', 'msrv',
   'post_install_script', 'pre_install_script', 'post_uninstall_script',
   'pre_uninstall_script', 'post_trans_script', 'pre_trans_script',
   'rpm_post_install_script', 'rpm_pre_uninstall_script',
@@ -67,10 +68,8 @@ function normalizeManifestDiffLine(line, inDependencyTable, inPackageSection = f
       normalized = normalized.replace(depVersion, '$1 = "VERSION"');
     } else if (inDependencyTable === false) {
       if (!(inPackageSection && key === 'version')) return trimmed;
-    } else if (key && !MANIFEST_NON_DEP_KEYS.has(key) && !/^\d/.test(key)) {
-      // Minimal patches without section context: keep shorthand dependency bumps.
-      normalized = normalized.replace(depVersion, '$1 = "VERSION"');
     }
+    // Without a known dependency or package section, do not guess; fail closed.
   }
   normalized = normalized.replace(/\bversion\s*=\s*"[^"]*"/g, 'version = "VERSION"');
   return normalized;

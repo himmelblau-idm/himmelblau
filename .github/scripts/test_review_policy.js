@@ -351,7 +351,7 @@ test('security dependencies and source changes require humans, ordinary version 
     assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml', patch }]), ['Cargo.toml']);
   }
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
-    patch: '-clap = "4.5"\n+clap = "4.6"' }]), []);
+    patch: '-clap = "4.5"\n+clap = "4.6"' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: ' [dependencies]\n-clap = "4.5"\n+clap = "4.6"' }]), []);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
@@ -364,6 +364,8 @@ test('security dependencies and source changes require humans, ordinary version 
     patch: '-resolver = "2"\n+resolver = "3"' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: '-edition = "2021"\n+edition = "2024"' }]), ['Cargo.toml']);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
+    patch: '-rust-version = "1.89"\n+rust-version = "1.90"' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: '-dep = { version = "1", features = ["32bit"] }\n+dep = { version = "1", features = ["64bit"] }' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'src/o365/Cargo.toml',
