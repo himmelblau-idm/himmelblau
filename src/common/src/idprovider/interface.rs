@@ -95,6 +95,10 @@ pub struct UserToken {
     pub tenant_id: Option<Uuid>,
     // Defaults to false.
     pub valid: bool,
+    /// True when Graph/app credentials validated the directory record but the
+    /// identity must not be treated as locally authenticated.
+    #[serde(default)]
+    pub directory_lookup: bool,
 }
 
 pub enum AuthCredHandler {

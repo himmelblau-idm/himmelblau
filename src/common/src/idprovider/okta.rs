@@ -123,6 +123,7 @@ mod tests {
                 groups: vec![],
                 tenant_id: None,
                 valid: true,
+                directory_lookup: false,
             },
         }
     }
@@ -1221,6 +1222,7 @@ impl IdProvider for OktaProvider {
             }],
             tenant_id: Some(self.tenant_id),
             valid: true,
+            directory_lookup: false,
         }))
     }
 

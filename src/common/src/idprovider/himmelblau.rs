@@ -865,8 +865,9 @@ impl IdProvider for HimmelblauProvider {
                                             token.displayname.clone_from(&old_token.displayname)
                                         }
                                         // App credentials authenticate the directory lookup,
-                                        // not this user on the host. Only user authentication
-                                        // or a refresh-token-backed result may populate the cache.
+                                        // not this user on the host. Persist an expired cache
+                                        // row for NSS resolution without granting local auth.
+                                        token.directory_lookup = true;
                                         return Ok(UserTokenState::LookupOnly(token));
                                     }
                                     Err(e) => {
@@ -1017,6 +1018,7 @@ impl IdProvider for HimmelblauProvider {
                                     IdpError::BadRequest
                                 })?),
                                 valid: true,
+                                directory_lookup: false,
                             }));
                         } else {
                             // This is the one time we really should return
@@ -4734,6 +4736,7 @@ impl HimmelblauProvider {
                 })?,
             ),
             valid,
+            directory_lookup: false,
         })
     }
 
