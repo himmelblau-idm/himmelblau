@@ -345,6 +345,9 @@ test('renames out of protected code stay sensitive; incomplete file enumeration 
 test('security dependencies and source changes require humans, ordinary version bumps do not', () => {
   for (const patch of [undefined, '-libhimmelblau = "0.8.44"\n+libhimmelblau = "0.8.45"',
     '-sha2 = "0.10.8"\n+sha2 = "0.10.9"',
+    '-argon2 = "0.5.3"\n+argon2 = "0.5.4"',
+    '-pbkdf2 = "0.12.2"\n+pbkdf2 = "0.12.3"',
+    '-rpassword = "7.3.1"\n+rpassword = "7.3.2"',
     '+newdep = { git = "https://example.com/dep" }', '+build = "script.rs"',
     '+newdep = "1.0"', '-olddep = "1.0"\n+newdep = "1.0"',
     '+dep = { version = "1", features = ["danger"] }']) {

@@ -25,7 +25,7 @@ const SENSITIVE_FILES = new Set([
   'scripts/dependabot_automerge_check.sh', 'scripts/dependabot_rollup.py',
   'scripts/cargo_vet_review.py', 'scripts/cargo-patch-config.toml',
 ]);
-const SECURITY_DEP = /\b(?:libhimmelblau|identity_dbus_broker|broker-client|okta(?:-auth-rs)?|openidconnect|oauth2|libkrimes|kanidm[\w-]*|crypto[\w-]*|rsa|rustls[\w-]*|openssl[\w-]*|ring|aws-lc[\w-]*|webpki[\w-]*|zeroize|secrecy|webauthn[\w-]*|sha2|authenticator|libwebauthn)\b/i;
+const SECURITY_DEP = /\b(?:libhimmelblau|identity_dbus_broker|broker-client|okta(?:-auth-rs)?|openidconnect|oauth2|libkrimes|kanidm[\w-]*|crypto[\w-]*|rsa|rustls[\w-]*|openssl[\w-]*|ring|aws-lc[\w-]*|webpki[\w-]*|zeroize|secrecy|webauthn[\w-]*|sha2|authenticator|libwebauthn|argon2|pbkdf2|password-hash|rpassword)\b/i;
 const MANIFEST_NON_DEP_KEYS = new Set([
   'resolver', 'edition', 'features', 'default-features', 'build', 'workspace',
   'rust-version', 'msrv',
