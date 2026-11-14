@@ -79,10 +79,12 @@ function versionBumpOnly(patch) {
   const removed = [], added = [];
   let inDependencyTable = null;
   let inPackageSection = false;
+  let sawSection = false;
   for (const line of patch.split('\n')) {
     if (/^ /.test(line)) {
       const table = manifestTable(line.slice(1));
       if (table) {
+        sawSection = true;
         inDependencyTable = dependencyTable(table);
         inPackageSection = packageSection(table);
       }
@@ -92,12 +94,15 @@ function versionBumpOnly(patch) {
     const content = line.slice(1);
     const table = manifestTable(content);
     if (table) {
+      sawSection = true;
       inDependencyTable = dependencyTable(table);
       inPackageSection = packageSection(table);
     }
     const normalized = normalizeManifestDiffLine(content, inDependencyTable, inPackageSection);
     (line[0] === '+' ? added : removed).push(normalized);
   }
+  // Patches without a manifest section header cannot establish table context.
+  if (!sawSection) return false;
   return removed.length > 0 && JSON.stringify(removed) === JSON.stringify(added);
 }
 

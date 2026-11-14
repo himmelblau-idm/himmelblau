@@ -376,6 +376,8 @@ test('security dependencies and source changes require humans, ordinary version 
     patch: '-post_install_script = "scripts/postinst"\n+post_install_script = "scripts/postrm"' }]), ['src/o365/Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: '-rustc-workspace-wrapper = "none"\n+rustc-workspace-wrapper = "sccache"' }]), ['Cargo.toml']);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
+    patch: '-version = "0.1.0"\n+version = "0.1.1"' }]), ['Cargo.toml']);
   for (const filename of ['Makefile', 'flake.nix', 'default.nix', 'shell.nix']) {
     assert.deepEqual(sensitiveChanges(pr(), [{ filename, patch: '+EXTRA = value' }]), [filename]);
   }
