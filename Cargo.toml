@@ -43,6 +43,8 @@ default-members = [
 resolver = "2"
 
 [patch.crates-io]
+# Fixes #1999 — remove once identity_dbus_broker 0.2.2 is on crates.io
+identity_dbus_broker = { path = "third_party/identity_dbus_broker" }
 adler2-2-0-0 = { package = "adler2", path = "src/overrides/adler2/2.0.0" }
 android_system_properties-0-1-5 = { package = "android_system_properties", path = "src/overrides/android_system_properties/0.1.5" }
 anstyle-wincon-3-0-8 = { package = "anstyle-wincon", path = "src/overrides/anstyle-wincon/3.0.8" }
@@ -168,7 +170,7 @@ himmelblau_policies = { path = "src/policies" }
 os-release = "^0.1.0"
 zeroize = "^1.8.2"
 idmap = { path = "src/idmap" }
-identity_dbus_broker = "0.2.1"
+identity_dbus_broker = "0.2.2"
 console-subscriber = "0.5.0"
 broker-client = { path = "src/broker-client" }
 libkrimes = { version = "0.1.0", features = ["keyring"] }

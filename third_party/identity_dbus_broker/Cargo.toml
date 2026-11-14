@@ -1,0 +1,25 @@
+[package]
+name = "identity_dbus_broker"
+description = "DBus Broker which supplies credentials for authenticated Entra ID users"
+version = "0.2.2"
+edition = "2021"
+authors = [
+    "David Mulder <dmulder@suse.com>"
+]
+license = "LGPL-3.0-or-later"
+homepage = "https://www.samba.org/"
+repository = "https://github.com/himmelblau-idm/identity_dbus_broker"
+
+[dependencies]
+async-trait = "0.1.83"
+bytes = "1.7.2"
+dbus = "0.9.7"
+dbus-crossroads = "0.5.2"
+dbus-tokio = "0.7.6"
+futures = "0.3.30"
+libc = "0.2.158"
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.128"
+tokio = { version = "1.40.0", features = ["rt", "sync", "macros"] }
+tokio-util = { version = "0.7.12", features = ["codec"] }
+tracing = "0.1.40"
