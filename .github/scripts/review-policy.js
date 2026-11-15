@@ -62,19 +62,24 @@ function normalizeManifestDiffLine(line, inDependencyTable, inPackageSection = f
   const key = manifestKey(trimmed);
   if (key && (MANIFEST_NON_DEP_KEYS.has(key) || /^\d/.test(key))) return trimmed;
   if (/^(?:edition|features|default-features)\s*=/i.test(trimmed)) return trimmed;
-  let normalized = trimmed;
-  normalized = normalized.replace(/^version\s*=\s*"[^"]*"/, 'version = "VERSION"');
   const depVersion = /^([\w.-]+)\s*=\s*"[0-9][^"]*"/;
+  if (/^version\s*=\s*"/i.test(trimmed)) {
+    // Package/workspace version bumps are AI-eligible only with table context.
+    if (!(inPackageSection && inDependencyTable === false)) return trimmed;
+    return trimmed.replace(/^version\s*=\s*"[^"]*"/, 'version = "VERSION"');
+  }
   if (depVersion.test(trimmed)) {
     if (inDependencyTable === true) {
-      normalized = normalized.replace(depVersion, '$1 = "VERSION"');
-    } else if (inDependencyTable === false) {
-      if (!(inPackageSection && key === 'version')) return trimmed;
+      let normalized = trimmed.replace(depVersion, '$1 = "VERSION"');
+      return normalized.replace(/\bversion\s*=\s*"[^"]*"/g, 'version = "VERSION"');
     }
-    // Without a known dependency or package section, do not guess; fail closed.
+    if (inDependencyTable === false && inPackageSection && key === 'version') {
+      return trimmed.replace(depVersion, '$1 = "VERSION"');
+    }
+    // Without a known dependency table, do not guess; fail closed.
+    return trimmed;
   }
-  normalized = normalized.replace(/\bversion\s*=\s*"[^"]*"/g, 'version = "VERSION"');
-  return normalized;
+  return trimmed;
 }
 
 function versionBumpOnly(patch) {
