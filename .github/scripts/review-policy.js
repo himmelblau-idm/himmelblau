@@ -227,7 +227,6 @@ function delegated(review) {
 function cleanBotReview(review, checks, comments, sha) {
   const provider = review.user?.type === 'Bot' && AI.get(review.user.login);
   if (!provider || review.commit_id !== sha) return null;
-  if (provider !== 'coderabbit' && review.state === 'APPROVED') return provider;
   if (!['COMMENTED', 'APPROVED'].includes(review.state)) return null;
   const body = review.body || '';
   if (provider === 'coderabbit') {

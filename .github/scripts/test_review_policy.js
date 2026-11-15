@@ -22,6 +22,9 @@ const coderabbitCheck = () => check('CodeRabbit', { app: { id: 347564, slug: 'co
 const coderabbitReview = () => review('coderabbitai[bot]', { user: bot('coderabbitai[bot]'), state: 'COMMENTED' });
 const coderabbitSummary = () => ({ id: 1, user: bot('coderabbitai[bot]'), body:
   `<!-- change_assessment_commit:"${SHA}" -->\n<!-- recent_review_status_start -->\nNo actionable comments were generated in the recent review.\n<!-- recent_review_status_end -->` });
+const codexReview = (extra = {}) => review('chatgpt-codex-connector[bot]', {
+  user: bot('chatgpt-codex-connector[bot]'), state: 'COMMENTED',
+  body: "### Codex Review: Didn't find any major issues.", ...extra });
 
 test('write-access author can merge with one human approval', () => {
   assert.equal(evaluate(snapshot()).eligible, true);
@@ -61,7 +64,7 @@ test('delegated AI approvals never count as human, including historical Codex di
 test('one provider cannot count twice across bot and delegated reviews', () => {
   const s = { ...snapshot(), authorCanWrite: false, reviews: [review('maintainer'),
     review('other', { id: 2, body: '<!-- review-policy:ai:codex -->' }),
-    review('chatgpt-codex-connector[bot]', { id: 3, user: bot('chatgpt-codex-connector[bot]') })],
+    codexReview({ id: 3 })],
   permissions: { maintainer: true, other: true } };
   assert.deepEqual(evaluate(s).reviewers.sort(), ['ai:codex', 'human:maintainer']);
 });
@@ -160,6 +163,20 @@ test('Copilot needs Ready to approve, not merely No open issues', () => {
   assert.equal(evaluate(s).eligible, false);
   s.reviews[0].body = s.reviews[0].body.replace('🔵 Needs a closer look', '🟢 Ready to approve');
   assert.equal(evaluate(s).eligible, true);
+});
+test('Codex and Copilot APPROVED still require their clean review bodies', () => {
+  const copilot = { ...snapshot(), tested: { by: 'maintainer' },
+    reviews: [review('copilot-pull-request-reviewer[bot]', {
+      user: bot('copilot-pull-request-reviewer[bot]'), state: 'APPROVED' })] };
+  assert.equal(evaluate(copilot).autoEligible, false);
+  copilot.reviews[0].body = '<!-- ccr-overview-v2 -->\n\n### 🟢 Ready to approve\n\n**No open issues** 🎉';
+  assert.equal(evaluate(copilot).autoEligible, true);
+  const codex = { ...snapshot(), tested: { by: 'maintainer' },
+    reviews: [review('chatgpt-codex-connector[bot]', {
+      user: bot('chatgpt-codex-connector[bot]'), state: 'APPROVED' })] };
+  assert.equal(evaluate(codex).autoEligible, false);
+  codex.reviews[0].body = "### Codex Review: Didn't find any major issues.";
+  assert.equal(evaluate(codex).autoEligible, true);
 });
 test('Codex clean formal review is accepted, prose mentions and reactions are not', () => {
   const s = { ...snapshot(), reviews: [review('chatgpt-codex-connector[bot]', {
@@ -318,7 +335,7 @@ test('sensitive runtime, configuration and all GitHub paths require human review
     'src/o365/build.rs', 'supply-chain/audits.toml'];
   for (const filename of protectedPaths) {
     const s = { ...snapshot(), files: [{ filename }], tested: { by: 'maintainer' },
-      reviews: [review('chatgpt-codex-connector[bot]', { user: bot('chatgpt-codex-connector[bot]') })] };
+      reviews: [codexReview()] };
     assert.equal(evaluate(s).eligible, false, filename);
     s.reviews.push(review('maintainer', { id: 2 }));
     assert.equal(evaluate(s).eligible, true, filename);
@@ -329,7 +346,7 @@ test('SELinux, experimental orchestrator and Collabora remain AI eligible', () =
   for (const filename of ['src/selinux/src/himmelblaud.te', 'src/orchestrator/src/communication.rs',
     'src/collabora/src/server.rs', 'README.md', 'scripts/gen_dockerfiles.py', 'src/sso-policies/src/firefox/policies.json']) {
     const s = { ...snapshot(), files: [{ filename }], tested: { by: 'maintainer' },
-      reviews: [review('chatgpt-codex-connector[bot]', { user: bot('chatgpt-codex-connector[bot]') })] };
+      reviews: [codexReview()] };
     assert.equal(evaluate(s).autoEligible, true, filename);
   }
 });
