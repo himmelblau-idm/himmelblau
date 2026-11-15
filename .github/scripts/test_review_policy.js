@@ -389,7 +389,12 @@ test('security dependencies and source changes require humans, ordinary version 
     patch: '@@ -1,3 +1,3 @@\n [dependencies]\n-clap = "4.5"\n+clap = "4.6"\n'
       + '@@ -10,3 +10,3 @@\n-description = "1 old"\n+description = "2 new"' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
+    patch: '@@ -1,3 +1,3 @@\n [dependencies]\n-clap = "4.5"\n+clap = "4.6"\n'
+      + '@@ -10,4 +10,4 @@\n [package]\n-description = "1 old"\n+description = "2 new"' }]), ['Cargo.toml']);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: ' [dependencies]\n-clap = "4.5"\n+clap = "4.6"\n-description = "1 old"\n+description = "2 new"' }]), ['Cargo.toml']);
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.lock',
+    patch: ' name = "sha2"\n-version = "0.10.8"\n+version = "0.10.9"' }]), ['Cargo.lock']);
   for (const filename of ['Makefile', 'flake.nix', 'default.nix', 'shell.nix']) {
     assert.deepEqual(sensitiveChanges(pr(), [{ filename, patch: '+EXTRA = value' }]), [filename]);
   }
