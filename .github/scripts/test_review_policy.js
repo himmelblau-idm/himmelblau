@@ -125,6 +125,15 @@ test('stale bot review does not erase a current delegated approval', () => {
   assert.equal(evaluate(s).eligible, true);
   assert.ok(evaluate(s).reviewers.includes('ai:codex'));
 });
+test('non-clean current-head bot review does not erase delegated approval', () => {
+  const s = { ...snapshot(), reviews: [
+    review('maintainer', { body: '<!-- review-policy:ai:codex -->' }),
+    review('chatgpt-codex-connector[bot]', { id: 2, user: bot('chatgpt-codex-connector[bot]'),
+      state: 'COMMENTED', body: 'Codex Review: Found major issues.' }),
+  ] };
+  assert.equal(evaluate(s).eligible, true);
+  assert.ok(evaluate(s).reviewers.includes('ai:codex'));
+});
 test('head and synthetic merge CI are evaluated independently', () => {
   const checks = REQUIRED_CI.map(name => check(name));
   const merge = 'c'.repeat(40);
