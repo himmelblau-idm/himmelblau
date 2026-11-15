@@ -5122,15 +5122,18 @@ class CheckpointMaintenanceTests(unittest.TestCase):
             gh.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$GH_RECORD"\n')
             gh.chmod(0o755)
             record = root / "args"
+            gh_output = root / "github_output"
             base = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                     "GH_RECORD": str(record), "STATE_DIR": str(root / "state"),
+                    "GITHUB_OUTPUT": str(gh_output),
                     "GITHUB_RUN_ID": "43279859768", "GITHUB_RUN_ATTEMPT": "2",
                     "GITHUB_REPOSITORY": "himmelblau-idm/himmelblau",
                     "TARGET_BRANCH": "stable-4.x", "PREVIOUS_STAGE": "backports-3",
                     "CHECKPOINT_REF": ref, "CHECKPOINT_ARTIFACT": ""}
             cases = [({}, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3"),
-                     ({"PREVIOUS_STAGE": ""}, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3"),
-                     ({"CHECKPOINT_ARTIFACT": "explicit-artifact"}, "explicit-artifact")]
+                     ({"CHECKPOINT_ARTIFACT": "explicit-artifact"}, "explicit-artifact"),
+                     ({"CHECKPOINT_ARTIFACT": "maintenance-checkpoint-43279859768-1-stable-4.x-vet"}, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3")]
+            cases.append(({"PREVIOUS_STAGE": ""}, None))
             cases += [({"CHECKPOINT_REF": bad}, None) for bad in (
                 ref.replace("43279859768", "999"), ref.replace("/1/", "/0/"),
                 ref.replace("stable-4.x", "stable-3.x"), ref.replace("backports-3", "vet"),
