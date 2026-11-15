@@ -284,15 +284,13 @@ function evaluate({ pr, authorCanWrite, permissions, reviews, threads, checks, c
     reasons.push('An authorized reviewer still requests changes.');
   }
   const votes = new Map();
-  const botApproved = new Set();
   for (const review of decisions) {
     if (review.state !== 'APPROVED' || review.commit_id !== pr.head.sha
         || review.user.login === pr.user.login) continue;
     const provider = review.user.type === 'Bot' && AI.get(review.user.login);
-    if (provider) {
-      votes.set(`ai:${provider}`, 'ai');
-      botApproved.add(`ai:${provider}`);
-    } else if (review.user.type === 'User' && permissions[review.user.login]) {
+    // Bot approvals must pass cleanBotReview; do not seed votes from raw APPROVED.
+    if (provider) continue;
+    if (review.user.type === 'User' && permissions[review.user.login]) {
       const ai = delegated(review);
       votes.set(ai ? `ai:${ai}` : `human:${review.user.login}`, ai ? 'ai' : 'human');
     }
@@ -305,13 +303,7 @@ function evaluate({ pr, authorCanWrite, permissions, reviews, threads, checks, c
     const provider = AI.get(review.user.login);
     const key = `ai:${provider}`;
     const clean = cleanBotReview(review, checks, comments, pr.head.sha);
-    if (clean && review.user.login !== pr.user.login) {
-      votes.set(key, 'ai');
-      botApproved.add(key);
-    } else if (botApproved.has(key)) {
-      votes.delete(key);
-      botApproved.delete(key);
-    }
+    if (clean && review.user.login !== pr.user.login) votes.set(key, 'ai');
   }
   if (pr.user.login !== 'chatgpt-codex-connector[bot]' && cleanCodexComment(comments, reviews, pr.head.sha)) {
     votes.set('ai:codex', 'ai');
