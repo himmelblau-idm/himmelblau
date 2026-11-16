@@ -299,16 +299,43 @@ class ReviewTests(unittest.TestCase):
 
     def test_discovery_rejects_missing_ambiguous_and_invalid_requirements(self):
         report = json.loads(self.vet_report())
-        missing = json.loads(self.vet_report())
-        missing["suggest"]["suggestions"] = []
         duplicate = json.loads(self.vet_report())
         duplicate["suggest"]["suggestions"] *= 2
-        mismatch = json.loads(self.vet_report())
-        mismatch["suggest"]["suggestions"][0]["suggested_diff"]["to"] = "2.0.0"
-        for value in ({}, [], {"conclusion": "fail (violation)"}, missing, duplicate, mismatch,
+        unrelated = json.loads(self.vet_report())
+        unrelated["suggest"]["suggestions"][0]["name"] = "unrelated"
+        for value in ({}, [], {"conclusion": "fail (violation)"}, duplicate, unrelated,
                       report | {"failures": []}, {"conclusion": "success"}):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 review.CargoVetParser().parse_vet_output(json.dumps(value))
+
+    def test_intermediate_coverage_suggestion_is_accepted(self):
+        # Failure is 1.2.0, but cargo-vet suggests auditing 1.0.0 -> 1.1.0 because
+        # 1.1.0 -> 1.2.0 coverage already exists.
+        report = {
+            "conclusion": "fail (vetting)",
+            "failures": [{"name": "example", "version": "1.2.0",
+                          "missing_criteria": ["safe-to-deploy"]}],
+            "suggest": {"suggestions": [{
+                "name": "example",
+                "notable_parents": "app",
+                "suggested_diff": {"from": "1.0.0", "to": "1.1.0"},
+            }]},
+        }
+        items = review.CargoVetParser().parse_vet_output(json.dumps(report))
+        self.assertEqual(len(items), 1)
+        self.assertEqual(
+            (items[0].crate_name, items[0].old_version, items[0].new_version),
+            ("example", "1.0.0", "1.1.0"),
+        )
+        self.assertIsNone(items[0].manual_reason)
+
+    def test_missing_published_suggestion_routes_to_manual_without_blocking(self):
+        report = json.loads(self.vet_report())
+        report["suggest"]["suggestions"] = []
+        items = review.CargoVetParser().parse_vet_output(json.dumps(report))
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].new_version, "1.1.0")
+        self.assertIsNotNone(items[0].manual_reason)
 
     def test_human_hints_preserve_publisher_actions_without_adding_targets(self):
         report = json.loads(self.vet_report())
@@ -409,15 +436,24 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(flow.automatic.call_args.args[0].crate_name, "example")
         flow.prompt.assert_not_called()
 
-    def test_git_handling_still_rejects_unrelated_or_missing_published_suggestions(self):
-        for remove_suggestion in (True, False):
-            report = self.git_report()
-            if remove_suggestion:
-                report["failures"].extend(json.loads(self.vet_report())["failures"])
-            else:
-                report["suggest"]["suggestions"].extend(json.loads(self.vet_report())["suggest"]["suggestions"])
-            with self.subTest(remove_suggestion=remove_suggestion), self.assertRaisesRegex(ValueError, "cover exactly"):
-                review.CargoVetParser().parse_vet_output(json.dumps(report))
+    def test_git_handling_keeps_published_targets_reviewable(self):
+        # Missing published suggestion: route that gap to manual without rejecting
+        # the git requirement.
+        missing = self.git_report()
+        missing["failures"].extend(json.loads(self.vet_report())["failures"])
+        items = review.CargoVetParser().parse_vet_output(json.dumps(missing))
+        manual = {item.crate_name: item for item in items}
+        self.assertEqual(set(manual), {"rsa", "example"})
+        self.assertIsNotNone(manual["rsa"].manual_reason)
+        self.assertIsNotNone(manual["example"].manual_reason)
+
+        # Unrelated published suggestion still fails closed.
+        unrelated = self.git_report()
+        published = json.loads(self.vet_report())["suggest"]["suggestions"][0]
+        published["name"] = "unrelated"
+        unrelated["suggest"]["suggestions"].append(published)
+        with self.assertRaisesRegex(ValueError, "failing published target"):
+            review.CargoVetParser().parse_vet_output(json.dumps(unrelated))
 
     def test_command_errors_preserve_policy_diagnostics_and_never_report_success(self):
         diagnostic = "Some non-crates.io-fetched packages match published crates.io versions\nrsa:0.9.10"
@@ -545,6 +581,21 @@ class ReviewTests(unittest.TestCase):
         self.assertIsNone(flow.automatic.call_args.args[0].old_version)
         flow.prompt.assert_not_called()
         flow.manual.assert_not_called()
+
+    def test_ordinary_mode_rejects_unsafe_classifications_before_certify(self):
+        cases = [
+            dict(severity="high"),
+            dict(severity="critical"),
+            dict(malicious=True),
+            dict(severity=None),
+        ]
+        for overrides in cases:
+            with self.subTest(overrides=overrides), \
+                 self.main_flow([self.report(**overrides)], inputs=["s"]) as flow:
+                self.assertEqual(review.main(), 1)
+            flow.automatic.assert_not_called()
+            flow.manual.assert_not_called()
+            flow.prompt.assert_called_once()
 
     def test_auto_exempt_policy_matrix_never_prompts(self):
         cases = [
@@ -768,6 +819,22 @@ class ReviewTests(unittest.TestCase):
         flow.prompt.assert_called_once()
         flow.manual.assert_not_called()
 
+    def test_rerun_rejects_unsafe_classifications_before_certify(self):
+        cases = [
+            dict(severity="high"),
+            dict(severity="critical"),
+            dict(malicious=True),
+            dict(severity=None),
+        ]
+        for overrides in cases:
+            with self.subTest(overrides=overrides), \
+                 self.main_flow([self.report(decision=False), self.report(**overrides)],
+                                inputs=["a", "s"]) as flow:
+                self.assertEqual(review.main(), 1)
+            flow.automatic.assert_not_called()
+            flow.manual.assert_not_called()
+            self.assertEqual(flow.prompt.call_count, 2)
+
     def test_dry_run_and_json_never_write_or_prompt(self):
         for flag in ("--dry-run", "--json"):
             with self.subTest(flag=flag), self.main_flow([self.report()], flags=[flag],
@@ -794,7 +861,10 @@ class ReviewTests(unittest.TestCase):
     def test_large_reviews_are_not_skipped_by_default(self):
         with self.main_flow([self.report()], source="+code\n" * 100001) as flow:
             # Batch coverage has separate tests; here verify the main loop reaches AI review.
-            with patch.object(review.AIAnalyzer, "review_diff", return_value=review.AIReview(True, True, "safe")) as ai:
+            approved = review.AIReview(
+                True, True, "safe", review.RiskLevel.LOW, False,
+            )
+            with patch.object(review.AIAnalyzer, "review_diff", return_value=approved) as ai:
                 review.main()
         ai.assert_called_once()
         flow.automatic.assert_called_once()
