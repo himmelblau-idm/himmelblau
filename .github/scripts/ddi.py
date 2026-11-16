@@ -24,8 +24,8 @@ import stable_packages as packages
 SCRIPTS = Path(__file__).resolve().parent
 NIGHTLY_TIMESTAMP_FORMAT = "%Y-%m-%d.%H%M%S%f"
 CHECKSUM_FILES = {
-    "SHA256SUMS": ("sysupdate-checksums", "text/plain"),
-    "SHA256SUMS.gpg": ("sysupdate-signature", "application/pgp-signature"),
+    "SHA256SUMS": "text/plain",
+    "SHA256SUMS.gpg": "application/pgp-signature",
 }
 
 
@@ -171,7 +171,8 @@ def expected_images(spec):
 
 
 def update_source(spec, record):
-    return f"https://dl.cloudsmith.io/public/{spec['repository']}/raw/names/{record['name']}/files"
+    # Default filename-based package names share a directory when their Cloudsmith version is the stream ID.
+    return f"https://dl.cloudsmith.io/public/{spec['repository']}/raw/versions/{record['name']}"
 
 
 def format_checksums(checksums):
@@ -194,13 +195,13 @@ def write_checksums(directory, checksums, signing):
 
 
 def remote_plan(spec, expected_hashes=None):
-    remotes = packages.api_packages(spec["repository"], "raw", spec["version"])
     missing, pending = [], False
     for record in expected_images(spec):
+        remotes = packages.api_packages(spec["repository"], "raw", record["name"])
         matches = [
             remote for remote in remotes
-            if remote.get("format") == "raw" and remote.get("name") == record["name"]
-            and remote.get("version") == record["version"]
+            if remote.get("format") == "raw" and remote.get("filename") == record["filename"]
+            and remote.get("version") == record["name"]
         ]
         if len(matches) > 1:
             raise ValueError(f"Duplicate Cloudsmith DDI: {record['name']}")
@@ -210,8 +211,9 @@ def remote_plan(spec, expected_hashes=None):
             raise ValueError(f"Cloudsmith DDI synchronization failed: {record['name']}")
         else:
             remote = matches[0]
-            if remote.get("filename") != record["filename"]:
-                raise ValueError(f"Cloudsmith DDI filename does not match: {record['name']}")
+            if (remote.get("is_sync_completed")
+                    and remote.get("cdn_url") != f"{update_source(spec, record)}/{record['filename']}"):
+                raise ValueError(f"Cloudsmith DDI URL does not match its stream: {record['name']}")
             if (remote.get("is_sync_completed") and expected_hashes
                     and record["name"] in expected_hashes
                     and remote.get("checksum_sha256") != expected_hashes[record["name"]]):
@@ -382,7 +384,7 @@ def publish(artifacts, spec):
         tags = f"ddi,{record['kind']},channel-{spec['channel']},source-{spec['source_sha']},distro-{spec['distro']}"
         image.run([
             "cloudsmith", "push", "raw", spec["repository"], artifacts / record["filename"],
-            "--name", record["name"], "--version", record["version"],
+            "--version", record["name"],
             "--content-type", "application/vnd.efi.img",
             "--no-republish", "--tags", tags,
         ], env=os.environ.copy())
@@ -395,22 +397,23 @@ def publish(artifacts, spec):
 
 def catalog_checksums(spec, record, rows):
     checksums = {}
+    version_pattern = (r"\d+\.\d+\.\d+" if spec["channel"] == "stable"
+                       else r"\d{4}-\d{2}-\d{2}(?:\.\d{12})?-[0-9a-f]+")
+    template = expected_images({**spec, "version": "@v", "kinds": [record["kind"]]})[0]["filename"]
+    prefix, suffix = template.split("@v")
+    pattern = re.escape(prefix) + version_pattern + re.escape(suffix)
     for remote in rows:
-        if remote.get("format") != "raw" or remote.get("name") != record["name"]:
+        if remote.get("format") != "raw" or remote.get("version") != record["name"]:
             continue
-        if remote.get("filename") in CHECKSUM_FILES:
+        filename = remote.get("filename") or ""
+        if filename in CHECKSUM_FILES:
             continue
-        version = remote.get("version") or ""
-        pattern = (r"\d+\.\d+\.\d+" if spec["channel"] == "stable"
-                   else r"\d{4}-\d{2}-\d{2}(?:\.\d{12})?-[0-9a-f]+")
-        if not re.fullmatch(pattern, version):
-            raise ValueError(f"Invalid image version in sysupdate stream {record['name']}")
-        expected = expected_images({**spec, "version": version, "kinds": [record["kind"]]})[0]
-        filename = remote.get("filename")
-        if filename != expected["filename"] or filename in checksums:
+        if not re.fullmatch(pattern, filename) or filename in checksums:
             raise ValueError(f"Unexpected or duplicate image in sysupdate stream {record['name']}")
         if remote.get("is_sync_failed") or not remote.get("is_sync_completed"):
             raise ValueError(f"Unsynchronized image in sysupdate stream {record['name']}")
+        if remote.get("cdn_url") != f"{update_source(spec, record)}/{filename}":
+            raise ValueError(f"Image URL is outside sysupdate stream {record['name']}: {filename}")
         checksums[filename] = remote.get("checksum_sha256") or ""
     if record["filename"] not in checksums:
         raise ValueError(f"The current image is missing from sysupdate stream {record['name']}")
@@ -421,18 +424,20 @@ def catalog_checksums(spec, record, rows):
 def verify_catalog_publication(spec, record, directory):
     expected = {name: (directory / name).read_bytes() for name in CHECKSUM_FILES}
     for attempt in range(30):
-        rows = packages.api_packages(spec["repository"], "raw", package_name=record["name"])
+        rows = packages.api_packages(spec["repository"], "raw", record["name"])
         synchronized = True
-        for name, (version, _) in CHECKSUM_FILES.items():
+        for name in CHECKSUM_FILES:
             matches = [row for row in rows if row.get("format") == "raw"
-                       and row.get("name") == record["name"] and row.get("version") == version]
+                       and row.get("filename") == name and row.get("version") == record["name"]]
             if len(matches) > 1:
                 raise ValueError(f"Duplicate sysupdate metadata: {record['name']}/{name}")
             if matches and matches[0].get("is_sync_failed"):
                 raise ValueError(f"Sysupdate metadata synchronization failed: {record['name']}/{name}")
+            if (matches and matches[0].get("is_sync_completed")
+                    and matches[0].get("cdn_url") != f"{update_source(spec, record)}/{name}"):
+                raise ValueError(f"Sysupdate metadata URL does not match its stream: {record['name']}/{name}")
             synchronized &= bool(
                 matches and matches[0].get("is_sync_completed")
-                and matches[0].get("filename") == name
                 and matches[0].get("checksum_sha256") == hashlib.sha256(expected[name]).hexdigest()
             )
         if synchronized:
@@ -458,7 +463,7 @@ def publish_checksums(spec):
     packages.require_api_key()
     streams = []
     for record in expected_images(spec):
-        rows = packages.api_packages(spec["repository"], "raw", package_name=record["name"])
+        rows = packages.api_packages(spec["repository"], "raw", record["name"])
         streams.append((record, catalog_checksums(spec, record, rows)))
     with tempfile.TemporaryDirectory(prefix="sysupdate-publish-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         work = Path(temporary)
@@ -470,11 +475,10 @@ def publish_checksums(spec):
                 # Publish the manifest last. During replacement clients reject
                 # mismatched pairs rather than accepting unauthenticated data.
                 for filename in ("SHA256SUMS.gpg", "SHA256SUMS"):
-                    version, content_type = CHECKSUM_FILES[filename]
                     image.run([
                         "cloudsmith", "push", "raw", spec["repository"], directory / filename,
-                        "--name", record["name"], "--version", version,
-                        "--content-type", content_type, "--republish",
+                        "--version", record["name"],
+                        "--content-type", CHECKSUM_FILES[filename], "--republish",
                         "--tags", f"ddi,sysupdate,channel-{spec['channel']}",
                     ], env=os.environ.copy())
                 verify_catalog_publication(spec, record, directory)
