@@ -381,6 +381,8 @@ test('renames out of protected code stay sensitive; incomplete file enumeration 
 test('security dependencies and source changes require humans, ordinary version bumps do not', () => {
   for (const patch of [undefined, '-libhimmelblau = "0.8.44"\n+libhimmelblau = "0.8.45"',
     '-sha2 = "0.10.8"\n+sha2 = "0.10.9"',
+    '-authenticator = "0.1.0"\n+authenticator = "0.1.1"',
+    '-libwebauthn = "0.1.0"\n+libwebauthn = "0.1.1"',
     '-argon2 = "0.5.3"\n+argon2 = "0.5.4"',
     '-pbkdf2 = "0.12.2"\n+pbkdf2 = "0.12.3"',
     '-rpassword = "7.3.1"\n+rpassword = "7.3.2"',
@@ -434,8 +436,10 @@ test('security dependencies and source changes require humans, ordinary version 
       + '@@ -10,4 +10,4 @@\n [package]\n-description = "1 old"\n+description = "2 new"' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: ' [dependencies]\n-clap = "4.5"\n+clap = "4.6"\n-description = "1 old"\n+description = "2 new"' }]), ['Cargo.toml']);
-  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.lock',
-    patch: ' name = "sha2"\n-version = "0.10.8"\n+version = "0.10.9"' }]), ['Cargo.lock']);
+  for (const name of ['sha2', 'authenticator', 'libwebauthn']) {
+    assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.lock',
+      patch: ` name = "${name}"\n-version = "0.1.0"\n+version = "0.1.1"` }]), ['Cargo.lock'], name);
+  }
   for (const filename of ['Makefile', 'flake.nix', 'default.nix', 'shell.nix']) {
     assert.deepEqual(sensitiveChanges(pr(), [{ filename, patch: '+EXTRA = value' }]), [filename]);
   }
