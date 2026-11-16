@@ -5137,7 +5137,12 @@ class CheckpointMaintenanceTests(unittest.TestCase):
             cases += [({"CHECKPOINT_REF": bad}, None) for bad in (
                 ref.replace("43279859768", "999"), ref.replace("/1/", "/0/"),
                 ref.replace("stable-4.x", "stable-3.x"), ref.replace("backports-3", "vet"),
-                ref + "/extra", ref + "\n", "$(touch NEVER_EXECUTE)", "")]
+                ref + "/extra", ref + "\n", "$(touch NEVER_EXECUTE)", "",
+                sm.AUTOMATION_PREFIX + "checkpoints/43279859768/1000000/stable-4.x/backports-3",
+                sm.AUTOMATION_PREFIX + "checkpoints/100000000000000000000/1/stable-4.x/backports-3")]
+            cases.append(({
+                "CHECKPOINT_ARTIFACT": "maintenance-checkpoint-43279859768-2-stable-4.x-backports-3",
+            }, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3"))
             for overrides, expected in cases:
                 with self.subTest(overrides=overrides):
                     record.unlink(missing_ok=True)

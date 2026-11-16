@@ -209,7 +209,7 @@ jobs:
             echo "::error::previous-stage is required when checkpoint-ref is set"
             exit 2
           fi
-          if [[ ! "$CHECKPOINT_REF" =~ ^automation/stable-maintenance/checkpoints/([1-9][0-9]*)/([1-9][0-9]*)/(stable-[34]\.x)/(dependencies|vet|backports-[1-4])$ ]] ||
+          if [[ ! "$CHECKPOINT_REF" =~ ^automation/stable-maintenance/checkpoints/([1-9][0-9]{0,19})/([1-9][0-9]{0,5})/(stable-[34]\.x)/(dependencies|vet|backports-[1-4])$ ]] ||
              [[ "${BASH_REMATCH[1]}" != "$GITHUB_RUN_ID" || "${BASH_REMATCH[3]}" != "$TARGET_BRANCH" ]]; then
             echo "::error::Invalid producer checkpoint ref for artifact fallback"
             exit 2
@@ -222,17 +222,15 @@ jobs:
             echo "::error::Producer checkpoint ref does not match previous-stage"
             exit 2
           fi
+          canonical_artifact="maintenance-checkpoint-${producer_run}-${producer_attempt}-${producer_branch}-${producer_stage}"
           # Branch callers may pair a checkpoint ref with another producer's artifact
           # when an intermediate stage published a ref without an artifact name.
-          if [ -n "$CHECKPOINT_ARTIFACT" ] &&
-             [[ "$CHECKPOINT_ARTIFACT" =~ ^maintenance-checkpoint- ]] &&
-             [[ ! "$CHECKPOINT_ARTIFACT" =~ -${producer_stage}$ ]]; then
-            CHECKPOINT_ARTIFACT=""
-          fi
-          # Actions expressions have no split function. Resolve a missing name
-          # from the producer ref, never the consumer's rerun attempt.
-          if [ -z "$CHECKPOINT_ARTIFACT" ]; then
-            CHECKPOINT_ARTIFACT="maintenance-checkpoint-${producer_run}-${producer_attempt}-${producer_branch}-${producer_stage}"
+          if [ -n "$CHECKPOINT_ARTIFACT" ] && [[ "$CHECKPOINT_ARTIFACT" =~ ^maintenance-checkpoint- ]]; then
+            if [ "$CHECKPOINT_ARTIFACT" != "$canonical_artifact" ]; then
+              CHECKPOINT_ARTIFACT="$canonical_artifact"
+            fi
+          elif [ -z "$CHECKPOINT_ARTIFACT" ]; then
+            CHECKPOINT_ARTIFACT="$canonical_artifact"
           fi
           printf 'previous-stage=%s\n' "$PREVIOUS_STAGE" >> "$GITHUB_OUTPUT"
           mkdir -p "$STATE_DIR"
