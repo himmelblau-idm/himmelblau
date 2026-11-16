@@ -1373,6 +1373,13 @@ sys.exit(int(sys.argv[1]))
         self.assertIn("cancel-in-progress: false\n", concurrency)
         self.assertIn("queue: max\n", concurrency)
 
+        maintain_permissions = WORKFLOW.read_text().split("\n  maintain:\n", 1)[1].split("    strategy:", 1)[0]
+        self.assertIn("actions: read", maintain_permissions)
+        branch_permissions = BRANCH_WORKFLOW.read_text().split("permissions:\n", 1)[1].split("jobs:", 1)[0]
+        self.assertIn("actions: read", branch_permissions)
+        stage_job = STAGE_WORKFLOW.read_text().split("\n  maintain:\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("actions: read", stage_job)
+
         dockerfile = DOCKERFILE.read_text()
         self.assertRegex(dockerfile, r"FROM rust:1\.98\.0-bookworm@sha256:[0-9a-f]{64} AS rust-toolchain")
         self.assertRegex(dockerfile, r"FROM rust:1\.98\.0-bookworm@sha256:[0-9a-f]{64} AS maintenance-tools")
