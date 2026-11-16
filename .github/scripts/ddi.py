@@ -22,7 +22,6 @@ import stable_packages as packages
 
 
 SCRIPTS = Path(__file__).resolve().parent
-NIGHTLY_REPOSITORY = "himmelblau/v_4"
 NIGHTLY_TIMESTAMP_FORMAT = "%Y-%m-%d.%H%M%S%f"
 CHECKSUM_FILES = {
     "SHA256SUMS": ("sysupdate-checksums", "text/plain"),
@@ -50,7 +49,7 @@ def matrix(channel, tag="", revision="", distro="all", architecture="all", times
         upstream = packages.version(source_sha)
         if not re.fullmatch(r"\d+\.\d+\.\d+", upstream):
             raise ValueError("Nightly source must have a MAJOR.MINOR.PATCH workspace version")
-        repository = NIGHTLY_REPOSITORY
+        repository = nightly.REPOSITORY
         build_time = (dt.datetime.strptime(timestamp, NIGHTLY_TIMESTAMP_FORMAT) if timestamp
                       else dt.datetime.now(dt.timezone.utc))
         if shared:
