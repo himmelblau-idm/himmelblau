@@ -5100,6 +5100,7 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("Retry checkpoint upload after transient artifact outage", stage)
         self.assertIn("pipelines.actions.githubusercontent.com:443", stage)
         self.assertIn("results-rests.actions.githubusercontent.com:443", stage)
+        self.assertIn("docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443", stage)
         script = expose.split("        run: |\n", 1)[1]
         script = "\n".join(line[10:] for line in script.splitlines())
         with tempfile.TemporaryDirectory() as tmp:
