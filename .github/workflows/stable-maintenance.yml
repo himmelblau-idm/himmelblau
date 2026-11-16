@@ -86,6 +86,7 @@ jobs:
     needs: select
     if: needs.select.outputs.enabled == 'true'
     permissions:
+      actions: read
       contents: read
       pull-requests: read
     strategy:
