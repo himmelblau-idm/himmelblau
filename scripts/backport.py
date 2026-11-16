@@ -984,6 +984,7 @@ class BackportManager:
             url = f"https://raw.githubusercontent.com/{self.repository}/refs/heads/main/scripts/cargo_vet_review.py"
             scripts_dir = self.repo_root / "scripts"
             target_file = scripts_dir / "cargo_vet_review.py"
+            script_updated = False
 
             print(f"  Downloading {url}...")
             try:
@@ -994,53 +995,70 @@ class BackportManager:
                     content = response.read().decode('utf-8')
 
                 target_file.write_text(content)
+                script_updated = True
                 print_color("  Updated scripts/cargo_vet_review.py", "green")
             except Exception as e:
                 print_color(f"  Warning: Could not download cargo_vet_review.py: {e}", "yellow")
+                print_color(
+                    "  Leaving Makefile vet target unchanged so it stays compatible "
+                    "with the existing review script.",
+                    "yellow",
+                )
 
-            # 2. Get the make vet target from main Makefile
-            makefile_url = f"https://raw.githubusercontent.com/{self.repository}/refs/heads/main/Makefile"
-            print(f"  Downloading {makefile_url}...")
-            try:
-                req = urllib.request.Request(makefile_url, headers={
-                    'User-Agent': 'himmelblau-backport/1.0',
-                })
-                with urllib.request.urlopen(req, timeout=30) as response:
-                    main_makefile = response.read().decode('utf-8')
+            # 2. Get the make vet target from main Makefile only after the script
+            # update succeeds. Otherwise a failed download can leave an older
+            # cargo_vet_review.py paired with a recipe that passes new flags
+            # such as --auto-exempt.
+            makefile_updated = False
+            if script_updated:
+                makefile_url = f"https://raw.githubusercontent.com/{self.repository}/refs/heads/main/Makefile"
+                print(f"  Downloading {makefile_url}...")
+                try:
+                    req = urllib.request.Request(makefile_url, headers={
+                        'User-Agent': 'himmelblau-backport/1.0',
+                    })
+                    with urllib.request.urlopen(req, timeout=30) as response:
+                        main_makefile = response.read().decode('utf-8')
 
-                # Extract the vet target from main Makefile
-                vet_match = re.search(r'^vet:.*?(?=^\w+:|\Z)', main_makefile, re.MULTILINE | re.DOTALL)
-                if vet_match:
-                    main_vet_target = vet_match.group(0).strip()
+                    # Extract the vet target from main Makefile
+                    vet_match = re.search(r'^vet:.*?(?=^\w+:|\Z)', main_makefile, re.MULTILINE | re.DOTALL)
+                    if vet_match:
+                        main_vet_target = vet_match.group(0).strip()
 
-                    # Read current Makefile
-                    local_makefile_path = self.repo_root / "Makefile"
-                    local_makefile = local_makefile_path.read_text()
+                        # Read current Makefile
+                        local_makefile_path = self.repo_root / "Makefile"
+                        local_makefile = local_makefile_path.read_text()
 
-                    # Replace or add vet target
-                    local_vet_match = re.search(r'^vet:.*?(?=^\w+:|\Z)', local_makefile, re.MULTILINE | re.DOTALL)
-                    if local_vet_match:
-                        # Replace existing vet target
-                        new_makefile = local_makefile[:local_vet_match.start()] + main_vet_target + "\n\n" + local_makefile[local_vet_match.end():]
-                    else:
-                        # Add vet target before help target (or at end)
-                        help_match = re.search(r'^help:', local_makefile, re.MULTILINE)
-                        if help_match:
-                            new_makefile = local_makefile[:help_match.start()] + main_vet_target + "\n\n" + local_makefile[help_match.start():]
+                        # Replace or add vet target
+                        local_vet_match = re.search(r'^vet:.*?(?=^\w+:|\Z)', local_makefile, re.MULTILINE | re.DOTALL)
+                        if local_vet_match:
+                            # Replace existing vet target
+                            new_makefile = local_makefile[:local_vet_match.start()] + main_vet_target + "\n\n" + local_makefile[local_vet_match.end():]
                         else:
-                            new_makefile = local_makefile + "\n\n" + main_vet_target + "\n"
+                            # Add vet target before help target (or at end)
+                            help_match = re.search(r'^help:', local_makefile, re.MULTILINE)
+                            if help_match:
+                                new_makefile = local_makefile[:help_match.start()] + main_vet_target + "\n\n" + local_makefile[help_match.start():]
+                            else:
+                                new_makefile = local_makefile + "\n\n" + main_vet_target + "\n"
 
-                    local_makefile_path.write_text(new_makefile)
-                    print_color("  Updated Makefile vet target", "green")
-                else:
-                    print_color("  Warning: Could not find vet target in main Makefile", "yellow")
+                        local_makefile_path.write_text(new_makefile)
+                        makefile_updated = True
+                        print_color("  Updated Makefile vet target", "green")
+                    else:
+                        print_color("  Warning: Could not find vet target in main Makefile", "yellow")
 
-            except Exception as e:
-                print_color(f"  Warning: Could not update Makefile: {e}", "yellow")
+                except Exception as e:
+                    print_color(f"  Warning: Could not update Makefile: {e}", "yellow")
 
             # 3. Stage and commit only vet-related changes
+            candidates = []
+            if script_updated:
+                candidates.append("scripts/cargo_vet_review.py")
+            if makefile_updated:
+                candidates.append("Makefile")
             files_to_stage = [
-                path for path in ("scripts/cargo_vet_review.py", "Makefile")
+                path for path in candidates
                 if (self.repo_root / path).exists()
             ]
 
