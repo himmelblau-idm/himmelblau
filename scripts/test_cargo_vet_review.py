@@ -933,6 +933,29 @@ class ReviewTests(unittest.TestCase):
         flow.automatic.assert_called_once()
         flow.prompt.assert_called_once()
         flow.manual.assert_not_called()
+        # Rerun must forward the same source-tree paths as the initial review.
+        self.assertEqual(flow.ai.call_count, 2)
+        for call in flow.ai.call_args_list:
+            self.assertEqual(call.kwargs.get("old_source"), None)
+            self.assertEqual(call.kwargs.get("new_source"), Path("/unused"))
+
+    def test_final_review_preserves_unknown_severity_with_confirmed_findings(self):
+        # Confirmed LOW findings must not overwrite a null final severity; unknown
+        # final assessments stay skip under --auto-exempt instead of becoming exemptions.
+        staged = review.StagedReview(review.AIAnalyzer("codex"), "+code", Path("/tmp"))
+        record = {"id": "integration-1", "issues": [{
+            "id": "f1", "kind": "finding", "description": "minor issue",
+            "severity": "low", "malicious": False, "status": "confirmed",
+            "evidence": "src/lib.rs:1",
+        }]}
+        value = dict(decision=False, complete=True, severity=None, malicious=False,
+                     explanation="Final assessment remains unknown")
+        result = staged._final_review(record, value)
+        self.assertIsNotNone(result)
+        self.assertIsNone(result["severity"])
+        self.assertFalse(result["decision"])
+        parsed = review.AIReview.parse(json.dumps(result))
+        self.assertEqual(parsed.automatic_action(), "skip")
 
     def test_rerun_rejects_unsafe_classifications_before_certify(self):
         cases = [

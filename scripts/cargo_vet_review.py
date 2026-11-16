@@ -1227,8 +1227,14 @@ review.complete must be false for any unresolved context or incomplete assessmen
             known = [i["severity"] for i in issues if i["severity"] is not None]
             if value["severity"] is not None:
                 known.append(value["severity"])
-            value["severity"] = (None if any(i["severity"] is None for i in issues)
-                                 else max(known, key=self.SEVERITIES.index))
+            # Keep the final assessment unknown when either the final review or any
+            # retained finding has unknown severity; only max known severities when
+            # every input severity is known. Unknown final severity must stay skip
+            # under --auto-exempt rather than becoming an exemption via LOW findings.
+            value["severity"] = (
+                None if value["severity"] is None or any(i["severity"] is None for i in issues)
+                else max(known, key=self.SEVERITIES.index)
+            )
             value["malicious"] = value["malicious"] or any(i["malicious"] for i in issues)
             value["explanation"] += "\nConfirmed findings:\n" + "\n".join(
                 f"{i['id']}: {i['description']} ({i.get('evidence', '')})" for i in issues)
@@ -2264,6 +2270,8 @@ def review_dependencies(args, json_output=None):
                     print("    Re-running AI analysis...")
                     ai_result = ai_analyzer.review_diff(
                         diff_content=diff_content,
+                        old_source=fetched_diff.old_source,
+                        new_source=fetched_diff.new_source,
                         crate_name=item.crate_name,
                         old_version=item.old_version,
                         new_version=item.new_version,
