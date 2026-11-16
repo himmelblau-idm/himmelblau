@@ -196,14 +196,43 @@ jobs:
 
 
       - name: Download this run's exact previous-stage progress
+        id: download-previous
         if: inputs.checkpoint-ref != ''
         env:
-          CHECKPOINT_ARTIFACT: >-
-            ${{ inputs.checkpoint-artifact || format('maintenance-checkpoint-{0}-{1}-{2}-{3}',
-            github.run_id, split(inputs.checkpoint-ref, '/')[4], inputs.branch, inputs.previous-stage) }}
+          CHECKPOINT_ARTIFACT: ${{ inputs.checkpoint-artifact }}
+          CHECKPOINT_REF: ${{ inputs.checkpoint-ref }}
+          PREVIOUS_STAGE: ${{ inputs.previous-stage }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [ -z "$PREVIOUS_STAGE" ]; then
+            echo "::error::previous-stage is required when checkpoint-ref is set"
+            exit 2
+          fi
+          if [[ ! "$CHECKPOINT_REF" =~ ^automation/stable-maintenance/checkpoints/([1-9][0-9]{0,19})/([1-9][0-9]{0,5})/(stable-[34]\.x)/(dependencies|vet|backports-[1-4])$ ]] ||
+             [[ "${BASH_REMATCH[1]}" != "$GITHUB_RUN_ID" || "${BASH_REMATCH[3]}" != "$TARGET_BRANCH" ]]; then
+            echo "::error::Invalid producer checkpoint ref for artifact fallback"
+            exit 2
+          fi
+          producer_run="${BASH_REMATCH[1]}"
+          producer_attempt="${BASH_REMATCH[2]}"
+          producer_branch="${BASH_REMATCH[3]}"
+          producer_stage="${BASH_REMATCH[4]}"
+          if [ "$PREVIOUS_STAGE" != "$producer_stage" ]; then
+            echo "::error::Producer checkpoint ref does not match previous-stage"
+            exit 2
+          fi
+          canonical_artifact="maintenance-checkpoint-${producer_run}-${producer_attempt}-${producer_branch}-${producer_stage}"
+          # Branch callers may pair a checkpoint ref with another producer's artifact
+          # when an intermediate stage published a ref without an artifact name.
+          if [ -n "$CHECKPOINT_ARTIFACT" ] && [[ "$CHECKPOINT_ARTIFACT" =~ ^maintenance-checkpoint- ]]; then
+            if [ "$CHECKPOINT_ARTIFACT" != "$canonical_artifact" ]; then
+              CHECKPOINT_ARTIFACT="$canonical_artifact"
+            fi
+          elif [ -z "$CHECKPOINT_ARTIFACT" ]; then
+            CHECKPOINT_ARTIFACT="$canonical_artifact"
+          fi
+          printf 'previous-stage=%s\n' "$PREVIOUS_STAGE" >> "$GITHUB_OUTPUT"
           mkdir -p "$STATE_DIR"
           for attempt in 1 2 3 4 5; do
             if gh run download "$GITHUB_RUN_ID" --name "$CHECKPOINT_ARTIFACT" \
@@ -222,7 +251,7 @@ jobs:
       - name: Resume — verify state digest, trusted snapshot and exact staged commit
         if: inputs.checkpoint-ref != ''
         env:
-          PREVIOUS_STAGE: ${{ inputs.previous-stage }}
+          PREVIOUS_STAGE: ${{ steps.download-previous.outputs.previous-stage }}
           CHECKPOINT_HEAD: ${{ inputs.checkpoint-head }}
           CHECKPOINT_DIGEST: ${{ inputs.checkpoint-digest }}
           CHECKPOINT_REF: ${{ inputs.checkpoint-ref }}

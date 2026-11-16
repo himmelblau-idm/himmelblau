@@ -26,7 +26,7 @@ jobs:
       branch: ${{ inputs.branch }}
       stage: vet
       failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }}
-      previous-stage: ${{ (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      previous-stage: ${{ (needs.dependencies.outputs.ref != '' && 'dependencies') || '' }}
       checkpoint-head: ${{ needs.dependencies.outputs.head || '' }}
       checkpoint-digest: ${{ needs.dependencies.outputs.digest || '' }}
       checkpoint-ref: ${{ needs.dependencies.outputs.ref || '' }}
@@ -41,7 +41,7 @@ jobs:
       branch: ${{ inputs.branch }}
       stage: backports-1
       failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }}
-      previous-stage: ${{ (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      previous-stage: ${{ (needs.vet.outputs.ref != '' && 'vet') || (needs.dependencies.outputs.ref != '' && 'dependencies') || '' }}
       checkpoint-head: ${{ needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
       checkpoint-digest: ${{ needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
       checkpoint-ref: ${{ needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
@@ -56,7 +56,7 @@ jobs:
       branch: ${{ inputs.branch }}
       stage: backports-2
       failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }},${{ needs.backports-1.outputs.network-not-before }}
-      previous-stage: ${{ (needs.backports-1.outputs.artifact != '' && 'backports-1') || (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      previous-stage: ${{ (needs.backports-1.outputs.ref != '' && 'backports-1') || (needs.vet.outputs.ref != '' && 'vet') || (needs.dependencies.outputs.ref != '' && 'dependencies') || '' }}
       checkpoint-head: ${{ needs.backports-1.outputs.head || needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
       checkpoint-digest: ${{ needs.backports-1.outputs.digest || needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
       checkpoint-ref: ${{ needs.backports-1.outputs.ref || needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
@@ -71,7 +71,7 @@ jobs:
       branch: ${{ inputs.branch }}
       stage: backports-3
       failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }},${{ needs.backports-1.outputs.network-not-before }},${{ needs.backports-2.outputs.network-not-before }}
-      previous-stage: ${{ (needs.backports-2.outputs.artifact != '' && 'backports-2') || (needs.backports-1.outputs.artifact != '' && 'backports-1') || (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      previous-stage: ${{ (needs.backports-2.outputs.ref != '' && 'backports-2') || (needs.backports-1.outputs.ref != '' && 'backports-1') || (needs.vet.outputs.ref != '' && 'vet') || (needs.dependencies.outputs.ref != '' && 'dependencies') || '' }}
       checkpoint-head: ${{ needs.backports-2.outputs.head || needs.backports-1.outputs.head || needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
       checkpoint-digest: ${{ needs.backports-2.outputs.digest || needs.backports-1.outputs.digest || needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
       checkpoint-ref: ${{ needs.backports-2.outputs.ref || needs.backports-1.outputs.ref || needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
@@ -86,7 +86,7 @@ jobs:
       branch: ${{ inputs.branch }}
       stage: backports-4
       failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }},${{ needs.backports-1.outputs.network-not-before }},${{ needs.backports-2.outputs.network-not-before }},${{ needs.backports-3.outputs.network-not-before }}
-      previous-stage: ${{ (needs.backports-3.outputs.artifact != '' && 'backports-3') || (needs.backports-2.outputs.artifact != '' && 'backports-2') || (needs.backports-1.outputs.artifact != '' && 'backports-1') || (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      previous-stage: ${{ (needs.backports-3.outputs.ref != '' && 'backports-3') || (needs.backports-2.outputs.ref != '' && 'backports-2') || (needs.backports-1.outputs.ref != '' && 'backports-1') || (needs.vet.outputs.ref != '' && 'vet') || (needs.dependencies.outputs.ref != '' && 'dependencies') || '' }}
       checkpoint-head: ${{ needs.backports-3.outputs.head || needs.backports-2.outputs.head || needs.backports-1.outputs.head || needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
       checkpoint-digest: ${{ needs.backports-3.outputs.digest || needs.backports-2.outputs.digest || needs.backports-1.outputs.digest || needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
       checkpoint-ref: ${{ needs.backports-3.outputs.ref || needs.backports-2.outputs.ref || needs.backports-1.outputs.ref || needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
@@ -101,8 +101,8 @@ jobs:
       branch: ${{ inputs.branch }}
       stage: final
       failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }},${{ needs.vet.outputs.network-not-before }},${{ needs.backports-1.outputs.network-not-before }},${{ needs.backports-2.outputs.network-not-before }},${{ needs.backports-3.outputs.network-not-before }},${{ needs.backports-4.outputs.network-not-before }}
-      incomplete-stages: "${{ needs.dependencies.outputs.artifact == '' && 'dependencies,' || '' }}${{ needs.vet.outputs.artifact == '' && 'vet,' || '' }}${{ needs.backports-1.outputs.artifact == '' && 'backports-1,' || '' }}${{ needs.backports-2.outputs.artifact == '' && 'backports-2,' || '' }}${{ needs.backports-3.outputs.artifact == '' && 'backports-3,' || '' }}${{ needs.backports-4.outputs.artifact == '' && 'backports-4,' || '' }}"
-      previous-stage: ${{ (needs.backports-4.outputs.artifact != '' && 'backports-4') || (needs.backports-3.outputs.artifact != '' && 'backports-3') || (needs.backports-2.outputs.artifact != '' && 'backports-2') || (needs.backports-1.outputs.artifact != '' && 'backports-1') || (needs.vet.outputs.artifact != '' && 'vet') || (needs.dependencies.outputs.artifact != '' && 'dependencies') || '' }}
+      incomplete-stages: "${{ needs.dependencies.outputs.ref == '' && 'dependencies,' || '' }}${{ needs.vet.outputs.ref == '' && 'vet,' || '' }}${{ needs.backports-1.outputs.ref == '' && 'backports-1,' || '' }}${{ needs.backports-2.outputs.ref == '' && 'backports-2,' || '' }}${{ needs.backports-3.outputs.ref == '' && 'backports-3,' || '' }}${{ needs.backports-4.outputs.ref == '' && 'backports-4,' || '' }}"
+      previous-stage: ${{ (needs.backports-4.outputs.ref != '' && 'backports-4') || (needs.backports-3.outputs.ref != '' && 'backports-3') || (needs.backports-2.outputs.ref != '' && 'backports-2') || (needs.backports-1.outputs.ref != '' && 'backports-1') || (needs.vet.outputs.ref != '' && 'vet') || (needs.dependencies.outputs.ref != '' && 'dependencies') || '' }}
       checkpoint-head: ${{ needs.backports-4.outputs.head || needs.backports-3.outputs.head || needs.backports-2.outputs.head || needs.backports-1.outputs.head || needs.vet.outputs.head || needs.dependencies.outputs.head || '' }}
       checkpoint-digest: ${{ needs.backports-4.outputs.digest || needs.backports-3.outputs.digest || needs.backports-2.outputs.digest || needs.backports-1.outputs.digest || needs.vet.outputs.digest || needs.dependencies.outputs.digest || '' }}
       checkpoint-ref: ${{ needs.backports-4.outputs.ref || needs.backports-3.outputs.ref || needs.backports-2.outputs.ref || needs.backports-1.outputs.ref || needs.vet.outputs.ref || needs.dependencies.outputs.ref || '' }}
