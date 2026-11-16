@@ -584,6 +584,10 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
     // Prefer a subsidiary that already matches this principal. Using
     // collection.primary() for every store would re-init the same cache and clear
     // the other principal when KerberosTGTs stores both cloud and AD tickets.
+    //
+    // When find() misses: use primary() if it is empty/uninitialized so default
+    // lookups discover the ticket (new_unique() does not set primary). If primary
+    // already holds a different principal, create a unique subsidiary instead.
     let res = libkrimes::ccache::resolve(Some(&ccname))
         .map_err(|e| format!("Failed to resolve credential cache {:?}: {:?}", ccname, e))
         .and_then(|cache| match cache {
@@ -591,7 +595,17 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
                 .find(tgt.name())
             {
                 Ok(cc) => Ok(cc),
-                Err(libkrimes::error::KrbError::CredentialCacheNotFound) => collection.new_unique(),
+                Err(libkrimes::error::KrbError::CredentialCacheNotFound) => {
+                    match collection.primary() {
+                        Ok(primary) => match primary.principal() {
+                            Err(libkrimes::error::KrbError::CredentialCacheNotFound) => Ok(primary),
+                            Ok(existing) if &existing == tgt.name() => Ok(primary),
+                            Ok(_) => collection.new_unique(),
+                            Err(e) => Err(e),
+                        },
+                        Err(e) => Err(e),
+                    }
+                }
                 Err(e) => Err(e),
             }
             .map_err(|e| format!("Failed to get subsidiary credential cache: {:?}", e))
