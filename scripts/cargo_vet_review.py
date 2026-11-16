@@ -526,6 +526,7 @@ class CargoVetParser:
             raise ValueError("cargo-vet report has no structured suggestions")
         items = {}
         manual_commands = {name: [] for name in manual_crates}
+        gap_crates = {crate for crate, _version in published_gaps}
         for suggestion in suggestions:
             if not isinstance(suggestion, dict) or not isinstance(suggestion.get("suggested_diff"), dict):
                 raise ValueError("invalid cargo-vet suggestion")
@@ -548,10 +549,14 @@ class CargoVetParser:
             if key in items:
                 raise ValueError("ambiguous duplicate cargo-vet suggestions")
             parents = suggestion.get("notable_parents", "unknown")
+            # cargo-vet may suggest an intermediate published version that closes
+            # coverage toward a failing target (for example 1.0.0 -> 1.1.0 when
+            # 1.2.0 fails but 1.1.0 -> 1.2.0 is already audited). Keep those.
+            if name not in gap_crates:
+                raise ValueError("cargo-vet suggestion does not match a failing published target")
             items[key] = self.AuditItem(command, name, old, new, "unknown",
                                        parents if isinstance(parents, str) else "unknown", "unknown")
-        if set(items) != published_gaps:
-            raise ValueError("cargo-vet suggestions do not cover exactly the failing targets")
+        suggested_crates = {crate for crate, _version in items}
         for failure in report["failures"]:
             name, version = failure["name"], failure["version"]
             if name in manual_crates:
@@ -560,6 +565,18 @@ class CargoVetParser:
                     "unknown", "unknown", "unknown",
                     manual_reason="Git-related audit requirements need manual review; AI review is skipped.",
                     manual_commands=manual_commands[name],
+                    missing_criteria=failure["missing_criteria"],
+                )
+            elif (name, version) not in items and name not in suggested_crates:
+                # No structured suggestion reached this published gap. Keep other
+                # targets reviewable and route this one to manual handling.
+                items[(name, version)] = self.AuditItem(
+                    f"cargo vet inspect {name} {version}", name, None, version,
+                    "unknown", "unknown", "unknown",
+                    manual_reason=(
+                        "No structured cargo-vet suggestion matched this published "
+                        "target; AI review is skipped."
+                    ),
                     missing_criteria=failure["missing_criteria"],
                 )
         # Human output supplies publisher/trust hints absent from cargo-vet JSON.
@@ -1599,7 +1616,11 @@ def review_dependencies(args, json_output=None):
                     print(f"    Automatically {'certified' if analysis.auto_certified else 'exempted'} "
                           f"{item.crate_name} {item.new_version}.")
             continue
-        if (analysis.ai_decision and analysis.ai_complete and not args.dry_run and not args.json
+        certify_review = AIReview(
+            analysis.ai_decision, analysis.ai_complete, analysis.ai_analysis or "",
+            analysis.ai_severity, analysis.ai_malicious,
+        )
+        if (certify_review.automatic_action() == "certify" and not args.dry_run and not args.json
                 and auto_certify_crate(item, args.ai_provider)):
             analysis.auto_certified = True
             analysis.resolved = True
@@ -1777,7 +1798,7 @@ def review_dependencies(args, json_output=None):
                     analysis.ai_malicious = ai_result.malicious
                     for line in ai_result.explanation.splitlines():
                         print(f"    {line}")
-                    if (ai_result.decision and ai_result.complete
+                    if (ai_result.automatic_action() == "certify"
                             and auto_certify_crate(item, args.ai_provider)):
                         analysis.auto_certified = True
                         analysis.resolved = True
