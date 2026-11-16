@@ -55,5 +55,6 @@ platform/arch/*.pkg.tar.*
 
 # Private AI review inputs may survive forced process termination.
 /.cargo-vet-review-*.diff
+/.cargo-vet-review-*.review/
 
 crate-hashes.json
