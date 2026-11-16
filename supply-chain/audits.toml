@@ -1349,6 +1349,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.1.4 -> 1.1.5"
 
+[[audits.rustix]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "1.1.5 -> 1.1.6"
+
 [[audits.rustls]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"

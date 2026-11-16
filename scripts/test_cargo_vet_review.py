@@ -24,6 +24,21 @@ def working_directory(path):
         review.os.chdir(previous)
 
 
+def stage_report(data, **overrides):
+    value = dict(task_id=data["task_id"], complete=True, summary="Reviewed assigned behavior",
+                 findings=[], questions=[], assumptions=[])
+    if "records" in data:
+        value["dispositions"] = [
+            dict(id=issue["id"], status="resolved", evidence="src/lib.rs:1 verified implementation")
+            for record in data["records"] for issue in record["issues"]
+        ]
+        if data["final"]:
+            value["review"] = dict(decision=True, complete=True, severity="low", malicious=False,
+                                   explanation="Reviewed source and cross-file behavior")
+    value.update(overrides)
+    return json.dumps(value)
+
+
 class ReviewTests(unittest.TestCase):
     kwargs = dict(crate_name="example", old_version="1.0", new_version="1.1",
                   publisher="publisher", verbose=False)
@@ -45,8 +60,11 @@ class ReviewTests(unittest.TestCase):
 
     def test_single_complete_approval_is_certifiable(self):
         analyzer = review.AIAnalyzer("codex")
-        with patch.object(analyzer, "analyze_diff", return_value=self.report()):
+        with tempfile.TemporaryDirectory() as root, \
+             patch.object(review, "PROJECT_ROOT", Path(root)), \
+             patch.object(analyzer, "analyze_diff", side_effect=lambda text, **kw: stage_report(json.loads(text))):
             result = analyzer.review_diff("source", **self.kwargs)
+            self.assertEqual(list(Path(root).iterdir()), [])
         self.assertTrue(result.decision)
         self.assertTrue(result.complete)
 
@@ -70,16 +88,19 @@ class ReviewTests(unittest.TestCase):
                 self.assertFalse(result.complete)
                 self.assertIn("Manual review required", result.explanation)
 
-    def test_failed_or_incomplete_review_preserves_explanation(self):
+    def test_failed_review_preserves_response_for_diagnosis(self):
         for failed in ("not JSON", None, self.report(decision=False, complete=False,
                                                     explanation="Unread range")):
-            with self.subTest(failed=failed):
+            with self.subTest(failed=failed), tempfile.TemporaryDirectory() as root:
                 analyzer = review.AIAnalyzer("codex")
-                with patch.object(analyzer, "analyze_diff", return_value=failed):
+                with patch.object(review, "PROJECT_ROOT", Path(root)), \
+                     patch.object(analyzer, "analyze_diff", return_value=failed):
                     result = analyzer.review_diff("source", **self.kwargs)
                 self.assertFalse(result.decision)
                 self.assertFalse(result.complete)
-                self.assertEqual(result.explanation, review.AIReview.parse(failed).explanation)
+                workspace = next(Path(root).iterdir())
+                self.assertEqual(json.loads((workspace / "source-1.response.json").read_text()), failed)
+                self.assertIn(str(workspace), result.explanation)
 
     def test_fenced_json_is_accepted(self):
         for fence in ("```json\n", "```\n"):
@@ -185,6 +206,9 @@ class ReviewTests(unittest.TestCase):
             (root / ".gitignore").write_text(ignore_rules)
             orphan = root / ".cargo-vet-review-orphan.diff"
             orphan.write_text("private untrusted crate source")
+            workspace = root / ".cargo-vet-review-orphan.review"
+            workspace.mkdir()
+            (workspace / "source-1.report.json").write_text('{"summary": "private review"}')
             (root / "legitimate.diff").write_text("a patch intended for review")
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             staged = subprocess.run(
@@ -192,6 +216,7 @@ class ReviewTests(unittest.TestCase):
                 capture_output=True, text=True,
             ).stdout.splitlines()
             self.assertNotIn(orphan.name, staged)
+            self.assertFalse(any(path.startswith(workspace.name + "/") for path in staged))
             self.assertIn("legitimate.diff", staged)
             self.assertEqual(orphan.read_text(), "private untrusted crate source")
 
@@ -246,8 +271,9 @@ class ReviewTests(unittest.TestCase):
              patch.object(review.CargoVetParser, "parse_vet_output", return_value=[item]), \
              patch.object(review.DiffFetcher, "fetch", return_value=fetched), \
              patch.object(review.AIAnalyzer, "is_available", return_value=True), \
-             patch.object(review.AIAnalyzer, "analyze_diff", side_effect=[
-                 self.report(decision=False, explanation="Existing review"), "Generated exemption"]), \
+             patch.object(review.AIAnalyzer, "review_diff", return_value=review.AIReview.parse(
+                 self.report(decision=False, explanation="Existing review"))), \
+             patch.object(review.AIAnalyzer, "analyze_diff", return_value="Generated exemption"), \
              patch("builtins.input", side_effect=inputs), \
              patch.object(review, "exempt_crate", return_value=True) as exempt:
             review.main()
@@ -591,7 +617,8 @@ class ReviewTests(unittest.TestCase):
              patch.object(review, "check_cargo_vet", return_value=(self.success_report(), set())) as final_check, \
              patch.object(review.DiffFetcher, "fetch", return_value=fetched) as fetch, \
              patch.object(review.AIAnalyzer, "is_available", return_value=available), \
-             patch.object(review.AIAnalyzer, "analyze_diff", side_effect=responses) as ai, \
+             patch.object(review.AIAnalyzer, "review_diff",
+                          side_effect=[review.AIReview.parse(value) for value in responses]) as ai, \
              patch("builtins.input", side_effect=inputs) as prompt, \
              patch.object(review, "auto_certify_crate", return_value=certify) as automatic, \
              patch.object(review, "certify_crate", return_value=True) as manual:
@@ -1013,48 +1040,78 @@ class ReviewTests(unittest.TestCase):
                 self.assertEqual(audits.read_bytes(), original)
                 self.assertEqual(list(store.iterdir()), [audits])
 
-    def test_large_diff_is_reviewed_from_one_complete_file(self):
-        source = "diff --git a/x b/x\n" + "x" * 125000 + "\n" + "short\n" * 3100
+    def test_large_diff_uses_shared_file_and_bounded_assignments(self):
+        source = "diff --git a/x b/x\n" + "x" * 500000 + "\n" + "short\n" * 12500
         with tempfile.TemporaryDirectory() as root:
-            paths = []
+            paths, primary = [], []
             def run(command, **kwargs):
                 self.assertEqual(kwargs["timeout"], 1800)
                 prompt = kwargs["input"]
                 path = Path(re.search(r"available at: (.+)\n", prompt).group(1))
                 paths.append(path)
-                self.assertEqual(path.read_text(), source)
-                self.assertNotIn(source, prompt)
-                self.assertIn("at most 500 lines", prompt)
-                self.assertIn("cross-file interactions", prompt)
-                self.assertIn("without truncation", prompt)
-                self.assertNotIn("batch", prompt.lower())
-                Path(command[command.index("--output-last-message") + 1]).write_text(self.report())
+                data = json.loads(path.read_text())
+                self.assertEqual(Path(data["full_diff"]).read_text(), source)
+                if "primary" in data:
+                    text = Path(data["primary"]).read_text()
+                    self.assertLessEqual(len(text), review.StagedReview.SOURCE_MAX_CHARS)
+                    self.assertLessEqual(len(text.splitlines()), review.StagedReview.SOURCE_MAX_LINES)
+                    primary.append((data["start"], data["end"], text))
+                Path(command[command.index("--output-last-message") + 1]).write_text(stage_report(data))
                 return subprocess.CompletedProcess(command, 0, "", "")
             analyzer = review.AIAnalyzer("codex")
             with patch.object(review, "PROJECT_ROOT", Path(root)), \
                  patch.object(analyzer, "is_available", return_value=True), \
-                 patch.object(review.subprocess, "run", side_effect=run) as invoke:
+                 patch.object(review.subprocess, "run", side_effect=run):
                 result = analyzer.review_diff(source, **self.kwargs)
             self.assertTrue(result.decision)
             self.assertTrue(result.complete)
-            invoke.assert_called_once()
-            self.assertEqual(len(paths), 1)
-            self.assertFalse(paths[0].exists())
+            self.assertEqual("".join(text for _, _, text in sorted(primary)), source)
+            self.assertGreater(len(primary), 3)
+            self.assertTrue(all(not path.exists() for path in paths))
+            self.assertEqual(list(Path(root).iterdir()), [])
+
+    def test_staged_prompts_reach_each_provider_with_the_configured_timeout(self):
+        for provider in ("codex", "claude", "gemini"):
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as root:
+                stages = []
+
+                def run(command, **kwargs):
+                    prompt = kwargs.get("input") or command[command.index("-p") + 1]
+                    data = json.loads(Path(re.search(r"available at: (.+)\n", prompt).group(1)).read_text())
+                    stages.append(data["task_id"])
+                    self.assertIn("Review Criteria", prompt)
+                    self.assertNotIn("## Your Analysis", prompt)
+                    self.assertEqual(kwargs["timeout"], 73)
+                    response = stage_report(data)
+                    if provider == "codex":
+                        Path(command[command.index("--output-last-message") + 1]).write_text(response)
+                        response = ""
+                    return subprocess.CompletedProcess(command, 0, response, "")
+
+                analyzer = review.AIAnalyzer(provider, timeout=73)
+                with patch.object(review, "PROJECT_ROOT", Path(root)), \
+                     patch.object(analyzer, "is_available", return_value=True), \
+                     patch.object(review.subprocess, "run", side_effect=run):
+                    result = analyzer.review_diff("+safe code", **self.kwargs)
+                self.assertTrue(result.decision)
+                self.assertEqual(stages, ["source-1", "integration-1"])
+                self.assertEqual(list(Path(root).iterdir()), [])
 
     def test_ai_timeout_cli_default_and_override_reach_provider(self):
-        analyze = review.AIAnalyzer.analyze_diff
+        review_diff = review.AIAnalyzer.review_diff
         for flags, expected in (([], 1800), (["--ai-timeout", "3600"], 3600)):
             def run(command, **kwargs):
-                Path(command[command.index("--output-last-message") + 1]).write_text(self.report())
+                data = json.loads(Path(re.search(r"available at: (.+)\n", kwargs["input"]).group(1)).read_text())
+                Path(command[command.index("--output-last-message") + 1]).write_text(stage_report(data))
                 return subprocess.CompletedProcess(command, 0, "", "")
             with self.subTest(flags=flags), tempfile.TemporaryDirectory() as root, \
                  self.main_flow([], flags=flags) as flow, \
                  patch.object(review, "PROJECT_ROOT", Path(root)), \
-                 patch.object(review.AIAnalyzer, "analyze_diff", analyze), \
+                 patch.object(review.AIAnalyzer, "review_diff", review_diff), \
                  patch.object(review.subprocess, "run", side_effect=run) as invoke:
                 self.assertEqual(review.main(), 0)
-            invoke.assert_called_once()
-            self.assertEqual(invoke.call_args.kwargs["timeout"], expected)
+            self.assertEqual(invoke.call_count, 2)
+            self.assertTrue(all(call.kwargs["timeout"] == expected for call in invoke.call_args_list))
             flow.automatic.assert_called_once()
             flow.prompt.assert_not_called()
 
@@ -1069,17 +1126,18 @@ class ReviewTests(unittest.TestCase):
             discover.assert_not_called()
 
     def test_configured_provider_timeout_prompts_only_in_interactive_mode(self):
-        analyze = review.AIAnalyzer.analyze_diff
+        review_diff = review.AIAnalyzer.review_diff
         for extra, inputs, prompts in (([], ["s"], 1), (["--auto-exempt"], [], 0)):
             with self.subTest(extra=extra), tempfile.TemporaryDirectory() as root, \
                  self.main_flow([], flags=["--ai-timeout", "42", *extra], inputs=inputs) as flow, \
                  patch.object(review, "PROJECT_ROOT", Path(root)), \
-                 patch.object(review.AIAnalyzer, "analyze_diff", analyze), \
+                 patch.object(review.AIAnalyzer, "review_diff", review_diff), \
                  patch.object(review, "exempt_crate") as exempt, \
                  patch.object(review.subprocess, "run",
                               side_effect=subprocess.TimeoutExpired("codex", 42)) as invoke:
                 self.assertEqual(review.main(), 1)
-                self.assertEqual(list(Path(root).iterdir()), [])
+                workspace = next(Path(root).iterdir())
+                self.assertTrue((workspace / "failure.json").exists())
             self.assertEqual(invoke.call_args.kwargs["timeout"], 42)
             flow.automatic.assert_not_called()
             exempt.assert_not_called()
