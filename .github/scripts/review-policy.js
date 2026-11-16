@@ -91,6 +91,8 @@ function versionBumpOnly(patch) {
     if (/^@@/.test(line)) {
       inDependencyTable = null;
       inPackageSection = false;
+      // Manifest section context does not carry across diff hunks.
+      sawSection = false;
       continue;
     }
     if (/^ /.test(line)) {
