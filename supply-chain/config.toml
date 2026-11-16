@@ -640,6 +640,10 @@ criteria = "safe-to-deploy"
 version = "0.25.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.libsqlite3-sys]]
+version = "0.39.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.libudev]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
@@ -891,6 +895,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.rusqlite]]
 version = "0.27.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.rustix]]
+version = "1.1.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-pki-types]]
