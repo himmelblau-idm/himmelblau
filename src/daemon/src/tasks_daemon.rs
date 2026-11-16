@@ -587,25 +587,23 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
     let res = libkrimes::ccache::resolve(Some(&ccname))
         .map_err(|e| format!("Failed to resolve credential cache {:?}: {:?}", ccname, e))
         .and_then(|cache| match cache {
-            libkrimes::ccache::ResolvedCredentialCache::Collection(collection) => {
-                match collection.find(tgt.name()) {
-                    Ok(cc) => Ok(cc),
-                    Err(libkrimes::error::KrbError::CredentialCacheNotFound) => {
-                        collection.new_unique()
-                    }
-                    Err(e) => Err(e),
-                }
-                .map_err(|e| format!("Failed to get subsidiary credential cache: {:?}", e))
-                .and_then(|mut cc| {
-                    cc.init(tgt.name(), None)
-                        .map_err(|e| format!("Failed to init credential cache: {:?}", e))
-                        .and_then(|_| {
-                            cc.store(tgt).map_err(|e| {
-                                format!("Failed to store credentials in credential cache: {:?}", e)
-                            })
-                        })
-                })
+            libkrimes::ccache::ResolvedCredentialCache::Collection(collection) => match collection
+                .find(tgt.name())
+            {
+                Ok(cc) => Ok(cc),
+                Err(libkrimes::error::KrbError::CredentialCacheNotFound) => collection.new_unique(),
+                Err(e) => Err(e),
             }
+            .map_err(|e| format!("Failed to get subsidiary credential cache: {:?}", e))
+            .and_then(|mut cc| {
+                cc.init(tgt.name(), None)
+                    .map_err(|e| format!("Failed to init credential cache: {:?}", e))
+                    .and_then(|_| {
+                        cc.store(tgt).map_err(|e| {
+                            format!("Failed to store credentials in credential cache: {:?}", e)
+                        })
+                    })
+            }),
             libkrimes::ccache::ResolvedCredentialCache::Subsidiary(mut cc) => cc
                 .init(tgt.name(), None)
                 .map_err(|e| format!("Failed to init credential cache: {:?}", e))
