@@ -749,6 +749,50 @@ class ReviewTests(unittest.TestCase):
         for mocked in (flow.ai, flow.fetch, flow.automatic, flow.manual, flow.prompt, exempt):
             mocked.assert_not_called()
 
+    def test_auto_exempt_clears_manual_placeholder_after_intermediate_audit(self):
+        # Failure 1.2.0 with intermediate suggestion 1.0.0 -> 1.1.0. Certifying
+        # the suggestion closes coverage; the manual 1.2.0 placeholder must not
+        # keep --auto-exempt failing when the final locked check is clean.
+        report = {
+            "conclusion": "fail (vetting)",
+            "failures": [{"name": "example", "version": "1.2.0",
+                          "missing_criteria": ["safe-to-deploy"]}],
+            "suggest": {"suggestions": [{
+                "name": "example",
+                "notable_parents": "app",
+                "suggested_diff": {"from": "1.0.0", "to": "1.1.0"},
+            }]},
+        }
+        with self.main_flow([self.report()], flags=["--auto-exempt"],
+                            vet_output=json.dumps(report)) as flow:
+            flow.final_check.return_value = (self.success_report(), set())
+            self.assertEqual(review.main(), 0)
+        flow.automatic.assert_called_once()
+        self.assertEqual(flow.automatic.call_args.args[0].new_version, "1.1.0")
+        flow.prompt.assert_not_called()
+
+    def test_auto_exempt_keeps_manual_placeholder_when_final_gap_remains(self):
+        # Same intermediate suggestion shape, but the locked re-check still
+        # reports 1.2.0 uncovered. The placeholder must keep failing policy.
+        report = {
+            "conclusion": "fail (vetting)",
+            "failures": [{"name": "example", "version": "1.2.0",
+                          "missing_criteria": ["safe-to-deploy"]}],
+            "suggest": {"suggestions": [{
+                "name": "example",
+                "notable_parents": "app",
+                "suggested_diff": {"from": "1.0.0", "to": "1.1.0"},
+            }]},
+        }
+        with self.main_flow([self.report()], flags=["--auto-exempt"],
+                            vet_output=json.dumps(report)) as flow:
+            flow.final_check.return_value = (
+                json.dumps(report), {("example", "1.2.0")},
+            )
+            self.assertEqual(review.main(), 1)
+        flow.automatic.assert_called_once()
+        self.assertEqual(flow.automatic.call_args.args[0].new_version, "1.1.0")
+
     def test_auto_exempt_explicit_size_skip_continues_without_prompting(self):
         targets = (("skipped", "1.0.0", "1.1.0"), ("approved", None, "2.0.0"))
         with self.main_flow([self.report()], targets=targets,

@@ -1472,8 +1472,11 @@ def review_dependencies(args, json_output=None):
 
     for idx, item in enumerate(items, 1):
         if item.manual_reason:
-            if args.auto_exempt:
-                automatic_failure = True
+            # Do not set automatic_failure here. Published coverage placeholders
+            # (for example failing 1.2.0 while cargo-vet suggests auditing
+            # 1.0.0 -> 1.1.0) must stay visible, but --auto-exempt should only
+            # fail them when they remain in the final gap set after intermediate
+            # audits. Genuine AI block/skip paths still set automatic_failure.
             exemption = ["cargo", "vet", "add-exemption", item.crate_name, item.new_version]
             for criterion in item.missing_criteria:
                 exemption.extend(["--criteria", criterion])
@@ -1833,7 +1836,7 @@ def review_dependencies(args, json_output=None):
             )
             for analysis in analyses:
                 analysis.resolved = (
-                    (analysis.resolved or not args.auto_exempt)
+                    (analysis.resolved or analysis.manual_reason is not None or not args.auto_exempt)
                     and (analysis.crate_name, analysis.new_version) not in remaining_gaps
                 )
         except (OSError, ValueError, subprocess.TimeoutExpired) as error:
@@ -1841,6 +1844,17 @@ def review_dependencies(args, json_output=None):
             verification_failed = True
             for analysis in analyses:
                 analysis.resolved = False
+
+    if args.auto_exempt:
+        # Manual placeholders that still appear in remaining_gaps are real
+        # unresolved requirements. Placeholders closed by intermediate audits do
+        # not keep --auto-exempt failing once the locked graph is clean.
+        manual_gaps_remain = any(
+            a.manual_reason and (a.crate_name, a.new_version) in remaining_gaps
+            for a in analyses
+        )
+        if manual_gaps_remain:
+            automatic_failure = True
 
     # Output JSON if requested
     if args.json:
