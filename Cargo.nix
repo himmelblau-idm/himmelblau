@@ -11034,7 +11034,7 @@ rec {
           "default" = [ "libsqlite3-sys/default" ];
           "in_gecko" = [ "libsqlite3-sys/in_gecko" ];
           "loadable_extension" = [ "libsqlite3-sys/loadable_extension" ];
-          "min_sqlite_version_3_14_0" = [ "libsqlite3-sys/min_sqlite_version_3_14_0" ];
+          "min_sqlite_version_3_14_0" = [ "libsqlite3-sys/min_sqlite_version_3_45_3" ];
           "preupdate_hook" = [ "libsqlite3-sys/preupdate_hook" ];
           "session" = [ "libsqlite3-sys/session" ];
           "sqlcipher" = [ "libsqlite3-sys/sqlcipher" ];
