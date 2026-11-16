@@ -556,7 +556,9 @@ class CargoVetParser:
             validate_crate_identity(name, new)
             if old is not None:
                 validate_crate_identity(name, old)
-            key = (name, new)
+            # Include old_version so distinct audit edges that share a destination
+            # (for example 1.0.0 -> 1.1.0 and 0.9.0 -> 1.1.0) remain reviewable.
+            key = (name, old, new)
             if key in items:
                 raise ValueError("ambiguous duplicate cargo-vet suggestions")
             parents = suggestion.get("notable_parents", "unknown")
@@ -567,23 +569,24 @@ class CargoVetParser:
                 raise ValueError("cargo-vet suggestion does not match a failing published target")
             items[key] = self.AuditItem(command, name, old, new, "unknown",
                                        parents if isinstance(parents, str) else "unknown", "unknown")
+        suggested_versions = {(name, new) for name, _old, new in items}
         for failure in report["failures"]:
             name, version = failure["name"], failure["version"]
             if name in manual_crates:
-                items[(name, version)] = self.AuditItem(
+                items[(name, None, version)] = self.AuditItem(
                     f"cargo vet inspect {name} {version}", name, None, version,
                     "unknown", "unknown", "unknown",
                     manual_reason="Git-related audit requirements need manual review; AI review is skipped.",
                     manual_commands=manual_commands[name],
                     missing_criteria=failure["missing_criteria"],
                 )
-            elif (name, version) not in items:
+            elif (name, version) not in suggested_versions:
                 # Keep every unmatched published (crate, version) visible for
                 # manual review, even when another suggestion exists for the
                 # same crate name (for example 1.1.0 suggested while 2.0.0 also
                 # fails, or an intermediate 1.0.0 -> 1.1.0 suggestion while
                 # 1.2.0 remains the failing target).
-                items[(name, version)] = self.AuditItem(
+                items[(name, None, version)] = self.AuditItem(
                     f"cargo vet inspect {name} {version}", name, None, version,
                     "unknown", "unknown", "unknown",
                     manual_reason=(

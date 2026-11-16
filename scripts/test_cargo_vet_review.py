@@ -357,6 +357,25 @@ class ReviewTests(unittest.TestCase):
         self.assertIsNotNone(by_version["1.2.0"].manual_reason)
         self.assertEqual(by_version["1.2.0"].missing_criteria, ["safe-to-deploy"])
 
+    def test_distinct_audit_edges_sharing_destination_remain_reviewable(self):
+        # cargo-vet can recommend two diffs that end at the same version.
+        # Destination-only identity must not drop either edge.
+        report = {
+            "conclusion": "fail (vetting)",
+            "failures": [{"name": "example", "version": "1.1.0",
+                          "missing_criteria": ["safe-to-deploy", "safe-to-run"]}],
+            "suggest": {"suggestions": [
+                {"name": "example", "notable_parents": "app",
+                 "suggested_diff": {"from": "1.0.0", "to": "1.1.0"}},
+                {"name": "example", "notable_parents": "lib",
+                 "suggested_diff": {"from": "0.9.0", "to": "1.1.0"}},
+            ]},
+        }
+        items = review.CargoVetParser().parse_vet_output(json.dumps(report))
+        edges = {(item.old_version, item.new_version, item.manual_reason is None)
+                 for item in items}
+        self.assertEqual(edges, {("1.0.0", "1.1.0", True), ("0.9.0", "1.1.0", True)})
+
     def test_unmatched_sibling_version_remains_manual(self):
         # Two failing versions of the same crate; only one has a suggestion.
         report = {
