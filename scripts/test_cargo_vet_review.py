@@ -322,12 +322,37 @@ class ReviewTests(unittest.TestCase):
             }]},
         }
         items = review.CargoVetParser().parse_vet_output(json.dumps(report))
-        self.assertEqual(len(items), 1)
+        by_version = {item.new_version: item for item in items}
+        self.assertEqual(set(by_version), {"1.1.0", "1.2.0"})
         self.assertEqual(
-            (items[0].crate_name, items[0].old_version, items[0].new_version),
-            ("example", "1.0.0", "1.1.0"),
+            (by_version["1.1.0"].old_version, by_version["1.1.0"].manual_reason),
+            ("1.0.0", None),
         )
-        self.assertIsNone(items[0].manual_reason)
+        self.assertIsNotNone(by_version["1.2.0"].manual_reason)
+        self.assertEqual(by_version["1.2.0"].missing_criteria, ["safe-to-deploy"])
+
+    def test_unmatched_sibling_version_remains_manual(self):
+        # Two failing versions of the same crate; only one has a suggestion.
+        report = {
+            "conclusion": "fail (vetting)",
+            "failures": [
+                {"name": "example", "version": "1.1.0",
+                 "missing_criteria": ["safe-to-deploy"]},
+                {"name": "example", "version": "2.0.0",
+                 "missing_criteria": ["safe-to-run"]},
+            ],
+            "suggest": {"suggestions": [{
+                "name": "example",
+                "notable_parents": "app",
+                "suggested_diff": {"from": "1.0.0", "to": "1.1.0"},
+            }]},
+        }
+        items = review.CargoVetParser().parse_vet_output(json.dumps(report))
+        by_version = {item.new_version: item for item in items}
+        self.assertEqual(set(by_version), {"1.1.0", "2.0.0"})
+        self.assertIsNone(by_version["1.1.0"].manual_reason)
+        self.assertIsNotNone(by_version["2.0.0"].manual_reason)
+        self.assertEqual(by_version["2.0.0"].missing_criteria, ["safe-to-run"])
 
     def test_missing_published_suggestion_routes_to_manual_without_blocking(self):
         report = json.loads(self.vet_report())
