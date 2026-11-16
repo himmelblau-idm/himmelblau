@@ -90,5 +90,5 @@ jobs:
       refresh_build_container: ${{ inputs.refresh_build_container || false }}
     secrets:
       CLOUDSMITH_PACKAGE_PUBLISHER: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
-      PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+      CACHIX_SIGNING_KEY: ${{ secrets.CACHIX_SIGNING_KEY }}
       PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}

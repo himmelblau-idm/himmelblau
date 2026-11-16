@@ -18,7 +18,7 @@ on:
     secrets:
       CLOUDSMITH_PACKAGE_PUBLISHER:
         required: true
-      PACKAGE_SIGNING_KEY:
+      CACHIX_SIGNING_KEY:
         required: true
       PACKAGE_SIGNING_PASSPHRASE:
         required: false
@@ -146,11 +146,11 @@ jobs:
       - name: Build and sign DDIs
         env:
           TARGET_SPEC: ${{ inputs.spec }}
-          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          CACHIX_SIGNING_KEY: ${{ secrets.CACHIX_SIGNING_KEY }}
           PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
-          PACKAGE_SIGNING_KEY_ID: ${{ vars.PACKAGE_SIGNING_KEY_ID }}
+          CACHIX_SIGNING_KEY_ID: ${{ vars.CACHIX_SIGNING_KEY_ID }}
         # The portable root includes root-only files whose permissions must survive extraction.
-        run: sudo --preserve-env=TARGET_SPEC,PACKAGE_SIGNING_KEY,PACKAGE_SIGNING_PASSPHRASE,PACKAGE_SIGNING_KEY_ID,RUNNER_TEMP python3 tooling/.github/scripts/ddi.py sign --artifacts payloads --output signed
+        run: sudo --preserve-env=TARGET_SPEC,CACHIX_SIGNING_KEY,PACKAGE_SIGNING_PASSPHRASE,CACHIX_SIGNING_KEY_ID,RUNNER_TEMP python3 tooling/.github/scripts/ddi.py sign --artifacts payloads --output signed
       - name: Archive DDIs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -208,7 +208,7 @@ jobs:
         env:
           TARGET_SPEC: ${{ inputs.spec }}
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
-          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          CACHIX_SIGNING_KEY: ${{ secrets.CACHIX_SIGNING_KEY }}
           PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
-          PACKAGE_SIGNING_KEY_ID: ${{ vars.PACKAGE_SIGNING_KEY_ID }}
+          CACHIX_SIGNING_KEY_ID: ${{ vars.CACHIX_SIGNING_KEY_ID }}
         run: python3 tooling/.github/scripts/ddi.py publish-checksums

@@ -41,7 +41,7 @@ def run(command, *, capture=False, extra_env=None, **kwargs):
     explicit_env = kwargs.pop("env", None)
     env = dict(os.environ if explicit_env is None else explicit_env)
     env.update(extra_env or {})
-    for name in ("PACKAGE_SIGNING_KEY", "PACKAGE_SIGNING_PASSPHRASE"):
+    for name in ("CACHIX_SIGNING_KEY", "PACKAGE_SIGNING_PASSPHRASE"):
         env.pop(name, None)
     if explicit_env is None:
         env.pop("CLOUDSMITH_API_KEY", None)
@@ -333,7 +333,7 @@ def select_rsa_key(listing, selector=""):
             current[fields[0]] = fields[9]
     exact = selector.removeprefix("0x").removesuffix("!").upper()
     if exact and not re.fullmatch(r"[0-9A-F]{16,64}", exact):
-        raise ValueError("PACKAGE_SIGNING_KEY_ID must be a key ID or fingerprint")
+        raise ValueError("CACHIX_SIGNING_KEY_ID must be a key ID or fingerprint")
     candidates = [
         key for key in keys if key["algorithm"] in ("1", "3")
         and "s" in key["capabilities"] and "D" not in key["capabilities"]
@@ -343,7 +343,7 @@ def select_rsa_key(listing, selector=""):
         and (not exact or key["fpr"].endswith(exact))
     ]
     if len(candidates) != 1:
-        raise ValueError("Select exactly one valid RSA package signing key with PACKAGE_SIGNING_KEY_ID")
+        raise ValueError("Select exactly one valid RSA package signing key with CACHIX_SIGNING_KEY_ID")
     return candidates[0]
 
 
@@ -359,8 +359,8 @@ class SigningMaterial:
 @contextmanager
 def signing_material(work, env=None):
     env = os.environ if env is None else env
-    if not env.get("PACKAGE_SIGNING_KEY"):
-        raise ValueError("PACKAGE_SIGNING_KEY must export the existing OpenPGP RSA package signing key")
+    if not env.get("CACHIX_SIGNING_KEY"):
+        raise ValueError("CACHIX_SIGNING_KEY must export the existing OpenPGP RSA package signing key")
     passphrase = env.get("PACKAGE_SIGNING_PASSPHRASE", "").encode() + b"\n"
     with tempfile.TemporaryDirectory(prefix="ddi-signing-", dir=work) as temporary:
         private = Path(temporary)
@@ -378,10 +378,10 @@ def signing_material(work, env=None):
             password.touch(mode=0o600)
             password.write_bytes(passphrase)
             run(gpg + ["--passphrase-file", password, "--import"],
-                input=env["PACKAGE_SIGNING_KEY"].encode())
+                input=env["CACHIX_SIGNING_KEY"].encode())
             listing = run(gpg + ["--with-colons", "--with-keygrip", "--list-secret-keys"],
                           capture=True).stdout.decode()
-            key = select_rsa_key(listing, env.get("PACKAGE_SIGNING_KEY_ID", ""))
+            key = select_rsa_key(listing, env.get("CACHIX_SIGNING_KEY_ID", ""))
             fingerprint = key["fpr"]
             serial = hashlib.sha256(fingerprint.encode()).hexdigest()[:38]
             expiry = (
