@@ -556,7 +556,6 @@ class CargoVetParser:
                 raise ValueError("cargo-vet suggestion does not match a failing published target")
             items[key] = self.AuditItem(command, name, old, new, "unknown",
                                        parents if isinstance(parents, str) else "unknown", "unknown")
-        suggested_crates = {crate for crate, _version in items}
         for failure in report["failures"]:
             name, version = failure["name"], failure["version"]
             if name in manual_crates:
@@ -567,9 +566,12 @@ class CargoVetParser:
                     manual_commands=manual_commands[name],
                     missing_criteria=failure["missing_criteria"],
                 )
-            elif (name, version) not in items and name not in suggested_crates:
-                # No structured suggestion reached this published gap. Keep other
-                # targets reviewable and route this one to manual handling.
+            elif (name, version) not in items:
+                # Keep every unmatched published (crate, version) visible for
+                # manual review, even when another suggestion exists for the
+                # same crate name (for example 1.1.0 suggested while 2.0.0 also
+                # fails, or an intermediate 1.0.0 -> 1.1.0 suggestion while
+                # 1.2.0 remains the failing target).
                 items[(name, version)] = self.AuditItem(
                     f"cargo vet inspect {name} {version}", name, None, version,
                     "unknown", "unknown", "unknown",
