@@ -3,6 +3,7 @@
 
 import argparse
 import datetime as dt
+from functools import cmp_to_key
 import hashlib
 import http.client
 import json
@@ -395,30 +396,129 @@ def publish(artifacts, spec):
                      f"`{spec['distro']}/{spec['architecture']}` to `{spec['repository']}`.")
 
 
-def catalog_checksums(spec, record, rows):
-    checksums = {}
+def image_version(spec, record, filename):
     version_pattern = (r"\d+\.\d+\.\d+" if spec["channel"] == "stable"
                        else r"\d{4}-\d{2}-\d{2}(?:\.\d{12})?-[0-9a-f]+")
     template = expected_images({**spec, "version": "@v", "kinds": [record["kind"]]})[0]["filename"]
     prefix, suffix = template.split("@v")
-    pattern = re.escape(prefix) + version_pattern + re.escape(suffix)
+    match = re.fullmatch(re.escape(prefix) + f"({version_pattern})" + re.escape(suffix), filename)
+    if not match:
+        raise ValueError(f"Unexpected image filename in sysupdate stream {record['name']}: {filename}")
+    return match[1]
+
+
+def catalog_checksums(spec, record, rows, *, require_current=True):
+    checksums = {}
     for remote in rows:
         if remote.get("format") != "raw" or remote.get("version") != record["name"]:
             continue
         filename = remote.get("filename") or ""
         if filename in CHECKSUM_FILES:
             continue
-        if not re.fullmatch(pattern, filename) or filename in checksums:
-            raise ValueError(f"Unexpected or duplicate image in sysupdate stream {record['name']}")
+        image_version(spec, record, filename)
+        if filename in checksums:
+            raise ValueError(f"Duplicate image in sysupdate stream {record['name']}")
         if remote.get("is_sync_failed") or not remote.get("is_sync_completed"):
             raise ValueError(f"Unsynchronized image in sysupdate stream {record['name']}")
         if remote.get("cdn_url") != f"{update_source(spec, record)}/{filename}":
             raise ValueError(f"Image URL is outside sysupdate stream {record['name']}: {filename}")
         checksums[filename] = remote.get("checksum_sha256") or ""
-    if record["filename"] not in checksums:
+    if require_current and record["filename"] not in checksums:
         raise ValueError(f"The current image is missing from sysupdate stream {record['name']}")
     format_checksums(checksums)
     return checksums
+
+
+def compare_versions(left, right):
+    try:
+        image.run(["systemd-analyze", "compare-versions", left, right], capture=True)
+    except subprocess.CalledProcessError as error:
+        if error.returncode == 11:
+            return 1
+        if error.returncode == 12:
+            return -1
+        raise
+    return 0
+
+
+def cleanup_plan(spec, rows):
+    current = {record["name"]: record for record in expected_images(spec)}
+    targets = {name: (spec, record, []) for name, record in current.items()}
+    portable = expected_images({**spec, "kinds": ["portable"]})[0]["name"]
+    arch = image.ARCHITECTURES[spec["architecture"]][0]
+    sysext_pattern = rf"himmelblau-{re.escape(spec['channel'])}-([A-Za-z0-9][A-Za-z0-9._+-]*)-{re.escape(arch)}-sysext"
+    for row in rows:
+        if row.get("format") != "raw" or row.get("filename") in CHECKSUM_FILES:
+            continue
+        name = row.get("version") or ""
+        if name == portable:
+            target = {**spec, "kinds": ["portable"]}
+        elif match := re.fullmatch(sysext_pattern, name):
+            target = {**spec, "distro": match[1], "kinds": ["sysext"]}
+        else:
+            continue
+        record = expected_images(target)[0]
+        targets.setdefault(name, (target, record, []))[2].append(row)
+
+    streams, unavailable = {}, []
+    for name, (target, record, candidates) in targets.items():
+        if name not in current and any(
+            row.get("is_sync_failed") or not row.get("is_sync_completed") for row in candidates
+        ):
+            unavailable.extend(candidates)
+            packages.summary(f"Skipping publication and cleanup for unsynchronized DDI stream `{name}`; "
+                             "preserving all portable images.")
+            continue
+        checksums = catalog_checksums(target, record, candidates, require_current=name in current)
+        versions = {filename: image_version(target, record, filename) for filename in checksums}
+        streams[name] = (record, candidates, checksums, versions)
+    ordered = sorted({version for _, _, _, versions in streams.values() for version in versions.values()},
+                     key=cmp_to_key(compare_versions))
+    rank = {version: index for index, version in enumerate(ordered)}
+    portable_versions = set(streams[portable][3].values()) if portable in streams else set()
+    keep = {}
+    # An unavailable stream may still depend on any of the published portable versions.
+    required_portables = set(portable_versions) if unavailable else set()
+    for name, (record, _, _, versions) in streams.items():
+        if record["kind"] == "portable":
+            continue
+        available = set(versions.values())
+        managed = {version for version in available if spec["channel"] != "stable"
+                   or int(version.split(".")[0]) == int(spec["version"].split(".")[0])}
+        complete = managed & portable_versions
+        if complete:
+            latest = max(complete, key=rank.__getitem__)
+            # Keep newer candidates until their shared portable image arrives.
+            keep[name] = (available - managed) | {version for version in managed if rank[version] >= rank[latest]}
+        else:
+            keep[name] = available
+            packages.summary(f"Retaining images in `{name}` until a matching portable image is synchronized.")
+        required_portables.update(keep[name] & portable_versions)
+    if portable_versions:
+        managed = {version for version in portable_versions if spec["channel"] != "stable"
+                   or int(version.split(".")[0]) == int(spec["version"].split(".")[0])}
+        keep[portable] = (portable_versions - managed) | required_portables
+        if managed:
+            keep[portable].add(max(managed, key=rank.__getitem__))
+
+    catalogs, deletions = [], []
+    retained_ids = {row.get("slug_perm") for row in unavailable}
+    for name, (record, candidates, checksums, versions) in streams.items():
+        retained = {filename: digest for filename, digest in checksums.items() if versions[filename] in keep[name]}
+        older = [row for row in candidates if row["filename"] not in retained]
+        retained_ids.update(row.get("slug_perm") for row in candidates if row["filename"] in retained)
+        # A previous portable upload may have succeeded before its catalog publication failed.
+        if name in current or name == portable or older:
+            catalogs.append((record, retained))
+        for row in older:
+            identifier = row.get("slug_perm")
+            if not isinstance(identifier, str) or not identifier or row.get("is_deleteable") is not True:
+                raise ValueError(f"Older DDI {row['filename']} cannot be safely deleted")
+            deletions.append(row)
+    identifiers = [row["slug_perm"] for row in deletions]
+    if len(identifiers) != len(set(identifiers)) or retained_ids.intersection(identifiers):
+        raise ValueError("Cloudsmith returned conflicting DDI identifiers; refusing cleanup")
+    return catalogs, deletions
 
 
 def verify_catalog_publication(spec, record, directory):
@@ -461,10 +561,8 @@ def verify_catalog_publication(spec, record, directory):
 
 def publish_checksums(spec):
     packages.require_api_key()
-    streams = []
-    for record in expected_images(spec):
-        rows = packages.api_packages(spec["repository"], "raw", record["name"])
-        streams.append((record, catalog_checksums(spec, record, rows)))
+    rows = packages.api_packages(spec["repository"], "raw")
+    streams, deletions = cleanup_plan(spec, rows)
     with tempfile.TemporaryDirectory(prefix="sysupdate-publish-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         work = Path(temporary)
         with image.signing_material(work) as signing:
@@ -484,6 +582,12 @@ def publish_checksums(spec):
                 verify_catalog_publication(spec, record, directory)
                 packages.summary(f"Published signed sysupdate manifest: `{update_source(spec, record)}` "
                                  f"({len(checksums)} versions).")
+    # No image is removed until every affected catalog has been signed and verified.
+    for row in deletions:
+        packages.delete_package(spec["repository"], row["slug_perm"])
+    packages.wait_for_deletions(spec["repository"], "raw", [row["slug_perm"] for row in deletions])
+    packages.summary(f"Reconciled `{spec['channel']}/{spec['architecture']}` DDIs in "
+                     f"`{spec['repository']}`: deleted {len(deletions)} older images.")
 
 
 def main():
