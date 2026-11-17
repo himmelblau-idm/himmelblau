@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import ANY, patch
+from unittest.mock import patch
 
 import cargo_vet_review as review
 
@@ -782,12 +782,27 @@ class ReviewTests(unittest.TestCase):
             flow.final_check.assert_not_called()
 
     def test_auto_exempt_applies_once_per_destination_across_sibling_edges(self):
-        responses = [self.report(decision=False), self.report(decision=False)]
+        # Distinct severities/explanations must both land in the single
+        # destination exemption note; the first edge alone is not enough.
+        low = "Low finding on the 1.0.0 -> 1.1.0 path."
+        medium = "Medium finding on the 0.9.0 -> 1.1.0 path."
+        responses = [
+            self.report(decision=False, severity="low", explanation=low),
+            self.report(decision=False, severity="medium", explanation=medium),
+        ]
         with self.main_flow(responses, flags=["--auto-exempt"],
                             vet_output=json.dumps(self.sibling_destination_report())) as flow, \
              patch.object(review, "exempt_crate", return_value=True) as exempt:
             self.assertEqual(review.main(), 0)
-        exempt.assert_called_once_with("example", "1.1.0", ANY)
+        exempt.assert_called_once()
+        crate, version, note = exempt.call_args.args
+        self.assertEqual((crate, version), ("example", "1.1.0"))
+        self.assertIn("1.0.0 -> 1.1.0", note)
+        self.assertIn("0.9.0 -> 1.1.0", note)
+        self.assertIn(low, note)
+        self.assertIn(medium, note)
+        self.assertIn("AI severity: LOW", note)
+        self.assertIn("AI severity: MEDIUM", note)
         self.assertEqual(flow.ai.call_count, 2)
         flow.final_check.assert_called_once()
         flow.prompt.assert_not_called()

@@ -2328,41 +2328,60 @@ def review_dependencies(args, json_output=None):
     # Apply deferred exemptions once every audit edge for a destination has
     # been reviewed. A block/skip on any edge for (crate, version) withholds
     # the version-wide exemption that would otherwise bypass that finding.
+    # Sibling edges that all qualify share one exemption whose notes retain
+    # every edge-labelled explanation.
     if args.auto_exempt and pending_exemptions:
-        flushed_destinations = {}
-        for item, analysis, notes in pending_exemptions:
-            destination = (item.crate_name, item.new_version)
+        pending_by_destination = {}
+        for entry in pending_exemptions:
+            item = entry[0]
+            pending_by_destination.setdefault(
+                (item.crate_name, item.new_version), []
+            ).append(entry)
+
+        for destination, entries in pending_by_destination.items():
+            crate_name, new_version = destination
             if destination in blocked_destinations:
                 automatic_failure = True
-                analysis.automatic_reason = (
-                    f"Exemption withheld: another audit edge for {item.crate_name} "
-                    f"{item.new_version} was blocked or skipped.\n"
-                    + (analysis.automatic_reason or "")
-                )
+                for item, analysis, _notes in entries:
+                    analysis.automatic_reason = (
+                        f"Exemption withheld: another audit edge for {item.crate_name} "
+                        f"{item.new_version} was blocked or skipped.\n"
+                        + (analysis.automatic_reason or "")
+                    )
                 print_color(
-                    f"    Withholding exemption for {item.crate_name} {item.new_version} "
+                    f"    Withholding exemption for {crate_name} {new_version} "
                     "(sibling edge blocked or skipped).",
                     "yellow",
                 )
                 continue
-            if destination in flushed_destinations:
-                success = flushed_destinations[destination]
+
+            if len(entries) == 1:
+                combined_notes = entries[0][2]
+            else:
+                sections = []
+                for item, _analysis, notes in entries:
+                    edge = f"{item.old_version or 'inspect'} -> {item.new_version}"
+                    sections.append(f"--- audit edge {edge} ---\n{notes}")
+                combined_notes = (
+                    f"Automated exemption, not certification, for {crate_name} "
+                    f"{new_version}; combined from {len(entries)} audit edges "
+                    f"reviewed by {args.ai_provider} under --auto-exempt policy.\n\n"
+                    + "\n\n".join(sections)
+                )
+
+            success = exempt_crate(crate_name, new_version, combined_notes)
+            for _item, analysis, _notes in entries:
                 analysis.auto_exempted = success
                 analysis.resolved = success
-                if not success:
-                    automatic_failure = True
-                continue
-            analysis.auto_exempted = exempt_crate(item.crate_name, item.new_version, notes)
-            analysis.resolved = analysis.auto_exempted
-            flushed_destinations[destination] = analysis.auto_exempted
-            if not analysis.resolved:
+            if not success:
                 automatic_failure = True
-                analysis.automatic_reason = (
-                    f"Automatic exempt failed.\n" + (analysis.automatic_reason or "")
-                )
-                print(analysis.automatic_reason)
+                for _item, analysis, _notes in entries:
+                    analysis.automatic_reason = (
+                        f"Automatic exempt failed.\n" + (analysis.automatic_reason or "")
+                    )
+                print(f"Automatic exempt failed for {crate_name} {new_version}.")
             else:
-                print(f"    Automatically exempted {item.crate_name} {item.new_version}.")
+                print(f"    Automatically exempted {crate_name} {new_version}.")
 
     # A successful action is not proof that the entire dependency graph is vetted.
     remaining_gaps = CargoVetParser.gaps(json.loads(vet_output))
