@@ -556,13 +556,12 @@ async function run({ github, context, core, merge = false }) {
         // guard; reads and a merge cannot be made atomic through this API.
         let finalCI;
         for (const peer of peers) {
-          if (!peer.finalPolicy && peer.pr && peer.canWrite) {
-            const reloaded = await evaluateAtMergeBoundary({ github, owner, repo, item: peer, canWrite: peer.canWrite });
-            peer.finalPolicy = reloaded.finalPolicy;
-            if (peer.sha === sha) finalCI = reloaded.finalCI;
-          }
+          if (!peer.pr || !peer.canWrite) continue;
+          const reloaded = await evaluateAtMergeBoundary({ github, owner, repo, item: peer, canWrite: peer.canWrite });
+          peer.finalPolicy = reloaded.finalPolicy;
+          if (peer.summary.number === pr.number) finalCI = reloaded.finalCI;
         }
-        if (!item.finalPolicy) {
+        if (finalCI === undefined) {
           const reloaded = await evaluateAtMergeBoundary({ github, owner, repo, item, canWrite });
           item.finalPolicy = reloaded.finalPolicy;
           finalCI = reloaded.finalCI;

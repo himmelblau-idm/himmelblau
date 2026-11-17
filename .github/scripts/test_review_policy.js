@@ -353,6 +353,49 @@ test('shared head sibling gains changes request during final peer revalidation',
   await run({ github, core, context: { repo: { owner: 'himmelblau-idm', repo: 'himmelblau' } }, merge: true });
   assert.equal(calls.some(c => c[0] === 'merge'), false);
 });
+test('shared head automerge uses current PR CI, not a sibling merge check', async () => {
+  const mergeSha1 = 'c'.repeat(40);
+  const mergeSha2 = 'd'.repeat(40);
+  const ready1 = { ...pr(), number: 1, merge_commit_sha: mergeSha1 };
+  const ready2 = { ...pr(), number: 2, merge_commit_sha: mergeSha2 };
+  const calls = [];
+  const github = {
+    rest: {
+      pulls: {
+        list: async () => [ready1, ready2],
+        get: async ({ pull_number }) => ({ data: { ...(pull_number === 1 ? ready1 : ready2),
+          mergeable: true, mergeable_state: 'clean' } }),
+        listReviews: async () => [review()],
+        listFiles: async () => [{ filename: 'src/selinux/src/himmelblaud.te' }],
+        merge: async args => { calls.push(['merge', args]); return { data: { merged: true } }; },
+      },
+      repos: {
+        getCollaboratorPermissionLevel: async () => ({ data: { permission: 'write' } }),
+        listCommitStatusesForRef: async () => [],
+      },
+      issues: { listComments: async ({ issue_number }) => issue_number === 1 ? [confirmation()] : [confirmation({
+        id: 11, body: `/confirm-tested ${SHA}`, html_url: 'https://github.com/himmelblau-idm/himmelblau/pull/2#issuecomment-11',
+      })] },
+      checks: {
+        listForRef: async ({ ref }) => {
+          const mandatory = REQUIRED_CI.map(name => check(name));
+          if (ref === mergeSha2) return [...mandatory, check('Extra', { conclusion: 'failure' })];
+          return mandatory;
+        },
+        create: async args => { calls.push(['check', args]); return { data: { id: args.external_id === 'main-review-policy:1' ? 1 : 2 } }; },
+        update: async args => { calls.push(['update', args]); },
+      },
+    },
+    paginate: async (method, args) => method(args),
+    graphql: async () => ({ repository: { pullRequest: { reviewThreads: {
+      nodes: [{ isResolved: true }], pageInfo: { hasNextPage: false },
+    } } } }),
+  };
+  const core = { info: () => {}, error: () => {}, setFailed: () => {} };
+  await run({ github, core, context: { repo: { owner: 'himmelblau-idm', repo: 'himmelblau' } }, merge: true });
+  assert.equal(calls.filter(c => c[0] === 'merge').length, 1);
+  assert.equal(calls.find(c => c[0] === 'merge')[1].pull_number, 1);
+});
 test('failed evaluation on a shared head blocks eligible sibling automerge', async () => {
   const ready = { ...pr(), number: 1 };
   const broken = { ...pr(), number: 2 };
