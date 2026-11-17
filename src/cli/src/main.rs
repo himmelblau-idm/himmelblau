@@ -1967,6 +1967,35 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
+            let config = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(config) => config,
+                Err(error) => {
+                    error!(?error, "Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+            let provider = match select_entra_provider(
+                &config,
+                account_id.as_deref(),
+                selected_domain.as_deref(),
+            ) {
+                Ok(provider) => provider,
+                Err(error) => {
+                    error!(error, "Cannot select provider for enumeration");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let remove_legacy_entries = match config.parse_providers() {
+                Ok(providers) => matches!(
+                    providers.as_slice(),
+                    [provider] if provider.kind == ProviderKind::Entra
+                ),
+                Err(errors) => {
+                    error!(?errors, "Failed to parse configured providers");
+                    return ExitCode::FAILURE;
+                }
+            };
+
             let (graph, access_token) = match obtain_access_token!(
                 account_id,
                 vec![
@@ -2004,23 +2033,7 @@ async fn main() -> ExitCode {
                 }
             };
 
-            // First clear the cache of old entries
-            let path = Path::new(ID_MAP_CACHE);
-            if path.exists() {
-                if let Err(e) = fs::remove_file(path) {
-                    error!("Failed to remove idmap cache: {:?}", e);
-                    return ExitCode::FAILURE;
-                }
-            }
-
-            let cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
-                Ok(cache) => cache,
-                Err(e) => {
-                    error!("Failed to open idmap cache: {}", e);
-                    return ExitCode::FAILURE;
-                }
-            };
-
+            let mut cached_users = Vec::new();
             for user in users {
                 if let Some(uid) = user.uid {
                     let gid = user.gid.unwrap_or(uid);
@@ -2033,22 +2046,15 @@ async fn main() -> ExitCode {
                         );
                         continue;
                     }
-                    let cache_user = StaticUser {
+                    cached_users.push(StaticUser {
                         name: user.upn.clone(),
                         uid,
                         gid,
-                    };
-
-                    if let Err(e) = cache.insert_user(&cache_user) {
-                        error!(
-                            "Failed to inserting enumerated user {} in cache: {}",
-                            user.upn, e
-                        );
-                        return ExitCode::FAILURE;
-                    }
+                    });
                 }
             }
 
+            let mut cached_groups = Vec::new();
             for group in groups {
                 if let Some(gid) = group.gid {
                     // Never cache a directory group into systemd's dynamic
@@ -2060,19 +2066,28 @@ async fn main() -> ExitCode {
                         );
                         continue;
                     }
-                    let cache_group = StaticGroup {
-                        name: group.displayname.clone(),
+                    cached_groups.push(StaticGroup {
+                        name: group.id.clone(),
                         gid,
-                    };
-
-                    if let Err(e) = cache.insert_group(&cache_group) {
-                        error!(
-                            "Failed to inserting enumerated group {} in cache: {}",
-                            group.displayname, e
-                        );
-                        return ExitCode::FAILURE;
-                    }
+                    });
                 }
+            }
+
+            let mut cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
+                Ok(cache) => cache,
+                Err(e) => {
+                    error!("Failed to open idmap cache: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(error) = cache.replace_provider_entries(
+                &provider.domain,
+                &cached_users,
+                &cached_groups,
+                remove_legacy_entries,
+            ) {
+                error!(?error, provider = %provider.domain, "Failed to replace enumerated cache entries");
+                return ExitCode::FAILURE;
             }
 
             info!("Users and groups enumerated successfully.");

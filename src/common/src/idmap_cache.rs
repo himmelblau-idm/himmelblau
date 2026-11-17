@@ -56,7 +56,24 @@ const CREATE_TABLES: &str = "CREATE TABLE IF NOT EXISTS static_users (
 CREATE TABLE IF NOT EXISTS static_groups (
     name TEXT PRIMARY KEY,
     gid INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS provider_static_users (
+    provider TEXT NOT NULL,
+    name TEXT NOT NULL,
+    uid INTEGER NOT NULL,
+    gid INTEGER NOT NULL,
+    PRIMARY KEY (provider, name)
+);
+CREATE TABLE IF NOT EXISTS provider_static_groups (
+    provider TEXT NOT NULL,
+    name TEXT NOT NULL,
+    gid INTEGER NOT NULL,
+    PRIMARY KEY (provider, name)
 );";
+
+fn ensure_schema(conn: &Connection) -> Result<()> {
+    conn.execute_batch(CREATE_TABLES)
+}
 
 /// Reject a cached user whose UID or GID lands in systemd's dynamic user
 /// range. The cache is populated from directory supplied rfc2307 attributes
@@ -113,7 +130,6 @@ impl StaticIdCache {
         } else if writable && is_root {
             write = true;
             let conn = Connection::open(db_path)?;
-            conn.execute_batch(CREATE_TABLES)?;
             fs::set_permissions(db_path, fs::Permissions::from_mode(0o644))
                 .map_err(|_| rusqlite::Error::InvalidPath(db_path.into()))?;
             Some(conn)
@@ -121,10 +137,107 @@ impl StaticIdCache {
             None
         };
 
+        if write {
+            if let Some(conn) = &conn {
+                ensure_schema(conn)?;
+            }
+        }
+
         Ok(Self {
             conn,
             writable: write,
         })
+    }
+
+    /// Atomically replaces one provider's enumerated mappings.
+    ///
+    /// When `remove_legacy_entries` is true, unscoped mappings are removed in
+    /// the same transaction.
+    pub fn replace_provider_entries(
+        &mut self,
+        provider: &str,
+        users: &[StaticUser],
+        groups: &[StaticGroup],
+        remove_legacy_entries: bool,
+    ) -> Result<()> {
+        let Some(conn) = self.conn.as_mut() else {
+            return Err(rusqlite::Error::InvalidQuery);
+        };
+        if !self.writable {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+
+        let tx = conn.transaction()?;
+        if remove_legacy_entries {
+            tx.execute("DELETE FROM static_users", [])?;
+            tx.execute("DELETE FROM static_groups", [])?;
+        }
+        tx.execute(
+            "DELETE FROM provider_static_users WHERE provider = ?1",
+            [provider],
+        )?;
+        tx.execute(
+            "DELETE FROM provider_static_groups WHERE provider = ?1",
+            [provider],
+        )?;
+        for user in users {
+            tx.execute(
+                "INSERT INTO provider_static_users (provider, name, uid, gid) VALUES (?1, ?2, ?3, ?4)",
+                params![provider, user.name, user.uid, user.gid],
+            )?;
+        }
+        for group in groups {
+            tx.execute(
+                "INSERT INTO provider_static_groups (provider, name, gid) VALUES (?1, ?2, ?3)",
+                params![provider, group.name, group.gid],
+            )?;
+        }
+        tx.commit()
+    }
+
+    pub fn get_user_by_provider_name(&self, provider: &str, name: &str) -> Option<StaticUser> {
+        let conn = self.conn.as_ref()?;
+        let user = conn
+            .query_row(
+                "SELECT name, uid, gid FROM provider_static_users WHERE provider = ?1 AND name = ?2",
+                params![provider, name],
+                |row| {
+                    Ok(StaticUser {
+                        name: row.get(0)?,
+                        uid: row.get(1)?,
+                        gid: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .ok()
+            .flatten();
+        if let Some(user) = user {
+            return static_user_is_safe(&user).then_some(user);
+        }
+        self.get_user_by_name(name)
+    }
+
+    pub fn get_group_by_provider_name(&self, provider: &str, name: &str) -> Option<StaticGroup> {
+        let conn = self.conn.as_ref()?;
+        let group = conn
+            .query_row(
+                "SELECT name, gid FROM provider_static_groups WHERE provider = ?1 AND name = ?2",
+                params![provider, name],
+                |row| {
+                    Ok(StaticGroup {
+                        name: row.get(0)?,
+                        gid: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+            .ok()
+            .flatten();
+        if let Some(group) = group {
+            return static_group_is_safe(&group).then_some(group);
+        }
+        self.get_group_by_name(name)
     }
 
     pub(crate) fn migrate_user_mapping(
@@ -384,5 +497,193 @@ mod tests {
         );
         assert_eq!(cache.get_user_by_name("alice").unwrap().uid, 1234);
         assert_eq!(cache.get_user_by_name("alice@work").unwrap().uid, 9876);
+    }
+
+    #[test]
+    fn provider_replacement_preserves_other_providers_and_prefers_scoped_entries() {
+        let mut cache = cache_with_user(&StaticUser {
+            name: "alice@example.org".to_string(),
+            uid: 1234,
+            gid: 5678,
+        });
+        cache
+            .insert_group(&StaticGroup {
+                name: "legacy-group".to_string(),
+                gid: 6000,
+            })
+            .unwrap();
+        cache
+            .replace_provider_entries(
+                "provider-a",
+                &[StaticUser {
+                    name: "alice@example.org".to_string(),
+                    uid: 2345,
+                    gid: 6789,
+                }],
+                &[StaticGroup {
+                    name: "group-a".to_string(),
+                    gid: 7000,
+                }],
+                true,
+            )
+            .unwrap();
+        cache
+            .replace_provider_entries(
+                "provider-b",
+                &[StaticUser {
+                    name: "alice@example.org".to_string(),
+                    uid: 3456,
+                    gid: 7890,
+                }],
+                &[StaticGroup {
+                    name: "group-b".to_string(),
+                    gid: 8000,
+                }],
+                false,
+            )
+            .unwrap();
+
+        assert!(cache.get_user_by_name("alice@example.org").is_none());
+        assert!(cache.get_group_by_name("legacy-group").is_none());
+        assert_eq!(
+            cache
+                .get_user_by_provider_name("provider-a", "alice@example.org")
+                .map(|user| (user.uid, user.gid)),
+            Some((2345, 6789))
+        );
+        assert_eq!(
+            cache
+                .get_user_by_provider_name("provider-b", "alice@example.org")
+                .map(|user| (user.uid, user.gid)),
+            Some((3456, 7890))
+        );
+
+        cache
+            .replace_provider_entries("provider-a", &[], &[], false)
+            .unwrap();
+        assert!(cache
+            .get_user_by_provider_name("provider-a", "alice@example.org")
+            .is_none());
+        assert_eq!(
+            cache
+                .get_user_by_provider_name("provider-b", "alice@example.org")
+                .map(|user| (user.uid, user.gid)),
+            Some((3456, 7890))
+        );
+        assert_eq!(
+            cache
+                .get_group_by_provider_name("provider-b", "group-b")
+                .map(|group| group.gid),
+            Some(8000)
+        );
+    }
+
+    #[test]
+    fn provider_replacement_can_preserve_legacy_mappings() {
+        let mut cache = cache_with_user(&StaticUser {
+            name: "legacy-user".to_string(),
+            uid: 1234,
+            gid: 5678,
+        });
+        cache
+            .replace_provider_entries("provider-a", &[], &[], false)
+            .unwrap();
+
+        assert_eq!(
+            cache
+                .get_user_by_provider_name("provider-a", "legacy-user")
+                .map(|user| user.uid),
+            Some(1234)
+        );
+    }
+
+    #[test]
+    fn provider_replacement_rolls_back_legacy_deletion_on_error() {
+        let mut cache = cache_with_user(&StaticUser {
+            name: "legacy-user".to_string(),
+            uid: 1234,
+            gid: 5678,
+        });
+        cache
+            .replace_provider_entries(
+                "provider-a",
+                &[StaticUser {
+                    name: "existing-user".to_string(),
+                    uid: 2345,
+                    gid: 6789,
+                }],
+                &[],
+                false,
+            )
+            .unwrap();
+
+        let duplicate_users = [
+            StaticUser {
+                name: "duplicate".to_string(),
+                uid: 2000,
+                gid: 2000,
+            },
+            StaticUser {
+                name: "duplicate".to_string(),
+                uid: 3000,
+                gid: 3000,
+            },
+        ];
+        assert!(cache
+            .replace_provider_entries("provider-a", &duplicate_users, &[], true)
+            .is_err());
+        assert_eq!(cache.get_user_by_name("legacy-user").unwrap().uid, 1234);
+        assert!(cache
+            .get_user_by_provider_name("provider-a", "duplicate")
+            .is_none());
+        assert_eq!(
+            cache
+                .get_user_by_provider_name("provider-a", "existing-user")
+                .map(|user| (user.uid, user.gid)),
+            Some((2345, 6789))
+        );
+    }
+
+    #[test]
+    fn provider_replacement_rejects_read_only_caches() {
+        let conn = Connection::open_in_memory().unwrap();
+        let mut cache = StaticIdCache {
+            conn: Some(conn),
+            writable: false,
+        };
+        assert!(cache
+            .replace_provider_entries("provider-a", &[], &[], false)
+            .is_err());
+    }
+
+    #[test]
+    fn writable_schema_setup_preserves_legacy_mappings() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE static_users (
+                name TEXT PRIMARY KEY,
+                uid INTEGER NOT NULL,
+                gid INTEGER NOT NULL
+            );
+            CREATE TABLE static_groups (
+                name TEXT PRIMARY KEY,
+                gid INTEGER NOT NULL
+            );
+            INSERT INTO static_users (name, uid, gid) VALUES ('legacy-user', 1234, 5678);",
+        )
+        .unwrap();
+        ensure_schema(&conn).unwrap();
+        let cache = StaticIdCache {
+            conn: Some(conn),
+            writable: true,
+        };
+        assert_eq!(cache.get_user_by_name("legacy-user").unwrap().uid, 1234);
+        assert_eq!(
+            cache
+                .get_user_by_provider_name("provider-a", "legacy-user")
+                .unwrap()
+                .gid,
+            5678
+        );
     }
 }

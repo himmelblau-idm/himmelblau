@@ -26,8 +26,9 @@ use crate::idprovider::common::should_block_hello_pin_attempts;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{
-    build_online_probe_client, oidc_group_claims_from_value, oidc_provider_config, oidc_user_ids,
-    oidc_user_token_from_claims, oidc_user_token_id_fields, OidcUserInfoClaims,
+    build_online_probe_client, oidc_group_claims_from_value, oidc_primary_group_token,
+    oidc_provider_config, oidc_user_ids, oidc_user_token_from_claims, oidc_user_token_id_fields,
+    OidcUserInfoClaims,
 };
 use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
 use crate::idprovider::interface::{
@@ -2990,12 +2991,9 @@ impl IdProvider for OidcProvider {
             gidnumber: token_id_fields.gidnumber,
             displayname,
             shell: Some(self.config.lock().await.get_shell(Some(&self.domain))),
-            groups: vec![GroupToken {
-                name: account_id.to_string(),
-                spn: account_id.to_string(),
-                uuid: object_id,
-                gidnumber: gid,
-            }],
+            groups: oidc_primary_group_token(account_id, object_id, uid, gid)
+                .into_iter()
+                .collect(),
             tenant_id: Some(tenant_id),
             oidc_account_id: None,
             valid: true,

@@ -946,7 +946,9 @@ impl IdProvider for HimmelblauProvider {
                             // Generate a lookup-only UserToken. Its real UUID
                             // requires a provider-backed token.
                             let id_attr_map = self.config.lock().await.get_id_attr_map();
-                            let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
+                            let (uid, gid) = match idmap_cache
+                                .get_user_by_provider_name(&self.domain, &account_id)
+                            {
                                 Some(user) => {
                                     (user.uid, user.gid)
                                 },
@@ -4591,7 +4593,7 @@ impl HimmelblauProvider {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
                 })?;
-                match idmap_cache.get_user_by_name(&spn) {
+                match idmap_cache.get_user_by_provider_name(&self.domain, &spn) {
                     Some(user) => (user.uid, user.gid),
                     None => {
                         let id_attr_map = self.config.lock().await.get_id_attr_map();
@@ -4769,9 +4771,12 @@ impl HimmelblauProvider {
         }
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
-        let idmap_cache_entry = StaticIdCache::new(ID_MAP_CACHE, false)
-            .ok()
-            .and_then(|idmap_cache| idmap_cache.get_group_by_name(&id.to_string()));
+        let idmap_cache_entry =
+            StaticIdCache::new(ID_MAP_CACHE, false)
+                .ok()
+                .and_then(|idmap_cache| {
+                    idmap_cache.get_group_by_provider_name(&self.domain, &id.to_string())
+                });
         let id_attr_map = self.config.lock().await.get_id_attr_map();
         let rfc2307_group_fallback_map = self.config.lock().await.get_rfc2307_group_fallback_map();
         let gidnumber = match idmap_cache_entry {

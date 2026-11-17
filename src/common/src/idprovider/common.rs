@@ -1525,12 +1525,12 @@ macro_rules! impl_setup_hello_totp_with_storage_key {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_refresh_token_with_loaded_hello_key, oidc_issuer_matches, oidc_user_token_id_fields,
-        sealed_refresh_token_or, should_block_hello_pin_attempts, should_offer_offline_hello_pin,
-        should_renew_expired_try_unseal_prt, should_warn_last_hello_pin_attempt,
-        try_unseal_policy_denial, unseal_refresh_token_with_loaded_hello_key, BadPinCounter,
-        IdpError, KeyType, RefreshCache, RefreshCacheEntry, TotpEnrollmentRecord,
-        TryUnsealPolicyDenial,
+        cache_refresh_token_with_loaded_hello_key, oidc_issuer_matches, oidc_primary_group_token,
+        oidc_user_token_id_fields, sealed_refresh_token_or, should_block_hello_pin_attempts,
+        should_offer_offline_hello_pin, should_renew_expired_try_unseal_prt,
+        should_warn_last_hello_pin_attempt, try_unseal_policy_denial,
+        unseal_refresh_token_with_loaded_hello_key, BadPinCounter, IdpError, KeyType, RefreshCache,
+        RefreshCacheEntry, TotpEnrollmentRecord, TryUnsealPolicyDenial,
     };
     use crate::db::{CacheError, KeyStoreTxn};
     use crate::idprovider::interface::{
@@ -1553,6 +1553,17 @@ mod tests {
         let fields = oidc_user_token_id_fields(2345, 6789);
         assert_eq!(fields.gidnumber, 2345);
         assert_eq!(fields.real_gidnumber, Some(6789));
+    }
+
+    #[test]
+    fn oidc_primary_group_is_only_created_for_a_private_group() {
+        let object_id = uuid::Uuid::new_v4();
+        assert!(oidc_primary_group_token("alice@example.org", object_id, 2345, 6789).is_none());
+        assert_eq!(
+            oidc_primary_group_token("alice@example.org", object_id, 2345, 2345)
+                .map(|group| (group.gidnumber, group.uuid)),
+            Some((2345, object_id))
+        );
     }
 
     struct ConnectivityFixture {
@@ -2648,7 +2659,13 @@ pub(crate) fn oidc_user_ids(
     let local_account_id = provider
         .map(|provider| provider.local_account_name(account_id))
         .unwrap_or_else(|| account_id.to_string());
-    match idmap_cache.get_user_by_name(&local_account_id) {
+    let cached_user = match provider {
+        Some(provider) => {
+            idmap_cache.get_user_by_provider_name(&provider.domain, &local_account_id)
+        }
+        None => idmap_cache.get_user_by_name(&local_account_id),
+    };
+    match cached_user {
         Some(user) => Ok((user.uid, user.gid)),
         None => {
             let gid = idmap
@@ -2720,12 +2737,10 @@ pub(crate) async fn oidc_user_token_from_claims(
 
     let displayname = flip_displayname_comma(&displayname);
 
-    let mut groups = vec![GroupToken {
-        name: account_id.to_string(),
-        spn: account_id.to_string(),
-        uuid: object_id,
-        gidnumber: gid,
-    }];
+    let mut groups = Vec::new();
+    if let Some(primary_group) = oidc_primary_group_token(&account_id, object_id, uid, gid) {
+        groups.push(primary_group);
+    }
     groups.extend(oidc_groups);
 
     let token_id_fields = oidc_user_token_id_fields(uid, gid);
@@ -2741,5 +2756,19 @@ pub(crate) async fn oidc_user_token_from_claims(
         tenant_id: Some(*tenant_id),
         oidc_account_id: None,
         valid: true,
+    })
+}
+
+pub(crate) fn oidc_primary_group_token(
+    account_id: &str,
+    object_id: uuid::Uuid,
+    uid: u32,
+    gid: u32,
+) -> Option<GroupToken> {
+    (uid == gid).then(|| GroupToken {
+        name: account_id.to_string(),
+        spn: account_id.to_string(),
+        uuid: object_id,
+        gidnumber: gid,
     })
 }
