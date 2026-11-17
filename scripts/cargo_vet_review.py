@@ -36,7 +36,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
+try:
+    import tomllib
+except ImportError:  # Python < 3.11
+    import tomli as tomllib
 import urllib.request
 from dataclasses import dataclass, field
 from enum import Enum
@@ -1937,6 +1940,11 @@ def review_dependencies(args, json_output=None):
     fetcher = DiffFetcher(source_cache_dir=args.source_cache_dir)
     analyses = []
     automatic_failure = False
+    # Defer version-wide exemptions until every audit edge for that destination
+    # has been reviewed, so a HIGH block on one edge cannot be bypassed by a
+    # later LOW exemption for the same (crate, version).
+    pending_exemptions = []
+    blocked_destinations = set()
 
     # Check AI availability
     use_ai = ai_analyzer is not None and ai_analyzer.is_available()
@@ -1978,6 +1986,8 @@ def review_dependencies(args, json_output=None):
                 automatic_action="skip" if args.auto_exempt else None,
                 automatic_reason=item.manual_reason if args.auto_exempt else None,
             ))
+            if args.auto_exempt:
+                blocked_destinations.add((item.crate_name, item.new_version))
             continue
         is_full_crate = item.old_version is None
         review_type = "FULL CRATE REVIEW" if is_full_crate else "version upgrade"
@@ -2004,6 +2014,7 @@ def review_dependencies(args, json_output=None):
         if args.skip_large is not None and line_count > args.skip_large:
             if args.auto_exempt:
                 automatic_failure = True
+                blocked_destinations.add((item.crate_name, item.new_version))
             print_color(f"    Skipping - diff too large ({line_count} lines > {args.skip_large})", "yellow")
             print(f"    Consider: cargo vet trust {item.crate_name} {item.trust_note or item.publisher}")
             continue
@@ -2022,6 +2033,7 @@ def review_dependencies(args, json_output=None):
         if args.skip_large is not None and line_count > args.skip_large:
             if args.auto_exempt:
                 automatic_failure = True
+                blocked_destinations.add((item.crate_name, item.new_version))
             print_color(f"    Skipping - diff too large ({line_count} lines > {args.skip_large})", "yellow")
             continue
         if fetched_diff:
@@ -2078,12 +2090,22 @@ def review_dependencies(args, json_output=None):
             print(f"    Automatic action: {analysis.automatic_action.upper()} (AI severity: {severity}, "
                   f"malicious: {result.malicious})")
             print(result.explanation)
+            destination = (item.crate_name, item.new_version)
             if analysis.automatic_action in ("block", "skip"):
                 automatic_failure = True
+                blocked_destinations.add(destination)
             elif not args.dry_run and not args.json:
                 if analysis.automatic_action == "certify":
                     analysis.auto_certified = auto_certify_crate(item, args.ai_provider)
                     analysis.resolved = analysis.auto_certified
+                    if not analysis.resolved:
+                        automatic_failure = True
+                        analysis.automatic_reason = (
+                            f"Automatic {analysis.automatic_action} failed.\n" + result.explanation
+                        )
+                        print(analysis.automatic_reason)
+                    else:
+                        print(f"    Automatically certified {item.crate_name} {item.new_version}.")
                 else:
                     notes = (
                         f"Automated exemption, not certification, for {item.crate_name} "
@@ -2092,15 +2114,9 @@ def review_dependencies(args, json_output=None):
                         "Findings remain unresolved and are accepted under --auto-exempt policy.\n\n"
                         + result.explanation
                     )
-                    analysis.auto_exempted = exempt_crate(item.crate_name, item.new_version, notes)
-                    analysis.resolved = analysis.auto_exempted
-                if not analysis.resolved:
-                    automatic_failure = True
-                    analysis.automatic_reason = f"Automatic {analysis.automatic_action} failed.\n" + result.explanation
-                    print(analysis.automatic_reason)
-                else:
-                    print(f"    Automatically {'certified' if analysis.auto_certified else 'exempted'} "
-                          f"{item.crate_name} {item.new_version}.")
+                    pending_exemptions.append((item, analysis, notes))
+                    print(f"    Queued exemption for {item.crate_name} {item.new_version} "
+                          "pending sibling-edge review.")
             continue
         certify_review = AIReview(
             analysis.ai_decision, analysis.ai_complete, analysis.ai_analysis or "",
@@ -2308,6 +2324,45 @@ def review_dependencies(args, json_output=None):
                     return 1
                 else:
                     print("    Invalid choice, try again")
+
+    # Apply deferred exemptions once every audit edge for a destination has
+    # been reviewed. A block/skip on any edge for (crate, version) withholds
+    # the version-wide exemption that would otherwise bypass that finding.
+    if args.auto_exempt and pending_exemptions:
+        flushed_destinations = {}
+        for item, analysis, notes in pending_exemptions:
+            destination = (item.crate_name, item.new_version)
+            if destination in blocked_destinations:
+                automatic_failure = True
+                analysis.automatic_reason = (
+                    f"Exemption withheld: another audit edge for {item.crate_name} "
+                    f"{item.new_version} was blocked or skipped.\n"
+                    + (analysis.automatic_reason or "")
+                )
+                print_color(
+                    f"    Withholding exemption for {item.crate_name} {item.new_version} "
+                    "(sibling edge blocked or skipped).",
+                    "yellow",
+                )
+                continue
+            if destination in flushed_destinations:
+                success = flushed_destinations[destination]
+                analysis.auto_exempted = success
+                analysis.resolved = success
+                if not success:
+                    automatic_failure = True
+                continue
+            analysis.auto_exempted = exempt_crate(item.crate_name, item.new_version, notes)
+            analysis.resolved = analysis.auto_exempted
+            flushed_destinations[destination] = analysis.auto_exempted
+            if not analysis.resolved:
+                automatic_failure = True
+                analysis.automatic_reason = (
+                    f"Automatic exempt failed.\n" + (analysis.automatic_reason or "")
+                )
+                print(analysis.automatic_reason)
+            else:
+                print(f"    Automatically exempted {item.crate_name} {item.new_version}.")
 
     # A successful action is not proof that the entire dependency graph is vetted.
     remaining_gaps = CargoVetParser.gaps(json.loads(vet_output))

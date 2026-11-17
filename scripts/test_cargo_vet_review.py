@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import cargo_vet_review as review
 
@@ -744,6 +744,51 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in exempt.call_args_list], ["write-failed", "exempted"])
         flow.automatic.assert_called_once()
         self.assertEqual(flow.automatic.call_args.args[0].crate_name, "approved")
+        flow.final_check.assert_called_once()
+        flow.prompt.assert_not_called()
+
+    def sibling_destination_report(self):
+        # Two distinct audit edges share destination 1.1.0.
+        return {
+            "conclusion": "fail (vetting)",
+            "failures": [{"name": "example", "version": "1.1.0",
+                          "missing_criteria": ["safe-to-deploy"]}],
+            "suggest": {"suggestions": [
+                {"name": "example", "notable_parents": "app",
+                 "suggested_diff": {"from": "1.0.0", "to": "1.1.0"}},
+                {"name": "example", "notable_parents": "lib",
+                 "suggested_diff": {"from": "0.9.0", "to": "1.1.0"}},
+            ]},
+        }
+
+    def test_auto_exempt_withholds_when_sibling_edge_blocks_destination(self):
+        # A HIGH block on one edge must prevent a LOW exemption for the same
+        # destination, regardless of review order.
+        cases = (
+            ("block_then_exempt",
+             [self.report(severity="high"), self.report(decision=False, severity="low")]),
+            ("exempt_then_block",
+             [self.report(decision=False, severity="low"), self.report(severity="high")]),
+        )
+        for label, responses in cases:
+            with self.subTest(order=label), \
+                 self.main_flow(responses, flags=["--auto-exempt"],
+                                vet_output=json.dumps(self.sibling_destination_report())) as flow, \
+                 patch.object(review, "exempt_crate") as exempt:
+                self.assertEqual(review.main(), 1)
+            exempt.assert_not_called()
+            self.assertEqual(flow.ai.call_count, 2)
+            flow.prompt.assert_not_called()
+            flow.final_check.assert_not_called()
+
+    def test_auto_exempt_applies_once_per_destination_across_sibling_edges(self):
+        responses = [self.report(decision=False), self.report(decision=False)]
+        with self.main_flow(responses, flags=["--auto-exempt"],
+                            vet_output=json.dumps(self.sibling_destination_report())) as flow, \
+             patch.object(review, "exempt_crate", return_value=True) as exempt:
+            self.assertEqual(review.main(), 0)
+        exempt.assert_called_once_with("example", "1.1.0", ANY)
+        self.assertEqual(flow.ai.call_count, 2)
         flow.final_check.assert_called_once()
         flow.prompt.assert_not_called()
 
