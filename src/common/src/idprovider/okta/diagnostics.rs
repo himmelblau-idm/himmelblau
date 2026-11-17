@@ -87,6 +87,11 @@ pub(super) fn local_error(operation: &'static str, error: &IdpError) {
             reason = "not_found",
             "Okta cached credential unavailable"
         ),
+        IdpError::TokenAcquisition(_) => error!(
+            operation,
+            reason = "token_acquisition",
+            "Okta authentication operation failed"
+        ),
     }
 }
 

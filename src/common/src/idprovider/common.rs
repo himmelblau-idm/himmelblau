@@ -1117,7 +1117,7 @@ macro_rules! entra_id_prt_token_fetch {
             .await
             .map_err(|e| {
                 error!("{:?}", e);
-                IdpError::BadRequest
+                IdpError::TokenAcquisition(Box::new(e))
             })
     }};
 }
@@ -1145,7 +1145,7 @@ macro_rules! entra_id_refresh_token_token_fetch {
         )
         .map_err(|e| {
             error!("Failed to create public client application: {:?}", e);
-            IdpError::BadRequest
+            IdpError::TokenAcquisition(Box::new(e))
         })?;
         let scopes = if $self.is_consumer_tenant().await {
             // Remove "https://graph.microsoft.com/.default" from the
@@ -1167,7 +1167,7 @@ macro_rules! entra_id_refresh_token_token_fetch {
             .await
             .map_err(|e| {
                 error!("Failed to refresh token: {:?}", e);
-                IdpError::BadRequest
+                IdpError::TokenAcquisition(Box::new(e))
             })
     }};
 }
@@ -1202,16 +1202,11 @@ macro_rules! oidc_refresh_token_token_fetch {
 #[macro_export]
 macro_rules! impl_unix_user_access {
     ($self:ident, $old_token:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $req_cnf:ident, $id:ident, $tpm:ident, $machine_key:ident, $prt_token_refresh:ident, $refresh_token_token_refresh:ident) => {{
-        if ($self.delayed_init().await).is_err() {
-            // We can't fetch an access_token when initialization hasn't
-            // completed. This only happens when we're offline during first
-            // startup. This should never happen!
-            return Err(IdpError::BadRequest);
-        }
+        $self.delayed_init().await?;
 
         if !$self.check_online($tpm, SystemTime::now()).await {
-            // We can't fetch an access_token when offline
-            return Err(IdpError::BadRequest);
+            debug!("Cannot acquire an access token while the provider is offline");
+            return Err(IdpError::Transport);
         }
 
         /* Use the prt mem cache to refresh the user token */

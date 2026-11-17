@@ -18,11 +18,12 @@
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use himmelblau::error::{MsalError, NO_CONSENT, NO_GROUP_CONSENT, REQUIRES_MFA};
 use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::idprovider::interface::Id;
+use himmelblau_unix_common::idprovider::interface::{Id, IdpError};
 use himmelblau_unix_common::idprovider::IdProviderProxy;
 use himmelblau_unix_common::resolver::Resolver;
-use identity_dbus_broker::HimmelblauBroker;
+use identity_dbus_broker::{BrokerError, BrokerErrorKind, HimmelblauBroker};
 use libc::uid_t;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -108,6 +109,47 @@ fn build_req_cnf(pop_params: &Option<PopParamsReq>) -> Option<String> {
     Some(URL_SAFE_NO_PAD.encode(json.as_bytes()))
 }
 
+fn broker_token_error(error: IdpError) -> BrokerError {
+    let kind = match &error {
+        IdpError::TokenAcquisition(error) => match error.as_ref() {
+            MsalError::AcquireTokenFailed(response) => match response.error.as_str() {
+                "interaction_required" | "login_required" | "consent_required" | "invalid_grant" => {
+                    BrokerErrorKind::InteractionRequired
+                }
+                "invalid_request" | "invalid_client" | "invalid_scope" | "unauthorized_client" => {
+                    BrokerErrorKind::IncorrectConfiguration
+                }
+                _ => BrokerErrorKind::Unexpected,
+            },
+            MsalError::MFARequired
+            | MsalError::PasswordRequired
+            | MsalError::ChangePassword
+            | MsalError::ConsentRequested(_)
+            | MsalError::OboInteractionRequired { .. } => BrokerErrorKind::InteractionRequired,
+            MsalError::AADSTSError(error) => match error.code {
+                REQUIRES_MFA | NO_CONSENT => BrokerErrorKind::InteractionRequired,
+                NO_GROUP_CONSENT | 70007 => BrokerErrorKind::IncorrectConfiguration,
+                _ => BrokerErrorKind::Unexpected,
+            },
+            MsalError::ConfigError(_) => BrokerErrorKind::IncorrectConfiguration,
+            _ => BrokerErrorKind::Unexpected,
+        },
+        IdpError::ProviderUnauthorised | IdpError::NotFound { .. } => {
+            BrokerErrorKind::InteractionRequired
+        }
+        _ => BrokerErrorKind::Unexpected,
+    };
+    let context = match error {
+        IdpError::TokenAcquisition(error) => match error.as_ref() {
+            MsalError::PasswordRequired => "A password is required to authenticate".to_string(),
+            MsalError::ChangePassword => "A password change is required".to_string(),
+            _ => error.to_string(),
+        },
+        error => format!("Access token request failed: {error:?}"),
+    };
+    BrokerError::new(kind, context)
+}
+
 #[derive(Clone)]
 pub(crate) struct Broker {
     pub(crate) cachelayer: Arc<Resolver<IdProviderProxy>>,
@@ -189,7 +231,7 @@ impl HimmelblauBroker for Broker {
                 req_cnf,
             )
             .await
-            .ok_or("Failed to authenticate user")?;
+            .map_err(broker_token_error)?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| format!("{:?}", e))?;
@@ -336,8 +378,67 @@ impl HimmelblauBroker for Broker {
 
 #[cfg(test)]
 mod tests {
-    use super::SsoCookieReq;
+    use super::{broker_token_error, SsoCookieReq};
+    use himmelblau::error::{ErrorResponse, MsalError};
+    use himmelblau_unix_common::idprovider::interface::IdpError;
+    use identity_dbus_broker::BrokerErrorKind;
     use serde_json::json;
+
+    #[test]
+    fn broker_token_error_preserves_azure_configuration_failure() {
+        let error = broker_token_error(IdpError::TokenAcquisition(Box::new(
+            MsalError::AcquireTokenFailed(ErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: "AADSTS70007: Unsupported response mode".to_string(),
+                suberror: None,
+                error_codes: vec![70007],
+            }),
+        )));
+
+        assert!(matches!(error.kind, BrokerErrorKind::IncorrectConfiguration));
+        assert_eq!(
+            error.context,
+            "Token acquisition failed: invalid_request (AADSTS70007: Unsupported response mode)"
+        );
+    }
+
+    #[test]
+    fn broker_token_error_requests_interaction_only_for_authentication_challenges() {
+        for code in [
+            "interaction_required",
+            "login_required",
+            "consent_required",
+            "invalid_grant",
+        ] {
+            let error = broker_token_error(IdpError::TokenAcquisition(Box::new(
+                MsalError::AcquireTokenFailed(ErrorResponse {
+                    error: code.to_string(),
+                    error_description: "Authentication required".to_string(),
+                    suberror: None,
+                    error_codes: vec![],
+                }),
+            )));
+            assert!(matches!(error.kind, BrokerErrorKind::InteractionRequired));
+        }
+
+        let error = broker_token_error(IdpError::TokenAcquisition(Box::new(
+            MsalError::RequestFailed("synthetic connection failure".to_string()),
+        )));
+        assert!(matches!(error.kind, BrokerErrorKind::Unexpected));
+        assert_eq!(error.context, "Request failed: synthetic connection failure");
+    }
+
+    #[test]
+    fn broker_token_error_does_not_classify_unknown_errors_by_message() {
+        let error = broker_token_error(IdpError::TokenAcquisition(Box::new(
+            MsalError::GeneralFailure("interaction_required in an untyped error".to_string()),
+        )));
+        assert!(matches!(error.kind, BrokerErrorKind::Unexpected));
+        assert_eq!(
+            error.context,
+            "General failure: interaction_required in an untyped error"
+        );
+    }
 
     #[test]
     fn sso_cookie_accepts_evolution_request() {

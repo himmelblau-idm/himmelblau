@@ -623,11 +623,14 @@ async fn handle_client(
                                                             )
                                                             .await
                                                         {
-                                                            Some(token) => token
+                                                            Ok(token) => token
                                                                 .access_token
                                                                 .clone()
                                                                 .unwrap_or("".to_string()),
-                                                            None => "".to_string(),
+                                                            Err(e) => {
+                                                                warn!(?e, "No access token available for logon script");
+                                                                "".to_string()
+                                                            }
                                                         };
 
                                                         let (tx, rx) = oneshot::channel();
@@ -1216,7 +1219,7 @@ async fn handle_client(
 }
 
 enum ApplyPolicyError {
-    /// One of the `get_user_accesstoken` calls returned `None`. This covers a
+    /// One of the `get_user_accesstoken` calls returned an error. This covers a
     /// range of conditions: broker/transport errors, no cached user token,
     /// expired refresh material, or a sealed/inactive user session.
     TokenAcquisitionFailed,
@@ -1321,11 +1324,15 @@ fn spawn_profile_photo_fetch(
     account_id: String,
 ) {
     tokio::spawn(async move {
-        let Some(token) = cachelayer
+        let token = match cachelayer
             .get_user_accesstoken(Id::Name(account_id.clone()), vec![], None, None, None)
             .await
-        else {
-            return;
+        {
+            Ok(token) => token,
+            Err(e) => {
+                debug!(?e, "Skipping profile photo fetch: no access token available");
+                return;
+            }
         };
         let Some(access_token) = token.access_token.as_ref() else {
             return;
@@ -1458,7 +1465,7 @@ async fn apply_intune_policy_for_account(
 
     let (graph_token, intune_token, iwservice_token) =
         match (graph_token, intune_token, iwservice_token) {
-            (Some(g), Some(i), Some(w)) => (g, i, w),
+            (Ok(g), Ok(i), Ok(w)) => (g, i, w),
             _ => return Err(ApplyPolicyError::TokenAcquisitionFailed),
         };
 
