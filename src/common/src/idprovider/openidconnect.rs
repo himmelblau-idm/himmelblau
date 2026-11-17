@@ -887,11 +887,12 @@ mod tests {
         auth_request_from_orchestrator_inputs, mfa_from_oidc_device, oidc_cache_refresh_token,
         oidc_hello_refresh_token_candidates, oidc_refresh_failure_state,
         oidc_refresh_token_rejected, oidc_should_prompt_hello_setup,
-        orchestrator_inputs_from_pam_request, parse_oidc_mfa_extra_data,
-        resolve_device_authorization_endpoint, ropc_is_invalid_credentials,
-        serialize_oidc_mfa_extra_data, validated_password_cache_action, DeviceAuthorizationUrl,
-        DeviceEndpointProviderMetadata, OidcMfaExtraData, OidcTokenResponse, OidcUserInfoClaims,
-        OrchestratorFlowState, OrchestratorInputType, OrchestratorRequiredInput,
+        orchestrator_inputs_from_pam_request, parse_device_authorization_response,
+        parse_oidc_mfa_extra_data, resolve_device_authorization_endpoint,
+        ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
+        validated_password_cache_action, DeviceAuthorizationUrl, DeviceEndpointProviderMetadata,
+        OidcMfaExtraData, OidcTokenResponse, OidcUserInfoClaims, OrchestratorFlowState,
+        OrchestratorInputType, OrchestratorRequiredInput,
     };
     use crate::idprovider::common::oidc_account_id_from_userinfo;
     use crate::idprovider::common::{RefreshCache, RefreshCacheEntry};
@@ -1337,6 +1338,39 @@ mod tests {
     }
 
     #[test]
+    fn device_response_with_legacy_verification_url() {
+        let payload = json!({
+            "user_code": "USER-CODE",
+            "device_code": "DEVICE-CODE",
+            "interval": 5,
+            "verification_uri_complete": "https://idp.example.com/device/user?user_code=USER-CODE",
+            "verification_uri": "https://idp.example.com/device/user",
+            "expires_in": 300,
+            "verification_url": "https://idp.example.com/device/user"
+        });
+        let details = parse_device_authorization_response(payload.to_string().as_bytes())
+            .expect("PingAM-style legacy verification_url should parse");
+        assert_eq!(
+            details.verification_uri().as_str(),
+            "https://idp.example.com/device/user"
+        );
+    }
+
+    #[test]
+    fn device_response_rejects_conflicting_verification_urls() {
+        let payload = json!({
+            "user_code": "USER-CODE",
+            "device_code": "DEVICE-CODE",
+            "interval": 5,
+            "verification_uri": "https://idp.example.com/a",
+            "verification_url": "https://idp.example.com/b",
+            "expires_in": 300
+        });
+        let details = parse_device_authorization_response(payload.to_string().as_bytes());
+        assert!(matches!(details, Err(MsalError::GeneralFailure(_))));
+    }
+
+    #[test]
     fn orchestrator_extra_data_round_trip() {
         let original = OidcMfaExtraData::Orchestrator {
             state: OrchestratorFlowState {
@@ -1604,6 +1638,46 @@ struct DeviceEndpointProviderMetadata {
 }
 
 impl AdditionalProviderMetadata for DeviceEndpointProviderMetadata {}
+
+/// Some IdPs (for example PingAM) return both RFC 8628 `verification_uri` and the
+/// legacy `verification_url` field. oauth2 5.0 treats `verification_url` as a serde
+/// alias of `verification_uri`, so serde rejects the response when both appear.
+fn normalize_device_authorization_response_json(value: &mut Value) -> Result<(), MsalError> {
+    let Some(obj) = value.as_object_mut() else {
+        return Err(MsalError::GeneralFailure(
+            "Device authorization response is not a JSON object".to_string(),
+        ));
+    };
+
+    let uri = obj.get("verification_uri").and_then(Value::as_str);
+    let legacy_url = obj.get("verification_url").and_then(Value::as_str);
+
+    match (uri, legacy_url) {
+        (Some(uri), Some(url)) if uri == url => {
+            obj.remove("verification_url");
+        }
+        (Some(uri), Some(url)) => {
+            return Err(MsalError::GeneralFailure(format!(
+                "Device authorization response has conflicting verification_uri ({uri}) and verification_url ({url})"
+            )));
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn parse_device_authorization_response(
+    bytes: &[u8],
+) -> Result<DeviceAuthorizationResponse<EmptyExtraDeviceAuthorizationFields>, MsalError> {
+    let mut value: Value = serde_json::from_slice(bytes).map_err(|e| {
+        MsalError::GeneralFailure(format!("Failed to parse device authorization response: {e}"))
+    })?;
+    normalize_device_authorization_response_json(&mut value)?;
+    serde_json::from_value(value).map_err(|e| {
+        MsalError::GeneralFailure(format!("Failed to parse device authorization response: {e}"))
+    })
+}
 
 fn resolve_device_authorization_endpoint(
     discovered: Option<DeviceAuthorizationUrl>,
@@ -2061,24 +2135,64 @@ impl OidcApplication {
             Scope::new("offline_access".to_string()),
         ];
         if let Some(delayed_init) = &*self.client.lock().await {
-            let details = delayed_init
+            let device_url = delayed_init
                 .client
-                .exchange_device_code()
-                .add_scopes(scopes)
-                .request_async(&delayed_init.http_client)
+                .device_authorization_url()
+                .ok_or_else(|| {
+                    MsalError::GeneralFailure(
+                        "OIDC client missing device authorization endpoint URL".to_string(),
+                    )
+                })?
+                .url()
+                .clone();
+
+            let client_id = delayed_init.client.client_id().as_str();
+            let scope = scopes
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            #[derive(Serialize)]
+            struct DeviceAuthorizationRequestBody<'a> {
+                client_id: &'a str,
+                scope: &'a str,
+            }
+
+            let body = DeviceAuthorizationRequestBody {
+                client_id,
+                scope: &scope,
+            };
+
+            let resp = delayed_init
+                .http_client
+                .post(device_url)
+                .header(reqwest::header::ACCEPT, "application/json")
+                .form(&body)
+                .send()
                 .await
                 .map_err(|e| {
-                    error!(?e, "Error requesting device code");
-                    match e {
-                        RequestTokenError::Request(resp) => MsalError::RequestFailed(format!(
-                            "HTTP error during device code request: {}",
-                            resp
-                        )),
-                        _ => MsalError::GeneralFailure("Failed to acquire device code".to_string()),
-                    }
+                    error!(%e, "Error requesting device code");
+                    MsalError::RequestFailed(format!("HTTP error during device code request: {e}"))
                 })?;
 
-            Ok(details)
+            let status = resp.status();
+            let bytes = resp.bytes().await.map_err(|e| {
+                error!(%e, "Error reading device code response body");
+                MsalError::GeneralFailure("Failed to acquire device code".to_string())
+            })?;
+
+            if status.is_success() {
+                parse_device_authorization_response(&bytes).map_err(|e| {
+                    error!(?e, "Error parsing device authorization response");
+                    e
+                })
+            } else {
+                error!(%status, "Error requesting device code");
+                Err(MsalError::RequestFailed(format!(
+                    "HTTP error during device code request: {status}"
+                )))
+            }
         } else {
             Err(MsalError::RequestFailed(
                 "OIDC client not initialized".to_string(),
