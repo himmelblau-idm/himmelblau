@@ -1,0 +1,19 @@
+name: Review policy wakeup
+
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+
+# Reviews on forks receive a read-only token. This job simply wakes the
+# privileged default-branch coordinator through workflow_run; no checkout.
+permissions: {}
+jobs:
+  wakeup:
+    name: Review policy wakeup
+    if: github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: echo 'Review state changed; the main policy coordinator will reload it from GitHub.'
