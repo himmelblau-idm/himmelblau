@@ -3,6 +3,7 @@
 
 import argparse
 import ast
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -108,6 +109,11 @@ def matrix(tag, revision="", distro="all", architecture="all"):
         raise ValueError("Source must descend from the release tag and belong to its stable branch")
     if version(tag_sha) != tag or version(source_sha) != tag:
         raise ValueError("Tag and source Cargo workspace versions must both match the release tag")
+    return source_matrix(tag, tag_sha, source_sha, REPOSITORIES[major], distro, architecture)
+
+
+def source_matrix(tag, tag_sha, source_sha, repository, distro="all", architecture="all"):
+    """Describe package builds after the caller has validated source provenance."""
     if architecture not in {"all", *ARCHITECTURES}:
         raise ValueError("Architecture must be all, amd64 or arm64")
     dists, packages = generator_config(source_text(source_sha, "scripts/gen_dockerfiles.py"))
@@ -151,7 +157,7 @@ def matrix(tag, revision="", distro="all", architecture="all"):
             if architecture not in {"all", arch} or (arch == "arm64" and not cfg.get("arm64", True)):
                 continue
             spec = {"tag": tag, "tag_sha": tag_sha, "source_sha": source_sha,
-                    "repository": REPOSITORIES[major], "distro": target,
+                    "repository": repository, "distro": target,
                     "destination": DESTINATIONS[target], "format": fmt,
                     "architecture": arch, "scc": bool(cfg.get("scc")),
                     "supported_architectures": [
@@ -186,6 +192,8 @@ def prepare():
     output("tooling_sha", resolve("HEAD"))
     output("enabled", "true")
     first = json.loads(result["include"][0]["spec"])
+    output("source_sha", first["source_sha"])
+    output("tag", tag)
     summary(f"Release `{tag}` (tag commit `{first['tag_sha']}`), source `{first['source_sha']}`; {len(result['include'])} build targets.")
 
 
@@ -245,15 +253,10 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_container=False):
-    source, artifacts = source.resolve(), artifacts.resolve()
-    if run("git", "rev-parse", "HEAD", cwd=source) != spec["source_sha"]:
-        raise ValueError("Build checkout does not match resolved source")
+@contextmanager
+def build_container(source, spec, *, container_cache_ref="", refresh_build_container=False):
     channel = spec.get("channel", "stable")
     image = f"himmelblau-{channel}-{spec['distro']}-{spec['architecture']}"
-    (source / "target").mkdir(exist_ok=True)
-    (source / "packaging").mkdir(exist_ok=True)
-    artifacts.mkdir(parents=True, exist_ok=False)
     with tempfile.TemporaryDirectory(prefix=f"{channel}-package-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         temporary = Path(temporary)
         subprocess.run(["python3", "scripts/gen_dockerfiles.py", "--only", spec["distro"],
@@ -266,6 +269,8 @@ def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_cont
                        "--cache-to", f"type=registry,ref={container_cache_ref},mode=max,ignore-error=true"]
         else:
             command = ["docker", "build"]
+            if refresh_build_container:
+                command += ["--pull"]
         command += ["--platform", spec["platform"], "--progress", "plain",
                     "-t", image, "-f", str(temporary / "images" / f"Dockerfile.{spec['distro']}")]
         if refresh_build_container:
@@ -280,33 +285,48 @@ def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_cont
             command += ["--secret", f"id=scc_regcode,src={secret}"]
         try:
             subprocess.run(command + [str(source)], check=True, env={**os.environ, "DOCKER_BUILDKIT": "1"})
-            run_command = ["docker", "run", "--rm", "--platform", spec["platform"],
-                           "--security-opt", "label=disable"]
-            variables = ("DEB_REVISION_APPEND",) if spec["format"] == "deb" else ("RPM_PACKAGE_RELEASE",)
-            for variable in variables:
-                if value := spec.get(variable.lower()):
-                    run_command += ["-e", f"{variable}={value}"]
-            run_command += ["-v", f"{source}:/himmelblau",
-                            "-v", f"{source / 'target'}:/himmelblau/target", image]
-            subprocess.run(run_command, check=True)
-            directory = source / "target" / ("debian" if spec["format"] == "deb" else "generate-rpm")
-            records = []
-            for path in sorted(directory.glob(f"*.{spec['format']}")):
-                record = package_metadata(image, source, path, spec)
-                filename = path.name if spec["format"] == "deb" else f"{path.stem}-{spec['distro']}.rpm"
-                shutil.copyfile(path, artifacts / filename)
-                records.append({**record, "filename": filename, "sha256": digest(artifacts / filename)})
-            names = [p["name"] for p in records]
-            if sorted(names) != sorted(spec["expected"]):
-                raise ValueError(f"Incomplete or unexpected package set: expected {spec['expected']}, got {names}")
-            validate_package_identities(records, spec)
-            (artifacts / "manifest.json").write_text(json.dumps({"spec": spec, "packages": records}, indent=2) + "\n")
-            summary(f"Built `{spec['distro']}` / `{spec['architecture']}` for `{spec['tag']}` from `{spec['source_sha']}`: {len(records)} packages.")
+            yield image
         finally:
             subprocess.run(["docker", "image", "rm", "-f", image], check=False, stdout=subprocess.DEVNULL)
 
 
-def api_packages(repository, fmt, tag=None, distribution=None):
+def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_container=False):
+    source, artifacts = source.resolve(), artifacts.resolve()
+    if run("git", "rev-parse", "HEAD", cwd=source) != spec["source_sha"]:
+        raise ValueError("Build checkout does not match resolved source")
+    (source / "target").mkdir(exist_ok=True)
+    (source / "packaging").mkdir(exist_ok=True)
+    artifacts.mkdir(parents=True, exist_ok=False)
+    with build_container(source, spec, container_cache_ref=container_cache_ref,
+                         refresh_build_container=refresh_build_container) as image:
+        run_command = ["docker", "run", "--rm", "--platform", spec["platform"],
+                       "--security-opt", "label=disable"]
+        variables = ("DEB_REVISION_APPEND",) if spec["format"] == "deb" else ("RPM_PACKAGE_RELEASE",)
+        for variable in variables:
+            if value := spec.get(variable.lower()):
+                run_command += ["-e", f"{variable}={value}"]
+        run_command += ["-v", f"{source}:/himmelblau",
+                        "-v", f"{source / 'target'}:/himmelblau/target", image]
+        subprocess.run(run_command, check=True)
+        directory = source / "target" / ("debian" if spec["format"] == "deb" else "generate-rpm")
+        records = []
+        for path in sorted(directory.glob(f"*.{spec['format']}")):
+            record = package_metadata(image, source, path, spec)
+            filename = path.name if spec["format"] == "deb" else f"{path.stem}-{spec['distro']}.rpm"
+            shutil.copyfile(path, artifacts / filename)
+            records.append({**record, "filename": filename, "sha256": digest(artifacts / filename)})
+        names = [p["name"] for p in records]
+        if sorted(names) != sorted(spec["expected"]):
+            raise ValueError(f"Incomplete or unexpected package set: expected {spec['expected']}, got {names}")
+        validate_package_identities(records, spec)
+        os_release = run("docker", "run", "--rm", "--platform", spec["platform"],
+                         "--network", "none", "--entrypoint", "cat", image, "/etc/os-release")
+        (artifacts / "manifest.json").write_text(json.dumps(
+            {"spec": spec, "packages": records, "os_release": os_release}, indent=2) + "\n")
+        summary(f"Built `{spec['distro']}` / `{spec['architecture']}` for `{spec['tag']}` from `{spec['source_sha']}`: {len(records)} packages.")
+
+
+def api_packages(repository, fmt, tag=None, distribution=None, package_name=None):
     # Current-version checks stay narrow. Cleanup deliberately inventories the
     # format's history so it can remove untagged packages from older workflows.
     packages, page = [], 1
@@ -315,7 +335,9 @@ def api_packages(repository, fmt, tag=None, distribution=None):
         if distribution:
             search += f" distribution:{distribution}"
         if tag:
-            search += f" version:{tag}-*"
+            search += f" version:{tag}" + ("" if fmt == "raw" else "-*")
+        if package_name:
+            search += f" name:{package_name}"
         query = urllib.parse.urlencode({"query": search, "page_size": 100, "page": page})
         request = urllib.request.Request(f"https://api.cloudsmith.io/v1/packages/{repository}/?{query}",
                                          headers={"X-Api-Key": os.environ["CLOUDSMITH_API_KEY"]})

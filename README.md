@@ -290,6 +290,73 @@ Packages will be written to `./packaging/`. You can then copy them to a target m
 > its free BCI base with the Leap 16 OSS repository. No SCC credentials are
 > required.
 
+### Portable Service and sysext DDIs
+
+Signed [Discoverable Disk Images (DDIs)](https://uapi-group.org/specifications/specs/discoverable_disk_image/)
+are published alongside the distribution packages, to allow installing Himmelblau
+on immutable systems, without having to use packages.
+
+For each architecture, there is one
+[**Portable Service DDI**](https://systemd.io/PORTABLE_SERVICES/), based on the
+latest Fedora release (Rawhide excluded). It contains the service binaries, their
+dependencies and runtime helpers, and their unit files.
+The broker binary and user unit are included only
+in the portable; its D-Bus activation file is included in both images so the host
+session bus can activate the attached broker user service. The image permits both system
+and user scopes: attach the `himmelblaud` and `himmelblau-hsm-pin-init` prefixes
+for the system services, and the `himmelblau-broker` prefix separately for the
+per-user session service.
+
+Each distro/release/architecture also gets a **sysext DDI** containing
+`aad-tool`, PAM and NSS modules, D-Bus integration config file, and more, using
+each distribution's library paths and host libraries. Each sysext can be installed
+on the respective distribution/release, as a companion to the distribution-agnostic
+Portable Service DDI.
+
+First, download the correct **sysext** for your host into
+`/var/lib/extensions/himmelblau.sysext.raw.v/`, and merge it to the host with
+`systemd-sysext merge`.
+Then, download the **Portable Service DDI** into `/var/lib/himmelblau-ddi/himmelblaud.v/`.
+
+Then, attach the system units (requires privileges):
+
+
+```bash
+# portablectl attach --now  --enable --profile trusted /var/lib/himmelblau-ddi/himmelblaud.v/ himmelblaud himmelblau-hsm-pin-init
+```
+
+Attach the user units and enable periodic compliance checks (as your user):
+
+```bash
+$ portablectl --user attach --now --enable --profile trusted /var/lib/himmelblau-ddi/himmelblaud.v/ himmelblau-broker himmelblau-compliance-check
+```
+
+The user attach command requires systemd 260 or newer on the host and a
+sufficiently recent kernel.
+Automated updates of the images are WIP.
+
+#### Configure PAM and NSS on the host
+
+Choose the PAM setup appropriate for the host:
+
+* **Debian/Ubuntu:** run `sudo pam-auth-update` and enable
+  **Azure Entra Id authentication**, retaining local UNIX authentication.
+* **Fedora/RHEL/Rocky/Amazon Linux using authselect:** inspect
+  `sudo authselect current`, then select the shipped `himmelblau` profile.
+  Append any required existing feature flags to the selection command; reconcile
+  custom profiles or local modifications rather than forcing their replacement.
+
+  ```bash
+  sudo authselect select himmelblau
+  sudo authselect apply-changes
+  ```
+
+  This profile configures **both PAM and NSS**.
+* **openSUSE/SLE using pam-config:** run `sudo pam-config --add --himmelblau`.
+* **Arch Linux or hosts with manually managed PAM:** preview the changes with
+  `sudo aad-tool configure-pam`, then apply the reviewed changes with
+  `sudo aad-tool configure-pam --really`.
+
 ### Uninstall
 
 ```bash

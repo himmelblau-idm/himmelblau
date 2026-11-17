@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       enabled: ${{ steps.prepare.outputs.enabled }}
-      matrix: ${{ steps.prepare.outputs.matrix }}
+      matrix: ${{ steps.ddis.outputs.matrix }}
       tooling_sha: ${{ steps.prepare.outputs.tooling_sha }}
     steps:
       - name: Checkout main with repository history
@@ -51,7 +51,7 @@ jobs:
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_gen_dockerfiles.py
       - name: Capture the UTC nightly date
         id: date
-        run: echo "value=$(date --utc +%Y%m%d)" >> "$GITHUB_OUTPUT"
+        run: date --utc +'value=%Y%m%d%nddi_timestamp=%Y-%m-%d.%H%M%S%6N' >> "$GITHUB_OUTPUT"
       - name: Check main and select nightly targets
         id: prepare
         env:
@@ -60,9 +60,19 @@ jobs:
           REQUESTED_ARCHITECTURE: ${{ inputs.architecture }}
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
         run: python3 .github/scripts/nightly_packages.py prepare
+      - name: Pair native package targets with their DDIs
+        id: ddis
+        if: steps.prepare.outputs.enabled == 'true'
+        env:
+          DDI_CHANNEL: nightly
+          REQUESTED_DISTRO: ${{ inputs.distro }}
+          REQUESTED_ARCHITECTURE: ${{ inputs.architecture }}
+          DDI_PACKAGE_MATRIX: ${{ steps.prepare.outputs.matrix }}
+          DDI_TIMESTAMP: ${{ steps.date.outputs.ddi_timestamp }}
+        run: python3 .github/scripts/ddi.py prepare
 
-  packages:
-    name: ${{ fromJSON(matrix.spec).distro }} ${{ fromJSON(matrix.spec).architecture }}
+  targets:
+    name: ${{ fromJSON(matrix.ddi_spec).distro }} ${{ fromJSON(matrix.ddi_spec).architecture }}
     permissions:
       contents: read
       packages: write
@@ -74,7 +84,11 @@ jobs:
     uses: ./.github/workflows/nightly-package-target.yml
     with:
       spec: ${{ matrix.spec }}
+      ddi_spec: ${{ matrix.ddi_spec }}
+      publish_packages: ${{ matrix.publish_packages }}
       tooling_sha: ${{ needs.prepare.outputs.tooling_sha }}
       refresh_build_container: ${{ inputs.refresh_build_container || false }}
     secrets:
       CLOUDSMITH_PACKAGE_PUBLISHER: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+      PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+      PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}

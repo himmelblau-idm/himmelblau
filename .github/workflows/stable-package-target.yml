@@ -1,20 +1,31 @@
-name: Build and publish one stable package target
+name: Build and publish one stable target
 
 on:
   workflow_call:
     inputs:
       spec:
-        required: true
+        description: Native package specification; leave empty for direct DDI builds
+        default: ''
         type: string
       tooling_sha:
         required: true
         type: string
+      ddi_spec:
+        default: ''
+        type: string
+      publish_packages:
+        default: true
+        type: boolean
       refresh_build_container:
         default: false
         type: boolean
     secrets:
       CLOUDSMITH_PACKAGE_PUBLISHER:
         required: true
+      PACKAGE_SIGNING_KEY:
+        required: false
+      PACKAGE_SIGNING_PASSPHRASE:
+        required: false
       SCC_EMAIL:
         required: false
       SCC_REGCODE:
@@ -25,11 +36,13 @@ permissions:
 
 jobs:
   preflight:
-    name: Checking Cloudsmith ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
+    if: inputs.spec != ''
+    name: Checking Cloudsmith ${{ fromJSON(inputs.spec || inputs.ddi_spec).distro }} ${{ fromJSON(inputs.spec || inputs.ddi_spec).architecture }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       build_required: ${{ steps.check.outputs.build_required }}
+      ddi_present: ${{ steps.ddi.outputs.build_required == 'false' }}
     steps:
       - name: Checkout release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,7 +50,15 @@ jobs:
           ref: ${{ inputs.tooling_sha }}
           path: tooling
           persist-credentials: false
+      - name: Check existing images for a DDI-only request
+        if: ${{ !inputs.publish_packages && inputs.ddi_spec != '' }}
+        id: ddi
+        env:
+          TARGET_SPEC: ${{ inputs.ddi_spec }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+        run: python3 tooling/.github/scripts/ddi.py preflight
       - name: Check complete package set in Cloudsmith
+        if: inputs.publish_packages || inputs.ddi_spec == '' || steps.ddi.outputs.build_required == 'true'
         id: check
         env:
           TARGET_SPEC: ${{ inputs.spec }}
@@ -47,8 +68,8 @@ jobs:
   build:
     needs: preflight
     if: needs.preflight.outputs.build_required == 'true'
-    name: Building ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
-    runs-on: ${{ fromJSON(inputs.spec).runner }}
+    name: Building ${{ fromJSON(inputs.spec || inputs.ddi_spec).distro }} ${{ fromJSON(inputs.spec || inputs.ddi_spec).architecture }}
+    runs-on: ${{ fromJSON(inputs.spec || inputs.ddi_spec).runner }}
     timeout-minutes: 330
     permissions:
       contents: read
@@ -114,18 +135,41 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  publish:
-    name: Publishing ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
+  ddis:
     needs: [preflight, build]
     if: >-
-      always() &&
+      !cancelled() &&
+      inputs.ddi_spec != '' &&
+      (inputs.spec == '' ||
+       (needs.preflight.result == 'success' &&
+        (needs.build.result == 'success' ||
+         (needs.build.result == 'skipped' && needs.preflight.outputs.ddi_present == 'true'))))
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/ddi-target.yml
+    with:
+      spec: ${{ inputs.ddi_spec }}
+      package_artifact: ${{ inputs.spec != '' && format('stable-{0}-{1}', fromJSON(inputs.spec).distro, fromJSON(inputs.spec).architecture) || '' }}
+      tooling_sha: ${{ inputs.tooling_sha }}
+      refresh_build_container: ${{ inputs.refresh_build_container }}
+    secrets:
+      CLOUDSMITH_PACKAGE_PUBLISHER: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+      PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+      PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+
+  publish:
+    name: Publishing ${{ fromJSON(inputs.spec || inputs.ddi_spec).distro }} ${{ fromJSON(inputs.spec || inputs.ddi_spec).architecture }}
+    needs: [preflight, build]
+    if: >-
+      always() && inputs.spec != '' && inputs.publish_packages &&
       needs.preflight.result == 'success' &&
       (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     # Serialize every release sharing an index, including architecture-independent packages.
     concurrency:
-      group: cloudsmith-${{ fromJSON(inputs.spec).repository }}-${{ fromJSON(inputs.spec).distro }}
+      group: cloudsmith-${{ fromJSON(inputs.spec || inputs.ddi_spec).repository }}-${{ fromJSON(inputs.spec || inputs.ddi_spec).distro }}
       cancel-in-progress: false
       queue: max
     steps:

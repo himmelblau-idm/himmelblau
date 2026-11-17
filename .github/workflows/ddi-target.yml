@@ -1,0 +1,214 @@
+name: Build, sign and publish one DDI target
+
+on:
+  workflow_call:
+    inputs:
+      spec:
+        required: true
+        type: string
+      tooling_sha:
+        required: true
+        type: string
+      package_artifact:
+        default: ''
+        type: string
+      refresh_build_container:
+        default: false
+        type: boolean
+    secrets:
+      CLOUDSMITH_PACKAGE_PUBLISHER:
+        required: true
+      PACKAGE_SIGNING_KEY:
+        required: true
+      PACKAGE_SIGNING_PASSPHRASE:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      build_required: ${{ steps.check.outputs.build_required }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tooling_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Check Cloudsmith for the signed raw images
+        id: check
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+        run: python3 tooling/.github/scripts/ddi.py preflight
+
+  build:
+    needs: preflight
+    if: needs.preflight.outputs.build_required == 'true'
+    runs-on: ${{ fromJSON(inputs.spec).runner }}
+    timeout-minutes: 330
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Checkout DDI tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tooling_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Checkout the resolved source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ fromJSON(inputs.spec).source_sha }}
+          path: source
+          persist-credentials: false
+      - name: Download the native build's validated package set
+        if: fromJSON(inputs.spec).package != null
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.package_artifact }}
+          path: native-packages
+      - name: Isolate registry credentials from the default Docker configuration
+        run: |
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/himmelblau-registry-auth" >> "$GITHUB_ENV"
+          mkdir -m 0700 "$RUNNER_TEMP/himmelblau-registry-auth"
+      - name: Log in to the staging-container cache
+        id: cache-login
+        continue-on-error: true
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Set up the build-container cache builder
+        if: steps.cache-login.outcome == 'success'
+        id: cache-builder
+        continue-on-error: true
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        with:
+          driver: docker-container
+      - name: Report uncached build fallback
+        if: steps.cache-login.outcome != 'success' || steps.cache-builder.outcome != 'success'
+        run: echo "::warning::DDI staging-container cache unavailable; building without the registry cache."
+      - name: Build distribution-native payload archives
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          BUILD_CONTAINER_CACHE_REF: ${{ steps.cache-login.outcome == 'success' && steps.cache-builder.outcome == 'success' && format('ghcr.io/himmelblau-idm/himmelblau-build-cache:v1-{0}-{1}', fromJSON(inputs.spec).package != null && fromJSON(inputs.spec).fedora || fromJSON(inputs.spec).distro, fromJSON(inputs.spec).architecture) || '' }}
+          REFRESH_BUILD_CONTAINER: ${{ inputs.refresh_build_container }}
+        run: |
+          BUILD_ARGS=(--source source --packages native-packages --artifacts payloads --container-cache-ref "$BUILD_CONTAINER_CACHE_REF")
+          if [ "$REFRESH_BUILD_CONTAINER" = true ]; then
+            BUILD_ARGS+=(--refresh-build-container)
+          fi
+          python3 tooling/.github/scripts/ddi.py build "${BUILD_ARGS[@]}"
+      - name: Remove build-cache registry credentials
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/himmelblau-registry-auth/config.json"
+      - name: Transfer payload archives to the isolated signing job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ddi-payload-${{ fromJSON(inputs.spec).channel }}-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
+          path: payloads/*.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  sign:
+    needs: build
+    runs-on: ${{ fromJSON(inputs.spec).runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Harden the signing runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tooling_sha }}
+          path: tooling
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ddi-payload-${{ fromJSON(inputs.spec).channel }}-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
+          path: payloads
+      - name: Install signing tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnupg gpgsm openssl systemd erofs-utils cryptsetup-bin fdisk
+      - name: Build and sign DDIs
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+          PACKAGE_SIGNING_KEY_ID: ${{ vars.PACKAGE_SIGNING_KEY_ID }}
+        # The portable root includes root-only files whose permissions must survive extraction.
+        run: sudo --preserve-env=TARGET_SPEC,PACKAGE_SIGNING_KEY,PACKAGE_SIGNING_PASSPHRASE,PACKAGE_SIGNING_KEY_ID,RUNNER_TEMP python3 tooling/.github/scripts/ddi.py sign --artifacts payloads --output signed
+      - name: Archive DDIs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ddi-signed-${{ fromJSON(inputs.spec).channel }}-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
+          path: signed/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    if: >-
+      !cancelled() &&
+      needs.preflight.result == 'success' &&
+      (needs.sign.result == 'success' ||
+       (needs.preflight.outputs.build_required == 'false' && needs.sign.result == 'skipped'))
+    needs: [preflight, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: cloudsmith-ddi-${{ fromJSON(inputs.spec).repository }}-${{ fromJSON(inputs.spec).channel }}-${{ fromJSON(inputs.spec).architecture }}
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tooling_sha }}
+          path: tooling
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.sign.result == 'success'
+        with:
+          name: ddi-signed-${{ fromJSON(inputs.spec).channel }}-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
+          path: signed
+      - name: Install Cloudsmith CLI
+        run: |
+          CLI_DIRECTORY="$RUNNER_TEMP/cloudsmith-cli"
+          mkdir -p "$CLI_DIRECTORY"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/cloudsmith-io/cloudsmith-cli/releases/download/v1.27.0/cloudsmith-1.27.0-linux-x86_64-gnu.tar.gz \
+            --output "$CLI_DIRECTORY/cloudsmith.tar.gz"
+          echo "cf714418c992d2e9a6a5d81c1523f4e0ac2e2cea0898e91f9df35a399254d014  $CLI_DIRECTORY/cloudsmith.tar.gz" | sha256sum --check
+          tar -xzf "$CLI_DIRECTORY/cloudsmith.tar.gz" -C "$CLI_DIRECTORY"
+          echo "$CLI_DIRECTORY/cloudsmith" >> "$GITHUB_PATH"
+      - name: Publish raw DDIs
+        if: needs.sign.result == 'success'
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+        run: python3 tooling/.github/scripts/ddi.py publish --artifacts signed
+      - name: Install checksum signing tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnupg gpgsm openssl
+      - name: Sign and publish sysupdate manifests
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+          PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+          PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+          PACKAGE_SIGNING_KEY_ID: ${{ vars.PACKAGE_SIGNING_KEY_ID }}
+        run: python3 tooling/.github/scripts/ddi.py publish-checksums

@@ -1373,6 +1373,13 @@ sys.exit(int(sys.argv[1]))
         self.assertIn("cancel-in-progress: false\n", concurrency)
         self.assertIn("queue: max\n", concurrency)
 
+        maintain_permissions = WORKFLOW.read_text().split("\n  maintain:\n", 1)[1].split("    strategy:", 1)[0]
+        self.assertIn("actions: read", maintain_permissions)
+        branch_permissions = BRANCH_WORKFLOW.read_text().split("permissions:\n", 1)[1].split("jobs:", 1)[0]
+        self.assertIn("actions: read", branch_permissions)
+        stage_job = STAGE_WORKFLOW.read_text().split("\n  maintain:\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("actions: read", stage_job)
+
         dockerfile = DOCKERFILE.read_text()
         self.assertRegex(dockerfile, r"FROM rust:1\.98\.0-bookworm@sha256:[0-9a-f]{64} AS rust-toolchain")
         self.assertRegex(dockerfile, r"FROM rust:1\.98\.0-bookworm@sha256:[0-9a-f]{64} AS maintenance-tools")
@@ -5088,7 +5095,12 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         expose = stage.split("      - name: Expose only successfully uploaded checkpoint metadata", 1)[1].split("\n      - name:", 1)[0]
         # Explicit cancellation checks let recovered failures publish outputs,
         # while failure, skipped and cancelled uploads leave them unavailable.
-        self.assertIn("if: ${{ !cancelled() && steps.checkpoint-upload.outcome == 'success' }}", expose)
+        self.assertIn("steps.checkpoint-upload-retry.outcome == 'success'", expose)
+        self.assertIn("steps.checkpoint-upload.outcome == 'success'", expose)
+        self.assertIn("Retry checkpoint upload after transient artifact outage", stage)
+        self.assertIn("pipelines.actions.githubusercontent.com:443", stage)
+        self.assertIn("results-rests.actions.githubusercontent.com:443", stage)
+        self.assertIn("docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443", stage)
         script = expose.split("        run: |\n", 1)[1]
         script = "\n".join(line[10:] for line in script.splitlines())
         with tempfile.TemporaryDirectory() as tmp:
@@ -5101,14 +5113,72 @@ class CheckpointMaintenanceTests(unittest.TestCase):
             subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=env, check=True, timeout=5)
             self.assertEqual(dict(line.split("=", 1) for line in output.read_text().splitlines()), values)
 
+    def test_checkpoint_download_resolves_producer_attempt_before_network(self):
+        """Execute the actual download shell with a recording gh, including reruns."""
+        stage = STAGE_WORKFLOW.read_text()
+        download = stage.split("      - name: Download this run's exact previous-stage progress", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("CHECKPOINT_ARTIFACT: ${{ inputs.checkpoint-artifact }}", download)
+        self.assertIn("CHECKPOINT_REF: ${{ inputs.checkpoint-ref }}", download)
+        self.assertIn("PREVIOUS_STAGE: ${{ inputs.previous-stage }}", download)
+        self.assertNotIn("split(", stage + BRANCH_WORKFLOW.read_text())
+        script = download.split("        run: |\n", 1)[1]
+        script = "\n".join(line[10:] for line in script.splitlines())
+        ref = sm.AUTOMATION_PREFIX + "checkpoints/43279859768/1/stable-4.x/backports-3"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gh = root / "gh"
+            gh.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$GH_RECORD"\n')
+            gh.chmod(0o755)
+            record = root / "args"
+            gh_output = root / "github_output"
+            base = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                    "GH_RECORD": str(record), "STATE_DIR": str(root / "state"),
+                    "GITHUB_OUTPUT": str(gh_output),
+                    "GITHUB_RUN_ID": "43279859768", "GITHUB_RUN_ATTEMPT": "2",
+                    "GITHUB_REPOSITORY": "himmelblau-idm/himmelblau",
+                    "TARGET_BRANCH": "stable-4.x", "PREVIOUS_STAGE": "backports-3",
+                    "CHECKPOINT_REF": ref, "CHECKPOINT_ARTIFACT": ""}
+            cases = [({}, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3"),
+                     ({"CHECKPOINT_ARTIFACT": "explicit-artifact"}, "explicit-artifact"),
+                     ({"CHECKPOINT_ARTIFACT": "maintenance-checkpoint-43279859768-1-stable-4.x-vet"}, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3")]
+            cases.append(({"PREVIOUS_STAGE": ""}, None))
+            cases += [({"CHECKPOINT_REF": bad}, None) for bad in (
+                ref.replace("43279859768", "999"), ref.replace("/1/", "/0/"),
+                ref.replace("stable-4.x", "stable-3.x"), ref.replace("backports-3", "vet"),
+                ref + "/extra", ref + "\n", "$(touch NEVER_EXECUTE)", "",
+                sm.AUTOMATION_PREFIX + "checkpoints/43279859768/1000000/stable-4.x/backports-3",
+                sm.AUTOMATION_PREFIX + "checkpoints/100000000000000000000/1/stable-4.x/backports-3")]
+            cases.append(({
+                "CHECKPOINT_ARTIFACT": "maintenance-checkpoint-43279859768-2-stable-4.x-backports-3",
+            }, "maintenance-checkpoint-43279859768-1-stable-4.x-backports-3"))
+            for overrides, expected in cases:
+                with self.subTest(overrides=overrides):
+                    record.unlink(missing_ok=True)
+                    result = subprocess.run(["bash", "-euo", "pipefail", "-c", script],
+                                            env={**base, **overrides}, capture_output=True,
+                                            text=True, timeout=5, cwd=root)
+                    if expected is None:
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertFalse(record.exists(), "invalid ref must not reach gh")
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(record.read_text().splitlines(), [
+                            "run", "download", "43279859768", "--name", expected,
+                            "--dir", str(root / "state"), "--repo", "himmelblau-idm/himmelblau"])
+            self.assertFalse((root / "NEVER_EXECUTE").exists())
+
     def test_workflow_has_ordered_fresh_jobs_and_only_final_publication(self):
         branch = BRANCH_WORKFLOW.read_text()
         stage = STAGE_WORKFLOW.read_text()
         stages = (*sm.CHECKPOINT_STAGES, "final")
-        for previous, current in zip(stages, stages[1:]):
+        for index, (previous, current) in enumerate(zip(stages, stages[1:]), 1):
             block = branch.split(f"\n  {current}:\n", 1)[1].split("\n\n", 1)[0]
-            self.assertIn(f"needs: {previous}", block)
-            self.assertIn(f"previous-stage: {previous}", block)
+            self.assertIn(f"needs: [{', '.join(stages[:index])}]", block)
+            self.assertIn("always() && !cancelled() && !contains(needs.*.outputs.proceed, 'false')", block)
+            self.assertIn(f"needs.{previous}.outputs.ref != '' && '{previous}'", block)
+            for field in ("head", "digest", "ref", "artifact"):
+                fallback = " || ".join(f"needs.{name}.outputs.{field}" for name in reversed(stages[:index]))
+                self.assertIn(f"checkpoint-{field}: ${{{{ {fallback} || '' }}}}", block)
             for field in ("head", "digest", "ref", "artifact"):
                 self.assertIn(f"needs.{previous}.outputs.{field}", block)
         self.assertEqual(branch.count("uses: ./.github/workflows/stable-maintenance-stage.yml"), 7)
@@ -5120,7 +5190,15 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("python3 -u", premutation)
         self.assertNotIn("if:", premutation)
         self.assertNotIn("workflow_run:", stage + branch + WORKFLOW.read_text())
-        self.assertNotIn("continue-on-error:", stage + branch)
+        for artifact_step in (
+            "Preserve exact checkpoint state for the next job",
+            "Preserve sanitized maintenance results",
+        ):
+            block = stage.split(f"      - name: {artifact_step}", 1)[1].split("\n      - name:", 1)[0]
+            if "continue-on-error: true" in block:
+                self.assertIn("Retry", stage.split(block, 1)[1][:200])
+        branch_yaml = branch + WORKFLOW.read_text()
+        self.assertNotIn("continue-on-error:", branch_yaml)
         for name in ("Release —", "Validate —", "Create scoped publication token", "Publish —"):
             block = stage.split("      - name: " + name, 1)[1].split("\n      - name:", 1)[0]
             self.assertIn("inputs.stage == 'final'", block)
@@ -5129,6 +5207,107 @@ class CheckpointMaintenanceTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", stage)
         self.assertIn("ref: ${{ github.sha }}", stage)
         self.assertNotIn("ref: ${{ inputs.checkpoint-ref }}", stage)
+
+    def test_recovery_workflow_requires_uploaded_checkpoint_and_initializes_without_one(self):
+        stage = STAGE_WORKFLOW.read_text()
+        branch = BRANCH_WORKFLOW.read_text()
+        for field in ("head", "digest", "ref", "artifact"):
+            self.assertIn(f"{field}: ${{{{ steps.available.outputs.{field} }}}}", stage)
+        self.assertIn("network-not-before: ${{ steps.network-cooldown.outputs.deadline }}", stage)
+        self.assertIn("MAINTENANCE_FAILURE_COOLDOWNS: ${{ inputs.failure-cooldowns }}", stage)
+        self.assertIn("failure-cooldowns: ${{ needs.dependencies.outputs.network-not-before }}", branch)
+        available = stage.split("      - name: Expose only successfully uploaded", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("steps.checkpoint-upload.outcome == 'success'", available)
+        cooldown = stage.split("      - name: Expose network cooldown for downstream continuation", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("emit-cooldown", cooldown)
+        self.assertIn("if: always()", cooldown)
+        for name in ("Download this run", "Resume —"):
+            block = stage.split("      - name: " + name, 1)[1].split("      - name:", 1)[0]
+            self.assertIn("if: inputs.checkpoint-ref != ''", block)
+        initialize = stage.split("      - name: Initialize —", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("inputs.checkpoint-ref == ''", initialize)
+        self.assertLess(stage.index("      - name: Initialize —"), stage.index("      - name: Prepare exact locked"))
+        tests = stage.split("      - name: Test trusted automation", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("MAINTENANCE_INCOMPLETE_STAGES: ''", tests)
+        self.assertIn("MAINTENANCE_FAILURE_COOLDOWNS: ''", tests)
+
+    def test_blocked_release_preserves_incomplete_stages_for_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state = sm.State(Path(tmp) / "state")
+            state.save({
+                "branch": "stable-4.x",
+                "original_head": head,
+                "cutoff": head,
+                "main_head": head,
+                "prerequisites_ready": False,
+                "phase_failures": [{"phase": "prerequisites", "reason": "prerequisite-failed", "gate": "image"}],
+            })
+            args = mock.Mock(command="release")
+            with mock.patch.dict(os.environ, {"MAINTENANCE_INCOMPLETE_STAGES": "dependencies,backports-1,"}):
+                sm.run_best_effort_phase(args, state, runner)
+            self.assertEqual(state.load()["incomplete_stages"], ["dependencies", "backports-1"])
+
+    def test_resume_merges_failure_cooldown_from_prior_stages(self):
+        with mock.patch.object(sm, "_HTTP_NEXT_REQUEST", {}), \
+             mock.patch.object(sm, "time", mock.Mock(time=lambda: 1000, monotonic=lambda: 100)):
+            value = {"branch": "stable-4.x", "main_head": "a" * 40, "original_head": "b" * 40,
+                     "cutoff": "c" * 40, "network_not_before": 1050.0}
+            sm.merge_failure_network_cooldowns(value)
+            self.assertEqual(value["network_not_before"], 1050.0)
+            with mock.patch.dict(os.environ, {"MAINTENANCE_FAILURE_COOLDOWNS": "1120,,"}):
+                sm.merge_failure_network_cooldowns(value)
+            self.assertEqual(value["network_not_before"], 1120.0)
+
+    def test_empty_incomplete_run_has_manual_handoff_without_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            state = sm.State(root / "state")
+            state.save({"branch": "stable-4.x", "original_head": head, "cutoff": head, "main_head": head})
+            with mock.patch.dict(os.environ, {"MAINTENANCE_INCOMPLETE_STAGES": "dependencies,backports-1,"}), \
+                 mock.patch.object(sm, "locked_build") as build, mock.patch.object(sm, "http_json") as http:
+                sm.phase_release(mock.Mock(), state, runner)
+                sm.phase_validate(mock.Mock(), state, runner)
+                sm.phase_publish(mock.Mock(), state, runner)
+                sm.phase_report(mock.Mock(branch="stable-4.x"), state, runner)
+            build.assert_not_called(); http.assert_not_called()
+            self.assertEqual(state.load()["incomplete_stages"], ["dependencies", "backports-1"])
+            report = (state.directory / "report.md").read_text()
+            self.assertIn("No publishable changes survived", report)
+            self.assertIn("- [ ] Re-run and review `backports-1`", report)
+
+    def test_recovery_pr_body_lists_incomplete_stages_with_phase_failures(self):
+        value = {
+            "branch": "stable-4.x",
+            "original_head": "a" * 40,
+            "cutoff": "b" * 40,
+            "main_head": "c" * 40,
+            "phase_failures": [{"phase": "prepare", "reason": "cache-dependent phase blocked"}],
+            "incomplete_stages": ["dependencies"],
+        }
+        body = sm.build_pr_body(value)
+        self.assertIn("Investigate `prepare`", body)
+        self.assertIn("Re-run and review `dependencies`", body)
+
+    def test_missing_backport_checkpoint_preserves_previous_cutoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runner = self.repository(root / "repo")
+            cutoff = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (runner.root / "fix.rs").write_text("fix\n")
+            main = self.commit(runner, "Fix on main")
+            runner.git(["checkout", "stable-4.x"])
+            (runner.root / "supply-chain").mkdir()
+            (runner.root / "supply-chain/imports.lock").write_text("audits\n")
+            self.commit(runner, "Refresh audits")
+            state = sm.State(root / "state")
+            state.save({"branch": "stable-4.x", "original_head": cutoff, "cutoff": cutoff, "main_head": main})
+            with mock.patch.dict(os.environ, {"MAINTENANCE_INCOMPLETE_STAGES": "backports-1,backports-2,"}):
+                sm.phase_release(mock.Mock(), state, runner)
+            self.assertEqual(state.load()["main_through"], cutoff)
+            self.assertEqual(sm.marker_sha(runner.git(["log", "-1", "--format=%B"]).stdout), cutoff)
+            self.assertEqual(sm.marker_sha(sm.build_pr_body(state.load())), cutoff)
 
     def test_checkpoint_reports_the_failed_local_git_operation_without_publishing(self):
         operations = {"status": "status", "branch": "branch", "rev-parse": "head",
@@ -6534,10 +6713,15 @@ class RecoveryMaintenanceTests(unittest.TestCase):
                 condition = next(line for line in block.splitlines() if line.strip().startswith("if:"))
                 self.assertIn("!cancelled()", condition)
                 self.assertIn("steps.guard.outputs.proceed", condition)
-        for line in BRANCH_WORKFLOW.read_text().splitlines():
-            if "if:" in line:
-                self.assertIn("!cancelled()", line)
-                self.assertIn(".outputs.head != ''", line)
+        branch = BRANCH_WORKFLOW.read_text()
+        for job in sm.CHECKPOINT_STAGES[1:] + ("final",):
+            block = branch.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
+            if_line = next(line for line in block.splitlines() if line.strip().startswith("if:"))
+            self.assertIn("always()", if_line)
+            self.assertIn("!cancelled()", if_line)
+            self.assertIn("!contains(needs.*.outputs.proceed, 'false')", if_line)
+        dependencies = branch.split("\n  dependencies:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertNotIn("always()", dependencies)
 
     def test_recovery_does_not_catch_integrity_or_transport_failures(self):
         for phase in ("initialize", "resume", "checkpoint", "publish"):

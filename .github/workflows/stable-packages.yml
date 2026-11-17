@@ -47,8 +47,10 @@ jobs:
     timeout-minutes: 10
     outputs:
       enabled: ${{ steps.prepare.outputs.enabled }}
-      matrix: ${{ steps.prepare.outputs.matrix }}
+      matrix: ${{ steps.ddis.outputs.matrix }}
       tooling_sha: ${{ steps.prepare.outputs.tooling_sha }}
+      source_sha: ${{ steps.prepare.outputs.source_sha }}
+      tag: ${{ steps.prepare.outputs.tag }}
     steps:
       - name: Checkout trusted release tooling and repository history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,9 +68,20 @@ jobs:
           REQUESTED_DISTRO: ${{ inputs.distro }}
           REQUESTED_ARCHITECTURE: ${{ inputs.architecture }}
         run: python3 .github/scripts/stable_packages.py prepare
+      - name: Pair native package targets with their DDIs
+        id: ddis
+        if: steps.prepare.outputs.enabled == 'true'
+        env:
+          DDI_CHANNEL: stable
+          RELEASE_TAG: ${{ steps.prepare.outputs.tag }}
+          REQUESTED_REVISION: ${{ steps.prepare.outputs.source_sha }}
+          REQUESTED_DISTRO: ${{ inputs.distro }}
+          REQUESTED_ARCHITECTURE: ${{ inputs.architecture }}
+          DDI_PACKAGE_MATRIX: ${{ steps.prepare.outputs.matrix }}
+        run: python3 .github/scripts/ddi.py prepare
 
-  packages:
-    name: ${{ fromJSON(matrix.spec).distro }} ${{ fromJSON(matrix.spec).architecture }}
+  targets:
+    name: ${{ fromJSON(matrix.ddi_spec).distro }} ${{ fromJSON(matrix.ddi_spec).architecture }}
     permissions:
       contents: read
       packages: write
@@ -80,9 +93,13 @@ jobs:
     uses: ./.github/workflows/stable-package-target.yml
     with:
       spec: ${{ matrix.spec }}
+      ddi_spec: ${{ matrix.ddi_spec }}
+      publish_packages: ${{ matrix.publish_packages }}
       tooling_sha: ${{ needs.prepare.outputs.tooling_sha }}
       refresh_build_container: ${{ inputs.refresh_build_container || false }}
     secrets:
       CLOUDSMITH_PACKAGE_PUBLISHER: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+      PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+      PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
       SCC_EMAIL: ${{ secrets.SCC_EMAIL }}
       SCC_REGCODE: ${{ secrets.SCC_REGCODE }}

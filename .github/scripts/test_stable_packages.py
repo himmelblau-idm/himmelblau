@@ -614,8 +614,8 @@ class WorkflowContractTests(unittest.TestCase):
         workflow = (MODULE.parents[1] / "workflows/stable-package-target.yml").read_text()
         self.assertIn(
             "concurrency:\n"
-            "      group: cloudsmith-${{ fromJSON(inputs.spec).repository }}-"
-            "${{ fromJSON(inputs.spec).distro }}\n"
+            "      group: cloudsmith-${{ fromJSON(inputs.spec || inputs.ddi_spec).repository }}-"
+            "${{ fromJSON(inputs.spec || inputs.ddi_spec).distro }}\n"
             "      cancel-in-progress: false\n"
             "      queue: max",
             workflow,

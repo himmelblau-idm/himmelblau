@@ -1,0 +1,86 @@
+name: Build and publish signed DDIs
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        default: nightly
+        type: choice
+        options: [stable, nightly]
+      tag:
+        description: Existing stable tag (leave empty for nightly)
+        type: string
+      revision:
+        description: Optional stable source revision (nightlies always use main)
+        type: string
+      distro:
+        description: Supported distro, including arch, or all
+        default: all
+        type: string
+      architecture:
+        description: Supported architecture
+        default: all
+        type: choice
+        options: [all, amd64, arm64]
+      refresh_build_container:
+        description: Refresh build-container dependencies
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ddis-${{ inputs.channel || 'nightly' }}-${{ inputs.tag || 'main' }}-${{ inputs.distro || 'all' }}-${{ inputs.architecture || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'himmelblau-idm/himmelblau' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      tooling_sha: ${{ steps.prepare.outputs.tooling_sha }}
+    steps:
+      - name: Checkout trusted release tooling and history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate sources and select every supported DDI target
+        id: prepare
+        env:
+          DDI_CHANNEL: ${{ inputs.channel || 'nightly' }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          REQUESTED_REVISION: ${{ inputs.revision }}
+          REQUESTED_DISTRO: ${{ inputs.distro }}
+          REQUESTED_ARCHITECTURE: ${{ inputs.architecture }}
+        run: python3 .github/scripts/ddi.py prepare
+
+  targets:
+    name: ${{ fromJSON(matrix.ddi_spec).distro }} ${{ fromJSON(matrix.ddi_spec).architecture }}
+    needs: prepare
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/stable-package-target.yml
+    with:
+      spec: ${{ matrix.spec }}
+      ddi_spec: ${{ matrix.ddi_spec }}
+      publish_packages: false
+      tooling_sha: ${{ needs.prepare.outputs.tooling_sha }}
+      refresh_build_container: ${{ inputs.refresh_build_container || false }}
+    secrets:
+      CLOUDSMITH_PACKAGE_PUBLISHER: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+      PACKAGE_SIGNING_KEY: ${{ secrets.PACKAGE_SIGNING_KEY }}
+      PACKAGE_SIGNING_PASSPHRASE: ${{ secrets.PACKAGE_SIGNING_PASSPHRASE }}
+      SCC_EMAIL: ${{ secrets.SCC_EMAIL }}
+      SCC_REGCODE: ${{ secrets.SCC_REGCODE }}
