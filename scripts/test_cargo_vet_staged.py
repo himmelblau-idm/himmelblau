@@ -58,6 +58,67 @@ class StagedReviewTests(unittest.TestCase):
                                prompts=prompts,
                                workspaces=list(root.glob("*.review")))
 
+    def test_single_pass_approval_needs_only_one_call(self):
+        run = self.run_review(MODIFIED_DIFF)
+        self.assertEqual([c["task_id"] for c in run.calls], ["source-1"])
+        self.assertTrue(run.calls[0]["final"])
+        self.assertIn("Perform the final assessment now", run.prompts[0])
+        self.assertNotIn("NOT whole-crate certification", run.prompts[0])
+        self.assertEqual(run.result.automatic_action(), "certify")
+        self.assertEqual(run.workspaces, [])
+
+    def test_single_pass_unresolved_context_stops_without_integration(self):
+        for field in ("questions", "assumptions"):
+            with self.subTest(field=field):
+                def respond(data):
+                    return stage_report(data, **{field: ["Verify the external ABI"]})
+
+                run = self.run_review(respond=respond)
+                self.assertEqual(len(run.calls), 1)
+                self.assertFalse(run.result.complete)
+                self.assertEqual(run.result.automatic_action(), "skip")
+                self.assertIn("Verify the external ABI", run.result.explanation)
+                self.assertTrue((run.workspaces[0] / "failure.json").is_file())
+
+    def test_single_pass_incomplete_assessment_does_not_subdivide_read_source(self):
+        def respond(data):
+            value = json.loads(stage_report(data))
+            value["review"].update(decision=False, complete=False,
+                                   explanation="Cannot verify the platform contract")
+            return json.dumps(value)
+
+        run = self.run_review(respond=respond)
+        self.assertEqual(len(run.calls), 1)
+        self.assertFalse(run.result.complete)
+        self.assertIn("Cannot verify the platform contract", run.result.explanation)
+        manifest = json.loads((run.workspaces[0] / "manifest.json").read_text())
+        self.assertEqual(manifest["completed_ranges"], [[0, len("+code\n")]])
+
+    def test_single_pass_findings_override_optimistic_approval(self):
+        for severity, malicious, action in (("low", False, "exempt"),
+                                             ("high", False, "block"),
+                                             ("low", True, "block"),
+                                             (None, False, "skip")):
+            with self.subTest(severity=severity, malicious=malicious):
+                run = self.run_review(respond=lambda data: stage_report(data, findings=[dict(
+                    description="lib.rs:1 remaining security finding", severity=severity, malicious=malicious)]))
+                self.assertEqual(len(run.calls), 1)
+                self.assertTrue(run.result.complete)
+                self.assertFalse(run.result.decision)
+                self.assertEqual(run.result.automatic_action(), action)
+                self.assertIn("remaining security finding", run.result.explanation)
+                self.assertTrue((run.workspaces[0] / "result.json").is_file())
+
+    def test_single_pass_missing_or_malformed_final_decision_never_certifies(self):
+        for value in (None, {}, dict(decision=True, complete=True, severity="invalid",
+                                    malicious=False, explanation="Invalid classification")):
+            with self.subTest(value=value):
+                run = self.run_review(respond=lambda data: stage_report(data, review=value))
+                self.assertEqual(len(run.calls), 1)
+                self.assertFalse(run.result.complete)
+                self.assertEqual(run.result.automatic_action(), "skip")
+                self.assertIn("invalid final AIReview", run.result.explanation)
+
     def test_whole_file_deletion_retains_metadata_and_explicit_omission(self):
         filtered, deletions = review.omit_deleted_file_contents(DELETED_DIFF + MODIFIED_DIFF)
         self.assertTrue(filtered.startswith(DELETED_HEADER))
@@ -106,9 +167,9 @@ class StagedReviewTests(unittest.TestCase):
         self.assertTrue(filtered.endswith(MODIFIED_DIFF.rstrip("\n")))
         self.assertEqual(filtered.count("diff --git "), 3)
 
-    def test_deletion_scope_is_explained_to_both_source_and_integration_reviewers(self):
+    def test_deletion_scope_is_explained_to_single_pass_reviewer(self):
         run = self.run_review(DELETED_DIFF)
-        self.assertEqual([c["task_id"] for c in run.calls], ["source-1", "integration-1"])
+        self.assertEqual([c["task_id"] for c in run.calls], ["source-1"])
         self.assertTrue(run.result.complete)
         self.assertTrue(run.result.decision)
         self.assertIn("1 deleted-file bodies intentionally omitted", run.result.explanation)
@@ -119,10 +180,10 @@ class StagedReviewTests(unittest.TestCase):
             self.assertIn("withhold certification for this exclusion alone", prompt)
             self.assertIn("concrete removal-related concern", prompt)
 
-    def test_deletion_only_review_requires_integration_decision(self):
+    def test_deletion_only_review_uses_single_pass_final_decision(self):
         def respond(data):
             value = json.loads(stage_report(data))
-            if "records" in data:
+            if data.get("final"):
                 value["review"].update(decision=False, explanation="Removing the build helper changes build behavior")
             return json.dumps(value)
 
@@ -130,13 +191,13 @@ class StagedReviewTests(unittest.TestCase):
         self.assertFalse(run.result.decision)
         self.assertTrue(run.result.complete)
         self.assertIn("changes build behavior", run.result.explanation)
-        self.assertEqual(len(run.calls), 2)
+        self.assertEqual(len(run.calls), 1)
 
     def test_artifacts_and_coverage_distinguish_filtered_and_original_diffs(self):
         original = DELETED_DIFF + MODIFIED_DIFF
         def respond(data):
             value = json.loads(stage_report(data))
-            if "records" in data:
+            if data.get("final"):
                 value["review"].update(decision=False, explanation="Retain artifacts for manual assessment")
             return json.dumps(value)
 
@@ -190,6 +251,8 @@ class StagedReviewTests(unittest.TestCase):
         primary = [(call["start"], call["end"]) for call in run.calls if "primary" in call]
         self.assertEqual(primary, [(0, 8), (0, 4), (4, 8)])
         integration = run.calls[-1]
+        self.assertTrue(run.calls[0]["final"])
+        self.assertTrue(all(not c["final"] for c in run.calls[1:] if "primary" in c))
         questions = [issue["description"] for record in integration["records"] for issue in record["issues"]]
         self.assertEqual(questions, ["Verify build.rs uses the new binding"])
         self.assertTrue(run.result.decision)
@@ -213,6 +276,25 @@ class StagedReviewTests(unittest.TestCase):
         self.assertEqual({issue["description"] for issue in integration_issues},
                          {"Verify the changed FFI contract", "binding.rs:1 possible ABI mismatch"})
         self.assertTrue(run.result.complete)
+
+    def test_subdivision_preserves_concerns_from_the_parent_final_assessment(self):
+        def respond(data):
+            value = json.loads(stage_report(data))
+            if data["task_id"] == "source-1":
+                value["complete"] = False
+                value["review"].update(decision=False, complete=False, severity="high", malicious=True,
+                                       explanation="build.rs:7 possible credential exfiltration")
+            elif "records" in data:
+                for disposition in value["dispositions"]:
+                    disposition.update(status="confirmed", evidence="build.rs:7 sends credentials")
+            return json.dumps(value)
+
+        run = self.run_review("abcdefgh", respond)
+        self.assertEqual([c["task_id"] for c in run.calls],
+                         ["source-1", "source-2", "source-3", "integration-1"])
+        self.assertEqual(run.result.automatic_action(), "block")
+        self.assertTrue(run.result.malicious)
+        self.assertIn("build.rs:7", run.result.explanation)
 
     def test_source_line_limit_splits_after_six_thousand_lines(self):
         material = "+code\n" * 6001
@@ -266,7 +348,7 @@ class StagedReviewTests(unittest.TestCase):
         def respond(data):
             if "primary" in data:
                 old, new = Path(data["old_source"]), Path(data["new_source"])
-                old.mkdir(); new.mkdir()
+                old.mkdir(exist_ok=True); new.mkdir(exist_ok=True)
                 (old / "build.rs").write_text('fn main() {}\n')
                 (new / "build.rs").write_text('fn main() { println!("cargo:rustc-link-lib=sqlite3"); }\n')
                 return stage_report(data, questions=["Does build.rs link sqlite3?"])
@@ -275,7 +357,7 @@ class StagedReviewTests(unittest.TestCase):
             value["dispositions"][0]["evidence"] = "build.rs:1 links sqlite3; checked old and new implementation"
             return json.dumps(value)
 
-        run = self.run_review(respond=respond)
+        run = self.run_review("a\nb\n", respond, SOURCE_MAX_LINES=1)
         self.assertIn("rustc-link-lib=sqlite3", inspected[0])
         self.assertTrue(run.result.decision)
 
@@ -289,7 +371,7 @@ class StagedReviewTests(unittest.TestCase):
             value["review"].update(decision=False, complete=False)
             return json.dumps(value)
 
-        run = self.run_review(respond=respond)
+        run = self.run_review("a\nb\n", respond, SOURCE_MAX_LINES=1)
         self.assertFalse(run.result.complete)
         self.assertEqual([c["resolution_round"] for c in run.calls if "records" in c], [0, 1, 2, 3])
         self.assertIn("FFI layout", run.result.explanation)
@@ -300,8 +382,8 @@ class StagedReviewTests(unittest.TestCase):
                 return stage_report(data, questions=["Validate manifest versus build.rs"])
             return stage_report(data)
 
-        run = self.run_review(respond=respond)
-        self.assertEqual(len(run.calls), 3)
+        run = self.run_review("a\nb\n", respond, SOURCE_MAX_LINES=1)
+        self.assertEqual(len(run.calls), 4)
         self.assertEqual(run.calls[-1]["records"][0]["issues"][0]["description"], "Validate manifest versus build.rs")
         self.assertTrue(run.result.decision)
 
@@ -316,7 +398,7 @@ class StagedReviewTests(unittest.TestCase):
                 return json.dumps(value)
 
             with self.subTest(duplicate=duplicate):
-                run = self.run_review(respond=respond)
+                run = self.run_review("a\nb\n", respond, SOURCE_MAX_LINES=1)
                 self.assertFalse(run.result.complete)
                 self.assertEqual(run.result.automatic_action(), "block")
                 self.assertIn("unchecked pointer", run.result.explanation)
@@ -392,7 +474,7 @@ class StagedReviewTests(unittest.TestCase):
                 return stage_report(data, complete=False, summary="Cross-file review unfinished")
             return stage_report(data)
 
-        run = self.run_review(respond=respond)
+        run = self.run_review("a\nb\n", respond, SOURCE_MAX_LINES=1)
         pending = run.calls[-1]["records"][0]["issues"]
         self.assertEqual(pending[0]["id"], "integration-1:incomplete")
         self.assertTrue(run.result.complete)
@@ -407,7 +489,7 @@ class StagedReviewTests(unittest.TestCase):
                 disposition.update(status="confirmed", evidence="build.rs:9 and lib.rs:4 have incompatible layouts")
             return json.dumps(value)
 
-        run = self.run_review(respond=respond)
+        run = self.run_review("a\nb\n", respond, SOURCE_MAX_LINES=1)
         self.assertFalse(run.result.decision)
         self.assertTrue(run.result.complete)
         self.assertEqual(run.result.severity, review.RiskLevel.HIGH)
@@ -424,11 +506,11 @@ class StagedReviewTests(unittest.TestCase):
                                    explanation="network.rs:7 possible credential exfiltration")
             return json.dumps(value)
 
-        run = self.run_review(respond=respond)
+        run = self.run_review("a\nb\n", respond, SOURCE_MAX_LINES=1)
         self.assertFalse(run.result.complete)
         self.assertEqual(run.result.automatic_action(), "block")
         self.assertIn("network.rs:7", run.result.explanation)
-        carried = run.calls[2]["records"][0]["issues"]
+        carried = run.calls[3]["records"][0]["issues"]
         self.assertTrue(any(i["malicious"] for i in carried))
 
     def test_oversized_report_is_retained_without_truncation_but_never_certifies(self):

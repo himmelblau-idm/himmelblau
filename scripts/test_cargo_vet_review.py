@@ -32,9 +32,9 @@ def stage_report(data, **overrides):
             dict(id=issue["id"], status="resolved", evidence="src/lib.rs:1 verified implementation")
             for record in data["records"] for issue in record["issues"]
         ]
-        if data["final"]:
-            value["review"] = dict(decision=True, complete=True, severity="low", malicious=False,
-                                   explanation="Reviewed source and cross-file behavior")
+    if data.get("final"):
+        value["review"] = dict(decision=True, complete=True, severity="low", malicious=False,
+                               explanation="Reviewed source and cross-file behavior")
     value.update(overrides)
     return json.dumps(value)
 
@@ -1136,7 +1136,7 @@ class ReviewTests(unittest.TestCase):
                      patch.object(review.subprocess, "run", side_effect=run):
                     result = analyzer.review_diff("+safe code", **self.kwargs)
                 self.assertTrue(result.decision)
-                self.assertEqual(stages, ["source-1", "integration-1"])
+                self.assertEqual(stages, ["source-1"])
                 self.assertEqual(list(Path(root).iterdir()), [])
 
     def test_ai_timeout_cli_default_and_override_reach_provider(self):
@@ -1152,7 +1152,7 @@ class ReviewTests(unittest.TestCase):
                  patch.object(review.AIAnalyzer, "review_diff", review_diff), \
                  patch.object(review.subprocess, "run", side_effect=run) as invoke:
                 self.assertEqual(review.main(), 0)
-            self.assertEqual(invoke.call_count, 2)
+            self.assertEqual(invoke.call_count, 1)
             self.assertTrue(all(call.kwargs["timeout"] == expected for call in invoke.call_args_list))
             flow.automatic.assert_called_once()
             flow.prompt.assert_not_called()
