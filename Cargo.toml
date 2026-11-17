@@ -44,12 +44,12 @@ resolver = "2"
 
 [patch.crates-io]
 adler2-2-0-0 = { package = "adler2", path = "src/overrides/adler2/2.0.0" }
-android_system_properties-0-1-5 = { package = "android_system_properties", path = "src/overrides/android_system_properties/0.1.5" }
 anstyle-wincon-3-0-8 = { package = "anstyle-wincon", path = "src/overrides/anstyle-wincon/3.0.8" }
 atomic-polyfill-1-0-3 = { package = "atomic-polyfill", path = "src/overrides/atomic-polyfill/1.0.3" }
 base64-0-21-7 = { package = "base64", path = "src/overrides/base64/0.21.7" }
 bs58-0-5-1 = { package = "bs58", path = "src/overrides/bs58/0.5.1" }
 cbindgen-0-29-2 = { package = "cbindgen", path = "src/overrides/cbindgen/0.29.2" }
+chrono-0-4-45 = { package = "chrono", path = "src/overrides/chrono/0.4.45" }
 const-oid-0-9-6 = { package = "const-oid", path = "src/overrides/const-oid/0.9.6" }
 core-foundation-0-10-1 = { package = "core-foundation", path = "src/overrides/core-foundation/0.10.1" }
 core-foundation-0-9-4 = { package = "core-foundation", path = "src/overrides/core-foundation/0.9.4" }
@@ -67,7 +67,7 @@ getopts-0-2-24 = { package = "getopts", path = "src/overrides/getopts/0.2.24" }
 getrandom-0-2-16 = { package = "getrandom", path = "src/overrides/getrandom/0.2.16" }
 getrandom-0-3-3 = { package = "getrandom", path = "src/overrides/getrandom/0.3.3" }
 hashbrown-0-15-5 = { package = "hashbrown", path = "src/overrides/hashbrown/0.15.5" }
-iana-time-zone-haiku-0-1-2 = { package = "iana-time-zone-haiku", path = "src/overrides/iana-time-zone-haiku/0.1.2" }
+humantime-2-2-0 = { package = "humantime", path = "src/overrides/humantime/2.2.0" }
 indexmap-1-9-3 = { package = "indexmap", path = "src/overrides/indexmap/1.9.3" }
 itertools-0-10-5 = { package = "itertools", path = "src/overrides/itertools/0.10.5" }
 jni-0-19-0 = { package = "jni", path = "src/overrides/jni/0.19.0" }
@@ -121,7 +121,6 @@ webpki-root-certs-1-0-6 = { package = "webpki-root-certs", path = "src/overrides
 winapi-0-3-9 = { package = "winapi", path = "src/overrides/winapi/0.3.9" }
 winapi-util-0-1-9 = { package = "winapi-util", path = "src/overrides/winapi-util/0.1.9" }
 windows-0-61-3 = { package = "windows", path = "src/overrides/windows/0.61.3" }
-windows-core-0-61-2 = { package = "windows-core", path = "src/overrides/windows-core/0.61.2" }
 windows-future-0-2-1 = { package = "windows-future", path = "src/overrides/windows-future/0.2.1" }
 windows-link-0-2-1 = { package = "windows-link", path = "src/overrides/windows-link/0.2.1" }
 windows-registry-0-4-0 = { package = "windows-registry", path = "src/overrides/windows-registry/0.4.0" }

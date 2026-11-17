@@ -677,16 +677,6 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" ];
       };
-      "android_system_properties" = rec {
-        crateName = "android_system_properties";
-        version = "0.1.5";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/android_system_properties/0.1.5; };
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
-
-      };
       "anstream" = rec {
         crateName = "anstream";
         version = "1.0.0";
@@ -2856,68 +2846,28 @@ rec {
         crateName = "chrono";
         version = "0.4.45";
         edition = "2021";
-        sha256 = "09rkcgk6is2sdhqs9142zv8xqnj8ryx8m9hknllqwyv9wxi9x9qs";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/chrono/0.4.45; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
         dependencies = [
           {
-            name = "iana-time-zone";
-            packageId = "iana-time-zone";
-            optional = true;
-            target = { target, features }: (target."unix" or false);
-            features = [ "fallback" ];
-          }
-          {
-            name = "js-sys";
-            packageId = "js-sys";
-            optional = true;
-            target = { target, features }: (("wasm32" == target."arch" or null) && (!(("emscripten" == target."os" or null) || ("wasi" == target."os" or null))));
-          }
-          {
-            name = "num-traits";
-            packageId = "num-traits";
+            name = "jiff";
+            packageId = "jiff";
             usesDefaultFeatures = false;
+            features = [ "std" ];
           }
           {
             name = "serde";
             packageId = "serde";
             optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "wasm-bindgen";
-            packageId = "wasm-bindgen";
-            optional = true;
-            target = { target, features }: (("wasm32" == target."arch" or null) && (!(("emscripten" == target."os" or null) || ("wasi" == target."os" or null))));
-          }
-          {
-            name = "windows-link";
-            packageId = "windows-link";
-            optional = true;
-            target = { target, features }: (target."windows" or false);
+            features = [ "derive" ];
           }
         ];
         features = {
-          "arbitrary" = [ "dep:arbitrary" ];
-          "clock" = [ "winapi" "iana-time-zone" "now" ];
-          "default" = [ "clock" "std" "oldtime" "wasmbind" ];
-          "defmt" = [ "dep:defmt" "pure-rust-locales?/defmt" ];
-          "iana-time-zone" = [ "dep:iana-time-zone" ];
-          "js-sys" = [ "dep:js-sys" ];
-          "now" = [ "std" ];
-          "pure-rust-locales" = [ "dep:pure-rust-locales" ];
-          "rkyv" = [ "dep:rkyv" "rkyv/size_32" ];
-          "rkyv-16" = [ "dep:rkyv" "rkyv?/size_16" ];
-          "rkyv-32" = [ "dep:rkyv" "rkyv?/size_32" ];
-          "rkyv-64" = [ "dep:rkyv" "rkyv?/size_64" ];
-          "rkyv-validation" = [ "rkyv?/validation" ];
           "serde" = [ "dep:serde" ];
-          "std" = [ "alloc" ];
-          "unstable-locales" = [ "pure-rust-locales" ];
-          "wasm-bindgen" = [ "dep:wasm-bindgen" ];
-          "wasmbind" = [ "wasm-bindgen" "js-sys" ];
-          "winapi" = [ "windows-link" ];
-          "windows-link" = [ "dep:windows-link" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "clock" "default" "iana-time-zone" "js-sys" "now" "oldtime" "serde" "std" "wasm-bindgen" "wasmbind" "winapi" "windows-link" ];
+        resolvedDefaultFeatures = [ "alloc" "clock" "serde" "std" "wasmbind" ];
       };
       "cipher 0.4.4" = rec {
         crateName = "cipher";
@@ -8710,7 +8660,10 @@ rec {
         crateName = "humantime";
         version = "2.2.0";
         edition = "2021";
-        sha256 = "17rz8jhh1mcv4b03wnknhv1shwq2v9vhkhlfg884pprsig62l4cv";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/humantime/2.2.0; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
 
       };
       "hybrid-array" = rec {
@@ -9134,69 +9087,6 @@ rec {
           "tracing" = [ "dep:tracing" ];
         };
         resolvedDefaultFeatures = [ "client" "client-legacy" "client-proxy" "client-proxy-system" "default" "http1" "http2" "server" "server-auto" "service" "tokio" ];
-      };
-      "iana-time-zone" = rec {
-        crateName = "iana-time-zone";
-        version = "0.1.63";
-        edition = "2021";
-        sha256 = "1n171f5lbc7bryzmp1h30zw86zbvl5480aq02z92lcdwvvjikjdh";
-        libName = "iana_time_zone";
-        authors = [
-          "Andrew Straw <strawman@astraw.com>"
-          "René Kijewski <rene.kijewski@fu-berlin.de>"
-          "Ryan Lopopolo <rjl@hyperbo.la>"
-        ];
-        dependencies = [
-          {
-            name = "android_system_properties";
-            packageId = "android_system_properties";
-            target = { target, features }: ("android" == target."os" or null);
-          }
-          {
-            name = "core-foundation-sys";
-            packageId = "core-foundation-sys";
-            target = { target, features }: ("apple" == target."vendor" or null);
-          }
-          {
-            name = "iana-time-zone-haiku";
-            packageId = "iana-time-zone-haiku";
-            target = { target, features }: ("haiku" == target."os" or null);
-          }
-          {
-            name = "js-sys";
-            packageId = "js-sys";
-            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
-          }
-          {
-            name = "log";
-            packageId = "log";
-            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
-          }
-          {
-            name = "wasm-bindgen";
-            packageId = "wasm-bindgen";
-            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
-          }
-          {
-            name = "windows-core";
-            packageId = "windows-core";
-            target = { target, features }: ("windows" == target."os" or null);
-          }
-        ];
-        features = {
-        };
-        resolvedDefaultFeatures = [ "fallback" ];
-      };
-      "iana-time-zone-haiku" = rec {
-        crateName = "iana-time-zone-haiku";
-        version = "0.1.2";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/iana-time-zone-haiku/0.1.2; };
-        libName = "iana_time_zone_haiku";
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
-
       };
       "icu_collections" = rec {
         crateName = "icu_collections";
@@ -22411,19 +22301,6 @@ rec {
         features = {
         };
         resolvedDefaultFeatures = [ "Devices_Bluetooth" "Devices_Bluetooth_Advertisement" "Devices_Bluetooth_GenericAttributeProfile" "Devices_Radios" "Foundation" "Foundation_Collections" "Storage_Streams" "default" ];
-      };
-      "windows-core" = rec {
-        crateName = "windows-core";
-        version = "0.61.2";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/windows-core/0.61.2; };
-        libName = "windows_core";
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
-        features = {
-        };
-        resolvedDefaultFeatures = [ "default" ];
       };
       "windows-future" = rec {
         crateName = "windows-future";
