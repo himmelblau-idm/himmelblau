@@ -654,7 +654,7 @@ test('security dependencies and source changes require humans, ordinary version 
       + '@@ -10,4 +10,4 @@\n [package]\n-description = "1 old"\n+description = "2 new"' }]), ['Cargo.toml']);
   assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.toml',
     patch: ' [dependencies]\n-clap = "4.5"\n+clap = "4.6"\n-description = "1 old"\n+description = "2 new"' }]), ['Cargo.toml']);
-  for (const name of ['sha2', 'authenticator', 'libwebauthn']) {
+  for (const name of ['sha2', 'authenticator', 'libwebauthn', 'totp-rs', 'aes', 'aead']) {
     assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Cargo.lock',
       patch: ` name = "${name}"\n-version = "0.1.0"\n+version = "0.1.1"` }]), ['Cargo.lock'], name);
   }
