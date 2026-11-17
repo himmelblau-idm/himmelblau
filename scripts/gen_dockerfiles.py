@@ -598,7 +598,7 @@ VOLUME /himmelblau
 WORKDIR /himmelblau
 
 # Install Rust + aarch64 target + packaging tools (native amd64)
-RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
+RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.96.0 && \\
     rustup target add aarch64-unknown-linux-gnu && \\
     cargo install cargo-deb
 
@@ -620,7 +620,7 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \\
 
 # Rust install: native (amd64) — compile cargo-deb/cargo-generate-rpm from source
 RUST_INSTALL_NATIVE = """\
-RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
+RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.96.0 && \\
     cargo install {packaging_tool}"""
 
 # Rust install: emulated (arm64) — install Rust and packaging tools natively.
@@ -629,7 +629,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -s
 # CFLAGS=-O2: prevent gcc segfaults under QEMU emulation (gcc -O3 triggers QEMU bugs)
 RUST_INSTALL_EMULATED = """\
 ENV CFLAGS="-O2" CXXFLAGS="-O2"
-RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
+RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.96.0 && \\
     cargo install {packaging_tool}"""
 
 # Ubuntu codename mapping (used for multiarch apt sources)

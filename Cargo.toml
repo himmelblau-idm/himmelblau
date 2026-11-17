@@ -46,7 +46,6 @@ resolver = "2"
 adler2-2-0-0 = { package = "adler2", path = "src/overrides/adler2/2.0.0" }
 android_system_properties-0-1-5 = { package = "android_system_properties", path = "src/overrides/android_system_properties/0.1.5" }
 anstyle-wincon-3-0-8 = { package = "anstyle-wincon", path = "src/overrides/anstyle-wincon/3.0.8" }
-assert_hex-0-4-1 = { package = "assert_hex", path = "src/overrides/assert_hex/0.4.1" }
 atomic-polyfill-1-0-3 = { package = "atomic-polyfill", path = "src/overrides/atomic-polyfill/1.0.3" }
 base64-0-21-7 = { package = "base64", path = "src/overrides/base64/0.21.7" }
 bs58-0-5-1 = { package = "bs58", path = "src/overrides/bs58/0.5.1" }
@@ -68,7 +67,6 @@ getopts-0-2-24 = { package = "getopts", path = "src/overrides/getopts/0.2.24" }
 getrandom-0-2-16 = { package = "getrandom", path = "src/overrides/getrandom/0.2.16" }
 getrandom-0-3-3 = { package = "getrandom", path = "src/overrides/getrandom/0.3.3" }
 hashbrown-0-15-5 = { package = "hashbrown", path = "src/overrides/hashbrown/0.15.5" }
-hermit-abi-0-4-0 = { package = "hermit-abi", path = "src/overrides/hermit-abi/0.4.0" }
 iana-time-zone-haiku-0-1-2 = { package = "iana-time-zone-haiku", path = "src/overrides/iana-time-zone-haiku/0.1.2" }
 indexmap-1-9-3 = { package = "indexmap", path = "src/overrides/indexmap/1.9.3" }
 itertools-0-10-5 = { package = "itertools", path = "src/overrides/itertools/0.10.5" }
@@ -77,9 +75,8 @@ jni-0-21-1 = { package = "jni", path = "src/overrides/jni/0.21.1" }
 jni-utils-0-1-1 = { package = "jni-utils", path = "src/overrides/jni-utils/0.1.1" }
 js-sys-0-3-77 = { package = "js-sys", path = "src/overrides/js-sys/0.3.77" }
 kqueue-1-1-1 = { package = "kqueue", path = "src/overrides/kqueue/1.1.1" }
-ldap3_proto-0-6-2 = { package = "ldap3_proto", path = "src/overrides/ldap3_proto/0.6.2" }
 libredox-0-1-3 = { package = "libredox", path = "src/overrides/libredox/0.1.3" }
-linux-raw-sys-0-4-15 = { package = "linux-raw-sys", path = "src/overrides/linux-raw-sys/0.4.15" }
+libsqlite3-sys-0-35-0 = { package = "libsqlite3-sys", path = "src/overrides/libsqlite3-sys/0.35.0" }
 maplit-1-0-2 = { package = "maplit", path = "src/overrides/maplit/1.0.2" }
 memoffset-0-8-0 = { package = "memoffset", path = "src/overrides/memoffset/0.8.0" }
 memoffset-0-9-1 = { package = "memoffset", path = "src/overrides/memoffset/0.9.1" }
@@ -97,7 +94,8 @@ quinn-0-11-8 = { package = "quinn", path = "src/overrides/quinn/0.11.8" }
 r-efi-6-0-0 = { package = "r-efi", path = "src/overrides/r-efi/6.0.0" }
 redox_syscall-0-5-12 = { package = "redox_syscall", path = "src/overrides/redox_syscall/0.5.12" }
 reqwest-0-12-28 = { package = "reqwest", path = "src/overrides/reqwest/0.12.24" }
-rsa-0-9-999 = { package = "rsa", path = "src/overrides/rsa/0.9.999" }
+rsa-0-10-0-rc-19 = { package = "rsa", path = "src/overrides/rsa/0.10.0-rc.19" }
+rsa-0-9-10 = { package = "rsa", path = "src/overrides/rsa/0.9.10" }
 rustls-platform-verifier-android-0-1-1 = { package = "rustls-platform-verifier-android", path = "src/overrides/rustls-platform-verifier-android/0.1.1" }
 schannel-0-1-27 = { package = "schannel", path = "src/overrides/schannel/0.1.27" }
 schemars-0-9-0 = { package = "schemars", path = "src/overrides/schemars/0.9.0" }
@@ -140,7 +138,7 @@ version = "5.0.0"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
-rust-version = "1.89"
+rust-version = "1.96"
 edition = "2021"
 license = "GPL-3.0-or-later"
 homepage = "https://github.com/himmelblau-idm/himmelblau"
@@ -155,7 +153,7 @@ serde_json = "^1.0.149"
 tracing-subscriber = "^0.3.23"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
-libhimmelblau = { version = "0.8.45", features = ["broker", "changepassword", "on_behalf_of", "mfa_method_selection", "optional_mfa", "intune_portal_vers_selection", "redirect_uri", "pop_support", "ipvers", "set_timeout"] }
+libhimmelblau = { version = "0.8.46", features = ["broker", "changepassword", "on_behalf_of", "mfa_method_selection", "optional_mfa", "intune_portal_vers_selection", "redirect_uri", "pop_support", "ipvers", "set_timeout"] }
 clap = { version = "^4.6", features = ["derive", "env"] }
 reqwest = { version = "^0.13.1", features = ["json"] }
 okta = { package = "okta-auth-rs", version = "8.0.1003" }
@@ -171,7 +169,7 @@ idmap = { path = "src/idmap" }
 identity_dbus_broker = "0.2.1"
 console-subscriber = "0.5.0"
 broker-client = { path = "src/broker-client" }
-libkrimes = { version = "0.1.0", features = ["keyring"] }
+libkrimes = { version = "0.2.0", features = ["keyring"] }
 
 # Kanidm deps
 base64 = "^0.23.0"
@@ -183,12 +181,12 @@ sketching = "1.10.0"
 rusqlite = "^0.37.0"
 hashbrown = { version = "0.17.0", features = ["serde", "inline-more"] }
 lru = "^0.18.0"
-kanidm_lib_crypto = "1.9.1"
-kanidm_utils_users = "1.8.1"
+kanidm_lib_crypto = { git = "https://github.com/kanidm/kanidm.git", tag = "v1.12.0" }
+kanidm_utils_users = { git = "https://github.com/kanidm/kanidm.git", tag = "v1.12.0" }
 walkdir = "2"
 csv = "1.4.0"
 notify-debouncer-full = { version = "0.5" }
 gettextrs = { package = "gettext-rs", version = "0.8", features = ["gettext-system"] }
-kanidm-hsm-crypto = { version = "^0.3.6" }
-kanidm_lib_file_permissions = "1.10.0"
+kanidm-hsm-crypto = { version = "^0.4" }
+kanidm_lib_file_permissions = { git = "https://github.com/kanidm/kanidm.git", tag = "v1.12.0" }
 sha2 = "0.11.0"
