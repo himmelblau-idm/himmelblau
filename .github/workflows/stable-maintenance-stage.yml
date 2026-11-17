@@ -99,7 +99,7 @@ jobs:
             static.crates.io:443
             static.rust-lang.org:443
             pipelines.actions.githubusercontent.com:443
-            results-rests.actions.githubusercontent.com:443
+            results-receiver.actions.githubusercontent.com:443
             *.blob.core.windows.net:443
 
       - name: Export runner-local maintenance paths
