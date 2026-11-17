@@ -661,6 +661,8 @@ test('security dependencies and source changes require humans, ordinary version 
   for (const filename of ['Makefile', 'flake.nix', 'default.nix', 'shell.nix']) {
     assert.deepEqual(sensitiveChanges(pr(), [{ filename, patch: '+EXTRA = value' }]), [filename]);
   }
+  assert.deepEqual(sensitiveChanges(pr(), [{ filename: 'Makefile',
+    patch: '-@./scripts/gen_servicefiles.py\n+@./scripts/gen_servicefiles.py --static-user root' }]), ['Makefile']);
 });
 test('manual eligibility does not require testing, but automatic eligibility does', () => {
   const s = snapshot();
