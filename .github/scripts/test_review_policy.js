@@ -526,16 +526,27 @@ test('unrelated, foreign, bot-authored, deleted or mismatched evidence cannot au
     assert.equal(await testingConfirmation(evidenceHarness([confirmation({ body: `/confirm-tested ${SHA} ${base}` })], options)), null);
   }
 });
-test('revoked testing or sponsorship, new findings, and CI reruns at final evaluation prevent merging', async () => {
-  for (const type of ['testing', 'sponsorship', 'review', 'ci', 'permissions']) {
-    const h = harness({ sponsored: type === 'sponsorship' });
+test('revoked sponsorship at final evaluation prevents automerge while testing confirmation remains', async () => {
+  const h = harness({ sponsored: true });
+  let reads = 0;
+  const original = h.github.rest.issues.listComments;
+  h.github.rest.issues.listComments = async () => {
+    if (++reads === 1) return original();
+    // Keep /confirm-tested so merge failure is attributable to sponsorship revalidation.
+    return (await original()).filter(c => !(c.body || '').startsWith('/sponsor-ai '));
+  };
+  await run({ ...h, merge: true });
+  assert.equal(h.calls.some(c => c[0] === 'merge'), false);
+});
+test('revoked testing, new findings, and CI reruns at final evaluation prevent merging', async () => {
+  for (const type of ['testing', 'review', 'ci', 'permissions']) {
+    const h = harness({ sponsored: false });
     let reads = 0;
-    if (type === 'testing' || type === 'sponsorship') {
+    if (type === 'testing') {
       const original = h.github.rest.issues.listComments;
       h.github.rest.issues.listComments = async () => {
         if (++reads === 1) return original();
-        if (type === 'testing') return [];
-        return (await original()).filter(c => !(c.body || '').startsWith('/sponsor-ai '));
+        return [];
       };
     } else if (type === 'review') {
       h.github.rest.pulls.listReviews = async () => ++reads === 1 ? [review()] : [review('maintainer', { state: 'CHANGES_REQUESTED' })];
