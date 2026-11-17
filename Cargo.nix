@@ -8187,6 +8187,7 @@ rec {
             features = [ "std" ];
           }
         ];
+
       };
       "hybrid-array" = rec {
         crateName = "hybrid-array";
@@ -10433,7 +10434,7 @@ rec {
           "default" = [ "libsqlite3-sys/default" ];
           "in_gecko" = [ "libsqlite3-sys/in_gecko" ];
           "loadable_extension" = [ "libsqlite3-sys/loadable_extension" ];
-          "min_sqlite_version_3_14_0" = [ "libsqlite3-sys/min_sqlite_version_3_14_0" ];
+          "min_sqlite_version_3_14_0" = [ "libsqlite3-sys/min_sqlite_version_3_45_3" ];
           "preupdate_hook" = [ "libsqlite3-sys/preupdate_hook" ];
           "session" = [ "libsqlite3-sys/session" ];
           "sqlcipher" = [ "libsqlite3-sys/sqlcipher" ];
@@ -13981,14 +13982,14 @@ rec {
       };
       "portable-atomic" = rec {
         crateName = "portable-atomic";
-        version = "1.13.1";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/portable-atomic/1.13.1; };
+        version = "1.15.0";
+        edition = "2018";
+        sha256 = "11csag858ndk5w4yz17h91vy53ynh67r2903gwwdn2cnilzbdj05";
         libName = "portable_atomic";
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
         features = {
+          "critical-section" = [ "dep:critical-section" ];
+          "default" = [ "fallback" ];
+          "serde" = [ "dep:serde" ];
         };
         resolvedDefaultFeatures = [ "fallback" "require-cas" ];
       };

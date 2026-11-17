@@ -157,9 +157,6 @@ audit-as-crates-io = false
 [policy."pastey:0.1.1"]
 audit-as-crates-io = false
 
-[policy."portable-atomic:1.13.1"]
-audit-as-crates-io = false
-
 [policy."quinn:0.11.8"]
 audit-as-crates-io = false
 
@@ -812,6 +809,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.polyval]]
 version = "0.6.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.portable-atomic]]
+version = "1.15.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ppv-lite86]]
