@@ -7,3 +7,6 @@ edition.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+
+[dependencies]
+jiff = { version = "0.2", default-features = false, features = ["std"] }

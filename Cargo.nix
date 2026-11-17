@@ -8179,7 +8179,14 @@ rec {
         authors = [
           "David Mulder <dmulder@suse.com>"
         ];
-
+        dependencies = [
+          {
+            name = "jiff";
+            packageId = "jiff";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
+        ];
       };
       "hybrid-array" = rec {
         crateName = "hybrid-array";
