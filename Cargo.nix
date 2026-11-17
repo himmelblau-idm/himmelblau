@@ -537,16 +537,6 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" ];
       };
-      "android_system_properties" = rec {
-        crateName = "android_system_properties";
-        version = "0.1.5";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/android_system_properties/0.1.5; };
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
-
-      };
       "anstream" = rec {
         crateName = "anstream";
         version = "1.0.0";
@@ -1887,7 +1877,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "cexpr";
@@ -2053,21 +2043,19 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
-      "bitflags 2.9.1" = rec {
+      "bitflags 2.13.2" = rec {
         crateName = "bitflags";
-        version = "2.9.1";
+        version = "2.13.2";
         edition = "2021";
-        sha256 = "0rz9rpp5wywwqb3mxfkywh4drmzci2fch780q7lifbf6bsc5d3hv";
+        sha256 = "01hbgjwvid66850fzi76mvn5f2bqycx6sf165ng1kfjqq9bl1v9x";
         authors = [
           "The Rust Project Developers"
         ];
         features = {
           "arbitrary" = [ "dep:arbitrary" ];
           "bytemuck" = [ "dep:bytemuck" ];
-          "compiler_builtins" = [ "dep:compiler_builtins" ];
-          "core" = [ "dep:core" ];
-          "rustc-dep-of-std" = [ "core" "compiler_builtins" ];
-          "serde" = [ "dep:serde" ];
+          "serde" = [ "serde_core" ];
+          "serde_core" = [ "dep:serde_core" ];
         };
         resolvedDefaultFeatures = [ "std" ];
       };
@@ -2341,7 +2329,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "bluez-generated";
@@ -2527,7 +2515,7 @@ rec {
           }
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "bluez-async";
@@ -2999,68 +2987,28 @@ rec {
         crateName = "chrono";
         version = "0.4.45";
         edition = "2021";
-        sha256 = "09rkcgk6is2sdhqs9142zv8xqnj8ryx8m9hknllqwyv9wxi9x9qs";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/chrono/0.4.45; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
         dependencies = [
           {
-            name = "iana-time-zone";
-            packageId = "iana-time-zone";
-            optional = true;
-            target = { target, features }: (target."unix" or false);
-            features = [ "fallback" ];
-          }
-          {
-            name = "js-sys";
-            packageId = "js-sys";
-            optional = true;
-            target = { target, features }: (("wasm32" == target."arch" or null) && (!(("emscripten" == target."os" or null) || ("wasi" == target."os" or null))));
-          }
-          {
-            name = "num-traits";
-            packageId = "num-traits";
+            name = "jiff";
+            packageId = "jiff";
             usesDefaultFeatures = false;
+            features = [ "std" ];
           }
           {
             name = "serde";
             packageId = "serde";
             optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "wasm-bindgen";
-            packageId = "wasm-bindgen";
-            optional = true;
-            target = { target, features }: (("wasm32" == target."arch" or null) && (!(("emscripten" == target."os" or null) || ("wasi" == target."os" or null))));
-          }
-          {
-            name = "windows-link";
-            packageId = "windows-link";
-            optional = true;
-            target = { target, features }: (target."windows" or false);
+            features = [ "derive" ];
           }
         ];
         features = {
-          "arbitrary" = [ "dep:arbitrary" ];
-          "clock" = [ "winapi" "iana-time-zone" "now" ];
-          "default" = [ "clock" "std" "oldtime" "wasmbind" ];
-          "defmt" = [ "dep:defmt" "pure-rust-locales?/defmt" ];
-          "iana-time-zone" = [ "dep:iana-time-zone" ];
-          "js-sys" = [ "dep:js-sys" ];
-          "now" = [ "std" ];
-          "pure-rust-locales" = [ "dep:pure-rust-locales" ];
-          "rkyv" = [ "dep:rkyv" "rkyv/size_32" ];
-          "rkyv-16" = [ "dep:rkyv" "rkyv?/size_16" ];
-          "rkyv-32" = [ "dep:rkyv" "rkyv?/size_32" ];
-          "rkyv-64" = [ "dep:rkyv" "rkyv?/size_64" ];
-          "rkyv-validation" = [ "rkyv?/validation" ];
           "serde" = [ "dep:serde" ];
-          "std" = [ "alloc" ];
-          "unstable-locales" = [ "pure-rust-locales" ];
-          "wasm-bindgen" = [ "dep:wasm-bindgen" ];
-          "wasmbind" = [ "wasm-bindgen" "js-sys" ];
-          "winapi" = [ "windows-link" ];
-          "windows-link" = [ "dep:windows-link" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "clock" "default" "iana-time-zone" "js-sys" "now" "oldtime" "serde" "std" "wasm-bindgen" "wasmbind" "winapi" "windows-link" ];
+        resolvedDefaultFeatures = [ "alloc" "clock" "serde" "std" "wasmbind" ];
       };
       "cipher" = rec {
         crateName = "cipher";
@@ -6682,7 +6630,7 @@ rec {
         dependencies = [
           {
             name = "rustix";
-            packageId = "rustix 1.1.4";
+            packageId = "rustix 1.1.6";
             usesDefaultFeatures = false;
             target = { target, features }: (!(target."windows" or false));
             features = [ "system" ];
@@ -8222,7 +8170,10 @@ rec {
         crateName = "humantime";
         version = "2.2.0";
         edition = "2021";
-        sha256 = "17rz8jhh1mcv4b03wnknhv1shwq2v9vhkhlfg884pprsig62l4cv";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/humantime/2.2.0; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
 
       };
       "hybrid-array" = rec {
@@ -8639,69 +8590,6 @@ rec {
           "tracing" = [ "dep:tracing" ];
         };
         resolvedDefaultFeatures = [ "client" "client-legacy" "client-proxy" "client-proxy-system" "default" "http1" "http2" "server" "server-auto" "service" "tokio" ];
-      };
-      "iana-time-zone" = rec {
-        crateName = "iana-time-zone";
-        version = "0.1.63";
-        edition = "2021";
-        sha256 = "1n171f5lbc7bryzmp1h30zw86zbvl5480aq02z92lcdwvvjikjdh";
-        libName = "iana_time_zone";
-        authors = [
-          "Andrew Straw <strawman@astraw.com>"
-          "René Kijewski <rene.kijewski@fu-berlin.de>"
-          "Ryan Lopopolo <rjl@hyperbo.la>"
-        ];
-        dependencies = [
-          {
-            name = "android_system_properties";
-            packageId = "android_system_properties";
-            target = { target, features }: ("android" == target."os" or null);
-          }
-          {
-            name = "core-foundation-sys";
-            packageId = "core-foundation-sys";
-            target = { target, features }: ("apple" == target."vendor" or null);
-          }
-          {
-            name = "iana-time-zone-haiku";
-            packageId = "iana-time-zone-haiku";
-            target = { target, features }: ("haiku" == target."os" or null);
-          }
-          {
-            name = "js-sys";
-            packageId = "js-sys";
-            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
-          }
-          {
-            name = "log";
-            packageId = "log";
-            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
-          }
-          {
-            name = "wasm-bindgen";
-            packageId = "wasm-bindgen";
-            target = { target, features }: (("wasm32" == target."arch" or null) && ("unknown" == target."os" or null));
-          }
-          {
-            name = "windows-core";
-            packageId = "windows-core";
-            target = { target, features }: ("windows" == target."os" or null);
-          }
-        ];
-        features = {
-        };
-        resolvedDefaultFeatures = [ "fallback" ];
-      };
-      "iana-time-zone-haiku" = rec {
-        crateName = "iana-time-zone-haiku";
-        version = "0.1.2";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/iana-time-zone-haiku/0.1.2; };
-        libName = "iana_time_zone_haiku";
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
-
       };
       "icu_collections" = rec {
         crateName = "icu_collections";
@@ -9278,7 +9166,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "inotify-sys";
@@ -10332,7 +10220,7 @@ rec {
           }
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "bitmask-enum";
@@ -10507,12 +10395,48 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
-      "libsqlite3-sys" = rec {
+      "libsqlite3-sys 0.35.0" = rec {
         crateName = "libsqlite3-sys";
         version = "0.35.0";
         edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/libsqlite3-sys/0.35.0; };
+        libName = "libsqlite3_sys";
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "libsqlite3-sys";
+            packageId = "libsqlite3-sys 0.39.1";
+          }
+        ];
+        features = {
+          "buildtime_bindgen" = [ "libsqlite3-sys/buildtime_bindgen" ];
+          "bundled" = [ "libsqlite3-sys/bundled" ];
+          "bundled-sqlcipher" = [ "libsqlite3-sys/bundled-sqlcipher" ];
+          "bundled-sqlcipher-vendored-openssl" = [ "libsqlite3-sys/bundled-sqlcipher-vendored-openssl" ];
+          "bundled-windows" = [ "libsqlite3-sys/bundled-windows" ];
+          "bundled_bindings" = [ "libsqlite3-sys/bundled_bindings" ];
+          "column_metadata" = [ "libsqlite3-sys/column_metadata" ];
+          "default" = [ "libsqlite3-sys/default" ];
+          "in_gecko" = [ "libsqlite3-sys/in_gecko" ];
+          "loadable_extension" = [ "libsqlite3-sys/loadable_extension" ];
+          "min_sqlite_version_3_14_0" = [ "libsqlite3-sys/min_sqlite_version_3_14_0" ];
+          "preupdate_hook" = [ "libsqlite3-sys/preupdate_hook" ];
+          "session" = [ "libsqlite3-sys/session" ];
+          "sqlcipher" = [ "libsqlite3-sys/sqlcipher" ];
+          "unlock_notify" = [ "libsqlite3-sys/unlock_notify" ];
+          "wasm32-wasi-vfs" = [ "libsqlite3-sys/wasm32-wasi-vfs" ];
+          "with-asan" = [ "libsqlite3-sys/with-asan" ];
+        };
+        resolvedDefaultFeatures = [ "default" ];
+      };
+      "libsqlite3-sys 0.39.1" = rec {
+        crateName = "libsqlite3-sys";
+        version = "0.39.1";
+        edition = "2024";
         links = "sqlite3";
-        sha256 = "0gy1m6j1l94fxsirzp4h4rkrksf78rz7jy3px57qd1rcd8m1hg0k";
+        sha256 = "1cx2z7q7rqacffszy2qsv0vlcxmwdkwhcg23gg80a9xrhwdz198l";
         libName = "libsqlite3_sys";
         authors = [
           "The rusqlite developers"
@@ -10533,13 +10457,13 @@ rec {
           "bindgen" = [ "dep:bindgen" ];
           "buildtime_bindgen" = [ "bindgen" "pkg-config" "vcpkg" ];
           "bundled" = [ "cc" "bundled_bindings" ];
-          "bundled-sqlcipher" = [ "bundled" ];
+          "bundled-sqlcipher" = [ "bundled" "dep:sqlcipher-src" ];
           "bundled-sqlcipher-vendored-openssl" = [ "bundled-sqlcipher" "openssl-sys/vendored" ];
           "bundled-windows" = [ "cc" "bundled_bindings" ];
           "cc" = [ "dep:cc" ];
-          "default" = [ "min_sqlite_version_3_14_0" ];
+          "default" = [ "min_sqlite_version_3_45_3" ];
           "loadable_extension" = [ "prettyplease" "quote" "syn" ];
-          "min_sqlite_version_3_14_0" = [ "pkg-config" "vcpkg" ];
+          "min_sqlite_version_3_45_3" = [ "pkg-config" "vcpkg" ];
           "openssl-sys" = [ "dep:openssl-sys" ];
           "pkg-config" = [ "dep:pkg-config" ];
           "prettyplease" = [ "dep:prettyplease" ];
@@ -10549,7 +10473,7 @@ rec {
           "syn" = [ "dep:syn" ];
           "vcpkg" = [ "dep:vcpkg" ];
         };
-        resolvedDefaultFeatures = [ "default" "min_sqlite_version_3_14_0" "pkg-config" "vcpkg" ];
+        resolvedDefaultFeatures = [ "default" "min_sqlite_version_3_45_3" "pkg-config" "vcpkg" ];
       };
       "libudev" = rec {
         crateName = "libudev";
@@ -10624,7 +10548,7 @@ rec {
           }
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "bluer";
@@ -11273,7 +11197,7 @@ rec {
         dependencies = [
           {
             name = "rustix";
-            packageId = "rustix 1.1.4";
+            packageId = "rustix 1.1.6";
             features = [ "fs" ];
           }
         ];
@@ -11453,7 +11377,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "cfg-if";
@@ -11548,7 +11472,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
             target = { target, features }: ("macos" == target."os" or null);
           }
           {
@@ -12263,7 +12187,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "cfg-if";
@@ -15462,7 +15386,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "fallible-iterator";
@@ -15478,7 +15402,7 @@ rec {
           }
           {
             name = "libsqlite3-sys";
-            packageId = "libsqlite3-sys";
+            packageId = "libsqlite3-sys 0.35.0";
           }
           {
             name = "smallvec";
@@ -15577,7 +15501,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
             usesDefaultFeatures = false;
           }
           {
@@ -15676,11 +15600,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "event" "fs" "libc-extra-traits" "net" "pipe" "process" "std" "time" ];
       };
-      "rustix 1.1.4" = rec {
+      "rustix 1.1.6" = rec {
         crateName = "rustix";
-        version = "1.1.4";
+        version = "1.1.6";
         edition = "2021";
-        sha256 = "14511f9yjqh0ix07xjrjpllah3325774gfwi9zpq72sip5jlbzmn";
+        sha256 = "1ajqv2zxmfms30hhvp5bdzpixn5xqnz7s871vpa56h99wm16grz5";
         authors = [
           "Dan Gohman <dev@sunfishcode.online>"
           "Jakub Konka <kubkon@jakubkonka.com>"
@@ -15688,7 +15612,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
             usesDefaultFeatures = false;
           }
           {
@@ -15773,7 +15697,7 @@ rec {
           "process" = [ "linux-raw-sys/prctl" ];
           "pty" = [ "fs" ];
           "runtime" = [ "linux-raw-sys/prctl" ];
-          "rustc-dep-of-std" = [ "core" "rustc-std-workspace-alloc" "linux-raw-sys/rustc-dep-of-std" "bitflags/rustc-dep-of-std" ];
+          "rustc-dep-of-std" = [ "core" "rustc-std-workspace-alloc" "linux-raw-sys/rustc-dep-of-std" ];
           "rustc-std-workspace-alloc" = [ "dep:rustc-std-workspace-alloc" ];
           "shm" = [ "fs" ];
           "std" = [ "bitflags/std" "alloc" "libc?/std" "libc_errno?/std" ];
@@ -16372,7 +16296,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "cssparser";
@@ -18220,7 +18144,7 @@ rec {
           }
           {
             name = "rustix";
-            packageId = "rustix 1.1.4";
+            packageId = "rustix 1.1.6";
             target = { target, features }: ((target."unix" or false) || ("wasi" == target."os" or null));
             features = [ "fs" ];
           }
@@ -19401,7 +19325,7 @@ rec {
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 2.13.2";
           }
           {
             name = "bytes";
@@ -20750,19 +20674,6 @@ rec {
         };
         resolvedDefaultFeatures = [ "Devices_Bluetooth" "Devices_Bluetooth_Advertisement" "Devices_Bluetooth_GenericAttributeProfile" "Devices_Radios" "Foundation" "Foundation_Collections" "Storage_Streams" "default" ];
       };
-      "windows-core" = rec {
-        crateName = "windows-core";
-        version = "0.61.2";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/windows-core/0.61.2; };
-        libName = "windows_core";
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
-        features = {
-        };
-        resolvedDefaultFeatures = [ "default" ];
-      };
       "windows-future" = rec {
         crateName = "windows-future";
         version = "0.2.1";
@@ -21704,7 +21615,7 @@ rec {
           }
           {
             name = "rustix";
-            packageId = "rustix 1.1.4";
+            packageId = "rustix 1.1.6";
             usesDefaultFeatures = false;
             target = { target, features }: (target."unix" or false);
             features = [ "net" "process" "std" ];

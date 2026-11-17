@@ -1,0 +1,23 @@
+[package]
+name = "chrono"
+version = "0.4.45"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+clock = []
+serde = ["dep:serde"]
+std = []
+wasmbind = []
+alloc = []
+
+[dependencies]
+jiff = { version = "0.2", default-features = false, features = ["std"] }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
