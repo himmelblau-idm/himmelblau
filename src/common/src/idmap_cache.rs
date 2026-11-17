@@ -62,17 +62,39 @@ CREATE TABLE IF NOT EXISTS provider_static_users (
     name TEXT NOT NULL,
     uid INTEGER NOT NULL,
     gid INTEGER NOT NULL,
+    manual_override INTEGER NOT NULL DEFAULT 0 CHECK (manual_override IN (0, 1)),
     PRIMARY KEY (provider, name)
 );
 CREATE TABLE IF NOT EXISTS provider_static_groups (
     provider TEXT NOT NULL,
     name TEXT NOT NULL,
     gid INTEGER NOT NULL,
+    manual_override INTEGER NOT NULL DEFAULT 0 CHECK (manual_override IN (0, 1)),
     PRIMARY KEY (provider, name)
 );";
 
 fn ensure_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(CREATE_TABLES)
+    conn.execute_batch(CREATE_TABLES)?;
+    for table in ["provider_static_users", "provider_static_groups"] {
+        let has_manual_override = {
+            let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            let mut found = false;
+            for column in columns {
+                if column? == "manual_override" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !has_manual_override {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN manual_override INTEGER NOT NULL DEFAULT 0 CHECK (manual_override IN (0, 1));"
+            ))?;
+        }
+    }
+    Ok(())
 }
 
 /// Reject a cached user whose UID or GID lands in systemd's dynamic user
@@ -166,33 +188,60 @@ impl StaticIdCache {
         if !self.writable {
             return Err(rusqlite::Error::InvalidQuery);
         }
-
         let tx = conn.transaction()?;
         if remove_legacy_entries {
             tx.execute("DELETE FROM static_users", [])?;
             tx.execute("DELETE FROM static_groups", [])?;
         }
         tx.execute(
-            "DELETE FROM provider_static_users WHERE provider = ?1",
+            "DELETE FROM provider_static_users WHERE provider = ?1 AND manual_override = 0",
             [provider],
         )?;
         tx.execute(
-            "DELETE FROM provider_static_groups WHERE provider = ?1",
+            "DELETE FROM provider_static_groups WHERE provider = ?1 AND manual_override = 0",
             [provider],
         )?;
         for user in users {
             tx.execute(
-                "INSERT INTO provider_static_users (provider, name, uid, gid) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO provider_static_users (provider, name, uid, gid, manual_override) VALUES (?1, ?2, ?3, ?4, 0) ON CONFLICT(provider, name) DO UPDATE SET uid = excluded.uid, gid = excluded.gid WHERE provider_static_users.manual_override = 0",
                 params![provider, user.name, user.uid, user.gid],
             )?;
         }
         for group in groups {
             tx.execute(
-                "INSERT INTO provider_static_groups (provider, name, gid) VALUES (?1, ?2, ?3)",
+                "INSERT INTO provider_static_groups (provider, name, gid, manual_override) VALUES (?1, ?2, ?3, 0) ON CONFLICT(provider, name) DO UPDATE SET gid = excluded.gid WHERE provider_static_groups.manual_override = 0",
                 params![provider, group.name, group.gid],
             )?;
         }
         tx.commit()
+    }
+
+    pub fn set_provider_user_override(&self, provider: &str, user: &StaticUser) -> Result<()> {
+        let Some(conn) = self.conn.as_ref() else {
+            return Err(rusqlite::Error::InvalidQuery);
+        };
+        if !self.writable {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        conn.execute(
+            "INSERT INTO provider_static_users (provider, name, uid, gid, manual_override) VALUES (?1, ?2, ?3, ?4, 1) ON CONFLICT(provider, name) DO UPDATE SET uid = excluded.uid, gid = excluded.gid, manual_override = 1",
+            params![provider, user.name, user.uid, user.gid],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_provider_group_override(&self, provider: &str, group: &StaticGroup) -> Result<()> {
+        let Some(conn) = self.conn.as_ref() else {
+            return Err(rusqlite::Error::InvalidQuery);
+        };
+        if !self.writable {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        conn.execute(
+            "INSERT INTO provider_static_groups (provider, name, gid, manual_override) VALUES (?1, ?2, ?3, 1) ON CONFLICT(provider, name) DO UPDATE SET gid = excluded.gid, manual_override = 1",
+            params![provider, group.name, group.gid],
+        )?;
+        Ok(())
     }
 
     pub fn get_user_by_provider_name(&self, provider: &str, name: &str) -> Option<StaticUser> {
@@ -598,6 +647,102 @@ mod tests {
     }
 
     #[test]
+    fn manual_provider_overrides_survive_enumeration() {
+        let mut cache = StaticIdCache::in_memory_for_test().unwrap();
+        let user_name = "alice@example.org";
+        let group_name = "group-object-id";
+        cache
+            .replace_provider_entries(
+                "provider-a",
+                &[StaticUser {
+                    name: user_name.to_string(),
+                    uid: 1234,
+                    gid: 5678,
+                }],
+                &[StaticGroup {
+                    name: group_name.to_string(),
+                    gid: 6000,
+                }],
+                false,
+            )
+            .unwrap();
+        cache
+            .replace_provider_entries(
+                "provider-b",
+                &[StaticUser {
+                    name: user_name.to_string(),
+                    uid: 2345,
+                    gid: 6789,
+                }],
+                &[StaticGroup {
+                    name: group_name.to_string(),
+                    gid: 7000,
+                }],
+                false,
+            )
+            .unwrap();
+        cache
+            .set_provider_user_override(
+                "provider-a",
+                &StaticUser {
+                    name: user_name.to_string(),
+                    uid: 3456,
+                    gid: 7890,
+                },
+            )
+            .unwrap();
+        cache
+            .set_provider_group_override(
+                "provider-a",
+                &StaticGroup {
+                    name: group_name.to_string(),
+                    gid: 8000,
+                },
+            )
+            .unwrap();
+        cache
+            .replace_provider_entries(
+                "provider-a",
+                &[StaticUser {
+                    name: user_name.to_string(),
+                    uid: 4567,
+                    gid: 8901,
+                }],
+                &[StaticGroup {
+                    name: group_name.to_string(),
+                    gid: 9000,
+                }],
+                false,
+            )
+            .unwrap();
+
+        assert_eq!(
+            cache
+                .get_user_by_provider_name("provider-a", user_name)
+                .map(|user| (user.uid, user.gid)),
+            Some((3456, 7890))
+        );
+        assert_eq!(
+            cache
+                .get_group_by_provider_name("provider-a", group_name)
+                .map(|group| group.gid),
+            Some(8000)
+        );
+        assert_eq!(
+            cache
+                .get_user_by_provider_name("provider-b", user_name)
+                .map(|user| (user.uid, user.gid)),
+            Some((2345, 6789))
+        );
+        assert_eq!(
+            cache
+                .get_group_by_provider_name("provider-b", group_name)
+                .map(|group| group.gid),
+            Some(7000)
+        );
+    }
+
+    #[test]
     fn provider_replacement_rolls_back_legacy_deletion_on_error() {
         let mut cache = cache_with_user(&StaticUser {
             name: "legacy-user".to_string(),
@@ -616,25 +761,29 @@ mod tests {
                 false,
             )
             .unwrap();
-
-        let duplicate_users = [
-            StaticUser {
-                name: "duplicate".to_string(),
-                uid: 2000,
-                gid: 2000,
-            },
-            StaticUser {
-                name: "duplicate".to_string(),
-                uid: 3000,
-                gid: 3000,
-            },
-        ];
+        cache
+            .conn
+            .as_ref()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_provider_user
+                 BEFORE INSERT ON provider_static_users
+                 BEGIN
+                     SELECT RAISE(ABORT, 'blocked');
+                 END;",
+            )
+            .unwrap();
+        let replacement = [StaticUser {
+            name: "replacement-user".to_string(),
+            uid: 2000,
+            gid: 2000,
+        }];
         assert!(cache
-            .replace_provider_entries("provider-a", &duplicate_users, &[], true)
+            .replace_provider_entries("provider-a", &replacement, &[], true)
             .is_err());
         assert_eq!(cache.get_user_by_name("legacy-user").unwrap().uid, 1234);
         assert!(cache
-            .get_user_by_provider_name("provider-a", "duplicate")
+            .get_user_by_provider_name("provider-a", "replacement-user")
             .is_none());
         assert_eq!(
             cache
@@ -684,6 +833,77 @@ mod tests {
                 .unwrap()
                 .gid,
             5678
+        );
+    }
+
+    #[test]
+    fn writable_schema_setup_adds_override_columns_to_existing_provider_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE static_users (
+                name TEXT PRIMARY KEY,
+                uid INTEGER NOT NULL,
+                gid INTEGER NOT NULL
+            );
+            CREATE TABLE static_groups (
+                name TEXT PRIMARY KEY,
+                gid INTEGER NOT NULL
+            );
+            CREATE TABLE provider_static_users (
+                provider TEXT NOT NULL,
+                name TEXT NOT NULL,
+                uid INTEGER NOT NULL,
+                gid INTEGER NOT NULL,
+                PRIMARY KEY (provider, name)
+            );
+            CREATE TABLE provider_static_groups (
+                provider TEXT NOT NULL,
+                name TEXT NOT NULL,
+                gid INTEGER NOT NULL,
+                PRIMARY KEY (provider, name)
+            );
+            INSERT INTO provider_static_users (provider, name, uid, gid)
+            VALUES ('provider-a', 'alice', 1234, 5678);
+            INSERT INTO provider_static_groups (provider, name, gid)
+            VALUES ('provider-a', 'group-id', 6000);",
+        )
+        .unwrap();
+        ensure_schema(&conn).unwrap();
+        let cache = StaticIdCache {
+            conn: Some(conn),
+            writable: true,
+        };
+        cache
+            .set_provider_user_override(
+                "provider-a",
+                &StaticUser {
+                    name: "alice".to_string(),
+                    uid: 2345,
+                    gid: 6789,
+                },
+            )
+            .unwrap();
+        cache
+            .set_provider_group_override(
+                "provider-a",
+                &StaticGroup {
+                    name: "group-id".to_string(),
+                    gid: 7000,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            cache
+                .get_user_by_provider_name("provider-a", "alice")
+                .map(|user| (user.uid, user.gid)),
+            Some((2345, 6789))
+        );
+        assert_eq!(
+            cache
+                .get_group_by_provider_name("provider-a", "group-id")
+                .map(|group| group.gid),
+            Some(7000)
         );
     }
 }

@@ -21,8 +21,8 @@ use libc::gid_t;
 
 #[derive(Debug, Subcommand)]
 pub enum IdmapOpt {
-    /// Add a static user mapping to the idmap cache. This maps an Entra ID user (by UPN or
-    /// SAM-compatible name) to a fixed UID and primary group GID.
+    /// Add a manual Entra ID user mapping for the provider selected by its UPN or `--domain`.
+    /// Unqualified names use the default provider.
     UserAdd {
         #[clap(short, long)]
         debug: bool,
@@ -33,9 +33,8 @@ pub enum IdmapOpt {
         #[clap(short = 'g', long = "gid")]
         gid: gid_t,
     },
-    /// Add a static group mapping to the idmap cache. This maps an Entra ID group (by Object Id
-    /// GUID) to a fixed GID. This can be used to maintain group identity and membership
-    /// compatibility after moving to Entra ID.
+    /// Add a manual Entra ID group mapping for the provider selected by `--domain` or the
+    /// configured default. This maps a group Object ID to a fixed GID.
     GroupAdd {
         #[clap(short, long)]
         debug: bool,

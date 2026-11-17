@@ -2240,6 +2240,26 @@ async fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
 
+                    let config = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                        Ok(config) => config,
+                        Err(error) => {
+                            error!(?error, "Failed to parse {}", DEFAULT_CONFIG_PATH);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                    let account_provider = account_id.contains('@').then_some(account_id.as_str());
+                    let provider = match select_entra_provider(
+                        &config,
+                        account_provider,
+                        selected_domain.as_deref(),
+                    ) {
+                        Ok(provider) => provider,
+                        Err(error) => {
+                            error!(error, "Cannot select provider for user mapping. Use a qualified account name or --domain");
+                            return ExitCode::FAILURE;
+                        }
+                    };
+
                     let cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
                         Ok(cache) => cache,
                         Err(e) => {
@@ -2254,12 +2274,12 @@ async fn main() -> ExitCode {
                         gid,
                     };
 
-                    if let Err(e) = cache.insert_user(&user) {
-                        error!("Failed to insert user mapping: {}", e);
+                    if let Err(e) = cache.set_provider_user_override(&provider.domain, &user) {
+                        error!("Failed to save user mapping: {}", e);
                         return ExitCode::FAILURE;
                     }
 
-                    info!("User mapping inserted successfully.");
+                    info!("User mapping saved successfully.");
                 }
 
                 IdmapOpt::GroupAdd {
@@ -2279,6 +2299,25 @@ async fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
 
+                    let config = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                        Ok(config) => config,
+                        Err(error) => {
+                            error!(?error, "Failed to parse {}", DEFAULT_CONFIG_PATH);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                    let provider = match select_entra_provider(
+                        &config,
+                        None,
+                        selected_domain.as_deref(),
+                    ) {
+                        Ok(provider) => provider,
+                        Err(error) => {
+                            error!(error, "Cannot select provider for group mapping. Specify --domain when no default Entra provider is configured");
+                            return ExitCode::FAILURE;
+                        }
+                    };
+
                     let cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
                         Ok(cache) => cache,
                         Err(e) => {
@@ -2292,12 +2331,12 @@ async fn main() -> ExitCode {
                         gid,
                     };
 
-                    if let Err(e) = cache.insert_group(&group) {
-                        error!("Failed to insert group mapping: {}", e);
+                    if let Err(e) = cache.set_provider_group_override(&provider.domain, &group) {
+                        error!("Failed to save group mapping: {}", e);
                         return ExitCode::FAILURE;
                     }
 
-                    info!("Group mapping inserted successfully.");
+                    info!("Group mapping saved successfully.");
                 }
 
                 IdmapOpt::Clear { debug: _ } => {
