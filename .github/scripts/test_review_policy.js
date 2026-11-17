@@ -437,6 +437,49 @@ test('failed evaluation on a shared head blocks eligible sibling automerge', asy
   await run({ github, core, context: { repo: { owner: 'himmelblau-idm', repo: 'himmelblau' } }, merge: true });
   assert.equal(calls.some(c => c[0] === 'merge'), false);
 });
+test('shared head blocks automerge when a sibling races during evaluation', async () => {
+  const racedSha = OLD;
+  const ready = { ...pr(), number: 1, head: { sha: racedSha } };
+  const racing = { ...pr(), number: 2, head: { sha: racedSha } };
+  const pulled = new Map();
+  const calls = [];
+  const github = {
+    rest: {
+      pulls: {
+        list: async () => [ready, racing],
+        get: async ({ pull_number }) => {
+          const count = (pulled.get(pull_number) || 0) + 1;
+          pulled.set(pull_number, count);
+          if (pull_number === 2 && count > 1) {
+            return { data: { ...racing, head: { sha: SHA }, mergeable: true, mergeable_state: 'clean' } };
+          }
+          return { data: { ...(pull_number === 1 ? ready : racing), mergeable: true, mergeable_state: 'clean' } };
+        },
+        listReviews: async () => [review('maintainer', { commit_id: racedSha })],
+        listFiles: async () => [{ filename: 'src/selinux/src/himmelblaud.te' }],
+        merge: async args => { calls.push(['merge', args]); return { data: { merged: true } }; },
+      },
+      repos: {
+        getCollaboratorPermissionLevel: async () => ({ data: { permission: 'write' } }),
+        listCommitStatusesForRef: async () => [],
+      },
+      issues: { listComments: async () => [confirmation({ body: `/confirm-tested ${racedSha}` })] },
+      checks: {
+        listForRef: async () => REQUIRED_CI.map(name => check(name)),
+        create: async args => { calls.push(['check', args]); return { data: { id: 1 } }; },
+        update: async args => { calls.push(['update', args]); },
+      },
+    },
+    paginate: async (method, args) => method(args),
+    graphql: async () => ({ repository: { pullRequest: { reviewThreads: {
+      nodes: [{ isResolved: true }], pageInfo: { hasNextPage: false },
+    } } } }),
+  };
+  const core = { info: () => {}, error: () => {}, setFailed: () => {} };
+  await run({ github, core, context: { repo: { owner: 'himmelblau-idm', repo: 'himmelblau' } }, merge: true });
+  assert.equal(calls.some(c => c[0] === 'merge'), false);
+  assert.ok(calls.some(c => (c[0] === 'check' || c[0] === 'update') && c[1].conclusion === 'failure'));
+});
 test('eligible writer PR cannot automerge when another main PR shares its head', async () => {
   const ready = { ...pr(), number: 1 };
   const blocked = { ...pr(), number: 2, user: user('outsider') };

@@ -480,6 +480,11 @@ async function run({ github, context, core, merge = false }) {
       if (fresh.head.sha !== sha || fresh.base.ref !== 'main' || fresh.base.sha !== pr.base.sha
           || fresh.state !== 'open' || fresh.draft !== pr.draft) {
         core.info(`#${pr.number}: PR changed during evaluation; retry on next event.`);
+        // Same commit-scoped required checks bind every PR on this head. Until a
+        // full evaluation succeeds, treat a raced sibling as a blocking peer.
+        const blocked = evaluationFailuresBySha.get(sha) || [];
+        blocked.push({ summary, policy: { eligible: false, autoEligible: false } });
+        evaluationFailuresBySha.set(sha, blocked);
         continue;
       }
       evaluated.push({ summary, pr, fresh, sha, args, permissions, canWrite, authorCanWrite, policy, ci,
