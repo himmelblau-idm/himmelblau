@@ -245,11 +245,50 @@ impl StaticIdCache {
     }
 
     pub fn get_user_by_provider_name(&self, provider: &str, name: &str) -> Option<StaticUser> {
+        self.get_user_by_provider_name_with_legacy_alias(provider, name, None)
+    }
+
+    pub fn get_user_by_provider_name_with_legacy_alias(
+        &self,
+        provider: &str,
+        name: &str,
+        legacy_alias: Option<&str>,
+    ) -> Option<StaticUser> {
+        let conn = self.conn.as_ref()?;
+        let query_provider_user = |account_name: &str, case_insensitive: bool| {
+            let query = if case_insensitive {
+                "SELECT name, uid, gid FROM provider_static_users WHERE provider = ?1 AND name = ?2 COLLATE NOCASE"
+            } else {
+                "SELECT name, uid, gid FROM provider_static_users WHERE provider = ?1 AND name = ?2"
+            };
+            conn.query_row(query, params![provider, account_name], |row| {
+                Ok(StaticUser {
+                    name: row.get(0)?,
+                    uid: row.get(1)?,
+                    gid: row.get(2)?,
+                })
+            })
+            .optional()
+            .ok()
+            .flatten()
+        };
+        let user = query_provider_user(name, false)
+            .or_else(|| legacy_alias.and_then(|alias| query_provider_user(alias, true)));
+        if let Some(user) = user {
+            return static_user_is_safe(&user).then_some(user);
+        }
+        self.get_user_by_name(name).or_else(|| {
+            legacy_alias.and_then(|alias| self.get_user_by_name_case_insensitive(alias))
+        })
+    }
+
+    /// Reads an unscoped mapping case-insensitively for qualified legacy account names.
+    fn get_user_by_name_case_insensitive(&self, name: &str) -> Option<StaticUser> {
         let conn = self.conn.as_ref()?;
         let user = conn
             .query_row(
-                "SELECT name, uid, gid FROM provider_static_users WHERE provider = ?1 AND name = ?2",
-                params![provider, name],
+                "SELECT name, uid, gid FROM static_users WHERE name = ?1 COLLATE NOCASE",
+                [name],
                 |row| {
                     Ok(StaticUser {
                         name: row.get(0)?,
@@ -260,11 +299,8 @@ impl StaticIdCache {
             )
             .optional()
             .ok()
-            .flatten();
-        if let Some(user) = user {
-            return static_user_is_safe(&user).then_some(user);
-        }
-        self.get_user_by_name(name)
+            .flatten()?;
+        static_user_is_safe(&user).then_some(user)
     }
 
     pub fn get_group_by_provider_name(&self, provider: &str, name: &str) -> Option<StaticGroup> {
@@ -739,6 +775,55 @@ mod tests {
                 .get_group_by_provider_name("provider-b", group_name)
                 .map(|group| group.gid),
             Some(7000)
+        );
+    }
+
+    #[test]
+    fn provider_lookup_uses_canonical_name_and_legacy_alias() {
+        let mut cache = StaticIdCache::in_memory_for_test().unwrap();
+        cache
+            .insert_user(&StaticUser {
+                name: "Alice@Work".to_string(),
+                uid: 1234,
+                gid: 5678,
+            })
+            .unwrap();
+        cache
+            .replace_provider_entries(
+                "provider-a",
+                &[StaticUser {
+                    name: "alice@example.org".to_string(),
+                    uid: 2345,
+                    gid: 6789,
+                }],
+                &[],
+                false,
+            )
+            .unwrap();
+
+        assert_eq!(
+            cache
+                .get_user_by_provider_name_with_legacy_alias(
+                    "provider-a",
+                    "alice@example.org",
+                    Some("alice@work"),
+                )
+                .map(|user| (user.uid, user.gid)),
+            Some((2345, 6789))
+        );
+
+        cache
+            .replace_provider_entries("provider-a", &[], &[], false)
+            .unwrap();
+        assert_eq!(
+            cache
+                .get_user_by_provider_name_with_legacy_alias(
+                    "provider-a",
+                    "alice@example.org",
+                    Some("alice@work"),
+                )
+                .map(|user| (user.uid, user.gid)),
+            Some((1234, 5678))
         );
     }
 

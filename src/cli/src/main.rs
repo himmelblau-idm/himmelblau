@@ -642,6 +642,10 @@ fn canonical_entra_account(cfg: &HimmelblauConfig, account: &str) -> String {
         .unwrap_or_else(|| account.to_string())
 }
 
+fn canonical_entra_account_key(cfg: &HimmelblauConfig, account: &str) -> String {
+    canonical_entra_account(cfg, account).to_lowercase()
+}
+
 /// First broker account matching `account_id` that belongs to the selected Entra provider.
 fn select_broker_account(
     cfg: &HimmelblauConfig,
@@ -2269,7 +2273,7 @@ async fn main() -> ExitCode {
                     };
 
                     let user = StaticUser {
-                        name: account_id,
+                        name: canonical_entra_account_key(&config, &account_id),
                         uid,
                         gid,
                     };
@@ -2744,6 +2748,10 @@ mod tests {
         ];
         assert_eq!(
             super::canonical_entra_account(&cfg, "riley@a"),
+            "riley@a.example"
+        );
+        assert_eq!(
+            super::canonical_entra_account_key(&cfg, "RILEY@A"),
             "riley@a.example"
         );
         let select = |account, domain| {

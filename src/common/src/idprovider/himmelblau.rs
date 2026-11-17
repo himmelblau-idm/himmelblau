@@ -945,9 +945,22 @@ impl IdProvider for HimmelblauProvider {
 
                             // Generate a lookup-only UserToken. Its real UUID
                             // requires a provider-backed token.
-                            let id_attr_map = self.config.lock().await.get_id_attr_map();
+                            let config = self.config.lock().await;
+                            let canonical_account_id = config
+                                .canonical_account_name(&account_id)
+                                .unwrap_or_else(|| account_id.clone())
+                                .to_lowercase();
+                            let id_attr_map = config.get_id_attr_map();
+                            drop(config);
+                            let legacy_alias = account_id
+                                .contains('@')
+                                .then_some(account_id.as_str());
                             let (uid, gid) = match idmap_cache
-                                .get_user_by_provider_name(&self.domain, &account_id)
+                                .get_user_by_provider_name_with_legacy_alias(
+                                    &self.domain,
+                                    &canonical_account_id,
+                                    legacy_alias,
+                                )
                             {
                                 Some(user) => {
                                     (user.uid, user.gid)
@@ -4593,7 +4606,18 @@ impl HimmelblauProvider {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
                 })?;
-                match idmap_cache.get_user_by_provider_name(&self.domain, &spn) {
+                let config = self.config.lock().await;
+                let canonical_spn = config
+                    .canonical_account_name(&spn)
+                    .unwrap_or_else(|| spn.clone())
+                    .to_lowercase();
+                drop(config);
+                let legacy_alias = spn.contains('@').then_some(spn.as_str());
+                match idmap_cache.get_user_by_provider_name_with_legacy_alias(
+                    &self.domain,
+                    &canonical_spn,
+                    legacy_alias,
+                ) {
                     Some(user) => (user.uid, user.gid),
                     None => {
                         let id_attr_map = self.config.lock().await.get_id_attr_map();
