@@ -66,6 +66,19 @@ Tips / conventions:
 
 Himmelblau depends heavily on **libhimmelblau**, which is typically developed side-by-side with this repo.
 
+### Changes to owned dependencies
+
+- Submit changes to `libhimmelblau` at its authoritative upstream,
+  https://gitlab.com/samba-team/libhimmelblau. The GitHub
+  `himmelblau-idm/libhimmelblau` repository is a mirror, not the upstream for merge requests.
+- Submit changes to `identity_dbus_broker` at
+  https://github.com/himmelblau-idm/identity_dbus_broker.
+- Make dependency fixes in those projects rather than vendoring a modified copy or
+  placing an unapplied patch in this repository. Coordinate any needed dependency
+  version and packaging updates here after the upstream change is available. If an
+  upstream change cannot be submitted, report the blocker and provide a patch for
+  the correct project.
+
 Expected checkout layout (common):
 
 - `<parent>/himmelblau/`
