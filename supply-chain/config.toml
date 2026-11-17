@@ -34,9 +34,6 @@ url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/
 [policy."adler2:2.0.0"]
 audit-as-crates-io = false
 
-[policy."android_system_properties:0.1.5"]
-audit-as-crates-io = false
-
 [policy."anstyle-wincon:3.0.8"]
 audit-as-crates-io = false
 
@@ -50,6 +47,9 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy."cbindgen:0.29.2"]
+audit-as-crates-io = false
+
+[policy."chrono:0.4.45"]
 audit-as-crates-io = false
 
 [policy."const-oid:0.9.6"]
@@ -100,7 +100,7 @@ audit-as-crates-io = false
 [policy."hermit-abi:0.4.0"]
 audit-as-crates-io = false
 
-[policy."iana-time-zone-haiku:0.1.2"]
+[policy."humantime:2.2.0"]
 audit-as-crates-io = false
 
 [policy."indexmap:1.9.3"]
@@ -125,6 +125,9 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy."libredox:0.1.3"]
+audit-as-crates-io = false
+
+[policy."libsqlite3-sys:0.35.0"]
 audit-as-crates-io = false
 
 [policy."linux-raw-sys:0.4.15"]
@@ -233,9 +236,6 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy."winapi:0.3.9"]
-audit-as-crates-io = false
-
-[policy."windows-core:0.61.2"]
 audit-as-crates-io = false
 
 [policy."windows-link:0.2.1"]
@@ -474,8 +474,17 @@ version = "0.7.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.der]]
-version = "0.8.2"
+version = "0.8.3"
 criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for der 0.8.3; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+The complete assigned material and all supplied issues were assessed. The upgrade provides meaningful validation and recursion fixes, and no newly introduced serious vulnerability was established. However, two independently confirmed medium-severity denial-of-service weaknesses remain in the reviewed interfaces. Although both predate this upgrade and their triggering configurations were not identified in the current workspace, the required certification rule withholds approval while confirmed security findings remain.
+Confirmed findings:
+source-1:findings:1: src/asn1/set_of.rs:166-175: The revised SetOfRef::from_bytes loop assumes successful T::decode always consumes input. Option<T> violates this assumption when the next tag does not match (src/asn1/optional.rs:21). SetOfRef::<Option<u8>>::from_der(&[0x31,0x02,0x05,0x00]) repeatedly decodes None and compares it equal without advancing. A local 0.8.3 debug reproduction timed out. Exploitation requires an application to decode attacker-controlled sets with Option elements or another decoder that can succeed without consuming input. Reject successful element decodes that do not advance the reader. This is a residual weakness: 0.8.2 instead reaches an iterator counter-underflow panic in debug builds, with unchecked counter wrapping allowing continued iteration in release builds. (Medium severity, nonmalicious denial of service. Inspected der-0.8.3/src/asn1/set_of.rs:166-175 and src/asn1/optional.rs:12-21: the validation loop has no input-progress check, while Option<T> can return None without consuming a mismatched tag. Independently compiled 0.8.3 and reproduced a timeout decoding SetOfRef::<Option<u8>>::from_der(&[0x31,0x02,0x05,0x00]). An attacker must control input decoded using Option elements or another decoder that succeeds without consuming input; the loop can occupy a worker indefinitely. Inspected the 0.8.2 constructor and iterator and reproduced its counter-underflow panic at src/asn1/set_of.rs:455 using the same input. Thus this is a remaining weakness rather than evidence of a newly introduced production vulnerability. A successful-element input-progress check is needed.)
+source-1:findings:2: src/asn1/real.rs:68-69: The added exponent-length checks leave the mantissa-copy loop vulnerable to oversized input. A binary REAL containing more than eight mantissa octets reaches n_bytes[7 - pos] with pos >= 8, causing an arithmetic or bounds panic. Reproduced using f64::from_der(&[0x09,0x0b,0x80,0,1,1,1,1,1,1,1,1,1]). Exploitation requires the real feature and an application decoding attacker-controlled REAL values; an uncaught panic can terminate a request handler or process. Validate the mantissa length before indexing. The same input also panics in 0.8.2; this is an existing weakness remaining after the adjacent truncation fix. (Medium severity, nonmalicious denial of service. Inspected der-0.8.3/src/asn1/real.rs:42-70: the new checks bound exponent reads but leave the eight-byte mantissa buffer indexed by 7-pos without bounding the mantissa length. Independently reproduced a panic at src/asn1/real.rs:69 with f64::from_der(&[0x09,0x0b,0x80,0,1,1,1,1,1,1,1,1,1]). Exploitation requires the real feature and attacker-controlled REAL decoding; an uncaught panic can terminate a handler or process. Inspected the corresponding 0.8.2 implementation and reproduced the same failure at src/asn1/real.rs:61. This weakness predates the upgrade. Rejecting oversized mantissas before indexing is needed.)
+Review scope: 43860 original characters (1271 lines); 0 deleted-file bodies intentionally omitted (0 patch characters). Remaining review material: 43860 characters (1271 lines), 1 initial source tasks. Source limits: 240000 characters / 6000 lines. Coverage applies to the retained diff and deletion metadata.
+Review artifacts: /home/dmulder/code/himmelblau2/.cargo-vet-review-gr9mjvyu.review"""
 
 [[exemptions.der_derive]]
 version = "0.7.3"
@@ -581,10 +590,6 @@ criteria = "safe-to-deploy"
 version = "1.1.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.humantime]]
-version = "2.2.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.hybrid-array]]
 version = "0.4.0"
 criteria = "safe-to-deploy"
@@ -637,6 +642,10 @@ criteria = "safe-to-deploy"
 version = "0.4.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.libc]]
+version = "0.2.191"
+criteria = "safe-to-deploy"
+
 [[exemptions.libdbus-sys]]
 version = "0.2.7"
 criteria = "safe-to-deploy"
@@ -650,7 +659,7 @@ version = "0.9.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.libsqlite3-sys]]
-version = "0.25.2"
+version = "0.39.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.libudev]]
@@ -889,6 +898,18 @@ criteria = "safe-to-deploy"
 version = "0.5.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.serde_json]]
+version = "1.0.154"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for serde_json 1.0.154; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Withhold unconditional safe-to-deploy certification because preserve_order without serde_json/std now selects a hasher explicitly unsuitable for interactive attackers, including for consumers whose unchanged feature declarations previously selected the standard hasher. This creates conditional CPU-denial-of-service exposure when parsing untrusted object keys. The supplied workspace avoids that path. No additional security findings or unresolved assessment context remain.
+Confirmed findings:
+source-1:findings:1: src/map.rs:43-46 and Cargo.toml's preserve_order feature introduce weaker collision-attack resistance when preserve_order is enabled without serde_json/std. Previously preserve_order necessarily enabled std and selected its RandomState; the same downstream feature configuration can now select foldhash. JSON object keys reach this hasher through src/value/de.rs:136-141. The new documentation and foldhash 0.2.0's documentation explicitly acknowledge insufficient protection against adaptive attackers. A long-running application accepting attacker-controlled object keys, with sufficient observable feedback to develop colliding inputs and insufficient input or execution limits, could suffer excessive CPU consumption from collision-heavy map operations. This is a conditional denial-of-service concern; no practical collision attack was demonstrated during this review. (Medium severity, non-malicious conditional denial of service. Cargo.toml removes std from preserve_order; src/map.rs selects foldhash::fast::RandomState when preserve_order is enabled without serde_json/std. src/value/de.rs::visit_map inserts input keys into that map. foldhash-0.2.0/src/lib.rs documents inadequate resistance to interactive attackers, and src/seed.rs derives randomness from addresses and mutable seed state rather than a cryptographic entropy source in this configuration. Existing consumers disabling defaults and relying on preserve_order to enable std can therefore lose collision-attack resistance on upgrade. Exploitation requires attacker-controlled keys, sufficient feedback or seed predictability to construct collision-heavy inputs, and inadequate resource limits. No practical collision exploit was demonstrated.)
+Review scope: 7766 original characters (246 lines); 0 deleted-file bodies intentionally omitted (0 patch characters). Remaining review material: 7766 characters (246 lines), 1 initial source tasks. Source limits: 240000 characters / 6000 lines. Coverage applies to the retained diff and deletion metadata.
+Review artifacts: /home/dmulder/code/himmelblau2/.cargo-vet-review-puh0b_di.review"""
+
 [[exemptions.serde_plain]]
 version = "1.0.2"
 criteria = "safe-to-deploy"
@@ -899,6 +920,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.sha-crypt]]
 version = "0.5.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.sha2]]
+version = "0.11.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.signal-hook-registry]]
@@ -927,6 +952,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tokio-rustls]]
 version = "0.26.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.tokio-util]]
+version = "0.7.20"
 criteria = "safe-to-deploy"
 
 [[exemptions.tonic]]
