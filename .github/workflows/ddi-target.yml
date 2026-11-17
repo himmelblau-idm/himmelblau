@@ -200,11 +200,11 @@ jobs:
           TARGET_SPEC: ${{ inputs.spec }}
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
         run: python3 tooling/.github/scripts/ddi.py publish --artifacts signed
-      - name: Install checksum signing tools
+      - name: Install checksum signing and version-comparison tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y gnupg gpgsm openssl
-      - name: Sign and publish sysupdate manifests
+          sudo apt-get install -y gnupg gpgsm openssl systemd
+      - name: Publish sysupdate manifests and prune old DDIs
         env:
           TARGET_SPEC: ${{ inputs.spec }}
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
