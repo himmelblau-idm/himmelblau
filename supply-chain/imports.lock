@@ -133,8 +133,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.compact_jwt]]
-version = "0.5.3-dev"
-when = "2025-07-10"
+version = "0.5.7"
+when = "2026-08-12"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -425,8 +425,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.43"
-when = "2026-10-01"
+version = "0.8.45"
+when = "2026-10-30"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
