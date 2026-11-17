@@ -253,7 +253,7 @@ rec {
     crates = {
       "aad-tool" = rec {
         crateName = "aad-tool";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -664,7 +664,7 @@ rec {
       };
       "apparmor" = rec {
         crateName = "apparmor";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/apparmor; };
         authors = [
@@ -2421,7 +2421,7 @@ rec {
       };
       "broker" = rec {
         crateName = "broker";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -2481,7 +2481,7 @@ rec {
       };
       "broker-client" = rec {
         crateName = "broker-client";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/broker-client; };
         libName = "broker_client";
@@ -4221,7 +4221,7 @@ rec {
           }
           {
             name = "sha2";
-            packageId = "sha2 0.11.0";
+            packageId = "sha2 0.11.1";
             rename = "sha2-pre";
             usesDefaultFeatures = false;
           }
@@ -4942,11 +4942,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "derive" "flagset" "oid" "pem" "std" "zeroize" ];
       };
-      "der 0.8.2" = rec {
+      "der 0.8.3" = rec {
         crateName = "der";
-        version = "0.8.2";
+        version = "0.8.3";
         edition = "2024";
-        sha256 = "02m8k3wix7gzc9mjc72l0zx8aiqfhsf1zd79c81b48g4x58chy58";
+        sha256 = "01703q9nh4vlswvm7hbjknvhjd589apzdz0jdrx452zbiw86m6ba";
         authors = [
           "RustCrypto Developers"
         ];
@@ -7424,7 +7424,7 @@ rec {
       };
       "himmelblau-fuzz" = rec {
         crateName = "himmelblau-fuzz";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -7473,7 +7473,7 @@ rec {
       };
       "himmelblau-orchestrator" = rec {
         crateName = "himmelblau-orchestrator";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -7550,7 +7550,7 @@ rec {
       };
       "himmelblau_policies" = rec {
         crateName = "himmelblau_policies";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/policies; };
         authors = [
@@ -7621,7 +7621,7 @@ rec {
       };
       "himmelblau_unix_common" = rec {
         crateName = "himmelblau_unix_common";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/common; };
         authors = [
@@ -7660,7 +7660,7 @@ rec {
           }
           {
             name = "der";
-            packageId = "der 0.8.2";
+            packageId = "der 0.8.3";
           }
           {
             name = "futures";
@@ -7763,7 +7763,7 @@ rec {
           }
           {
             name = "sha2";
-            packageId = "sha2 0.11.0";
+            packageId = "sha2 0.11.1";
           }
           {
             name = "sketching";
@@ -7819,7 +7819,7 @@ rec {
       };
       "himmelblaud" = rec {
         crateName = "himmelblaud";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -9085,7 +9085,7 @@ rec {
       };
       "idmap" = rec {
         crateName = "idmap";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/idmap; };
         authors = [
@@ -9832,7 +9832,7 @@ rec {
           }
           {
             name = "sha2";
-            packageId = "sha2 0.11.0";
+            packageId = "sha2 0.11.1";
           }
           {
             name = "tracing";
@@ -10087,9 +10087,9 @@ rec {
       };
       "libc" = rec {
         crateName = "libc";
-        version = "0.2.190";
+        version = "0.2.191";
         edition = "2021";
-        sha256 = "0y5yap4bfp7rfsldcbk9pb5alcgygca5xn1n2pmh181zdpf3spff";
+        sha256 = "02i4j7pjh129y92rijaia4576131fa2xjsii1dc3c1fnlv4qgkb5";
         features = {
           "default" = [ "std" ];
           "rustc-dep-of-std" = [ "align" "rustc-std-workspace-core" ];
@@ -10352,7 +10352,7 @@ rec {
           }
           {
             name = "der";
-            packageId = "der 0.8.2";
+            packageId = "der 0.8.3";
             features = [ "alloc" "derive" "flagset" "std" ];
           }
           {
@@ -11691,7 +11691,7 @@ rec {
       };
       "nss_himmelblau" = rec {
         crateName = "nss_himmelblau";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/nss; };type = [ "cdylib" ];
         authors = [
@@ -11934,7 +11934,7 @@ rec {
       };
       "o365" = rec {
         crateName = "o365";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/o365; };
         authors = [
@@ -13206,7 +13206,7 @@ rec {
       };
       "pam_himmelblau" = rec {
         crateName = "pam_himmelblau";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         links = "pam";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/pam; };type = [ "cdylib" ];
@@ -14394,7 +14394,7 @@ rec {
       };
       "qr-greeter" = rec {
         crateName = "qr-greeter";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/qr-greeter; };
         libName = "qr_greeter";
@@ -16424,7 +16424,7 @@ rec {
       };
       "selinux" = rec {
         crateName = "selinux";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/selinux; };
         authors = [
@@ -16775,9 +16775,9 @@ rec {
       };
       "serde_json" = rec {
         crateName = "serde_json";
-        version = "1.0.153";
+        version = "1.0.154";
         edition = "2021";
-        sha256 = "0xi1alrj977jw917pdndgdkx7g4bwa4x6f7rnbvyq5i44ffhfqma";
+        sha256 = "1mjby21g8fxhrsfp73yz8wg6n2f4h23ah0nczds409l53f5wrsg7";
         dependencies = [
           {
             name = "itoa";
@@ -16815,7 +16815,7 @@ rec {
           "alloc" = [ "serde_core/alloc" ];
           "default" = [ "std" ];
           "indexmap" = [ "dep:indexmap" ];
-          "preserve_order" = [ "indexmap" "std" ];
+          "preserve_order" = [ "indexmap" "alloc" "dep:foldhash" ];
           "std" = [ "memchr/std" "serde_core/std" ];
         };
         resolvedDefaultFeatures = [ "alloc" "default" "std" ];
@@ -17285,11 +17285,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "oid" "std" ];
       };
-      "sha2 0.11.0" = rec {
+      "sha2 0.11.1" = rec {
         crateName = "sha2";
-        version = "0.11.0";
+        version = "0.11.1";
         edition = "2024";
-        sha256 = "1x15x22c5yf54ac0np5bfqnq5x0hdw4wqzpi48zwn94ma0bsfss4";
+        sha256 = "06ddr559jvwx17d7847l6i1g4hrlwy39j0yimjwwfskxxfdhdms7";
         authors = [
           "RustCrypto Developers"
         ];
@@ -17784,7 +17784,7 @@ rec {
       };
       "sshd-config" = rec {
         crateName = "sshd-config";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/sshd-config; };
         libName = "sshd_config";
@@ -17795,7 +17795,7 @@ rec {
       };
       "sso" = rec {
         crateName = "sso";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         crateBin = [
           {
@@ -17842,7 +17842,7 @@ rec {
       };
       "sso-policies" = rec {
         crateName = "sso-policies";
-        version = "4.0.8";
+        version = "4.0.9";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/sso-policies; };
         libName = "sso_policies";
@@ -18867,9 +18867,9 @@ rec {
       };
       "tokio-util" = rec {
         crateName = "tokio-util";
-        version = "0.7.19";
+        version = "0.7.20";
         edition = "2021";
-        sha256 = "0licqrhrawysjrsr0qw3cgzkkjph7090hlcqcm45aazmkg81aj29";
+        sha256 = "0jwagxx9vr940rlxjh0y7zimd2cbxqbjym5nz73byvm93d2wyr74";
         libName = "tokio_util";
         authors = [
           "Tokio Contributors <team@tokio.rs>"
@@ -20218,9 +20218,9 @@ rec {
       };
       "unicode-normalization" = rec {
         crateName = "unicode-normalization";
-        version = "0.1.25";
+        version = "0.1.26";
         edition = "2018";
-        sha256 = "1s76dcrxw7vs32yhpi0p074apdc3s7lak7809f3qvclwij3zdm2z";
+        sha256 = "0pd8b0kx8kf0zkfzhr1xn3q5kfwwgsn07q8ykaxb722j7nq3zkbm";
         libName = "unicode_normalization";
         authors = [
           "kwantam <kwantam@gmail.com>"
