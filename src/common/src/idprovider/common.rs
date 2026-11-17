@@ -436,7 +436,7 @@ macro_rules! impl_himmelblau_hello_key_helpers {
 
 #[macro_export]
 macro_rules! load_cached_prt {
-    ($hello_key:ident, $hello_storage_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($hello_key:ident, $loaded_hello_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // Check for and decrypt any cached PRT
         let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
@@ -444,9 +444,9 @@ macro_rules! load_cached_prt {
                 .client
                 .lock()
                 .await
-                .unseal_user_prt_with_loaded_hello_key(
+                .unseal_user_prt_with_loaded_ms_hello_key(
                     &hello_prt,
-                    &$hello_storage_key,
+                    &$loaded_hello_key,
                     $tpm,
                     $machine_key,
                 )
@@ -471,23 +471,23 @@ macro_rules! load_cached_prt {
 
 #[macro_export]
 macro_rules! load_cached_prt_no_op {
-    ($hello_key:ident, $hello_storage_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($hello_key:ident, $loaded_hello_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // No-op, since openidconnect does not have PRTs
     };
 }
 
 #[macro_export]
 macro_rules! load_cached_prt_for_try_unseal {
-    ($hello_key:ident, $hello_storage_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($hello_key:ident, $loaded_hello_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
             let (mut prt, prt_expired) = $self
                 .client
                 .lock()
                 .await
-                .unseal_user_prt_with_loaded_hello_key(
+                .unseal_user_prt_with_loaded_ms_hello_key(
                     &hello_prt,
-                    &$hello_storage_key,
+                    &$loaded_hello_key,
                     $tpm,
                     $machine_key,
                 )
@@ -570,7 +570,7 @@ macro_rules! load_cached_prt_for_try_unseal {
 
 #[macro_export]
 macro_rules! load_cached_prt_for_try_unseal_no_op {
-    ($hello_key:ident, $hello_storage_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($hello_key:ident, $loaded_hello_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // No-op, since openidconnect does not have PRTs
         let _ = (&$keytype, $online);
     };
@@ -773,8 +773,8 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         e
                     })?;
 
-                let pin = match PinValue::new(&cred) {
-                    Ok(pin) => pin,
+                match PinValue::new(&cred) {
+                    Ok(_) => (),
                     Err(e) => {
                         error!("Failed setting pin value: {:?}", e);
                         handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
@@ -785,11 +785,12 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         )));
                     }
                 };
-                match $tpm.ms_hello_key_load($machine_key, &hello_key, &pin) {
-                    Ok((_, win_hello_storage_key)) => {
+                match himmelblau::LoadedMsHelloKey::load(&hello_key, &cred, $tpm, $machine_key) {
+                    Ok(loaded_hello_key) => {
+                        let win_hello_storage_key = loaded_hello_key.storage_key();
                         $load_cached_prt!(
                             hello_key,
-                            win_hello_storage_key,
+                            loaded_hello_key,
                             cred,
                             $self,
                             $account_id,
@@ -804,7 +805,7 @@ macro_rules! impl_himmelblau_offline_auth_step {
                             $keystore.get_tagged_hsm_key(&hello_refresh_token_tag)
                         {
                             let refresh_token = String::from_utf8(
-                                $tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token)
+                                $tpm.unseal_data(win_hello_storage_key, &sealed_refresh_token)
                                     .map_err(|e| {
                                         error!("Failed to unseal refresh token: {:?}", e);
                                         IdpError::Tpm
@@ -930,8 +931,8 @@ macro_rules! impl_himmelblau_try_unseal {
                 error!("try_unseal failed. Hello key missing.");
                 e
             })?;
-        let pin = match PinValue::new($cred) {
-            Ok(pin) => pin,
+        match PinValue::new($cred) {
+            Ok(_) => (),
             Err(e) => {
                 error!("Failed setting pin value: {:?}", e);
                 handle_hello_bad_pin_count!($self, $account_id, $keystore, |_msg: &str| {
@@ -941,15 +942,16 @@ macro_rules! impl_himmelblau_try_unseal {
             }
         };
 
-        match $tpm.ms_hello_key_load($machine_key, &hello_key, &pin) {
-            Ok((_, win_hello_storage_key)) => {
+        match himmelblau::LoadedMsHelloKey::load(&hello_key, $cred, $tpm, $machine_key) {
+            Ok(loaded_hello_key) => {
+                let win_hello_storage_key = loaded_hello_key.storage_key();
                 // The PIN has been validated. Clear stale failures before any
                 // fallible PRT renewal or refresh-token restoration can return.
                 $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
 
                 $load_cached_prt!(
                     hello_key,
-                    win_hello_storage_key,
+                    loaded_hello_key,
                     keytype,
                     $online,
                     $cred,
@@ -966,7 +968,7 @@ macro_rules! impl_himmelblau_try_unseal {
                     $keystore.get_tagged_hsm_key(&hello_refresh_token_tag)
                 {
                     let refresh_token = String::from_utf8(
-                        $tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token)
+                        $tpm.unseal_data(win_hello_storage_key, &sealed_refresh_token)
                             .map_err(|e| {
                                 error!("Failed to unseal refresh token: {:?}", e);
                                 IdpError::Tpm

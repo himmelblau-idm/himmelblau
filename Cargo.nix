@@ -3262,16 +3262,16 @@ rec {
       };
       "compact_jwt" = rec {
         crateName = "compact_jwt";
-        version = "0.5.3-dev";
+        version = "0.5.7";
         edition = "2021";
-        sha256 = "0dbcmw6fq5hhqhy3hiwkpbqb2593a900jnxw49p6h9s0i63jx093";
+        sha256 = "1yk5s9y03rqrv9namg6yczsslg975r3vz893pxg2gh4kywpymynq";
         authors = [
           "William Brown <william@blackhats.net.au>"
         ];
         dependencies = [
           {
             name = "base64";
-            packageId = "base64 0.21.7";
+            packageId = "base64 0.22.1";
           }
           {
             name = "base64urlsafedata";
@@ -3297,6 +3297,11 @@ rec {
           {
             name = "serde_json";
             packageId = "serde_json";
+          }
+          {
+            name = "time";
+            packageId = "time";
+            features = [ "macros" "parsing" "serde" ];
           }
           {
             name = "tracing";
@@ -10041,9 +10046,9 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.43";
+        version = "0.8.45";
         edition = "2021";
-        sha256 = "040g3dznp2cv0dcfys20ndh8qics37h6lzvk6j65qgldhc80pzh2";
+        sha256 = "0mjfh8kqa61sk0q2wzn3n9acx26wyq5ahx6i7g0kax3lkypa846m";
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"

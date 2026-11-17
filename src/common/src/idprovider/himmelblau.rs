@@ -2853,8 +2853,8 @@ impl IdProvider for HimmelblauProvider {
                 // `acquire_token_by_hello_for_business_key` CAN (and probably will)
                 // respond with a `RequestFailed` prior to validating the PIN, since
                 // the Nonce request will fail (which is sent prior to validation).
-                let pin = match PinValue::new(&$cred) {
-                    Ok(pin) => pin,
+                match PinValue::new(&$cred) {
+                    Ok(_) => (),
                     Err(e) => {
                         error!("Failed setting pin value: {:?}", e);
                         handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
@@ -2866,8 +2866,8 @@ impl IdProvider for HimmelblauProvider {
                         ));
                     }
                 };
-                let (_, win_hello_storage_key) =
-                    match tpm.ms_hello_key_load(machine_key, &$hello_key, &pin) {
+                let loaded_hello_key =
+                    match himmelblau::LoadedMsHelloKey::load(&$hello_key, &$cred, tpm, machine_key) {
                         Ok(keys) => keys,
                         Err(e) => {
                             error!("{:?}", e);
@@ -2880,6 +2880,8 @@ impl IdProvider for HimmelblauProvider {
                             ));
                         }
                     };
+
+                let win_hello_storage_key = loaded_hello_key.storage_key();
 
                 // If an app_id is defined in the config, the app should have the
                 // GroupMember.Read.All API permission.
@@ -3117,9 +3119,9 @@ impl IdProvider for HimmelblauProvider {
                             .client
                             .lock()
                             .await
-                            .unseal_user_prt_with_loaded_hello_key(
+                            .unseal_user_prt_with_loaded_ms_hello_key(
                                 &hello_prt,
-                                &win_hello_storage_key,
+                                &loaded_hello_key,
                                 tpm,
                                 machine_key,
                             )
@@ -3131,7 +3133,7 @@ impl IdProvider for HimmelblauProvider {
                                 Ok(Some(sealed_refresh_token)) => {
                                     match unseal_refresh_token_with_loaded_hello_key(
                                         tpm,
-                                        &win_hello_storage_key,
+                                        win_hello_storage_key,
                                         &sealed_refresh_token,
                                     )? {
                                         Some(refresh_token) => {
@@ -3440,7 +3442,7 @@ impl IdProvider for HimmelblauProvider {
                     // If there is no PRT, cache the refresh token instead
                     let sealed_refresh_token = seal_refresh_token_with_loaded_hello_key(
                         tpm,
-                        &win_hello_storage_key,
+                        win_hello_storage_key,
                         &token.refresh_token,
                         account_id,
                     )?;

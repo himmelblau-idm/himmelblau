@@ -964,17 +964,18 @@ checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 
 [[package]]
 name = "compact_jwt"
-version = "0.5.3-dev"
+version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23812e87894027686e22bc5b0940522315b1f0ba9347383cc41016ec0caf6c35"
+checksum = "d8faea2ff793c0275ebf23a1bf472e273daaf567debcaa6cda19e7017cd265fa"
 dependencies = [
- "base64 0.21.7",
+ "base64 0.22.1",
  "base64urlsafedata",
  "crypto-glue",
  "hex",
  "kanidm-hsm-crypto",
  "serde",
  "serde_json",
+ "time",
  "tracing",
  "url",
  "uuid",
@@ -3084,9 +3085,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.43"
+version = "0.8.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02fe0b10838d3e5c8c34737f6ae0199a458c60b34068ef58039b896b7f1b0f10"
+checksum = "d510a4ae9f747435c13bd174a80af6dc88ce54b2c37e2e30983a188527824e56"
 dependencies = [
  "base64 0.23.1",
  "cbindgen",
