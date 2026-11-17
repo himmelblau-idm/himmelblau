@@ -10,8 +10,8 @@ mod forms;
 
 use super::common::{
     flip_displayname_comma, oidc_issuer_matches, oidc_provider_config, oidc_user_ids,
-    oidc_user_token_from_claims, should_block_hello_pin_attempts, BadPinCounter, KeyType,
-    RefreshCache, RefreshCacheEntry, TotpEnrollmentRecord,
+    oidc_user_token_from_claims, oidc_user_token_id_fields, should_block_hello_pin_attempts,
+    BadPinCounter, KeyType, RefreshCache, RefreshCacheEntry, TotpEnrollmentRecord,
 };
 use super::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -1203,12 +1203,13 @@ impl IdProvider for OktaProvider {
         let idmap = self.idmap.lock().await;
         let (uid, gid) =
             oidc_user_ids(&cache, &idmap, provider.as_ref(), &self.tenant_id, account)?;
+        let token_id_fields = oidc_user_token_id_fields(uid, gid);
         Ok(UserTokenState::LookupOnly(UserToken {
             name: account.into(),
             spn: account.into(),
             uuid: object_id,
-            real_gidnumber: Some(uid),
-            gidnumber: gid,
+            real_gidnumber: token_id_fields.real_gidnumber,
+            gidnumber: token_id_fields.gidnumber,
             displayname: flip_displayname_comma(""),
             shell: Some(self.config.lock().await.get_shell(Some(&self.domain))),
             groups: vec![GroupToken {

@@ -1346,6 +1346,20 @@ impl HimmelblauConfig {
         } else {
             self.validate_tenants(&providers, &mut report);
         }
+        for provider in providers
+            .iter()
+            .filter(|provider| provider.kind == ProviderKind::Oidc)
+        {
+            if provider
+                .get_app_id(self)
+                .is_none_or(|app_id| app_id.trim().is_empty())
+            {
+                report.errors.push(format!(
+                    "[{}] OIDC provider requires app_id",
+                    provider.section
+                ));
+            }
+        }
         self.validate_id_ranges(&providers, &mut report);
         report
     }
@@ -1395,14 +1409,6 @@ impl HimmelblauConfig {
                     section
                 ));
             }
-            if let Some(val) = self.config.get(section, "idmap_range") {
-                if parse_range(&val).is_none() {
-                    report
-                        .errors
-                        .push(format!("[{}] idmap_range = {} is invalid", section, val));
-                }
-            }
-
             if p.kind == ProviderKind::Entra {
                 if let Some(tenant_id) = self.get_tenant_id(&p.domain) {
                     if let Some(other) = tenant_ids.insert(tenant_id.to_lowercase(), section) {
@@ -1413,14 +1419,6 @@ impl HimmelblauConfig {
                     }
                 }
             }
-            if p.kind == ProviderKind::Oidc
-                && p.get_app_id(self).is_none_or(|id| id.trim().is_empty())
-            {
-                report
-                    .errors
-                    .push(format!("[{}] OIDC provider requires app_id", section));
-            }
-
             if let Some(issuer) = self
                 .config
                 .get(section, "oidc_issuer_url")
@@ -1498,10 +1496,30 @@ impl HimmelblauConfig {
     }
 
     fn validate_id_ranges(&self, providers: &[ProviderConfig], report: &mut ValidationReport) {
-        let ranges: Vec<(String, (u32, u32))> = providers
-            .iter()
-            .map(|p| (p.domain.clone(), self.get_idmap_range(&p.domain)))
-            .collect();
+        let mut ranges = Vec::with_capacity(providers.len());
+        for provider in providers {
+            let configured_range = self
+                .domain_value(&provider.domain, "idmap_range")
+                .map(|value| (provider.section.as_str(), value))
+                .or_else(|| {
+                    self.config
+                        .get("global", "idmap_range")
+                        .map(|value| ("global", value))
+                });
+            let range = match configured_range {
+                Some((section, value)) => match parse_range(&value) {
+                    Some(range) => range,
+                    None => {
+                        report
+                            .errors
+                            .push(format!("[{}] idmap_range = {} is invalid", section, value));
+                        continue;
+                    }
+                },
+                None => self.get_idmap_range(&provider.domain),
+            };
+            ranges.push((provider.domain.clone(), range));
+        }
 
         let subid_range = self.get_subid_range();
         for (idx, (name, range)) in ranges.iter().enumerate() {
@@ -3749,7 +3767,7 @@ mod tests {
     #[allow(clippy::unwrap_used)]
     fn test_legacy_oidc_takes_precedence_over_domain() {
         let config = load_with_cache(
-            "[global]\ndomain = contoso.com\noidc_issuer_url = https://issuer.example.com\n",
+            "[global]\ndomain = contoso.com\noidc_issuer_url = https://issuer.example.com\napp_id = linux-login\n",
             "",
         );
         let provider = config.default_provider().unwrap();
@@ -3977,6 +3995,16 @@ mod tests {
         }
         config.set("tenant.b", "oidc_issuer_url", "https://other.example");
         assert!(config.validate().is_ok());
+
+        let mut legacy =
+            HimmelblauConfig::from_test_config("[global]\noidc_issuer_url=https://id.example\n");
+        assert!(legacy
+            .validate()
+            .errors
+            .iter()
+            .any(|error| error.contains("requires app_id")));
+        legacy.set("global", "app_id", "linux");
+        assert!(legacy.validate().is_ok());
     }
 
     #[test]
@@ -4174,6 +4202,11 @@ mod tests {
                 "[global]\ndomain = contoso.com\nidmap_range = 2100000000-2100000100\n".to_string(),
                 "",
                 "of contoso.com overlaps with subid_range",
+            ),
+            (
+                "[global]\ndomain = contoso.com\nidmap_range = 400000-300000\n".to_string(),
+                "",
+                "idmap_range = 400000-300000 is invalid",
             ),
             (
                 "[global]\ndebug = true\n".to_string(),

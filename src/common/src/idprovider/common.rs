@@ -1525,8 +1525,8 @@ macro_rules! impl_setup_hello_totp_with_storage_key {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_refresh_token_with_loaded_hello_key, oidc_issuer_matches, sealed_refresh_token_or,
-        should_block_hello_pin_attempts, should_offer_offline_hello_pin,
+        cache_refresh_token_with_loaded_hello_key, oidc_issuer_matches, oidc_user_token_id_fields,
+        sealed_refresh_token_or, should_block_hello_pin_attempts, should_offer_offline_hello_pin,
         should_renew_expired_try_unseal_prt, should_warn_last_hello_pin_attempt,
         try_unseal_policy_denial, unseal_refresh_token_with_loaded_hello_key, BadPinCounter,
         IdpError, KeyType, RefreshCache, RefreshCacheEntry, TotpEnrollmentRecord,
@@ -1547,6 +1547,13 @@ mod tests {
     use std::time::{Duration, SystemTime};
     use totp_rs::{Algorithm, Secret, TOTP};
     use zeroize::Zeroizing;
+
+    #[test]
+    fn oidc_user_token_fields_keep_distinct_uid_and_gid() {
+        let fields = oidc_user_token_id_fields(2345, 6789);
+        assert_eq!(fields.gidnumber, 2345);
+        assert_eq!(fields.real_gidnumber, Some(6789));
+    }
 
     struct ConnectivityFixture {
         state: tokio::sync::Mutex<CacheState>,
@@ -2666,6 +2673,18 @@ pub(crate) fn oidc_provider_config(
     }
 }
 
+pub(crate) struct OidcUserTokenIdFields {
+    pub(crate) gidnumber: u32,
+    pub(crate) real_gidnumber: Option<u32>,
+}
+
+pub(crate) fn oidc_user_token_id_fields(uid: u32, gid: u32) -> OidcUserTokenIdFields {
+    OidcUserTokenIdFields {
+        gidnumber: uid,
+        real_gidnumber: Some(gid),
+    }
+}
+
 pub(crate) async fn oidc_user_token_from_claims(
     claims: &serde_json::Value,
     shell: String,
@@ -2709,12 +2728,13 @@ pub(crate) async fn oidc_user_token_from_claims(
     }];
     groups.extend(oidc_groups);
 
+    let token_id_fields = oidc_user_token_id_fields(uid, gid);
     Ok(UserToken {
         name: account_id.to_string(),
         spn: account_id.to_string(),
         uuid: object_id,
-        real_gidnumber: Some(uid),
-        gidnumber: gid,
+        real_gidnumber: token_id_fields.real_gidnumber,
+        gidnumber: token_id_fields.gidnumber,
         displayname,
         shell: Some(shell),
         groups,

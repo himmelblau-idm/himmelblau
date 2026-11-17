@@ -15,7 +15,9 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use crate::config::{split_username, HimmelblauConfig, ProviderConfig, ProviderKind};
+use crate::config::{
+    split_username, HimmelblauConfig, ProviderConfig, ProviderKind, TENANT_SECTION_PREFIX,
+};
 use crate::constants::{ID_MAP_CACHE, NSS_CACHE};
 use crate::db::{CacheError, CacheTxn, KeyStoreTxn, ScopedKeyStore};
 use crate::idmap_cache::{StaticIdCache, UserMappingMigration};
@@ -53,6 +55,27 @@ pub mod interface;
 enum Providers {
     Oidc(OidcRouter),
     Himmelblau(HimmelblauProvider),
+}
+
+fn qualified_entra_provider<'a>(
+    settings: &HimmelblauConfig,
+    account: &'a str,
+) -> Option<(&'a str, ProviderConfig)> {
+    let (upn, label) = account.rsplit_once('@')?;
+    let (name, domain) = split_username(upn)?;
+    if name.is_empty() || domain.is_empty() || label.is_empty() {
+        return None;
+    }
+    let provider = settings
+        .parse_providers()
+        .ok()?
+        .into_iter()
+        .find(|provider| {
+            provider.section.starts_with(TENANT_SECTION_PREFIX)
+                && provider.label.eq_ignore_ascii_case(label)
+                && provider.kind == ProviderKind::Entra
+        })?;
+    Some((domain, provider))
 }
 
 pub struct IdProviderProxy {
@@ -514,23 +537,48 @@ impl IdProviderProxy {
     async fn find_provider(&self, account: &str) -> Result<&Providers, IdpError> {
         let mut selected = self.config.lock().await.provider_for_account(account);
         if selected.is_none() {
-            if let Some((name, domain)) = split_username(account) {
-                if !name.is_empty() && !domain.is_empty() {
-                    // Discovery must not hold the shared config lock or create providers.
-                    let snapshot = self.config.lock().await.clone();
-                    if snapshot.routing_name_is_known(domain) {
-                        error!(domain, "Ambiguous provider selection");
-                        return Err(IdpError::BadRequest);
-                    }
-                    selected = snapshot.discover_provider_for_domain(domain).await;
-                    if let Some(provider) = &selected {
-                        if !self
-                            .config
-                            .lock()
-                            .await
-                            .record_domain_alias(provider, domain)
-                        {
+            let snapshot = self.config.lock().await.clone();
+            if let Some((domain, provider)) = qualified_entra_provider(&snapshot, account) {
+                if snapshot.routing_name_is_known(domain) {
+                    error!(domain, "Ambiguous provider selection");
+                    return Err(IdpError::BadRequest);
+                }
+                let discovered = snapshot.discover_provider_for_domain(domain).await;
+                if discovered.as_ref() != Some(&provider) {
+                    error!(
+                        domain,
+                        provider = %provider.label,
+                        "Qualified account domain does not match provider"
+                    );
+                    return Err(IdpError::BadRequest);
+                }
+                if !self
+                    .config
+                    .lock()
+                    .await
+                    .record_domain_alias(&provider, domain)
+                {
+                    return Err(IdpError::BadRequest);
+                }
+                selected = Some(provider);
+            }
+            if selected.is_none() {
+                if let Some((name, domain)) = split_username(account) {
+                    if !name.is_empty() && !domain.is_empty() {
+                        if snapshot.routing_name_is_known(domain) {
+                            error!(domain, "Ambiguous provider selection");
                             return Err(IdpError::BadRequest);
+                        }
+                        selected = snapshot.discover_provider_for_domain(domain).await;
+                        if let Some(provider) = &selected {
+                            if !self
+                                .config
+                                .lock()
+                                .await
+                                .record_domain_alias(provider, domain)
+                            {
+                                return Err(IdpError::BadRequest);
+                            }
                         }
                     }
                 }
@@ -1629,6 +1677,19 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn qualified_entra_login_parses_an_unknown_alias_before_the_provider_label() {
+        let settings = HimmelblauConfig::from_test_config(
+            "[tenant.a]\ndomain=a.example\ndefault=true\nidmap_range=200000-300000\n\
+             [tenant.b]\ndomain=b.example\nidmap_range=300001-400000\n",
+        );
+        let account = "alice@signin.example@a";
+        assert!(settings.provider_for_account(account).is_none());
+        let (domain, provider) = qualified_entra_provider(&settings, account).unwrap();
+        assert_eq!(domain, "signin.example");
+        assert_eq!(provider.label, "a");
     }
 
     #[tokio::test]

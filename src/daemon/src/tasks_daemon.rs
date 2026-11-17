@@ -990,6 +990,24 @@ async fn prepare_provider_caches(cfg: &HimmelblauConfig) -> Result<(), String> {
         .map_err(|error| format!("Failed preparing provider caches: {error:#}"))
 }
 
+fn select_config_path<'a>(
+    prepare_provider_cache: bool,
+    config_argument: Option<&'a str>,
+    env_config: Option<&'a str>,
+) -> Option<&'a str> {
+    if prepare_provider_cache {
+        Some(
+            config_argument
+                .or(env_config)
+                .unwrap_or(DEFAULT_CONFIG_PATH),
+        )
+    } else if config_argument.is_some() {
+        None
+    } else {
+        Some(DEFAULT_CONFIG_PATH)
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args = ClapCommand::new("himmelblaud_tasks")
@@ -1017,16 +1035,18 @@ async fn main() -> ExitCode {
     let systemd_booted = sd_notify::booted().unwrap_or(false);
 
     let prepare_provider_cache = args.get_flag("prepare-provider-cache");
-    let config_path_str = if prepare_provider_cache {
-        args.get_one::<String>("config")
-            .map(String::as_str)
-            .unwrap_or(DEFAULT_CONFIG_PATH)
+    let env_config = if prepare_provider_cache {
+        std::env::var("HIMMELBLAU_CONFIG").ok()
     } else {
-        if args.get_one::<String>("config").is_some() {
-            error!("--config is only valid with --prepare-provider-cache");
-            return ExitCode::FAILURE;
-        }
-        DEFAULT_CONFIG_PATH
+        None
+    };
+    let Some(config_path_str) = select_config_path(
+        prepare_provider_cache,
+        args.get_one::<String>("config").map(String::as_str),
+        env_config.as_deref(),
+    ) else {
+        error!("--config is only valid with --prepare-provider-cache");
+        return ExitCode::FAILURE;
     };
     let config_path = Path::new(config_path_str);
     let config_path_str = match config_path.to_str() {
@@ -1232,6 +1252,30 @@ mod tests {
     /// The exact payload from GHSA-x259-23ph-65m5.
     const ADVISORY_PAYLOAD: &str = "padding:100000:65536\nattacker:0:65536\npadding";
     const TENANT_ID: &str = "11111111-2222-3333-4444-555555555555";
+
+    #[test]
+    fn provider_cache_config_path_prefers_cli_then_environment() {
+        assert_eq!(
+            select_config_path(true, Some("/explicit.conf"), Some("/environment.conf")),
+            Some("/explicit.conf")
+        );
+        assert_eq!(
+            select_config_path(true, None, Some("/environment.conf")),
+            Some("/environment.conf")
+        );
+        assert_eq!(
+            select_config_path(true, None, None),
+            Some(DEFAULT_CONFIG_PATH)
+        );
+        assert_eq!(
+            select_config_path(false, None, Some("/environment.conf")),
+            Some(DEFAULT_CONFIG_PATH)
+        );
+        assert_eq!(
+            select_config_path(false, Some("/explicit.conf"), None),
+            None
+        );
+    }
 
     #[test]
     fn home_prefix_uses_resolved_provider_and_preserves_single_provider_rfc2307() {

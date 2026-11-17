@@ -357,6 +357,15 @@ async fn submit_local_groups_task(
     }
 }
 
+fn parse_sudo_group_ids(sudo_groups: Option<Vec<String>>) -> Option<HashSet<Uuid>> {
+    sudo_groups.map(|groups| {
+        groups
+            .iter()
+            .filter_map(|group| Uuid::parse_str(group).ok())
+            .collect()
+    })
+}
+
 async fn reconcile_local_groups_once(
     cachelayer: &Resolver<IdProviderProxy>,
     task_channel_tx: &Sender<AsyncTaskRequest>,
@@ -377,14 +386,17 @@ async fn reconcile_local_groups_once(
     };
 
     for account in accounts {
-        let sudo_group_ids: HashSet<Uuid> = cachelayer
+        let sudo_groups = cachelayer
             .provider_for_account(&account.name)
             .await
-            .map(|p| p.get_sudo_groups(cfg))
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|group| Uuid::parse_str(group).ok())
-            .collect();
+            .map(|provider| provider.get_sudo_groups(cfg));
+        let Some(sudo_group_ids) = parse_sudo_group_ids(sudo_groups) else {
+            warn!(
+                account_id = account.name.as_str(),
+                "Skipping local group reconciliation for unresolved provider"
+            );
+            continue;
+        };
         let is_sudoer = if sudo_group_ids.is_empty() {
             false
         } else {
@@ -1515,6 +1527,11 @@ mod tests {
     use super::*;
 
     const ACCOUNT_ID: &str = "user@example.com";
+
+    #[test]
+    fn unresolved_provider_has_no_sudo_membership_decision() {
+        assert!(parse_sudo_group_ids(None).is_none());
+    }
 
     #[test]
     fn default_socket_paths_match_the_systemd_units() {

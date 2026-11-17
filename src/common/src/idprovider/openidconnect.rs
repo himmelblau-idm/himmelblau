@@ -27,7 +27,7 @@ use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{
     build_online_probe_client, oidc_group_claims_from_value, oidc_provider_config, oidc_user_ids,
-    oidc_user_token_from_claims, OidcUserInfoClaims,
+    oidc_user_token_from_claims, oidc_user_token_id_fields, OidcUserInfoClaims,
 };
 use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
 use crate::idprovider::interface::{
@@ -2981,12 +2981,13 @@ impl IdProvider for OidcProvider {
             account_id,
         )?;
 
+        let token_id_fields = oidc_user_token_id_fields(uid, gid);
         Ok(UserTokenState::LookupOnly(UserToken {
             name: account_id.to_string(),
             spn: account_id.to_string(),
             uuid: object_id,
-            real_gidnumber: Some(uid),
-            gidnumber: gid,
+            real_gidnumber: token_id_fields.real_gidnumber,
+            gidnumber: token_id_fields.gidnumber,
             displayname,
             shell: Some(self.config.lock().await.get_shell(Some(&self.domain))),
             groups: vec![GroupToken {
