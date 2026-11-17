@@ -4,7 +4,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { run, evaluate, ciReasons, sensitiveChanges, testingConfirmation, command, REQUIRED_CI } = require('./review-policy.js');
+const { run, evaluate, ciReasons, sensitiveChanges, testingConfirmation, command, REQUIRED_CI,
+  sharedHeadCheckEligible, sharedHeadAutoEligible } = require('./review-policy.js');
 
 const SHA = 'a'.repeat(40);
 const OLD = 'b'.repeat(40);
@@ -301,6 +302,53 @@ test('coordinator report-only mode never merges', async () => {
   const h = harness(); await run(h);
   assert.equal(h.calls.some(c => c[0] === 'merge'), false);
   assert.equal(h.calls.find(c => c[0] === 'check')[1].conclusion, 'success');
+});
+test('shared head SHA fails closed until every open main PR on that commit passes', () => {
+  const eligible = { policy: { eligible: true, autoEligible: true } };
+  const blocked = { policy: { eligible: false, autoEligible: false } };
+  assert.equal(sharedHeadCheckEligible([eligible], eligible.policy), true);
+  assert.equal(sharedHeadCheckEligible([eligible, blocked], eligible.policy), false);
+  assert.equal(sharedHeadAutoEligible([eligible, blocked], eligible.policy), false);
+});
+test('eligible writer PR cannot automerge when another main PR shares its head', async () => {
+  const ready = { ...pr(), number: 1 };
+  const blocked = { ...pr(), number: 2, user: user('outsider') };
+  blocked.changed_files = 1;
+  const calls = [];
+  const github = {
+    rest: {
+      pulls: {
+        list: async () => [ready, blocked],
+        get: async ({ pull_number }) => ({ data: pull_number === 1 ? { ...ready, mergeable: true, mergeable_state: 'clean' }
+          : { ...blocked, mergeable: true, mergeable_state: 'clean' } }),
+        listReviews: async ({ pull_number }) => pull_number === 1 ? [review()] : [review()],
+        listFiles: async () => [{ filename: 'src/selinux/src/himmelblaud.te' }],
+        merge: async args => { calls.push(['merge', args]); return { data: { merged: true } }; },
+      },
+      repos: {
+        getCollaboratorPermissionLevel: async ({ username }) => ({
+          data: { permission: username === 'outsider' ? 'read' : 'write' },
+        }),
+        listCommitStatusesForRef: async () => [],
+      },
+      issues: { listComments: async ({ issue_number }) => issue_number === 1 ? [confirmation()] : [] },
+      checks: {
+        listForRef: async () => REQUIRED_CI.map(name => check(name)),
+        create: async args => { calls.push(['check', args]); return { data: { id: args.external_id === 'main-review-policy:1' ? 1 : 2 } }; },
+        update: async args => { calls.push(['update', args]); },
+      },
+    },
+    paginate: async (method, args) => method(args),
+    graphql: async () => ({ repository: { pullRequest: { reviewThreads: {
+      nodes: [{ isResolved: true }], pageInfo: { hasNextPage: false },
+    } } } }),
+  };
+  const core = { info: () => {}, error: () => {}, setFailed: () => {} };
+  await run({ github, core, context: { repo: { owner: 'himmelblau-idm', repo: 'himmelblau' } }, merge: true });
+  const published = calls.filter(c => c[0] === 'check' || c[0] === 'update');
+  assert.equal(published.length, 2);
+  assert.ok(published.every(([, args]) => args.conclusion === 'failure'));
+  assert.equal(calls.some(c => c[0] === 'merge'), false);
 });
 test('race, blocked state, failed CI, permission errors and paginated unresolved threads prevent merge', async () => {
   for (const options of [{ changeHead: true }, { changeBase: true }, { mergeState: 'behind' },

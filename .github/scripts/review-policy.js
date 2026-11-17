@@ -380,13 +380,25 @@ async function reviewThreads(github, owner, repo, number) {
   return threads;
 }
 
+// Required checks are commit-scoped; multiple open PRs on the same head SHA
+// cannot publish independent Review policy results. Fail closed unless every
+// peer on that SHA satisfies the same gate.
+function sharedHeadCheckEligible(peers, policy) {
+  return policy.eligible && peers.every(item => item.policy.eligible);
+}
+
+function sharedHeadAutoEligible(peers, policy) {
+  return policy.autoEligible && peers.every(item => item.policy.autoEligible);
+}
+
 async function run({ github, context, core, merge = false }) {
   const { owner, repo } = context.repo;
   // Both the trigger and this API filter enforce the main-only scope.
   const prs = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: 'main', per_page: 100 });
   let errors = 0;
+  const evaluated = [];
   for (const summary of prs) {
-    let pr, checkId;
+    let pr;
     try {
       pr = (await github.rest.pulls.get({ owner, repo, pull_number: summary.number })).data;
       if (pr.base.ref !== 'main' || pr.state !== 'open') continue;
@@ -436,11 +448,44 @@ async function run({ github, context, core, merge = false }) {
         core.info(`#${pr.number}: PR changed during evaluation; retry on next event.`);
         continue;
       }
-      const description = [...policy.reasons, ...ci, ...policy.autoReasons];
+      evaluated.push({ summary, pr, fresh, sha, args, permissions, canWrite, authorCanWrite, policy, ci,
+        tested, files, checks });
+    } catch (error) {
+      errors++;
+      core.error(`#${summary.number}: ${error.message}`);
+      const headSha = pr?.head?.sha || summary.head?.sha;
+      const baseRef = pr?.base?.ref || summary.base?.ref;
+      if (headSha && baseRef === 'main') {
+        const failure = { owner, repo, name: CHECK, status: 'completed', conclusion: 'failure',
+          output: { title: 'Policy evaluation failed', summary: 'Inspect the Main review policy workflow logs. No automatic merge was attempted after this error.' } };
+        await github.rest.checks.create({ ...failure, head_sha: headSha, external_id: `main-review-policy:${summary.number}` });
+      }
+    }
+  }
+  const peersBySha = new Map();
+  for (const item of evaluated) {
+    const peers = peersBySha.get(item.sha) || [];
+    peers.push(item);
+    peersBySha.set(item.sha, peers);
+  }
+  for (const item of evaluated) {
+    let checkId;
+    const { pr, fresh, sha, args, permissions, canWrite, authorCanWrite, policy, ci, tested, files, checks } = item;
+    const peers = peersBySha.get(sha);
+    const sharedEligible = sharedHeadCheckEligible(peers, policy);
+    const sharedAutoEligible = sharedHeadAutoEligible(peers, policy);
+    try {
+      const extraReasons = [];
+      if (peers.length > 1 && !sharedEligible) {
+        const blocked = peers.filter(peer => peer.summary.number !== pr.number && !peer.policy.eligible)
+          .map(peer => `#${peer.summary.number}`);
+        if (blocked.length) extraReasons.push(`Another open main PR on this commit still fails review policy: ${blocked.join(', ')}.`);
+      }
+      const description = [...policy.reasons, ...ci, ...policy.autoReasons, ...extraReasons];
       const existing = checks.find(c => c.name === CHECK && c.app?.id === ACTIONS_APP
         && c.external_id === `main-review-policy:${pr.number}`);
       const output = {
-        title: policy.eligible ? 'Review requirements satisfied' : 'Waiting for reviews or discussion resolution',
+        title: sharedEligible ? 'Review requirements satisfied' : 'Waiting for reviews or discussion resolution',
         summary: [`Author has write access: ${authorCanWrite}.`,
           `AI companion sponsor: ${policy.sponsoredBy || 'none'}.`,
           `Sensitive paths: ${(policy.sensitive || []).join(', ') || 'none'}.`,
@@ -451,7 +496,7 @@ async function run({ github, context, core, merge = false }) {
       // This check represents reviews only. Native required CI remains an
       // independent server-side gate, and the coordinator also inspects CI.
       const check = { owner, repo, name: CHECK, status: 'completed',
-        conclusion: policy.eligible ? 'success' : 'failure', output };
+        conclusion: sharedEligible ? 'success' : 'failure', output };
       if (existing) {
         checkId = existing.id;
         await github.rest.checks.update({ ...check, check_run_id: checkId });
@@ -462,7 +507,7 @@ async function run({ github, context, core, merge = false }) {
       core.info(`#${pr.number}: ${description.join(' ') || 'Ready to merge.'}`);
       // GitHub enforces protections again at merge time; never use an admin
       // bypass. Unknown/blocked/behind states wait instead of forcing merge.
-      if (merge && policy.autoEligible && ci.length === 0 && fresh.mergeable === true
+      if (merge && sharedAutoEligible && ci.length === 0 && fresh.mergeable === true
           && fresh.mergeable_state === 'clean') {
         // Re-read reviews, threads, permissions and attestations at the merge
         // boundary. GitHub's SHA lease and native protections remain the final
@@ -491,9 +536,11 @@ async function run({ github, context, core, merge = false }) {
         const finalPolicy = evaluate({ pr, authorCanWrite: finalAuthorCanWrite, permissions,
           reviews: finalReviews, comments: finalComments, threads: finalThreads, files, tested: finalTested,
           checks: latestBy(finalChecks, c => `${c.app?.id}:${c.name}`) });
-        if (!finalPolicy.autoEligible || finalCI.length) {
+        const finalSharedEligible = sharedHeadCheckEligible(peers, finalPolicy);
+        const finalSharedAutoEligible = sharedHeadAutoEligible(peers, finalPolicy);
+        if (!finalSharedAutoEligible || finalCI.length) {
           await github.rest.checks.update({ ...check, check_run_id: checkId,
-            conclusion: finalPolicy.eligible ? 'success' : 'failure',
+            conclusion: finalSharedEligible ? 'success' : 'failure',
             output: { title: 'Automatic merge deferred after revalidation',
               summary: [...finalPolicy.reasons, ...finalPolicy.autoReasons, ...finalCI].join('\n\n') } });
           continue;
@@ -508,21 +555,17 @@ async function run({ github, context, core, merge = false }) {
       }
     } catch (error) {
       errors++;
-      core.error(`#${summary.number}: ${error.message}`);
-      // Revoke an earlier success if a later evaluation cannot complete.
-      const headSha = pr?.head?.sha || summary.head?.sha;
-      const baseRef = pr?.base?.ref || summary.base?.ref;
-      if (headSha && baseRef === 'main') {
-        const failure = { owner, repo, name: CHECK, status: 'completed', conclusion: 'failure',
-          output: { title: 'Policy evaluation failed', summary: 'Inspect the Main review policy workflow logs. No automatic merge was attempted after this error.' } };
-        if (checkId) await github.rest.checks.update({ ...failure, check_run_id: checkId });
-        else await github.rest.checks.create({ ...failure, head_sha: headSha, external_id: `main-review-policy:${summary.number}` });
-      }
+      core.error(`#${pr.number}: ${error.message}`);
+      const failure = { owner, repo, name: CHECK, status: 'completed', conclusion: 'failure',
+        output: { title: 'Policy evaluation failed', summary: 'Inspect the Main review policy workflow logs. No automatic merge was attempted after this error.' } };
+      if (checkId) await github.rest.checks.update({ ...failure, check_run_id: checkId });
+      else await github.rest.checks.create({ ...failure, head_sha: sha, external_id: `main-review-policy:${pr.number}` });
     }
   }
   if (errors) core.setFailed(`${errors} PR policy evaluation(s) failed.`);
 }
 
 module.exports = { run, evaluate, ciReasons, cleanBotReview, sensitiveChanges,
+  sharedHeadCheckEligible, sharedHeadAutoEligible,
   testingConfirmation, command, REQUIRED_CI, CHECK };
 
