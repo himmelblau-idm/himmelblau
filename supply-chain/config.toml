@@ -40,9 +40,6 @@ audit-as-crates-io = false
 [policy."anstyle-wincon:3.0.8"]
 audit-as-crates-io = false
 
-[policy."assert_hex:0.4.1"]
-audit-as-crates-io = false
-
 [policy."base64:0.21.7"]
 audit-as-crates-io = false
 
@@ -119,9 +116,6 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy."kqueue:1.1.1"]
-audit-as-crates-io = false
-
-[policy."ldap3_proto:0.6.2"]
 audit-as-crates-io = false
 
 [policy."libredox:0.1.3"]
