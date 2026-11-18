@@ -31,9 +31,6 @@ url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/
 [policy."adler2:2.0.0"]
 audit-as-crates-io = false
 
-[policy."android_system_properties:0.1.5"]
-audit-as-crates-io = false
-
 [policy."anstyle-wincon:3.0.8"]
 audit-as-crates-io = false
 
@@ -44,6 +41,9 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy."cbindgen:0.29.2"]
+audit-as-crates-io = false
+
+[policy."chrono:0.4.45"]
 audit-as-crates-io = false
 
 [policy."const-oid:0.9.6"]
@@ -91,7 +91,7 @@ audit-as-crates-io = false
 [policy."hashbrown:0.15.5"]
 audit-as-crates-io = false
 
-[policy."iana-time-zone-haiku:0.1.2"]
+[policy."humantime:2.2.0"]
 audit-as-crates-io = false
 
 [policy."indexmap:1.9.3"]
@@ -227,9 +227,6 @@ audit-as-crates-io = false
 audit-as-crates-io = false
 
 [policy."winapi:0.3.9"]
-audit-as-crates-io = false
-
-[policy."windows-core:0.61.2"]
 audit-as-crates-io = false
 
 [policy."windows-link:0.2.1"]
@@ -569,10 +566,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.hostname-validator]]
 version = "1.1.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.humantime]]
-version = "2.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.hybrid-array]]

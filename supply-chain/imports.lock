@@ -1114,20 +1114,6 @@ criteria = "safe-to-deploy"
 delta = "1.0.0-rc.2 -> 1.0.0"
 notes = "Only minor changes made for a stable release."
 
-[[audits.bytecode-alliance.audits.iana-time-zone]]
-who = "Dan Gohman <dev@sunfishcode.online>"
-criteria = "safe-to-deploy"
-version = "0.1.59"
-notes = """
-I also manually ran windows-bindgen and confirmed that the output matches
-the bindings checked into the repo.
-"""
-
-[[audits.bytecode-alliance.audits.iana-time-zone]]
-who = "Pat Hickey <pat@moreproductive.org>"
-criteria = "safe-to-deploy"
-delta = "0.1.59 -> 0.1.61"
-
 [[audits.bytecode-alliance.audits.idna]]
 who = "Alex Crichton <alex@alexcrichton.com>"
 criteria = "safe-to-deploy"
@@ -3128,12 +3114,6 @@ aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/mai
 who = "Simon Friedberger <simon@mozilla.com>"
 criteria = "safe-to-deploy"
 version = "0.4.3"
-aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.iana-time-zone]]
-who = "Mark Hammond <mhammond@skippinet.com.au>"
-criteria = "safe-to-deploy"
-delta = "0.1.61 -> 0.1.63"
 aggregated-from = "https://raw.githubusercontent.com/mozilla-firefox/firefox/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.icu_collections]]
