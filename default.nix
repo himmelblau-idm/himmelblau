@@ -17,6 +17,14 @@ let
     ];
   };
   cargoArgs = {
+    # crate2nix omits target_has_atomic from its default target attributes.
+    # Both Linux flake targets have native pointer atomics.
+    extraTargetFlags = lib.optionalAttrs (builtins.elem pkgs.stdenv.hostPlatform.system [
+      "x86_64-linux"
+      "aarch64-linux"
+    ]) {
+      has_atomic = "ptr";
+    };
     rootFeatures = [
       "default"
       "himmelblau_unix_common/tpm"
