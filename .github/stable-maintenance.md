@@ -25,9 +25,11 @@ before formatting/acceptance. There is no shared build cache.
 ## Image provisioning
 
 The pinned image retains APT's three per-file acquisition retries. If an index
-refresh still fails solely with explicit transient HTTP 408/429/500/502/503/504
-fetch errors, provisioning retries that refresh up to three more times after
-60, 120 and 240 seconds. Integrity, signature, configuration and local execution
+refresh or download-only acquisition still fails solely with explicit transient
+HTTP 408/429/500/502/503/504 fetch errors or connection timeouts, provisioning
+retries the acquisition up to three more times after 60, 120 and 240 seconds.
+APT's cached connection failure is retryable only when the same host also has
+an explicit timeout. Integrity, signature, configuration and local execution
 errors fail immediately; package installation is not replayed. The reviewed
 snapshot, signature/hash checks, 35-minute combined native provisioning deadline
 and 45-minute image-step deadline remain unchanged. A sustained remote outage

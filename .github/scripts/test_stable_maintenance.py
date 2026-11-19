@@ -1539,12 +1539,21 @@ sys.exit(int(sys.argv[1]))
                 self.assertNotIn("600%20URI%20Acquire", output)
 
     def test_image_index_refresh_only_retries_transient_fetch_failures(self):
-        """Only exhausted transient HTTP fetch failures may repeat the update."""
+        """Retry only recognized transient acquisition failures."""
         block = DOCKERFILE.read_text().split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
         shell = shlex.split(block.replace("\\\n", ""))[-1]
         probe = shell.split('echo "apt-provision: stage=update"', 1)[0] + "apt_update"
         transient = "E: Failed to fetch https://snapshot.invalid/index  503 Service Unavailable"
+        timedout = "E: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/noble/InRelease  Could not connect to archive.ubuntu.com:80 (91.189.90.12), connection timed out"
+        cached = "E: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease  Unable to connect to archive.ubuntu.com:80:"
         cases = (
+            (100, timedout + "\n" + cached + "\nE: Some index files failed to download.", "", 0),
+            (100, timedout, "", 0),
+            (100, cached, "", 100),
+            (100, timedout + "\n" + cached.replace("archive.ubuntu.com:80:", "other.invalid:80:"), "", 100),
+            (100, timedout + "\n" + cached + "\nE: The repository is not signed.", "", 100),
+            (100, timedout + "\nE: Failed to fetch https://snapshot.invalid/index  Hash Sum mismatch", "", 100),
+            (100, "E: Failed to fetch http://archive.ubuntu.com/ubuntu/index  Could not connect to archive.ubuntu.com:80 (127.0.0.1), Connection refused", "", 100),
             (100, "E: Failed to fetch https://snapshot.invalid/index  404 Not Found", "", 100),
             (100, "E: Failed to fetch https://snapshot.invalid/index  Hash Sum mismatch", "", 100),
             (100, transient + "\nE: The repository is not signed.", "", 100),

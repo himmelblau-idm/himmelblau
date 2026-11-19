@@ -40,7 +40,8 @@ RUN printf '%s\n' \
 # Worker failures expose the reason before APT retries (ordinary Ign lines do
 # not). Keep only failure messages from worker debug, not its configuration or
 # request dumps. Bash pipefail preserves APT failure through the streaming filter.
-# Retry exhausted index/download-only acquisition for transient HTTP failures.
+# Retry exhausted index/download-only acquisition for transient HTTP failures
+# and explicit connection timeouts, including APT's subsequent cached failure.
 # Keep the same signed snapshot and the combined provisioning deadline; never
 # retry integrity/configuration failures or replay package installation.
 RUN timeout --kill-after=15s 35m /bin/bash -o pipefail -ec ' \
@@ -63,7 +64,7 @@ RUN timeout --kill-after=15s 35m /bin/bash -o pipefail -ec ' \
             if [ "${statuses[1]}" -ne 0 ]; then exit "${statuses[1]}"; fi; \
             status=${statuses[0]}; \
             if [ "$status" -ne 100 ] || [ "$delay" -eq 0 ] || ! \
-                awk -v stage="$stage" "/^E: Failed to fetch / { seen++; if (\$0 !~ /^E: Failed to fetch [^[:space:]]+[[:space:]]+(408|429|500|502|503|504)[[:space:]]/) bad=1; next } /^E: Some index files failed to download\\./ { next } /^E: Some files failed to download$/ { if (stage != \"download\") bad=1; next } /^E:/ { bad=1 } END { exit !(seen && !bad) }" "$log"; then \
+                awk -v stage="$stage" "/^E: Failed to fetch / { seen++; if (\$0 ~ /^E: Failed to fetch [^[:space:]]+[[:space:]]+(408|429|500|502|503|504)[[:space:]]/) next; if (\$0 ~ /^E: Failed to fetch [^[:space:]]+[[:space:]]+Could not connect to [^[:space:]]+ \([^)]*\), connection timed out$/) { match(\$0, /Could not connect to [^[:space:]]+/); host=substr(\$0, RSTART, RLENGTH); sub(/^Could not connect to /, \"\", host); timedout[host]=1; next } if (\$0 ~ /^E: Failed to fetch [^[:space:]]+[[:space:]]+Unable to connect to [^[:space:]]+:$/) { match(\$0, /Unable to connect to [^[:space:]]+/); host=substr(\$0, RSTART, RLENGTH); sub(/^Unable to connect to /, \"\", host); sub(/:$/, \"\", host); cached[host]=1; next } bad=1; next } /^E: Some index files failed to download\\./ { next } /^E: Some files failed to download$/ { if (stage != \"download\") bad=1; next } /^E:/ { bad=1 } END { for (host in cached) if (!timedout[host]) bad=1; exit !(seen && !bad) }" "$log"; then \
                 exit "$status"; \
             fi; \
             echo "apt-provision: stage=$stage retry_wait_seconds=$delay"; \
