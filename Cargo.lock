@@ -343,10 +343,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atomic-polyfill"
-version = "1.0.3"
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -798,7 +794,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b6dd31f7069836e87169bc5910212571b873cebe389c7c7f2d8b1fb3e55c80d"
 dependencies = [
  "delog",
- "heapless",
+ "heapless 0.7.17",
  "heapless-bytes",
  "serde_core",
 ]
@@ -1300,7 +1296,7 @@ dependencies = [
  "cbor-smol",
  "cosey",
  "delog",
- "heapless",
+ "heapless 0.7.17",
  "heapless-bytes",
  "iso7816",
  "serde",
@@ -2154,9 +2150,9 @@ dependencies = [
 
 [[package]]
 name = "hash32"
-version = "0.2.1"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c35f58762feb77d74ebe43bdbc3210f09be9fe6742234d573bacc26ed92b67"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
 dependencies = [
  "byteorder",
 ]
@@ -2207,14 +2203,19 @@ dependencies = [
 [[package]]
 name = "heapless"
 version = "0.7.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
 dependencies = [
- "atomic-polyfill",
- "hash32",
- "rustc_version",
+ "heapless 0.9.4",
  "serde",
- "spin",
+]
+
+[[package]]
+name = "heapless"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "411fdef4df93751117bd9ef8caa0e7f99c65dafec5bd84313eb8e2fdd75e32f2"
+dependencies = [
+ "hash32",
+ "serde_core",
  "stable_deref_trait",
 ]
 
@@ -2224,7 +2225,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7285eba272c6af3e9f15fb9e1c1b6e7d35aa70580ffe0d47af017e97dfb6f48b"
 dependencies = [
- "heapless",
+ "heapless 0.7.17",
  "serde",
  "typenum",
 ]
@@ -2821,7 +2822,7 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd3c7e91da489667bb054f9cd2f1c60cc2ac4478a899f403d11dbc62189215b0"
 dependencies = [
- "heapless",
+ "heapless 0.7.17",
 ]
 
 [[package]]
@@ -3244,7 +3245,7 @@ dependencies = [
  "der 0.7.10",
  "flate2",
  "futures",
- "heapless",
+ "heapless 0.7.17",
  "hex",
  "hidapi",
  "hkdf",
@@ -5341,15 +5342,6 @@ checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "spin"
-version = "0.9.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
-dependencies = [
- "lock_api",
 ]
 
 [[package]]
