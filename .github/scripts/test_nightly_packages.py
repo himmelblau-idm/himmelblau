@@ -187,6 +187,8 @@ class PublicationTests(unittest.TestCase):
                 self.spec["destination"] = "ubuntu/noble" if fmt == "deb" else "el/9"
                 pages = [io.BytesIO(json.dumps(remote[:100]).encode()),
                          io.BytesIO(json.dumps(remote[100:]).encode())]
+                for page in pages:
+                    page.headers = {"X-Pagination-Pagetotal": "2"}
                 with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test"}), \
                      patch.object(np.packages.urllib.request, "urlopen", side_effect=pages) as lookup, \
                      patch.object(np.packages, "delete_package") as delete, \
