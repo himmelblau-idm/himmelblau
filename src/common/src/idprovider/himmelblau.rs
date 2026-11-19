@@ -3079,6 +3079,7 @@ impl IdProvider for HimmelblauProvider {
                     let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
                     let hello_refresh_token_tag = self.fetch_hello_refresh_token_key_tag(account_id);
                     let refresh_cache_entry = match keystore.get_tagged_hsm_key(&hello_prt_tag) {
+                        #[allow(deprecated)]
                         Ok(Some(hello_prt)) => self
                             .client
                             .lock()

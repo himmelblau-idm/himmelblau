@@ -440,6 +440,7 @@ macro_rules! load_cached_prt {
         // Check for and decrypt any cached PRT
         let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
+            #[allow(deprecated)]
             let (prt, prt_expired) = $self
                 .client
                 .lock()
@@ -481,6 +482,7 @@ macro_rules! load_cached_prt_for_try_unseal {
     ($hello_key:ident, $hello_storage_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
+            #[allow(deprecated)]
             let (mut prt, prt_expired) = $self
                 .client
                 .lock()

@@ -20,7 +20,7 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 #![allow(unexpected_cfgs)]
 
-use std::ffi::CString;
+use std::ffi::{CString, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
@@ -496,43 +496,63 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
     // which will be '0' (root) for the tasks daemon because it runs as root. Force
     // the ccache name.
     // TODO: Add a new himmelblau.conf option to define the ccache name
-    let ccname = Some(format!("KEYRING:persistent:{}", uid));
+    let ccname = OsString::from(format!("KEYRING:persistent:{}", uid));
 
     debug!(?ccname, "Storing kerberos ticket in credential cache");
 
     let guard = uzers::switch::switch_user_group(uid, gid)
         .map_err(|e| format!("Failed to switch user/group: {}", e))?;
 
-    let mut ccache = match libkrimes::ccache::resolve(ccname.as_deref()) {
-        Ok(ccache) => ccache,
-        Err(e) => {
-            drop(guard);
-            let msg = format!("Failed to resolve credential cache {:?}: {:?}", ccname, e);
-            return Err(msg);
-        }
-    };
-
-    match ccache.init(tgt.name(), None) {
-        Ok(_) => (),
-        Err(e) => {
-            drop(guard);
-            let msg = format!("Failed to init credential cache {:?}: {:?}", ccname, e);
-            return Err(msg);
-        }
-    }
-
-    match ccache.store(tgt) {
-        Ok(_) => (),
-        Err(e) => {
-            drop(guard);
-            let msg = format!("Failed to store TGT in credential cache: {:?}", e);
-            return Err(msg);
-        }
-    }
+    // Prefer a subsidiary that already matches this principal. Using
+    // collection.primary() for every store would re-init the same cache and clear
+    // the other principal when KerberosTGTs stores both cloud and AD tickets.
+    //
+    // When find() misses: use primary() if it is empty/uninitialized so default
+    // lookups discover the ticket (new_unique() does not set primary). If primary
+    // already holds a different principal, create a unique subsidiary instead.
+    let res = libkrimes::ccache::resolve(Some(&ccname))
+        .map_err(|e| format!("Failed to resolve credential cache {:?}: {:?}", ccname, e))
+        .and_then(|cache| match cache {
+            libkrimes::ccache::ResolvedCredentialCache::Collection(collection) => match collection
+                .find(tgt.name())
+            {
+                Ok(cc) => Ok(cc),
+                Err(libkrimes::error::KrbError::CredentialCacheNotFound) => {
+                    match collection.primary() {
+                        Ok(primary) => match primary.principal() {
+                            Err(libkrimes::error::KrbError::CredentialCacheNotFound) => Ok(primary),
+                            Ok(existing) if &existing == tgt.name() => Ok(primary),
+                            Ok(_) => collection.new_unique(),
+                            Err(e) => Err(e),
+                        },
+                        Err(e) => Err(e),
+                    }
+                }
+                Err(e) => Err(e),
+            }
+            .map_err(|e| format!("Failed to get subsidiary credential cache: {:?}", e))
+            .and_then(|mut cc| {
+                cc.init(tgt.name(), None)
+                    .map_err(|e| format!("Failed to init credential cache: {:?}", e))
+                    .and_then(|_| {
+                        cc.store(tgt).map_err(|e| {
+                            format!("Failed to store credentials in credential cache: {:?}", e)
+                        })
+                    })
+            }),
+            libkrimes::ccache::ResolvedCredentialCache::Subsidiary(mut cc) => cc
+                .init(tgt.name(), None)
+                .map_err(|e| format!("Failed to init credential cache: {:?}", e))
+                .and_then(|_| {
+                    cc.store(tgt).map_err(|e| {
+                        format!("Failed to store credentials in credential cache: {:?}", e)
+                    })
+                }),
+        });
 
     drop(guard);
 
-    Ok(())
+    res
 }
 
 fn write_kerberos_config_snippet(
