@@ -176,6 +176,22 @@ def update_source(spec, record):
     return f"https://dl.cloudsmith.io/public/{spec['repository']}/raw/versions/{record['name']}"
 
 
+def install_sysupdate(root, spec):
+    directory = root / "usr/lib/sysupdate.himmelblau.d"
+    directory.mkdir(parents=True, exist_ok=True)
+    template = (image.CONFIG / "sysupdate.transfer.in").read_text()
+    records = expected_images({**spec, "version": "@v", "kinds": ["portable", "sysext"]})
+    for index, record in enumerate(records, start=1):
+        if record["kind"] == "portable":
+            target = "/var/lib/himmelblau-ddi/himmelblaud.v"
+        else:
+            target = "/var/lib/extensions/himmelblau.sysext.raw.v"
+        (directory / f"{index * 10}-{record['kind']}.transfer").write_text(template.format(
+            version=spec["version"], source=update_source(spec, record),
+            pattern=record["filename"], target=target,
+        ))
+
+
 def format_checksums(checksums):
     lines = []
     for filename, digest in sorted(checksums.items()):
@@ -353,6 +369,7 @@ def stage(request):
                 release = request["release"]
             image.extension_release(root, release, record["filename"],
                                     f"{spec['version']}-{spec['distro']}", spec["architecture"])
+            install_sysupdate(root, spec)
         image.make_payload(root, Path("/output") / (record["filename"] + ".tar"))
 
 

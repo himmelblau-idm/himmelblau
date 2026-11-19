@@ -1,0 +1,13 @@
+[Unit]
+Description=Activate Himmelblau after a DDI Update
+Documentation=man:systemd-sysupdate(8) man:systemd-sysext(8) man:portablectl(1)
+RefuseManualStart=yes
+
+[Service]
+ExecStart=/usr/libexec/himmelblaud-sysupdate-notify /var/lib/himmelblau-ddi/himmelblaud.v/
+User=root
+BindReadOnlyPaths=/var/lib/himmelblau-ddi
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=5min

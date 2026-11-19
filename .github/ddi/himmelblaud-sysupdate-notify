@@ -1,0 +1,120 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+    printf 'himmelblaud-sysupdate-notify: %s\n' "$1" >&2
+    printf '{"error":"org.himmelblau.SysUpdate.Failed","parameters":{}}\0'
+    exit 1
+}
+
+activate_user() {
+    local uid=$1 image=$2 state runtime=false method=ReattachImage
+    local -a user_bus=(--user -M "$uid@.host" --no-pager)
+    local -a scope=()
+
+    state=$(portablectl "${user_bus[@]}" --no-ask-password is-attached himmelblaud)
+    case "$state" in
+        detached) method=AttachImage ;;
+        attached|enabled|running) ;;
+        attached-runtime|enabled-runtime|running-runtime)
+            scope+=(--runtime)
+            runtime=true
+            ;;
+        *)
+            printf 'Unexpected portable state for UID %s: %s\n' "$uid" "$state" >&2
+            return 1
+            ;;
+    esac
+
+    printf 'Activating Himmelblau user services for UID %s (%s)\n' "$uid" "$method" >&2
+    # portablectl rejects paths with -M, but portabled resolves the .v directory on the host.
+    if ! busctl "${user_bus[@]}" --allow-interactive-authorization=no call \
+        org.freedesktop.portable1 /org/freedesktop/portable1 org.freedesktop.portable1.Manager \
+        "$method" sassbs "$image" 2 himmelblau-broker himmelblau-compliance-check trusted "$runtime" "" >&2; then
+        return 1
+    fi
+    if ! systemctl "${user_bus[@]}" --no-ask-password daemon-reload >&2; then
+        return 1
+    fi
+    if ! systemctl "${user_bus[@]}" --no-ask-password enable "${scope[@]}" \
+        himmelblau-compliance-check.service himmelblau-compliance-check.timer >&2; then
+        return 1
+    fi
+    systemctl "${user_bus[@]}" --no-ask-password --no-block restart \
+        himmelblau-broker.service himmelblau-compliance-check.timer >&2
+}
+
+if ! IFS= read -r -d '' -n 1048576 request; then
+    fail "Incomplete Varlink request"
+fi
+if ((${#request} >= 1048576)); then
+    fail "Varlink request is too large"
+fi
+
+if ! action=$(jq --slurp --exit-status --raw-output '
+    if length != 1 or (.[0] | type) != "object" then
+        error("Expected one Varlink request")
+    else .[0] end
+    | if .method != "io.systemd.SysUpdate.Notify.OnCompletedUpdate" then
+        error("Unsupported Varlink method")
+    elif (.parameters | type) != "object" then
+        error("Expected notification parameters")
+    elif (.parameters.component != null and (.parameters.component | type) != "string")
+         or (.parameters.version != null and (.parameters.version | type) != "string") then
+        error("Invalid component or version")
+    elif .parameters.component == "himmelblau"
+         and (.parameters.version | type == "string" and length > 0) then
+        "reattach"
+    else "ignore" end
+' <<<"$request"); then
+    fail "Invalid sysupdate notification"
+fi
+
+if [[ "$action" == reattach ]]; then
+    if (($# != 1)); then
+        fail "Expected the portable image path"
+    fi
+    printf 'Refreshing host sysexts after a completed Himmelblau DDI update\n' >&2
+    if ! systemctl --system --no-ask-password reload-or-restart systemd-sysext.service >&2; then
+        fail "Host sysext refresh failed"
+    fi
+    if ! user_units=$(systemctl --system --no-pager --no-legend --plain list-units \
+        --type=service --state=running 'user@*.service'); then
+        fail "Cannot list running user managers"
+    fi
+    failed_users=()
+    while read -r unit _; do
+        if [[ -z "$unit" ]]; then
+            continue
+        fi
+        if [[ ! "$unit" =~ ^user@([0-9]+)\.service$ ]]; then
+            fail "Unexpected user manager unit: $unit"
+        fi
+        uid=${BASH_REMATCH[1]}
+        if ! activate_user "$uid" "$1"; then
+            printf 'Failed to activate Himmelblau user services for UID %s\n' "$uid" >&2
+            failed_users+=("$uid")
+        fi
+    done <<<"$user_units"
+    if ((${#failed_users[@]})); then
+        fail "User portable activation failed for UID(s): ${failed_users[*]}"
+    fi
+
+    system_action=reattach
+    system_scope=()
+    state=$(portablectl --system --no-ask-password is-attached "$1")
+    case "$state" in
+        detached) system_action=attach ;;
+        attached|enabled|running) ;;
+        attached-runtime|enabled-runtime|running-runtime) system_scope+=(--runtime) ;;
+        *) fail "Unexpected system portable state: $state" ;;
+    esac
+    # This can restart the notification service itself, so queue it last.
+    printf 'Activating Himmelblau system services (%s)\n' "$system_action" >&2
+    if ! portablectl --system --no-ask-password "$system_action" --now --enable --no-block --profile trusted \
+        "${system_scope[@]}" "$1" himmelblaud himmelblaud-sysupdate-notify himmelblau-hsm-pin-init >&2; then
+        fail "System portable activation failed"
+    fi
+fi
+
+printf '{"parameters":{}}\0'
