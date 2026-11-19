@@ -1145,7 +1145,8 @@ original reports and source as needed; summaries alone cannot resolve a source q
             elif depth < self.MAX_DEPTH and end - start > 1:
                 assessment = report.get("review") if data["final"] else None
                 if isinstance(assessment, dict) and (
-                        assessment.get("complete") is False or assessment.get("malicious") is True
+                        assessment.get("decision") is False or assessment.get("complete") is False
+                        or assessment.get("malicious") is True
                         or assessment.get("severity") in ("medium", "high", "critical")):
                     # Carry final-assessment concerns into integration if the source
                     # pass was incomplete, even when omitted from its issue lists.
