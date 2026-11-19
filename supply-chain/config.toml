@@ -97,6 +97,9 @@ audit-as-crates-io = false
 [policy."hashbrown:0.15.5"]
 audit-as-crates-io = false
 
+[policy."heapless:0.7.17"]
+audit-as-crates-io = false
+
 [policy."hermit-abi:0.4.0"]
 audit-as-crates-io = false
 
@@ -571,6 +574,18 @@ criteria = "safe-to-deploy"
 version = "2.6.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.hash32]]
+version = "0.3.1"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for hash32 0.3.1; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Withheld safe-to-deploy certification because safe MurmurHash3 operations create references to a partially initialized array on ordinary input lengths. The change replaces the earlier uninitialized constructor but leaves the buffering path unsound.
+Confirmed findings:
+source-1:findings:1: src/murmur3.rs:63 calls assume_init_mut on the entire four-byte buffer before writing the first tail byte. The buffer starts uninitialized at line 74, so safe hashing can violate the initialization requirement when a write leaves a one- to three-byte tail before the internal buffer has been fully initialized. A later write that completes the first buffered block repeats the violation at line 149, and finish32 uses assume_init_ref on the same partially initialized array at lines 89–106. The standard finish method delegates to finish32. These violations cause undefined behavior in safe code. Exposure requires an application to select Murmur3Hasher and feed untrusted bytes through the affected buffering path. The code establishes the soundness defect without establishing a specific production crash or memory corruption outcome. [Rust MaybeUninit safety requirements](https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#method.assume_init_mut) ()
+Review scope: 25228 original characters (900 lines); 3 deleted-file bodies intentionally omitted (544 patch characters). Remaining review material: 24908 characters (870 lines), 1 initial source tasks. Source limits: 240000 characters / 6000 lines. Coverage applies to the retained diff and deletion metadata.
+Review artifacts: /home/dmulder/code/himmelblau/.cargo-vet-review-fway7hwi.review"""
+
 [[exemptions.hashlink]]
 version = "0.7.0"
 criteria = "safe-to-deploy"
@@ -578,6 +593,11 @@ criteria = "safe-to-deploy"
 [[exemptions.hdrhistogram]]
 version = "7.5.4"
 criteria = "safe-to-deploy"
+
+[[exemptions.heapless]]
+version = "0.9.4"
+criteria = "safe-to-deploy"
+notes = "Temporary exemption for this upgrade: automated review was blocked and coverage incomplete; reported security findings remain unverified, with risk accepted pending follow-up."
 
 [[exemptions.hkdf]]
 version = "0.12.4"
@@ -937,10 +957,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.snow]]
 version = "0.10.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.spin]]
-version = "0.9.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.spki]]
