@@ -1079,17 +1079,6 @@ rec {
         ];
 
       };
-      "atomic-polyfill" = rec {
-        crateName = "atomic-polyfill";
-        version = "1.0.3";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/atomic-polyfill/1.0.3; };
-        libName = "atomic_polyfill";
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
-
-      };
       "atomic-waker" = rec {
         crateName = "atomic-waker";
         version = "1.1.2";
@@ -2638,7 +2627,7 @@ rec {
           }
           {
             name = "heapless";
-            packageId = "heapless";
+            packageId = "heapless 0.7.17";
             rename = "heapless-v0-7";
             optional = true;
           }
@@ -4351,7 +4340,7 @@ rec {
           }
           {
             name = "heapless";
-            packageId = "heapless";
+            packageId = "heapless 0.7.17";
             usesDefaultFeatures = false;
             features = [ "serde" ];
           }
@@ -7389,9 +7378,9 @@ rec {
       };
       "hash32" = rec {
         crateName = "hash32";
-        version = "0.2.1";
+        version = "0.3.1";
         edition = "2015";
-        sha256 = "0rrbv5pc5b1vax6j6hk7zvlrpw0h6aybshxy9vbpgsrgfrc5zhxh";
+        sha256 = "01h68z8qi5gl9lnr17nz10lay8wjiidyjdyd60kqx8ibj090pmj7";
         authors = [
           "Jorge Aparicio <jorge@japaric.io>"
         ];
@@ -7550,11 +7539,43 @@ rec {
         };
         resolvedDefaultFeatures = [ "base64" "flate2" "nom" "serialization" ];
       };
-      "heapless" = rec {
+      "heapless 0.7.17" = rec {
         crateName = "heapless";
         version = "0.7.17";
-        edition = "2018";
-        sha256 = "0kwn2wzk9fnsqnwp6rqjqhvh6hfq4rh225xwqjm72b5n1ry4bind";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/heapless/0.7.17; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "heapless";
+            packageId = "heapless 0.9.4";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            optional = true;
+            usesDefaultFeatures = false;
+            features = [ "derive" ];
+          }
+        ];
+        features = {
+          "__trybuild" = [ "heapless/__trybuild" ];
+          "cas" = [ "heapless/cas" ];
+          "defmt-impl" = [ "heapless/defmt-impl" ];
+          "mpmc_large" = [ "heapless/mpmc_large" ];
+          "serde" = [ "dep:serde" "heapless/serde" ];
+          "ufmt-impl" = [ "heapless/ufmt-impl" ];
+          "x86-sync-pool" = [ "heapless/x86-sync-pool" ];
+        };
+        resolvedDefaultFeatures = [ "default" "serde" ];
+      };
+      "heapless 0.9.4" = rec {
+        crateName = "heapless";
+        version = "0.9.4";
+        edition = "2021";
+        sha256 = "1wijbvbzvqmq7qqq9gf5zvd6b77rwyhcmy4yplbi2xckvzsdw7s1";
         authors = [
           "Jorge Aparicio <jorge@japaric.io>"
           "Per Lindgren <per.lindgren@ltu.se>"
@@ -7562,70 +7583,34 @@ rec {
         ];
         dependencies = [
           {
-            name = "atomic-polyfill";
-            packageId = "atomic-polyfill";
-            optional = true;
-            target = { target, features }: ("avr" == target."arch" or null);
-          }
-          {
-            name = "atomic-polyfill";
-            packageId = "atomic-polyfill";
-            target = { target, features }: (target.name == "riscv32i-unknown-none-elf");
-          }
-          {
-            name = "atomic-polyfill";
-            packageId = "atomic-polyfill";
-            target = { target, features }: (target.name == "riscv32imc-unknown-none-elf");
-          }
-          {
-            name = "atomic-polyfill";
-            packageId = "atomic-polyfill";
-            optional = true;
-            target = { target, features }: (target.name == "thumbv6m-none-eabi");
-          }
-          {
-            name = "atomic-polyfill";
-            packageId = "atomic-polyfill";
-            target = { target, features }: (target.name == "xtensa-esp32s2-none-elf");
-          }
-          {
             name = "hash32";
             packageId = "hash32";
           }
           {
-            name = "serde";
-            packageId = "serde";
+            name = "serde_core";
+            packageId = "serde_core";
             optional = true;
             usesDefaultFeatures = false;
-          }
-          {
-            name = "spin";
-            packageId = "spin";
-            target = { target, features }: ("x86_64" == target."arch" or null);
           }
           {
             name = "stable_deref_trait";
             packageId = "stable_deref_trait";
             usesDefaultFeatures = false;
-          }
-        ];
-        buildDependencies = [
-          {
-            name = "rustc_version";
-            packageId = "rustc_version";
+            target = { target, features }: (("arm" == target."arch" or null) || ("32" == target."pointer_width" or null) || ("64" == target."pointer_width" or null));
           }
         ];
         features = {
-          "atomic-polyfill" = [ "dep:atomic-polyfill" ];
-          "cas" = [ "atomic-polyfill" ];
-          "default" = [ "cas" ];
+          "bytes" = [ "dep:bytes" ];
           "defmt" = [ "dep:defmt" ];
-          "defmt-impl" = [ "defmt" ];
-          "serde" = [ "dep:serde" ];
-          "ufmt-impl" = [ "ufmt-write" ];
-          "ufmt-write" = [ "dep:ufmt-write" ];
+          "embedded-io-v0.7" = [ "dep:embedded-io" ];
+          "portable-atomic" = [ "dep:portable-atomic" ];
+          "portable-atomic-critical-section" = [ "dep:portable-atomic" "portable-atomic" "portable-atomic?/critical-section" ];
+          "portable-atomic-unsafe-assume-single-core" = [ "dep:portable-atomic" "portable-atomic" "portable-atomic?/unsafe-assume-single-core" ];
+          "serde" = [ "dep:serde_core" ];
+          "ufmt" = [ "dep:ufmt" "dep:ufmt-write" ];
+          "zeroize" = [ "dep:zeroize" ];
         };
-        resolvedDefaultFeatures = [ "atomic-polyfill" "cas" "default" "serde" ];
+        resolvedDefaultFeatures = [ "serde" ];
       };
       "heapless-bytes" = rec {
         crateName = "heapless-bytes";
@@ -7639,7 +7624,7 @@ rec {
         dependencies = [
           {
             name = "heapless";
-            packageId = "heapless";
+            packageId = "heapless 0.7.17";
             usesDefaultFeatures = false;
           }
           {
@@ -9869,7 +9854,7 @@ rec {
         dependencies = [
           {
             name = "heapless";
-            packageId = "heapless";
+            packageId = "heapless 0.7.17";
           }
         ];
         features = {
@@ -11138,7 +11123,7 @@ rec {
           }
           {
             name = "heapless";
-            packageId = "heapless";
+            packageId = "heapless 0.7.17";
           }
           {
             name = "hex";
@@ -19028,39 +19013,6 @@ rec {
         features = {
         };
         resolvedDefaultFeatures = [ "all" ];
-      };
-      "spin" = rec {
-        crateName = "spin";
-        version = "0.9.9";
-        edition = "2015";
-        sha256 = "03psal0vh1xdxp7agphw09p7kf50v3bj1zshijq1s5bkdd7jcqrp";
-        authors = [
-          "Mathijs van de Nes <git@mathijs.vd-nes.nl>"
-          "John Ericson <git@JohnEricson.me>"
-          "Joshua Barretto <joshua.s.barretto@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "lock_api";
-            packageId = "lock_api";
-            rename = "lock_api_crate";
-            optional = true;
-          }
-        ];
-        features = {
-          "barrier" = [ "mutex" ];
-          "default" = [ "lock_api" "mutex" "spin_mutex" "rwlock" "once" "lazy" "barrier" ];
-          "fair_mutex" = [ "mutex" ];
-          "lazy" = [ "once" ];
-          "lock_api" = [ "lock_api_crate" ];
-          "lock_api_crate" = [ "dep:lock_api_crate" ];
-          "portable-atomic" = [ "dep:portable-atomic" ];
-          "portable_atomic" = [ "portable-atomic" ];
-          "spin_mutex" = [ "mutex" ];
-          "ticket_mutex" = [ "mutex" ];
-          "use_ticket_mutex" = [ "mutex" "ticket_mutex" ];
-        };
-        resolvedDefaultFeatures = [ "barrier" "default" "lazy" "lock_api" "lock_api_crate" "mutex" "once" "rwlock" "spin_mutex" ];
       };
       "spki 0.7.3" = rec {
         crateName = "spki";
