@@ -203,15 +203,6 @@ impl MessagePrinter for PamConvMessagePrinter {
     }
 }
 
-fn should_capture_keyring_secret(prompt: &str) -> bool {
-    let prompt = prompt.trim().to_lowercase();
-    if prompt.contains("confirm") {
-        return false;
-    }
-
-    prompt.contains("pin") || prompt.contains("password")
-}
-
 pub struct KeyringCaptureMessagePrinter {
     inner: Arc<dyn MessagePrinter>,
     captured: Arc<Mutex<Option<String>>>,
@@ -237,12 +228,14 @@ impl MessagePrinter for KeyringCaptureMessagePrinter {
     }
 
     fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
-        let result = self.inner.prompt_echo_off(prompt);
-        if let Some(ref cred) = result {
-            if should_capture_keyring_secret(prompt) {
-                if let Ok(mut captured) = self.captured.lock() {
-                    *captured = Some(cred.clone());
-                }
+        self.inner.prompt_echo_off(prompt)
+    }
+
+    fn prompt_keyring_secret(&self, prompt: &str) -> Option<String> {
+        let result = self.inner.prompt_keyring_secret(prompt);
+        if let Some(ref secret) = result {
+            if let Ok(mut captured) = self.captured.lock() {
+                *captured = Some(secret.clone());
             }
         }
         result
@@ -1296,17 +1289,74 @@ impl PamHooks for PamKanidm {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_should_capture_keyring_secret_pin_prompts() {
-        // capture
-        assert!(should_capture_keyring_secret("PIN: "));
-        assert!(should_capture_keyring_secret(" New PIN: "));
-        assert!(should_capture_keyring_secret("Fido PIN: "));
-        assert!(should_capture_keyring_secret("   pIn   "));
+    struct TestPrinter(Option<String>);
 
-        // do not capture confirmations
-        assert!(!should_capture_keyring_secret("Confirm PIN: "));
-        assert!(!should_capture_keyring_secret("confirm new pin: "));
+    impl MessagePrinter for TestPrinter {
+        fn print_text(&self, _: &str) {}
+        fn print_error(&self, _: &str) {}
+        fn prompt_echo_on(&self, _: &str) -> Option<String> {
+            None
+        }
+        fn prompt_echo_off(&self, _: &str) -> Option<String> {
+            self.0.clone()
+        }
+    }
+
+    #[test]
+    fn keyring_capture_does_not_depend_on_prompt_language() {
+        for prompt in ["Code NIP : ", "Passwort: ", "PIN: ", "Password: "] {
+            let captured = Arc::new(Mutex::new(None));
+            let printer = KeyringCaptureMessagePrinter::new(
+                Arc::new(TestPrinter(Some("test-secret".into()))),
+                captured.clone(),
+            );
+            assert_eq!(
+                printer.prompt_keyring_secret(prompt).as_deref(),
+                Some("test-secret")
+            );
+            assert_eq!(captured.lock().unwrap().as_deref(), Some("test-secret"));
+        }
+    }
+
+    #[test]
+    fn ordinary_hidden_input_does_not_overwrite_keyring_secret() {
+        let captured = Arc::new(Mutex::new(None));
+        let printer = KeyringCaptureMessagePrinter::new(
+            Arc::new(TestPrinter(Some("other-response".into()))),
+            captured.clone(),
+        );
+        for prompt in [
+            "Password: ",
+            "Confirm PIN: ",
+            "PIN bestätigen: ",
+            "TOTP Code: ",
+        ] {
+            assert_eq!(
+                printer.prompt_echo_off(prompt).as_deref(),
+                Some("other-response")
+            );
+            assert_eq!(*captured.lock().unwrap(), None);
+        }
+
+        *captured.lock().unwrap() = Some("original-secret".into());
+        assert_eq!(
+            printer.prompt_echo_off("Code: ").as_deref(),
+            Some("other-response")
+        );
+        assert_eq!(captured.lock().unwrap().as_deref(), Some("original-secret"));
+    }
+
+    #[test]
+    fn cancelled_keyring_prompt_preserves_existing_secret() {
+        let captured = Arc::new(Mutex::new(None));
+        let printer =
+            KeyringCaptureMessagePrinter::new(Arc::new(TestPrinter(None)), captured.clone());
+        assert_eq!(printer.prompt_keyring_secret("Passwort: "), None);
+        assert_eq!(*captured.lock().unwrap(), None);
+
+        *captured.lock().unwrap() = Some("original-secret".into());
+        assert_eq!(printer.prompt_keyring_secret("Code NIP : "), None);
+        assert_eq!(captured.lock().unwrap().as_deref(), Some("original-secret"));
     }
 
     #[test]

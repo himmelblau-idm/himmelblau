@@ -77,6 +77,12 @@ pub trait MessagePrinter: Send + Sync {
     fn print_error(&self, msg: &str);
     fn prompt_echo_on(&self, prompt: &str) -> Option<String>;
     fn prompt_echo_off(&self, prompt: &str) -> Option<String>;
+    /// Prompt for a password or PIN to pass to the keyring after successful authentication.
+    /// Callers select credentials by authentication step, never by translated prompt text.
+    /// MFA codes, confirmations and other hidden input must use `prompt_echo_off`.
+    fn prompt_keyring_secret(&self, prompt: &str) -> Option<String> {
+        self.prompt_echo_off(prompt)
+    }
 }
 
 pub const DAEMON_START_WAIT_MESSAGE: &str = "Himmelblau authentication is starting, please wait...";
@@ -129,7 +135,7 @@ pub(crate) fn fido_status_check(
                 msg_printer.print_text(&format!("[FIDO_TOUCH] {}", presence_prompt));
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::PinRequired(sender))) => {
-                match msg_printer.prompt_echo_off(&(tr("Fido PIN:") + " ")) {
+                match msg_printer.prompt_keyring_secret(&(tr("Fido PIN:") + " ")) {
                     Some(pin) => {
                         sender.send(Pin::new(&pin)).expect("Failed to send PIN");
                         continue;
@@ -150,7 +156,7 @@ pub(crate) fn fido_status_check(
                 });
                 let msg = tr_fmt("Wrong PIN! {message}", &[("message", detail)]);
                 msg_printer.print_text(&msg);
-                match msg_printer.prompt_echo_off(&(tr("Fido PIN:") + " ")) {
+                match msg_printer.prompt_keyring_secret(&(tr("Fido PIN:") + " ")) {
                     Some(pin) => {
                         sender.send(Pin::new(&pin)).expect("Failed to send PIN");
                         continue;
@@ -921,7 +927,7 @@ fn handle_pam_auth_response_password(
             (true, Some(long_prompt)) => format!("{}\n{}", long_prompt, prompt),
             _ => prompt,
         };
-        match state.msg_printer.prompt_echo_off(&prompt) {
+        match state.msg_printer.prompt_keyring_secret(&prompt) {
             Some(cred) => cred,
             None => {
                 debug!("no password");
@@ -1061,7 +1067,10 @@ fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> P
     let mut confirm;
     loop {
         state.msg_printer.print_text(&msg);
-        pin = match state.msg_printer.prompt_echo_off(&(tr("New PIN:") + " ")) {
+        pin = match state
+            .msg_printer
+            .prompt_keyring_secret(&(tr("New PIN:") + " "))
+        {
             Some(cred) => {
                 if cred.len() < state.cfg.get_hello_pin_min_length() {
                     state.msg_printer.print_text(&tr_fmt(
@@ -1143,7 +1152,7 @@ fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
             .print_text(&i18n::translate_external_message(
                 &state.cfg.get_hello_pin_prompt(),
             ));
-        match state.msg_printer.prompt_echo_off(&(tr("PIN:") + " ")) {
+        match state.msg_printer.prompt_keyring_secret(&(tr("PIN:") + " ")) {
             Some(cred) if !cred.is_empty() => cred,
             None => {
                 debug!("no pin");
@@ -1321,7 +1330,7 @@ fn handle_pam_auth_response_change_password(state: &AuthenticateState, msg: &str
             .print_text(&i18n::translate_external_message(msg));
         password = match state
             .msg_printer
-            .prompt_echo_off(&(tr("New password:") + " "))
+            .prompt_keyring_secret(&(tr("New password:") + " "))
         {
             Some(cred) => {
                 // Entra Id requires a minimum password length of 8 characters
@@ -1808,6 +1817,7 @@ mod tests {
         text: Mutex<Vec<String>>,
         error: Mutex<Vec<String>>,
         prompts: Mutex<Vec<String>>,
+        keyring_prompts: Mutex<Vec<String>>,
     }
 
     impl MessagePrinter for RecordingPrinter {
@@ -1827,6 +1837,14 @@ mod tests {
         fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
             self.prompts.lock().unwrap().push(prompt.to_string());
             Some("hunter2".to_string())
+        }
+
+        fn prompt_keyring_secret(&self, prompt: &str) -> Option<String> {
+            self.keyring_prompts
+                .lock()
+                .unwrap()
+                .push(prompt.to_string());
+            self.prompt_echo_off(prompt)
         }
     }
 
@@ -2344,6 +2362,26 @@ mod tests {
             msg.len() > uri.len(),
             "enrollment text should include generated QR content"
         );
+    }
+
+    #[test]
+    fn localized_password_uses_keyring_prompt() {
+        let printer = Arc::new(RecordingPrinter::default());
+        let (mut state, listener) = test_password_state(printer.clone());
+
+        let next = handle_pam_auth_response_password(&mut state, Some("Passwort:"), None);
+
+        assert_eq!(
+            printer.keyring_prompts.lock().unwrap().as_slice(),
+            &["Passwort:".to_string()]
+        );
+        match next {
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(PamAuthRequest::Password {
+                cred,
+            })) => assert_eq!(cred, "hunter2"),
+            _ => panic!("expected a password step request"),
+        }
+        fs::remove_file(listener.local_addr().unwrap().as_pathname().unwrap()).unwrap();
     }
 
     // no_info_prompt folds the info text into a single PAM_PROMPT_ECHO_OFF.
