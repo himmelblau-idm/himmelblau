@@ -181,7 +181,7 @@ rand = "^0.10.2"
 sketching = "1.10.0"
 rusqlite = "^0.37.0"
 hashbrown = { version = "0.17.0", features = ["serde", "inline-more"] }
-lru = "^0.18.0"
+lru = "^0.19.0"
 kanidm_lib_crypto = { git = "https://github.com/kanidm/kanidm.git", tag = "v1.12.0" }
 kanidm_utils_users = { git = "https://github.com/kanidm/kanidm.git", tag = "v1.12.0" }
 walkdir = "2"
