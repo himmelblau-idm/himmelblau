@@ -25,7 +25,6 @@ resolver = "2"
 adler2-2-0-0 = { package = "adler2", path = "src/overrides/adler2/2.0.0" }
 anstyle-wincon-3-0-8 = { package = "anstyle-wincon", path = "src/overrides/anstyle-wincon/3.0.8" }
 assert_hex-0-4-1 = { package = "assert_hex", path = "src/overrides/assert_hex/0.4.1" }
-atomic-polyfill-1-0-3 = { package = "atomic-polyfill", path = "src/overrides/atomic-polyfill/1.0.3" }
 base64-0-21-7 = { package = "base64", path = "src/overrides/base64/0.21.7" }
 bs58-0-5-1 = { package = "bs58", path = "src/overrides/bs58/0.5.1" }
 cbindgen-0-29-2 = { package = "cbindgen", path = "src/overrides/cbindgen/0.29.2" }
@@ -48,6 +47,7 @@ getrandom-0-2-16 = { package = "getrandom", path = "src/overrides/getrandom/0.2.
 getrandom-0-3-3 = { package = "getrandom", path = "src/overrides/getrandom/0.3.3" }
 hashbrown-0-15-5 = { package = "hashbrown", path = "src/overrides/hashbrown/0.15.5" }
 hermit-abi-0-4-0 = { package = "hermit-abi", path = "src/overrides/hermit-abi/0.4.0" }
+heapless-0-7-17 = { package = "heapless", path = "src/overrides/heapless/0.7.17" }
 humantime-2-2-0 = { package = "humantime", path = "src/overrides/humantime/2.2.0" }
 indexmap-1-9-3 = { package = "indexmap", path = "src/overrides/indexmap/1.9.3" }
 itertools-0-10-5 = { package = "itertools", path = "src/overrides/itertools/0.10.5" }
