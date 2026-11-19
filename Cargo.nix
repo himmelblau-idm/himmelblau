@@ -9426,9 +9426,9 @@ rec {
       };
       "identity_dbus_broker" = rec {
         crateName = "identity_dbus_broker";
-        version = "0.2.1";
+        version = "0.2.2";
         edition = "2021";
-        sha256 = "0nnbfbx0ajyisw03k7hfg23qhv191w3qnamahy2qd4gikq7wm4j3";
+        sha256 = "111flhdr7avfgsjjsc7jxv7djfwmp3dcv8ihfljdipwdrbxjbz5p";
         authors = [
           "David Mulder <dmulder@suse.com>"
         ];

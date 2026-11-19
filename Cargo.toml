@@ -167,7 +167,7 @@ himmelblau_policies = { path = "src/policies" }
 os-release = "^0.1.0"
 zeroize = "^1.8.2"
 idmap = { path = "src/idmap" }
-identity_dbus_broker = "0.2.1"
+identity_dbus_broker = "0.2.2"
 console-subscriber = "0.5.0"
 broker-client = { path = "src/broker-client" }
 libkrimes = { version = "0.2.0", features = ["keyring"] }
