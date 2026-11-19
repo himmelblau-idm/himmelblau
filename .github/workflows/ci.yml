@@ -243,6 +243,11 @@ jobs:
           python3 scripts/test_sso_policies_scripts.py
           cargo test
         continue-on-error: false
+      - name: "Test time compatibility overrides"
+        run: |
+          cargo test -p humantime@2.2.0
+          cargo test -p chrono@0.4.45 --features chrono/serde
+        continue-on-error: false
       - name: "Test aad-tool without donation messages"
         run: cargo test -p aad-tool --no-default-features
         continue-on-error: false

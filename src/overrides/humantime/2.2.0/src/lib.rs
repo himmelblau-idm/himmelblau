@@ -41,6 +41,25 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_nanoseconds_and_checks_second_carry() {
+        assert_eq!(
+            parse_duration("18446744073709551615s 999999999ns"),
+            Ok(StdDuration::MAX)
+        );
+        assert_eq!(
+            parse_duration("18446744073709551614s 500000000ns 500000000ns"),
+            Ok(StdDuration::from_secs(u64::MAX))
+        );
+        for input in [
+            "18446744073709551615s 1000000000ns",
+            "18446744073709551615s 500000000ns 500000000ns",
+            "1000000000ns 18446744073709551615s",
+        ] {
+            assert_eq!(parse_duration(input), Err(Error::NumberOverflow), "{input}");
+        }
+    }
+
+    #[test]
     fn rejects_invalid_and_overflowing_durations() {
         for input in ["", "1fortnight", "18446744073709551615h"] {
             assert!(input.parse::<Duration>().is_err(), "{input}");

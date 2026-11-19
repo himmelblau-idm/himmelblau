@@ -137,7 +137,7 @@ impl Parser<'_> {
             }
         };
         let mut nsec = self.current.1.add(nsec)?;
-        if nsec > 1_000_000_000 {
+        if nsec >= 1_000_000_000 {
             sec = sec.add(nsec / 1_000_000_000)?;
             nsec %= 1_000_000_000;
         }
