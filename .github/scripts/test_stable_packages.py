@@ -380,12 +380,14 @@ class PublicationTests(unittest.TestCase):
 
     def test_package_lookup_reads_every_page_without_exposing_api_key(self):
         first = [self.remote(self.records[0])] * 100
-        last = [self.remote(self.records[1], tags={})]
+        last = [self.remote(self.records[1], tags={})] * 100
         pages = [io.BytesIO(json.dumps(first).encode()), io.BytesIO(json.dumps(last).encode())]
+        for page in pages:
+            page.headers = {"X-Pagination-Pagetotal": "2"}
         with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
              patch.object(sp.urllib.request, "urlopen", side_effect=pages) as request:
             rows = sp.api_packages(self.spec["repository"], "deb", self.spec["tag"])
-        self.assertEqual(len(rows), 101)
+        self.assertEqual(len(rows), 200)
         for call in request.call_args_list:
             self.assertNotIn("test-not-a-secret", call.args[0].full_url)
             query = sp.urllib.parse.parse_qs(sp.urllib.parse.urlsplit(call.args[0].full_url).query)
@@ -393,15 +395,19 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(query["page"], ["2"])
 
     def test_cleanup_inventory_lookup_is_not_limited_to_current_version(self):
+        response = io.BytesIO(b"[]")
+        response.headers = {"X-Pagination-Pagetotal": "1"}
         with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
-             patch.object(sp.urllib.request, "urlopen", return_value=io.BytesIO(b"[]")) as request:
+             patch.object(sp.urllib.request, "urlopen", return_value=response) as request:
             self.assertEqual(sp.api_packages(self.spec["repository"], "deb"), [])
         query = sp.urllib.parse.parse_qs(sp.urllib.parse.urlsplit(request.call_args.args[0].full_url).query)
         self.assertEqual(query["query"], ["format:deb"])
 
     def test_cleanup_inventory_lookup_can_filter_distribution(self):
+        response = io.BytesIO(b"[]")
+        response.headers = {"X-Pagination-Pagetotal": "1"}
         with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
-             patch.object(sp.urllib.request, "urlopen", return_value=io.BytesIO(b"[]")) as request:
+             patch.object(sp.urllib.request, "urlopen", return_value=response) as request:
             self.assertEqual(sp.api_packages(
                 self.spec["repository"], "deb", distribution="ubuntu/noble"), [])
         query = sp.urllib.parse.parse_qs(

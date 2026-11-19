@@ -329,7 +329,7 @@ def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_cont
 def api_packages(repository, fmt, tag=None, distribution=None, package_name=None):
     # Current-version checks stay narrow. Cleanup deliberately inventories the
     # format's history so it can remove untagged packages from older workflows.
-    packages, page = [], 1
+    packages, page, restarts = [], 1, 0
     while True:
         search = f"format:{fmt}"
         if distribution:
@@ -341,12 +341,30 @@ def api_packages(repository, fmt, tag=None, distribution=None, package_name=None
         query = urllib.parse.urlencode({"query": search, "page_size": 100, "page": page})
         request = urllib.request.Request(f"https://api.cloudsmith.io/v1/packages/{repository}/?{query}",
                                          headers={"X-Api-Key": os.environ["CLOUDSMITH_API_KEY"]})
+        restart = False
         for attempt in range(3):
             try:
                 with urllib.request.urlopen(request, timeout=30) as response:
                     rows = json.load(response)
+                    page_total = response.headers.get("X-Pagination-Pagetotal", "")
+                    if not re.fullmatch(r"[1-9][0-9]*", page_total) or int(page_total) < page:
+                        raise RuntimeError("Cloudsmith returned invalid pagination metadata; no credentials logged")
+                    last_page = int(page_total)
                 break
             except urllib.error.HTTPError as exc:
+                # Concurrent cleanup can remove a later page. Never return the partial inventory.
+                if exc.code == 404 and page > 1:
+                    if restarts == 2:
+                        raise RuntimeError("Cloudsmith package pagination did not stabilize after three attempts; "
+                                           "no credentials logged") from None
+                    restarts += 1
+                    summary(f"Cloudsmith package lookup returned HTTP 404 on page {page}; "
+                            f"restarting pagination ({restarts}/2).")
+                    packages.clear()
+                    page = 1
+                    restart = True
+                    time.sleep(2 ** (restarts - 1))
+                    break
                 if exc.code not in {429, 500, 502, 503, 504} or attempt == 2:
                     raise RuntimeError(f"Cloudsmith package lookup failed (HTTP {exc.code}); no credentials logged") from None
                 time.sleep(2 ** attempt)
@@ -354,8 +372,10 @@ def api_packages(repository, fmt, tag=None, distribution=None, package_name=None
                 if attempt == 2:
                     raise RuntimeError("Cloudsmith package lookup failed; no credentials logged") from None
                 time.sleep(2 ** attempt)
+        if restart:
+            continue
         packages.extend(rows)
-        if len(rows) < 100:
+        if page == last_page:
             return packages
         page += 1
 
