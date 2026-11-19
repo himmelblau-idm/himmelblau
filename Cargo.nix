@@ -83,6 +83,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "chrono" = rec {
+      packageId = "chrono";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "chrono";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "himmelblau-collabora" = rec {
       packageId = "himmelblau-collabora";
       build = internal.buildRustCrateWithFeatures {
@@ -137,6 +147,16 @@ rec {
       packageId = "himmelblaud";
       build = internal.buildRustCrateWithFeatures {
         packageId = "himmelblaud";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
+    "humantime" = rec {
+      packageId = "humantime";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "humantime";
       };
 
       # Debug support which might change between releases.
@@ -2862,6 +2882,12 @@ rec {
             packageId = "serde";
             optional = true;
             features = [ "derive" ];
+          }
+        ];
+        devDependencies = [
+          {
+            name = "serde_json";
+            packageId = "serde_json";
           }
         ];
         features = {
@@ -8663,6 +8689,14 @@ rec {
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/humantime/2.2.0; };
         authors = [
           "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "jiff";
+            packageId = "jiff";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
+          }
         ];
 
       };

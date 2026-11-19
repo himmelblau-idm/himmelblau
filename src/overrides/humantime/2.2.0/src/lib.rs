@@ -1,18 +1,18 @@
-//! Duration parsing compatibility for console-subscriber.
+//! Only the duration interface required by console-subscriber.
+//!
+//! Parsing uses jiff's friendly unsigned-duration grammar.
 
-mod duration;
-
-pub use duration::{parse_duration, Error};
 use std::{str::FromStr, time::Duration as StdDuration};
 
-#[derive(Debug)]
 pub struct Duration(StdDuration);
 
 impl FromStr for Duration {
-    type Err = Error;
+    type Err = jiff::Error;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        parse_duration(value).map(Self)
+        jiff::fmt::friendly::SpanParser::new()
+            .parse_unsigned_duration(value)
+            .map(Self)
     }
 }
 
@@ -28,34 +28,9 @@ mod tests {
 
     #[test]
     fn parses_console_durations() {
-        for (input, seconds) in [
-            ("1h", 3_600),
-            ("1000ms", 1),
-            ("1h 2min 3s", 3_723),
-            ("1M", 2_630_016),
-            ("1y", 31_557_600),
-        ] {
+        for (input, seconds) in [("1h", 3_600), ("1000ms", 1), ("1h 2min 3s", 3_723)] {
             let duration: StdDuration = input.parse::<Duration>().unwrap().into();
             assert_eq!(duration, StdDuration::from_secs(seconds));
-        }
-    }
-
-    #[test]
-    fn normalizes_nanoseconds_and_checks_second_carry() {
-        assert_eq!(
-            parse_duration("18446744073709551615s 999999999ns"),
-            Ok(StdDuration::MAX)
-        );
-        assert_eq!(
-            parse_duration("18446744073709551614s 500000000ns 500000000ns"),
-            Ok(StdDuration::from_secs(u64::MAX))
-        );
-        for input in [
-            "18446744073709551615s 1000000000ns",
-            "18446744073709551615s 500000000ns 500000000ns",
-            "1000000000ns 18446744073709551615s",
-        ] {
-            assert_eq!(parse_duration(input), Err(Error::NumberOverflow), "{input}");
         }
     }
 

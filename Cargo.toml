@@ -19,6 +19,8 @@ members = [
 	"src/collabora",
 	"fuzz",
 	"src/orchestrator",
+	"src/overrides/humantime/2.2.0",
+	"src/overrides/chrono/0.4.45",
 ]
 default-members = [
 	"src/daemon",
