@@ -1,31 +1,37 @@
-{ system ? builtins.currentSystem }:
+{
+  system ? builtins.currentSystem,
+  sources ? import ./sources.nix,
+  pkgs ? import sources.nixpkgs {
+    inherit system;
+    overlays = [ (import sources.rust-overlay) ];
+  },
+}:
 let
-  self = import ./default.nix { inherit system; };
-  inherit (self.passthru) pkgs;
+  rustVersion = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.rust-version;
+  rustToolchain = pkgs.rust-bin.stable."${rustVersion}.0".default.override {
+    extensions = [ "rust-analyzer" "rust-src" ];
+  };
 in
 pkgs.mkShell {
   packages = with pkgs; [
-    rust-analyzer
-    rustfmt
-    clippy
+    rustToolchain
+    gawk
     pkg-config
     openssl
     udev.dev
     dbus.dev
     libunistring
-    libclang
     clang
+    libclang
     stdenv.cc
     pam
     sqlite.dev
     python3
-    rustc
-    cargo
   ];
 
   env = {
     # For rust-analyzer support
-    RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
+    RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
     LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
     BINDGEN_EXTRA_CLANG_ARGS = ''
       -isystem ${pkgs.stdenv.cc.libc.dev}/include
