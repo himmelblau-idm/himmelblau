@@ -868,12 +868,7 @@ fn handle_pam_auth_response_success() -> PamWhatNext {
 fn handle_pam_auth_response_denied(state: &AuthenticateState, msg: &str) -> PamWhatNext {
     state.msg_printer.print_text(msg);
     thread::sleep(Duration::from_secs(2));
-    let req = ClientRequest::PamAuthenticateInit(
-        state.account_id.to_string(),
-        state.service.to_string(),
-        state.opts.no_hello_pin,
-        state.opts.force_reauth,
-    );
+    let req = state.auth_init_request();
     PamWhatNext::Next(req)
 }
 
@@ -1519,6 +1514,7 @@ struct AuthenticateState {
     authtok: Option<String>,
     cfg: HimmelblauConfig,
     account_id: String,
+    supplied_name: Option<String>,
     service: String,
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
@@ -1528,6 +1524,26 @@ struct AuthenticateState {
 }
 
 impl AuthenticateState {
+    fn auth_init_request(&self) -> ClientRequest {
+        match self.supplied_name.as_deref() {
+            Some(name) if self.cfg.learned_name_mapping_enabled() => {
+                ClientRequest::PamAuthenticateInitWithName(
+                    self.account_id.clone(),
+                    self.service.clone(),
+                    self.opts.no_hello_pin,
+                    self.opts.force_reauth,
+                    name.to_owned(),
+                )
+            }
+            _ => ClientRequest::PamAuthenticateInit(
+                self.account_id.clone(),
+                self.service.clone(),
+                self.opts.no_hello_pin,
+                self.opts.force_reauth,
+            ),
+        }
+    }
+
     fn clear_enrollment_qr(&mut self) {
         // The empty marker is a greeter command, not a user-facing message.
         // Ordinary logins (including local-user fallthrough) never need it.
@@ -1618,6 +1634,7 @@ pub fn wait_for_daemon_client(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn authenticate_with_client(
     daemon_client: DaemonClientBlocking,
     authtok: Option<String>,
@@ -1626,6 +1643,7 @@ pub fn authenticate_with_client(
     service: &str,
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
+    supplied_name: Option<&str>,
 ) -> PamResultCode {
     i18n::init();
     let mut state = AuthenticateState {
@@ -1633,6 +1651,7 @@ pub fn authenticate_with_client(
         authtok,
         cfg,
         account_id: account_id.to_owned(),
+        supplied_name: supplied_name.map(str::to_owned),
         service: service.to_owned(),
         opts,
         msg_printer,
@@ -1641,13 +1660,8 @@ pub fn authenticate_with_client(
         enrollment_qr_active: false,
     };
 
-    // This is the initial request to the daemon
-    let mut req = ClientRequest::PamAuthenticateInit(
-        state.account_id.to_owned(),
-        state.service.to_owned(),
-        state.opts.no_hello_pin,
-        state.opts.force_reauth,
-    );
+    // Carry the original PAM name without trusting it as the authenticated identity.
+    let mut req = state.auth_init_request();
 
     loop {
         let res = authenticate_request_response(&mut state, &req);
@@ -1683,6 +1697,7 @@ pub fn authenticate(
         service,
         opts,
         msg_printer,
+        None,
     )
 }
 
@@ -2142,6 +2157,7 @@ mod tests {
                 authtok: None,
                 cfg: test_config(""),
                 account_id: "user@example.com".to_string(),
+                supplied_name: None,
                 service: "mariadb".to_string(),
                 opts: Options::default(),
                 msg_printer: printer,
@@ -2151,6 +2167,34 @@ mod tests {
             },
             listener,
         )
+    }
+
+    #[test]
+    fn denied_retry_preserves_original_pam_name() {
+        let (mut state, _listener) = test_password_state(Arc::new(RecordingPrinter::default()));
+        state.cfg = test_config("[global]\ncn_name_mapping=true\nlearned_name_mapping=true\n");
+        state.supplied_name = Some("User@Example.COM".to_string());
+        let PamWhatNext::Next(request) = handle_pam_auth_response_denied(&state, "Retry") else {
+            panic!("Denied authentication should retry");
+        };
+        assert!(matches!(
+            request,
+            ClientRequest::PamAuthenticateInitWithName(account, service, _, _, supplied)
+                if account == "user@example.com"
+                    && service == "mariadb"
+                    && supplied == "User@Example.COM"
+        ));
+        state.cfg = test_config("[global]\ncn_name_mapping=true\nlearned_name_mapping=false\n");
+        assert!(matches!(
+            state.auth_init_request(),
+            ClientRequest::PamAuthenticateInit(..)
+        ));
+        state.cfg = test_config("[global]\ncn_name_mapping=true\nlearned_name_mapping=true\n");
+        state.supplied_name = None;
+        assert!(matches!(
+            state.auth_init_request(),
+            ClientRequest::PamAuthenticateInit(..)
+        ));
     }
 
     #[test]
@@ -2179,6 +2223,7 @@ mod tests {
                     ..Default::default()
                 },
                 printer.clone(),
+                None,
             );
 
             assert_eq!(result, expected);

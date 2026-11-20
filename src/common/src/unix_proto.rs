@@ -233,6 +233,7 @@ pub enum ClientRequest {
     NssGroupByName(String),
     NssInitgroups(String),
     PamAuthenticateInit(String, String, bool, bool),
+    PamAuthenticateInitWithName(String, String, bool, bool, String),
     PamAuthenticateStep(PamAuthRequest),
     PamAccountAllowed(String),
     PamAccountBeginSession(String),
@@ -261,6 +262,9 @@ impl ClientRequest {
                     "PamAuthenticateInit({}, {}, no_hello_pin: {}, force_reauth: {})",
                     id, service, no_hello_pin, force_reauth
                 )
+            }
+            ClientRequest::PamAuthenticateInitWithName(_, _, _, _, _) => {
+                "PamAuthenticateInitWithName(...)".to_string()
             }
             ClientRequest::PamAuthenticateStep(_) => "PamAuthenticateStep".to_string(),
             ClientRequest::PamAccountAllowed(id) => {
@@ -318,6 +322,7 @@ pub struct HomeDirectoryInfo {
 pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
     LocalGroups(String, bool),
+    LearnNameMapping(String, String),
     LogonScript(String, String),
     KerberosConfig(Option<String>, Option<String>, Option<String>),
     KerberosTGTs(
@@ -338,6 +343,7 @@ impl TaskRequest {
     pub fn as_safe_string(&self) -> String {
         match self {
             TaskRequest::HomeDirectory(_) => "HomeDirectory(...)".to_string(),
+            TaskRequest::LearnNameMapping(_, _) => "LearnNameMapping(...)".to_string(),
             TaskRequest::LocalGroups(_, _) => "LocalGroups(...)".to_string(),
             TaskRequest::LogonScript(_, _) => "LogonScript(...)".to_string(),
             TaskRequest::KerberosConfig(..) => "KerberosConfig(...)".to_string(),
