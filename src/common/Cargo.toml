@@ -61,6 +61,6 @@ totp-rs = { version = "5.7.1", features = ["gen_secret", "otpauth", "qr", "serde
 hostname = "0.4.2"
 qrcodegen = "1.8.0"
 urlencoding = { workspace = true }
-x509-cert = { workspace = true }
+x509-cert = "0.3.0"
 rand.workspace = true
 lazy_static.workspace = true

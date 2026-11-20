@@ -328,11 +328,9 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
             })?;
 
             let client_id = cert
-                .tbs_certificate
-                .subject
-                .as_ref()
+                .tbs_certificate()
+                .subject()
                 .iter()
-                .flat_map(|rdn| rdn.0.iter())
                 .find_map(|attr| {
                     (attr.oid.to_string() == "2.5.4.3")
                         .then(|| attr.value.decode_as::<Utf8StringRef>().ok())

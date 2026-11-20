@@ -31,9 +31,6 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [imports.zcash]
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
-[policy."ldap3_proto:0.6.2"]
-audit-as-crates-io = false
-
 [policy."opentelemetry-otlp:0.31.1"]
 audit-as-crates-io = false
 
