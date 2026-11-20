@@ -696,7 +696,7 @@ class NixosServiceTests(unittest.TestCase):
     def test_nixos_default_shell_is_a_registered_bash(self):
         self.assertEqual(
             self.evaluated["defaultShell"],
-            self.evaluated["bashShell"],
+            "/run/current-system/sw/bin/bash",
         )
         self.assertIn(
             self.evaluated["defaultShell"],
@@ -706,7 +706,8 @@ class NixosServiceTests(unittest.TestCase):
     def test_default_shell_survives_empty_core_packages(self):
         evaluated = evaluate(emptyCorePackages=True)
         self.assertEqual(evaluated["corePackages"], [])
-        self.assertEqual(evaluated["defaultShell"], evaluated["bashShell"])
+        self.assertEqual(evaluated["defaultShell"], "/run/current-system/sw/bin/bash")
+        self.assertIn(evaluated["bashPackage"], evaluated["systemPackages"])
         self.assertIn(
             evaluated["defaultShell"], evaluated["allowedShells"].splitlines()
         )

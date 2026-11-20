@@ -67,7 +67,8 @@ in
     tasks = map toString cfg.systemd.services.himmelblaud-tasks.restartTriggers;
   };
   defaultShell = cfg.services.himmelblau.settings.shell;
-  bashShell = "${pkgs.bashInteractive}/bin/bash";
+  bashPackage = toString pkgs.bashInteractive;
+  systemPackages = map toString cfg.environment.systemPackages;
   allowedShells = cfg.environment.etc.shells.text;
   corePackages = map toString cfg.environment.corePackages;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
