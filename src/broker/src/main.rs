@@ -17,6 +17,7 @@
 */
 use himmelblau_unix_common::auth::{authenticate, MessagePrinter};
 use himmelblau_unix_common::config::HimmelblauConfig;
+use himmelblau_unix_common::i18n::{tr, translate_external_message};
 use himmelblau_unix_common::pam::{Options, PamResultCode};
 use identity_dbus_broker::{session_broker_serve, LogLevelCallbacks, SessionBroker};
 use pinentry::PassphraseInput;
@@ -180,28 +181,46 @@ fn is_qr_art_line(line: &str) -> bool {
     blocks * 2 >= non_space
 }
 
-/// Prepare auth messages for pinentry: drop greeter prefixes and QR art, and
-/// keep Assuan command payloads short enough that pinentry-rs does not panic.
+// pinentry-rs caps encoded commands at 1000 bytes. Reserve room for command
+// framing and its special handling of a trailing backslash.
+const MAX_PINENTRY_TEXT_BYTES: usize = 900;
+
+fn pinentry_char_bytes(ch: char) -> usize {
+    match ch {
+        '\n' | '\r' | '%' => 3,
+        _ => ch.len_utf8(),
+    }
+}
+
+fn limit_pinentry_text(msg: &str) -> String {
+    const ELLIPSIS: &str = "\u{2026}";
+    let mut encoded_bytes = 0;
+    let mut prefix_end = 0;
+    for (index, ch) in msg.char_indices() {
+        encoded_bytes += pinentry_char_bytes(ch);
+        if encoded_bytes <= MAX_PINENTRY_TEXT_BYTES - ELLIPSIS.len() {
+            prefix_end = index + ch.len_utf8();
+        }
+        if encoded_bytes > MAX_PINENTRY_TEXT_BYTES {
+            return format!("{}{ELLIPSIS}", &msg[..prefix_end]);
+        }
+    }
+    msg.to_string()
+}
+
+/// Remove greeter prefixes and QR art while retaining full text for URL launch.
 fn sanitize_for_pinentry(msg: &str) -> String {
     let clean = msg
         .trim_start_matches("[FIDO_INSERT] ")
         .trim_start_matches("[FIDO_TOUCH] ");
 
-    let without_qr: String = clean
+    clean
         .lines()
         .filter(|line| !is_qr_art_line(line))
         .collect::<Vec<_>>()
         .join("\n")
         .trim()
-        .to_string();
-
-    // pinentry-rs 0.8 does not split long Assuan lines; stay well under 1KiB.
-    const MAX_PINENTRY_CHARS: usize = 900;
-    if without_qr.chars().count() <= MAX_PINENTRY_CHARS {
-        return without_qr;
-    }
-    let truncated: String = without_qr.chars().take(MAX_PINENTRY_CHARS).collect();
-    format!("{truncated}…")
+        .to_string()
 }
 
 /// Pull https URLs out of MFA / device-code messages for browser launch.
@@ -257,34 +276,173 @@ fn show_pinentry_message(msg: &str) {
     } else {
         "OK"
     };
-    if let Some(mut dialog) = pinentry::MessageDialog::with_default_binary() {
-        // Pinentry-rs panics on oversized Assuan lines; never let that
-        // unwind through the D-Bus handler (Edge AcquireTokenInteractively).
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = dialog.with_ok(ok_label).show_message(msg);
-        }));
+    let msg = limit_pinentry_text(msg);
+    let Some(mut dialog) = pinentry::MessageDialog::with_default_binary() else {
+        error!("No pinentry binary found for authentication message");
+        return;
+    };
+    if let Err(e) = dialog.with_ok(ok_label).show_message(&msg) {
+        error!("pinentry message failed: {:?}", e);
+    }
+}
+
+const PINENTRY_TITLE: &str = "Entra ID Authentication";
+
+fn confirm_pinentry_retry(msg: &str) -> bool {
+    let Some(mut dialog) = pinentry::ConfirmationDialog::with_default_binary() else {
+        error!("No pinentry binary found for authentication retry confirmation");
+        return false;
+    };
+    let msg = limit_pinentry_text(msg);
+    let ok = tr("OK");
+    let cancel = tr("Cancel");
+    match dialog
+        .with_title(PINENTRY_TITLE)
+        .with_ok(&ok)
+        .with_cancel(&cancel)
+        .confirm(&msg)
+    {
+        Ok(retry) => retry,
+        Err(e) => {
+            error!("pinentry retry confirmation failed: {:?}", e);
+            false
+        }
+    }
+}
+
+fn authenticate_with_retry(
+    mut authenticate: impl FnMut(Arc<PinentryMessagePrinter>) -> Result<PamResultCode, dbus::MethodErr>,
+    mut confirm_retry: impl FnMut(&str) -> bool,
+) -> Result<(), dbus::MethodErr> {
+    loop {
+        let printer = Arc::new(PinentryMessagePrinter::default());
+        let result = authenticate(Arc::clone(&printer))?;
+        if result == PamResultCode::PAM_SUCCESS {
+            return Ok(());
+        }
+        let message = printer
+            .failure_message
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+        if let Some(message) = message {
+            if confirm_retry(&message) {
+                continue;
+            }
+        }
+        return Err(dbus::MethodErr::failed(&format!(
+            "Interactive authentication failed: {:?}",
+            result
+        )));
+    }
+}
+
+/// Prompt and description shown in a pinentry passphrase dialog.
+fn pinentry_prompt_fields(prompt: &str, message: Option<String>) -> (String, String) {
+    let prompt = prompt.trim();
+    // pinentry-gnome3 renders the prompt as the dialog heading.
+    let prompt = if prompt == tr("PIN:").trim() {
+        tr("Authorization Required")
+    } else {
+        prompt.to_string()
+    };
+    let description = message.unwrap_or_else(|| PINENTRY_TITLE.to_string());
+    (
+        limit_pinentry_text(&prompt),
+        limit_pinentry_text(&description),
+    )
+}
+
+fn pinentry_error_message(error: String, description: Option<String>) -> String {
+    let Some(description) = description else {
+        return error;
+    };
+    let combined = format!("{description}\n\n{error}");
+    // Do not let optional prompt context displace the error when truncating.
+    if combined.chars().map(pinentry_char_bytes).sum::<usize>() > MAX_PINENTRY_TEXT_BYTES {
+        error
+    } else {
+        combined
     }
 }
 
 /// A `MessagePrinter` that uses `pinentry` for prompts and messages.
 /// Used by `authenticate()` for the interactive auth flow.
-struct PinentryMessagePrinter;
+#[derive(Default)]
+struct PinentryMessagePrinter {
+    pending_message: Mutex<Option<String>>,
+    failure_message: Mutex<Option<String>>,
+}
 
-impl MessagePrinter for PinentryMessagePrinter {
-    fn print_sensitive(&self, msg: &str) {
-        let clean = sanitize_for_pinentry(msg);
-        if !clean.is_empty() {
-            show_pinentry_message(&clean);
-        }
+impl PinentryMessagePrinter {
+    fn take_pending_message(&self) -> Option<String> {
+        self.pending_message
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
     }
 
-    fn print_text(&self, msg: &str) {
+    fn show_text(&self, msg: &str, mut show: impl FnMut(&str)) {
         let clean = sanitize_for_pinentry(msg);
         if clean.is_empty() {
             return;
         }
         debug!("message: {}", clean);
-        show_pinentry_message(&clean);
+        if let Some(pending) = self.take_pending_message() {
+            show(&pending);
+        }
+        show(&clean);
+    }
+}
+
+impl MessagePrinter for PinentryMessagePrinter {
+    fn print_sensitive(&self, msg: &str) {
+        let clean = sanitize_for_pinentry(msg);
+        if !clean.is_empty() {
+            if let Some(pending) = self.take_pending_message() {
+                show_pinentry_message(&pending);
+            }
+            show_pinentry_message(&clean);
+        }
+    }
+
+    fn print_text(&self, msg: &str) {
+        self.show_text(msg, show_pinentry_message);
+    }
+
+    fn print_prompt_description(&self, msg: &str) {
+        let clean = sanitize_for_pinentry(msg);
+        if clean.is_empty() {
+            return;
+        }
+        debug!("prompt description: {}", clean);
+        let previous = self
+            .pending_message
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(clean);
+        if let Some(previous) = previous {
+            show_pinentry_message(&previous);
+        }
+    }
+
+    fn print_auth_failure(&self, code: PamResultCode, msg: &str) {
+        let clean = sanitize_for_pinentry(&translate_external_message(msg));
+        error!("auth failure {:?}: {}", code, clean);
+        let message = if clean.is_empty() {
+            tr("Authentication failed.")
+        } else {
+            clean
+        };
+        *self
+            .failure_message
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(message);
+    }
+
+    fn retry_after_denial(&self, msg: &str) -> bool {
+        self.print_auth_failure(PamResultCode::PAM_AUTH_ERR, msg);
+        false
     }
 
     fn print_error(&self, msg: &str) {
@@ -293,7 +451,8 @@ impl MessagePrinter for PinentryMessagePrinter {
             return;
         }
         error!("auth error: {}", clean);
-        show_pinentry_message(&clean);
+        let message = pinentry_error_message(clean, self.take_pending_message());
+        show_pinentry_message(&message);
     }
 
     fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
@@ -302,9 +461,11 @@ impl MessagePrinter for PinentryMessagePrinter {
 
     fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
         let mut input = PassphraseInput::with_default_binary()?;
+        let (prompt, description) = pinentry_prompt_fields(prompt, self.take_pending_message());
         input
-            .with_description("Entra ID Authentication")
-            .with_prompt(prompt);
+            .with_title(PINENTRY_TITLE)
+            .with_description(description.as_str())
+            .with_prompt(prompt.as_str());
         match input.interact() {
             Ok(secret) => Some(secret.expose_secret().to_string()),
             Err(e) => {
@@ -402,54 +563,38 @@ impl InteractiveSessionBroker {
 
     /// Drive an interactive auth via pinentry to re-prime the daemon cache.
     fn run_interactive_auth(&self, account_id: &str) -> Result<(), dbus::MethodErr> {
-        if !interactive_session_available() {
-            return Err(dbus::MethodErr::failed(
-                &"No interactive prompt available: no unlocked graphical session or pinentry binary found",
-            ));
-        }
+        authenticate_with_retry(
+            |msg_printer| {
+                if !interactive_session_available() {
+                    return Err(dbus::MethodErr::failed(
+                        &"No interactive prompt available: no unlocked graphical session or pinentry binary found",
+                    ));
+                }
+                // Run authenticate() on a dedicated thread to avoid nested
+                // tokio runtime issues (fido_auth creates its own Runtime).
+                let cfg = (*self.cfg).clone();
+                // Hello PIN provides the interactive step required by Edge.
+                // force_reauth / no_hello_pin would skip it and fall back to MFA.
+                let opts = Options::default();
 
-        // Run authenticate() on a dedicated thread to avoid nested
-        // tokio runtime issues (fido_auth creates its own Runtime).
-        let cfg = (*self.cfg).clone();
-        let msg_printer: Arc<dyn MessagePrinter> = Arc::new(PinentryMessagePrinter);
-        // Edge AcquireTokenInteractively needs a real interactive step, but
-        // Hello PIN *is* that step. force_reauth / no_hello_pin both skip
-        // Hello in unix_user_online_auth_init and fall straight through to
-        // MFA device-code (pinentry MessageDialog) — useless for Edge sync.
-        let opts = Options {
-            debug: false,
-            use_first_pass: false,
-            ignore_unknown_user: false,
-            mfa_poll_prompt: false,
-            no_hello_pin: false,
-            no_info_prompt: false,
-            set_authtok: false,
-            try_unseal: false,
-            force_reauth: false,
-        };
+                info!("starting interactive auth for {}", account_id);
 
-        info!("starting interactive auth for {}", account_id);
-
-        let account_id_clone = account_id.to_string();
-        let auth_result = std::thread::spawn(move || {
-            authenticate(
-                None,
-                cfg,
-                &account_id_clone,
-                "broker-interactive",
-                opts,
-                msg_printer,
-            )
-        })
-        .join()
-        .map_err(|_| dbus::MethodErr::failed(&"Authentication thread panicked"))?;
-
-        if auth_result != PamResultCode::PAM_SUCCESS {
-            return Err(dbus::MethodErr::failed(&format!(
-                "Interactive authentication failed: {:?}",
-                auth_result
-            )));
-        }
+                let account_id_clone = account_id.to_string();
+                std::thread::spawn(move || {
+                    authenticate(
+                        None,
+                        cfg,
+                        &account_id_clone,
+                        "broker-interactive",
+                        opts,
+                        msg_printer,
+                    )
+                })
+                .join()
+                .map_err(|_| dbus::MethodErr::failed(&"Authentication thread panicked"))
+            },
+            confirm_pinentry_retry,
+        )?;
 
         info!("interactive auth succeeded for {}", account_id);
         Ok(())
@@ -712,6 +857,18 @@ async fn main() -> ExitCode {
 mod tests {
     use super::*;
 
+    fn pinentry_request_bytes(command: &str, value: &str) -> usize {
+        let mut escaped = value
+            .replace('%', "%25")
+            .replace('\r', "%0D")
+            .replace('\n', "%0A");
+        if escaped.ends_with('\\') {
+            escaped.pop();
+            escaped.push_str("%5C");
+        }
+        format!("{command} {escaped}\n").len()
+    }
+
     #[test]
     fn extracts_top_level_account() {
         let json = r#"{"account":{"username":"user@example.com"}}"#;
@@ -769,11 +926,322 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_for_pinentry_truncates_oversized_text() {
+    fn limit_pinentry_text_truncates_oversized_text() {
         let huge = "x".repeat(2000);
-        let out = sanitize_for_pinentry(&huge);
-        assert!(out.chars().count() <= 901);
-        assert!(out.ends_with('…'));
+        let out = limit_pinentry_text(&huge);
+        assert!(pinentry_request_bytes("SETDESC", &out) <= 1000);
+        assert!(out.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn action_message_keeps_full_urls_until_display() {
+        let url = format!(
+            "https://login.microsoftonline.com/authorize?state={}",
+            "%2F".repeat(400)
+        );
+        let printer = PinentryMessagePrinter::default();
+        let mut shown = Vec::new();
+        printer.show_text(&format!("Open {url}"), |message| {
+            shown.push(message.to_string());
+        });
+        assert_eq!(shown.len(), 1);
+        assert_eq!(extract_https_urls(&shown[0]), [url]);
+    }
+
+    #[test]
+    fn pinentry_text_budget_handles_utf8_and_assuan_escaping() {
+        for value in [
+            "x",
+            "\u{00e9}",
+            "\u{4e2d}",
+            "\u{1f600}",
+            "%",
+            "\r",
+            "\n",
+            "\\",
+            "%\r\n\u{4e2d}\\",
+        ] {
+            for count in [0, 1, 299, 300, 301, 449, 450, 451, 899, 900, 901, 2000] {
+                let input = value.repeat(count);
+                let output = limit_pinentry_text(&input);
+                for command in ["SETDESC", "SETPROMPT"] {
+                    assert!(pinentry_request_bytes(command, &output) <= 1000);
+                }
+                if pinentry_request_bytes("SETPROMPT", &input) <= 900 {
+                    assert_eq!(output, input);
+                } else if pinentry_request_bytes("SETPROMPT", &input) > 1000 {
+                    assert!(output.ends_with('\u{2026}'));
+                    assert!(input.starts_with(output.strip_suffix('\u{2026}').unwrap()));
+                }
+            }
+        }
+        for input in ["x".repeat(900), "\u{4e2d}".repeat(300), "%".repeat(300)] {
+            assert_eq!(limit_pinentry_text(&input), input);
+        }
+    }
+
+    #[test]
+    fn pinentry_prompt_fields_bound_final_prompt_and_description() {
+        let (prompt, description) =
+            pinentry_prompt_fields(&"%".repeat(1000), Some("\u{4e2d}".repeat(400)));
+        assert!(pinentry_request_bytes("SETPROMPT", &prompt) <= 1000);
+        assert!(pinentry_request_bytes("SETDESC", &description) <= 1000);
+        assert!(prompt.ends_with('\u{2026}'));
+        assert!(description.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn pinentry_error_message_keeps_errors_instead_of_oversized_context() {
+        assert_eq!(
+            pinentry_error_message("Failure".to_string(), Some("Context".to_string())),
+            "Context\n\nFailure"
+        );
+        for (description, error) in [
+            ("a".repeat(600), "b".repeat(600)),
+            ("%".repeat(200), "b".repeat(400)),
+            ("\u{4e2d}".repeat(200), "b".repeat(400)),
+        ] {
+            let message = pinentry_error_message(error.clone(), Some(description));
+            assert_eq!(message, error);
+            assert!(pinentry_request_bytes("SETDESC", &message) <= 1000);
+        }
+    }
+
+    #[test]
+    fn action_messages_are_shown_without_waiting_for_a_prompt() {
+        for (msg, expected) in [
+            (
+                "Sign in at https://microsoft.com/devicelogin with code ABC123",
+                "Sign in at https://microsoft.com/devicelogin with code ABC123",
+            ),
+            (
+                "Approve sign-in on your phone",
+                "Approve sign-in on your phone",
+            ),
+            ("[FIDO_INSERT] Insert your key", "Insert your key"),
+            ("[FIDO_TOUCH] Touch your key", "Touch your key"),
+        ] {
+            let printer = PinentryMessagePrinter::default();
+            let mut shown = Vec::new();
+            printer.show_text(msg, |message| shown.push(message.to_string()));
+            assert_eq!(shown, [expected]);
+            assert!(printer.take_pending_message().is_none());
+        }
+    }
+
+    #[test]
+    fn credential_description_is_folded_into_the_next_prompt() {
+        let printer = PinentryMessagePrinter::default();
+        printer.print_prompt_description("Use your Hello PIN");
+        assert_eq!(
+            pinentry_prompt_fields("PIN: ", printer.take_pending_message()),
+            (
+                tr("Authorization Required"),
+                "Use your Hello PIN".to_string()
+            )
+        );
+        assert!(printer.take_pending_message().is_none());
+    }
+
+    #[test]
+    fn action_message_flushes_an_unconsumed_description_first() {
+        let printer = PinentryMessagePrinter::default();
+        printer.print_prompt_description("Credential context");
+        let mut shown = Vec::new();
+        printer.show_text("Touch your key", |message| shown.push(message.to_string()));
+        assert_eq!(shown, ["Credential context", "Touch your key"]);
+        assert!(printer.take_pending_message().is_none());
+    }
+
+    #[test]
+    fn confirmed_failure_retries_with_fresh_prompt_state() {
+        let mut attempts = 0;
+        let mut confirmations = 0;
+        let failure = tr("No Entra Id Hello PIN was supplied.");
+        let result = authenticate_with_retry(
+            |printer| {
+                attempts += 1;
+                assert!(printer.take_pending_message().is_none());
+                assert!(printer.failure_message.lock().unwrap().is_none());
+                if attempts == 1 {
+                    printer.print_prompt_description("Unconsumed description");
+                    printer.print_auth_failure(
+                        PamResultCode::PAM_CRED_INSUFFICIENT,
+                        "No Entra Id Hello PIN was supplied.",
+                    );
+                    Ok(PamResultCode::PAM_ABORT)
+                } else {
+                    Ok(PamResultCode::PAM_SUCCESS)
+                }
+            },
+            |message| {
+                confirmations += 1;
+                assert_eq!(message, failure);
+                true
+            },
+        );
+        assert!(result.is_ok());
+        assert_eq!(attempts, 2);
+        assert_eq!(confirmations, 1);
+    }
+
+    #[test]
+    fn cancelled_failure_confirmation_ends_authentication() {
+        for failure in ["Authentication failed.", ""] {
+            let mut attempts = 0;
+            let result = authenticate_with_retry(
+                |printer| {
+                    attempts += 1;
+                    printer.print_auth_failure(PamResultCode::PAM_AUTH_ERR, failure);
+                    Ok(PamResultCode::PAM_ABORT)
+                },
+                |message| {
+                    assert_eq!(message, tr("Authentication failed."));
+                    false
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(attempts, 1);
+        }
+    }
+
+    #[test]
+    fn failures_without_recorded_messages_do_not_offer_retry() {
+        for code in [
+            PamResultCode::PAM_IGNORE,
+            PamResultCode::PAM_SYSTEM_ERR,
+            PamResultCode::PAM_USER_UNKNOWN,
+        ] {
+            let mut code = Some(code);
+            let result = authenticate_with_retry(
+                |_| Ok(code.take().expect("failure must not be retried")),
+                |_| panic!("a failure without a recorded message must not show another dialog"),
+            );
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn daemon_denial_waits_for_confirmation_before_retrying() {
+        use himmelblau_unix_common::auth::authenticate_with_client;
+        use himmelblau_unix_common::client_sync::DaemonClientBlocking;
+        use himmelblau_unix_common::unix_proto::{
+            ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse,
+        };
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixListener;
+
+        for retry in [false, true] {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir()
+                .join(format!("hb-broker-denied-{}-{nonce}", std::process::id()));
+            let socket_path = path.with_extension("sock");
+            let config_path = path.with_extension("conf");
+            std::fs::write(&config_path, "[global]\n").unwrap();
+            let listener = UnixListener::bind(&socket_path).unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut requests = Vec::new();
+                for response in [
+                    PamAuthResponse::Pin,
+                    PamAuthResponse::Denied("Wrong Hello PIN".to_string()),
+                ] {
+                    let mut data = Vec::new();
+                    let request = loop {
+                        let mut buffer = [0; 4096];
+                        let count = socket.read(&mut buffer).unwrap();
+                        assert_ne!(count, 0);
+                        data.extend_from_slice(&buffer[..count]);
+                        if let Ok(request) = serde_json::from_slice::<ClientRequest>(&data) {
+                            break request;
+                        }
+                    };
+                    requests.push(request);
+                    socket
+                        .write_all(
+                            &serde_json::to_vec(&ClientResponse::PamAuthenticateStepResponse(
+                                response,
+                            ))
+                            .unwrap(),
+                        )
+                        .unwrap();
+                }
+                assert!(matches!(
+                    requests.as_slice(),
+                    [
+                        ClientRequest::PamAuthenticateInit(..),
+                        ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { .. }),
+                    ]
+                ));
+                let mut buffer = [0];
+                assert_eq!(socket.read(&mut buffer).unwrap(), 0);
+            });
+            let mut attempts = 0;
+            let mut confirmations = 0;
+            let result = authenticate_with_retry(
+                |printer| {
+                    attempts += 1;
+                    if attempts > 1 {
+                        return Ok(PamResultCode::PAM_SUCCESS);
+                    }
+                    let result = authenticate_with_client(
+                        DaemonClientBlocking::new(socket_path.to_str().unwrap()).unwrap(),
+                        Some("wrong-pin".to_string()),
+                        HimmelblauConfig::new(Some(config_path.to_str().unwrap())).unwrap(),
+                        "user@example.com",
+                        "broker-interactive",
+                        Options::default(),
+                        printer,
+                    );
+                    assert_eq!(result, PamResultCode::PAM_AUTH_ERR);
+                    Ok(result)
+                },
+                |message| {
+                    confirmations += 1;
+                    assert_eq!(message, "Wrong Hello PIN");
+                    retry
+                },
+            );
+            server.join().unwrap();
+            std::fs::remove_file(socket_path).unwrap();
+            std::fs::remove_file(config_path).unwrap();
+            assert_eq!(result.is_ok(), retry);
+            assert_eq!(attempts, if retry { 2 } else { 1 });
+            assert_eq!(confirmations, 1);
+        }
+    }
+
+    #[test]
+    fn authentication_thread_error_is_not_retried() {
+        let result = authenticate_with_retry(
+            |_| Err(dbus::MethodErr::failed(&"Authentication thread panicked")),
+            |_| panic!("a thread failure must not offer a retry"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pinentry_prompt_fields_use_authorization_heading_for_hello_pin() {
+        assert_eq!(
+            pinentry_prompt_fields("PIN: ", Some("Use your Hello PIN".to_string())),
+            (
+                "Authorization Required".to_string(),
+                "Use your Hello PIN".to_string()
+            )
+        );
+        assert_eq!(
+            pinentry_prompt_fields("Confirm PIN: ", None),
+            (
+                "Confirm PIN:".to_string(),
+                "Entra ID Authentication".to_string()
+            )
+        );
     }
 
     #[test]
