@@ -387,8 +387,8 @@ impl InteractiveSessionBroker {
             .map_err(|e| dbus::MethodErr::failed(&format!("invalid UTF-8: {}", e)))
     }
 
-    /// Resolve the account username for a broker request, falling back to
-    /// the caller's session account when the request omits a username.
+    /// Resolve the caller's session account and reject any supplied username
+    /// that does not match it before starting interactive authentication.
     fn resolve_account_id(
         request_json: &str,
         get_accounts: impl FnOnce() -> Result<String, dbus::MethodErr>,
@@ -404,7 +404,7 @@ impl InteractiveSessionBroker {
                 dbus::MethodErr::failed(&"Invalid broker request: authParameters must be an object")
             })?),
         };
-        let mut account_id = None;
+        let mut requested_usernames = Vec::new();
         for account in [
             request.get("account"),
             auth_parameters.and_then(|parameters| parameters.get("account")),
@@ -419,7 +419,7 @@ impl InteractiveSessionBroker {
             match account.get("username") {
                 None | Some(serde_json::Value::Null) => {}
                 Some(serde_json::Value::String(username)) => {
-                    account_id.get_or_insert(username);
+                    requested_usernames.push(username);
                 }
                 Some(_) => {
                     return Err(dbus::MethodErr::failed(
@@ -428,15 +428,11 @@ impl InteractiveSessionBroker {
                 }
             }
         }
-        if let Some(account_id) = account_id {
-            return Ok(account_id.to_string());
-        }
-
         // getAccounts is scoped by the daemon to the socket peer's UID.
         let response = get_accounts()?;
         let response: serde_json::Value = serde_json::from_str(&response)
             .map_err(|e| dbus::MethodErr::failed(&format!("Invalid accounts response: {}", e)))?;
-        response
+        let account_id = response
             .get("accounts")
             .and_then(|accounts| accounts.as_array())
             .filter(|accounts| accounts.len() == 1)
@@ -444,8 +440,17 @@ impl InteractiveSessionBroker {
             .and_then(|account| account.get("username"))
             .and_then(|username| username.as_str())
             .filter(|username| !username.trim().is_empty())
-            .map(String::from)
-            .ok_or_else(|| dbus::MethodErr::failed(&"Unable to resolve session account username"))
+            .ok_or_else(|| {
+                dbus::MethodErr::failed(&"Unable to resolve session account username")
+            })?;
+        let expected_username = account_id.to_lowercase();
+        if requested_usernames
+            .iter()
+            .any(|username| username.to_lowercase() != expected_username)
+        {
+            return Err(dbus::MethodErr::failed(&"Invalid request for user!"));
+        }
+        Ok(account_id.to_string())
     }
 
     /// Drive an interactive auth via pinentry to re-prime the daemon cache.
@@ -841,52 +846,70 @@ mod tests {
     }
 
     #[test]
-    fn explicit_username_does_not_query_session_account() {
+    fn explicit_usernames_must_match_session_account() {
         for request in [
             r#"{"account":{"username":"explicit@example.com"}}"#,
             r#"{"authParameters":{"account":{"username":"explicit@example.com"}}}"#,
             r#"{"account":null,"authParameters":{"account":{"username":"explicit@example.com"}}}"#,
             r#"{"account":{},"authParameters":{"account":{"username":"explicit@example.com"}}}"#,
             r#"{"account":{"username":null},"authParameters":{"account":{"username":"explicit@example.com"}}}"#,
-            r#"{"account":{"username":"explicit@example.com"},"authParameters":{"account":{"username":"other@example.com"}}}"#,
+            r#"{"account":{"username":"EXPLICIT@EXAMPLE.COM"}}"#,
+            r#"{"account":{"username":"explicit@example.com"},"authParameters":{"account":{"username":"EXPLICIT@EXAMPLE.COM"}}}"#,
         ] {
             let account_id = InteractiveSessionBroker::resolve_account_id(request, || {
-                Err(dbus::MethodErr::failed(&"Unexpected account lookup"))
+                Ok(r#"{"accounts":[{"username":"explicit@example.com"}]}"#.to_string())
             })
             .unwrap();
             assert_eq!(account_id, "explicit@example.com");
         }
-        for request in [
-            r#"{"account":{"username":""}}"#,
-            r#"{"account":{"username":""},"authParameters":{"account":{"username":"other@example.com"}}}"#,
-        ] {
-            let account_id = InteractiveSessionBroker::resolve_account_id(request, || {
-                Err(dbus::MethodErr::failed(&"Unexpected account lookup"))
-            })
-            .unwrap();
-            assert_eq!(account_id, "");
+    }
+
+    #[test]
+    fn mismatched_usernames_fail_before_interactive_authentication() {
+        for username in ["other@another.org", "other@example.com", "", "  "] {
+            for request in [
+                serde_json::json!({"account": {"username": username}}),
+                serde_json::json!({"authParameters": {"account": {"username": username}}}),
+                serde_json::json!({
+                    "account": {"username": "user@example.com"},
+                    "authParameters": {"account": {"username": username}}
+                }),
+                serde_json::json!({
+                    "account": {"username": username},
+                    "authParameters": {"account": {"username": "user@example.com"}}
+                }),
+            ] {
+                let error =
+                    InteractiveSessionBroker::resolve_account_id(&request.to_string(), || {
+                        Ok(r#"{"accounts":[{"username":"user@example.com"}]}"#.to_string())
+                    })
+                    .unwrap_err();
+                assert!(error.to_string().contains("Invalid request for user!"));
+            }
         }
     }
 
     #[test]
-    fn missing_username_requires_one_usable_session_account() {
-        for response in [
-            "not json",
-            "{}",
-            r#"{"accounts":[]}"#,
-            r#"{"accounts":[{}]}"#,
-            r#"{"accounts":[{"username":"  "}]}"#,
-            r#"{"accounts":[{"username":"one@example.com"},{"username":"two@example.com"}]}"#,
-        ] {
-            assert!(InteractiveSessionBroker::resolve_account_id("{}", || {
-                Ok(response.to_string())
+    fn requests_require_one_usable_session_account() {
+        for request in ["{}", r#"{"account":{"username":"user@example.com"}}"#] {
+            for response in [
+                "not json",
+                "{}",
+                r#"{"accounts":[]}"#,
+                r#"{"accounts":[{}]}"#,
+                r#"{"accounts":[{"username":"  "}]}"#,
+                r#"{"accounts":[{"username":"one@example.com"},{"username":"two@example.com"}]}"#,
+            ] {
+                assert!(InteractiveSessionBroker::resolve_account_id(request, || {
+                    Ok(response.to_string())
+                })
+                .is_err());
+            }
+            assert!(InteractiveSessionBroker::resolve_account_id(request, || {
+                Err(dbus::MethodErr::failed(&"Account lookup failed"))
             })
             .is_err());
         }
-        assert!(InteractiveSessionBroker::resolve_account_id("{}", || {
-            Err(dbus::MethodErr::failed(&"Account lookup failed"))
-        })
-        .is_err());
     }
 
     #[test]
