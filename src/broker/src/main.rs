@@ -393,22 +393,43 @@ impl InteractiveSessionBroker {
         request_json: &str,
         get_accounts: impl FnOnce() -> Result<String, dbus::MethodErr>,
     ) -> Result<String, dbus::MethodErr> {
-        if let Some(account_id) = serde_json::from_str::<serde_json::Value>(request_json)
-            .ok()
-            .and_then(|v| {
-                v.get("account")
-                    .and_then(|a| a.get("username"))
-                    .filter(|u| !u.is_null())
-                    .or_else(|| {
-                        v.get("authParameters")
-                            .and_then(|ap| ap.get("account"))
-                            .and_then(|a| a.get("username"))
-                    })
-                    .and_then(|u| u.as_str())
-                    .map(String::from)
-            })
+        let request: serde_json::Value = serde_json::from_str(request_json)
+            .map_err(|e| dbus::MethodErr::failed(&format!("Invalid broker request: {}", e)))?;
+        let request = request.as_object().ok_or_else(|| {
+            dbus::MethodErr::failed(&"Invalid broker request: expected an object")
+        })?;
+        let auth_parameters = match request.get("authParameters") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(parameters) => Some(parameters.as_object().ok_or_else(|| {
+                dbus::MethodErr::failed(&"Invalid broker request: authParameters must be an object")
+            })?),
+        };
+        let mut account_id = None;
+        for account in [
+            request.get("account"),
+            auth_parameters.and_then(|parameters| parameters.get("account")),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|account| !account.is_null())
         {
-            return Ok(account_id);
+            let account = account.as_object().ok_or_else(|| {
+                dbus::MethodErr::failed(&"Invalid broker request: account must be an object")
+            })?;
+            match account.get("username") {
+                None | Some(serde_json::Value::Null) => {}
+                Some(serde_json::Value::String(username)) => {
+                    account_id.get_or_insert(username);
+                }
+                Some(_) => {
+                    return Err(dbus::MethodErr::failed(
+                        &"Invalid broker request: account.username must be a string or null",
+                    ));
+                }
+            }
+        }
+        if let Some(account_id) = account_id {
+            return Ok(account_id.to_string());
         }
 
         // getAccounts is scoped by the daemon to the socket peer's UID.
@@ -747,12 +768,75 @@ mod tests {
             r#"{"account":null}"#,
             r#"{"account":{}}"#,
             r#"{"account":{"username":null}}"#,
+            r#"{"authParameters":null}"#,
+            r#"{"authParameters":{"account":{"username":null}}}"#,
         ] {
             let account_id = InteractiveSessionBroker::resolve_account_id(request, || {
                 Ok(r#"{"accounts":[{"username":"user@example.com"}]}"#.to_string())
             })
             .unwrap();
             assert_eq!(account_id, "user@example.com");
+        }
+    }
+
+    #[test]
+    fn malformed_request_fails_before_account_lookup() {
+        let mut queried = false;
+        let error = InteractiveSessionBroker::resolve_account_id("{", || {
+            queried = true;
+            Ok(r#"{"accounts":[{"username":"user@example.com"}]}"#.to_string())
+        })
+        .unwrap_err();
+        assert!(!queried);
+        assert!(error.to_string().contains("Invalid broker request"));
+    }
+
+    #[test]
+    fn invalid_account_fields_fail_before_account_lookup() {
+        for invalid in [
+            serde_json::json!(7),
+            serde_json::json!(true),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            for request in [
+                serde_json::json!({"account": {"username": invalid}}),
+                serde_json::json!({"authParameters": {"account": {"username": invalid}}}),
+                serde_json::json!({
+                    "account": {"username": "user@example.com"},
+                    "authParameters": {"account": {"username": invalid}}
+                }),
+                serde_json::json!({
+                    "account": {"username": invalid},
+                    "authParameters": {"account": {"username": "user@example.com"}}
+                }),
+            ] {
+                let error =
+                    InteractiveSessionBroker::resolve_account_id(&request.to_string(), || {
+                        panic!("Invalid request must fail before account lookup")
+                    })
+                    .unwrap_err();
+                assert!(error
+                    .to_string()
+                    .contains("account.username must be a string or null"));
+            }
+        }
+        for request in [
+            "null",
+            "[]",
+            "7",
+            r#"{"account":true}"#,
+            r#"{"account":"user@example.com"}"#,
+            r#"{"authParameters":[]}"#,
+            r#"{"authParameters":{"account":7}}"#,
+            r#"{"account":{"username":"user@example.com"},"authParameters":true}"#,
+            r#"{"account":{"username":"user@example.com"},"authParameters":{"account":[]}}"#,
+        ] {
+            let error = InteractiveSessionBroker::resolve_account_id(request, || {
+                panic!("Invalid request must fail before account lookup")
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("Invalid broker request"));
         }
     }
 
