@@ -219,77 +219,6 @@ Flake based configurations add this repository to their inputs and enable the se
 }
 ```
 
-## Demos
-
-### Windows Hello on Linux via GDM
-
-[![Azure Entra ID Authentication for openSUSE: Windows Hello on Linux!](img/hello.png)](https://www.youtube.com/watch?v=rSeHxs0JX58 "Azure Entra ID Authentication for openSUSE: Windows Hello on Linux!")
-
-### MFA Authentication over SSH
-
-[![Azure Entra ID MFA Authentication over SSH: Himmelblau](img/ssh.png)](https://www.youtube.com/watch?v=IAqC8FoYLGc "Azure Entra ID MFA Authentication over SSH: Himmelblau")
-
-## Device Authorization QR Behavior
-
-When a device authorization response includes `verification_uri_complete`, Himmelblau shows that complete URL in the QR code so users can scan and continue sign-in without typing the user code. If the complete URL is not provided, the QR code falls back to `verification_uri` and the user code prompt remains required.
-
----
-
-## Contributing
-
-> **Note:** The packages you build here are from the current development branch and are intended for testing and evaluation. **Do not deploy to production.** Use a VM or a non-critical host.
-
-### Build packages for your host distro
-
-This detects your distro and builds the matching packages (inside a container).
-Artifacts land in `./packaging/`.
-
-[Docker BuildKit](https://docs.docker.com/build/buildkit/#getting-started) is required to enable cache volumes.
-
-```bash
-make
-```
-
-### Install the packages you just built
-
-This installs whatever is already in `./packaging/`.
-
-```bash
-sudo make install
-```
-
-Under the hood, `make install` uses your system package manager (`apt`, `dnf`/`yum`,
-`zypper`, or `pacman`) to install the locally built packages.
-
-### Building for Other Distros (Optional)
-
-You can also target specific distros explicitly.
-Available targets (as of now):
-
-- **DEB:** `ubuntu22.04` `ubuntu24.04` `ubuntu26.04` `debian12` `debian13`
-- **RHEL family:** `rocky8` `rocky9` `rocky10` `fedora43` `fedora44` `fedora45` `rawhide`
-- **SUSE:** `sle15sp7` `sle16` `tumbleweed`
-
-Examples:
-
-```bash
-# Build Ubuntu 22.04 packages
-make ubuntu22.04
-
-# Build Rocky 9 packages
-make rocky9
-
-# Build openSUSE Tumbleweed packages
-make tumbleweed
-```
-
-Packages will be written to `./packaging/`. You can then copy them to a target machine and install with the native package manager.
-
-> **Note (SLE targets):** SLE 15 SP7 uses an official SP7 BCI development image
-> with the public SP7 Backports and Backports Update repositories. SLE 16 uses
-> its free BCI base with the Leap 16 OSS repository. No SCC credentials are
-> required.
-
 ### Portable Service and sysext DDIs
 
 Signed [Discoverable Disk Images (DDIs)](https://uapi-group.org/specifications/specs/discoverable_disk_image/)
@@ -432,6 +361,77 @@ component automatically whenever systemd-sysupdate is scheduled to run by its ti
 It refreshes the host sysexts, attaches or reattaches the broker and
 compliance units for every running user manager and for the system instance.
 Older OSes may have to run the merge/reattach operations manually.
+
+## Demos
+
+### Windows Hello on Linux via GDM
+
+[![Azure Entra ID Authentication for openSUSE: Windows Hello on Linux!](img/hello.png)](https://www.youtube.com/watch?v=rSeHxs0JX58 "Azure Entra ID Authentication for openSUSE: Windows Hello on Linux!")
+
+### MFA Authentication over SSH
+
+[![Azure Entra ID MFA Authentication over SSH: Himmelblau](img/ssh.png)](https://www.youtube.com/watch?v=IAqC8FoYLGc "Azure Entra ID MFA Authentication over SSH: Himmelblau")
+
+## Device Authorization QR Behavior
+
+When a device authorization response includes `verification_uri_complete`, Himmelblau shows that complete URL in the QR code so users can scan and continue sign-in without typing the user code. If the complete URL is not provided, the QR code falls back to `verification_uri` and the user code prompt remains required.
+
+---
+
+## Contributing
+
+> **Note:** The packages you build here are from the current development branch and are intended for testing and evaluation. **Do not deploy to production.** Use a VM or a non-critical host.
+
+### Build packages for your host distro
+
+This detects your distro and builds the matching packages (inside a container).
+Artifacts land in `./packaging/`.
+
+[Docker BuildKit](https://docs.docker.com/build/buildkit/#getting-started) is required to enable cache volumes.
+
+```bash
+make
+```
+
+### Install the packages you just built
+
+This installs whatever is already in `./packaging/`.
+
+```bash
+sudo make install
+```
+
+Under the hood, `make install` uses your system package manager (`apt`, `dnf`/`yum`,
+`zypper`, or `pacman`) to install the locally built packages.
+
+### Building for Other Distros (Optional)
+
+You can also target specific distros explicitly.
+Available targets (as of now):
+
+- **DEB:** `ubuntu22.04` `ubuntu24.04` `ubuntu26.04` `debian12` `debian13`
+- **RHEL family:** `rocky8` `rocky9` `rocky10` `fedora43` `fedora44` `fedora45` `rawhide`
+- **SUSE:** `sle15sp7` `sle16` `tumbleweed`
+
+Examples:
+
+```bash
+# Build Ubuntu 22.04 packages
+make ubuntu22.04
+
+# Build Rocky 9 packages
+make rocky9
+
+# Build openSUSE Tumbleweed packages
+make tumbleweed
+```
+
+Packages will be written to `./packaging/`. You can then copy them to a target machine and install with the native package manager.
+
+> **Note (SLE targets):** SLE 15 SP7 uses an official SP7 BCI development image
+> with the public SP7 Backports and Backports Update repositories. SLE 16 uses
+> its free BCI base with the Leap 16 OSS repository. No SCC credentials are
+> required.
 
 ### Uninstall
 
