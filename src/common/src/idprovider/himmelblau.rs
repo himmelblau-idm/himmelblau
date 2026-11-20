@@ -381,7 +381,7 @@ impl HimmelblauProvider {
     }
 
     async fn domains_are_aliases(&self, domain1: &str, domain2: &str) -> bool {
-        let mut cfg = self.config.lock().await;
+        let cfg = self.config.lock().await.clone();
         cfg.domains_are_aliases(domain1, domain2).await
     }
 
@@ -945,8 +945,22 @@ impl IdProvider for HimmelblauProvider {
 
                             // Generate a lookup-only UserToken. Its real UUID
                             // requires a provider-backed token.
-                            let id_attr_map = self.config.lock().await.get_id_attr_map();
-                            let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
+                            let config = self.config.lock().await;
+                            let canonical_account_id = config
+                                .canonical_account_name(&account_id)
+                                .unwrap_or_else(|| account_id.clone())
+                                .to_lowercase();
+                            let id_attr_map = config.get_id_attr_map();
+                            let legacy_alias = config.legacy_entra_account_name(&canonical_account_id)
+                                .unwrap_or_else(|| account_id.clone());
+                            drop(config);
+                            let (uid, gid) = match idmap_cache
+                                .get_user_by_provider_name_with_legacy_alias(
+                                    &self.domain,
+                                    &canonical_account_id,
+                                    Some(legacy_alias.as_str()),
+                                )
+                            {
                                 Some(user) => {
                                     (user.uid, user.gid)
                                 },
@@ -1016,6 +1030,7 @@ impl IdProvider for HimmelblauProvider {
                                     error!("{:?}", e);
                                     IdpError::BadRequest
                                 })?),
+                                oidc_account_id: None,
                                 valid: true,
                             }));
                         } else {
@@ -4078,6 +4093,21 @@ impl HimmelblauProvider {
                     error!("Failed discovering the tenant_id: {}", e);
                     IdpError::BadRequest
                 })?;
+                {
+                    // Claim the tenant under one lock so concurrent providers cannot share it.
+                    let mut cfg = self.config.lock().await;
+                    if let Some(other) = cfg.provider_sharing_tenant(&self.domain, &tenant_id) {
+                        error!(
+                            domain = %self.domain,
+                            other_section = %other.section,
+                            tenant_id = %tenant_id,
+                            "Provider shares its Entra tenant with another provider; configure one provider per Entra tenant"
+                        );
+                        return Err(IdpError::BadRequest);
+                    }
+                    cfg.set(&self.domain, "tenant_id", &tenant_id);
+                    debug!(domain = %self.domain, tenant_id = %tenant_id, "Set tenant_id");
+                }
                 let authority_host = self.graph.authority_host().await.map_err(|e| {
                     error!("Failed discovering the authority_host: {}", e);
                     IdpError::BadRequest
@@ -4112,11 +4142,6 @@ impl HimmelblauProvider {
 
                 // Cache the federation provider responses
                 let mut cfg = self.config.lock().await;
-                cfg.set(&self.domain, "tenant_id", &tenant_id);
-                debug!(
-                    "Setting domain {} config tenant_id to {}",
-                    self.domain, tenant_id
-                );
                 cfg.set(&self.domain, "authority_host", &authority_host);
                 debug!(
                     "Setting domain {} config authority_host to {}",
@@ -4580,7 +4605,20 @@ impl HimmelblauProvider {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
                 })?;
-                match idmap_cache.get_user_by_name(&spn) {
+                let config = self.config.lock().await;
+                let canonical_spn = config
+                    .canonical_account_name(&spn)
+                    .unwrap_or_else(|| spn.clone())
+                    .to_lowercase();
+                let legacy_alias = config
+                    .legacy_entra_account_name(&canonical_spn)
+                    .unwrap_or_else(|| spn.clone());
+                drop(config);
+                match idmap_cache.get_user_by_provider_name_with_legacy_alias(
+                    &self.domain,
+                    &canonical_spn,
+                    Some(legacy_alias.as_str()),
+                ) {
                     Some(user) => (user.uid, user.gid),
                     None => {
                         let id_attr_map = self.config.lock().await.get_id_attr_map();
@@ -4733,6 +4771,7 @@ impl HimmelblauProvider {
                     IdpError::BadRequest
                 })?,
             ),
+            oidc_account_id: None,
             valid,
         })
     }
@@ -4757,9 +4796,12 @@ impl HimmelblauProvider {
         }
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
-        let idmap_cache_entry = StaticIdCache::new(ID_MAP_CACHE, false)
-            .ok()
-            .and_then(|idmap_cache| idmap_cache.get_group_by_name(&id.to_string()));
+        let idmap_cache_entry =
+            StaticIdCache::new(ID_MAP_CACHE, false)
+                .ok()
+                .and_then(|idmap_cache| {
+                    idmap_cache.get_group_by_provider_name(&self.domain, &id.to_string())
+                });
         let id_attr_map = self.config.lock().await.get_id_attr_map();
         let rfc2307_group_fallback_map = self.config.lock().await.get_rfc2307_group_fallback_map();
         let gidnumber = match idmap_cache_entry {

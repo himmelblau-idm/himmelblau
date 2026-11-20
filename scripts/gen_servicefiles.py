@@ -237,6 +237,7 @@ ConfigurationDirectory=himmelblau
 {type_line}
 {'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc' if supported('LoadCredentialEncrypted') else ''}
 {'Environment=HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin' if supported('LoadCredentialEncrypted') else ''}
+ExecStartPre=+/usr/sbin/himmelblaud_tasks --prepare-provider-cache
 ExecStart=/usr/sbin/himmelblaud
 {daemon_sockets_line}
 Restart=on-failure

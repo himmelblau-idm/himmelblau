@@ -21,8 +21,8 @@ use libc::gid_t;
 
 #[derive(Debug, Subcommand)]
 pub enum IdmapOpt {
-    /// Add a static user mapping to the idmap cache. This maps an Entra ID user (by UPN or
-    /// SAM-compatible name) to a fixed UID and primary group GID.
+    /// Add a manual Entra ID user mapping for the provider selected by its UPN or `--domain`.
+    /// Unqualified names use the default provider.
     UserAdd {
         #[clap(short, long)]
         debug: bool,
@@ -33,9 +33,8 @@ pub enum IdmapOpt {
         #[clap(short = 'g', long = "gid")]
         gid: gid_t,
     },
-    /// Add a static group mapping to the idmap cache. This maps an Entra ID group (by Object Id
-    /// GUID) to a fixed GID. This can be used to maintain group identity and membership
-    /// compatibility after moving to Entra ID.
+    /// Add a manual Entra ID group mapping for the provider selected by `--domain` or the
+    /// configured default. This maps a group Object ID to a fixed GID.
     GroupAdd {
         #[clap(short, long)]
         debug: bool,
@@ -284,7 +283,7 @@ pub enum CredOpt {
         client_id: String,
         /// The tenant domain this secret is associated with.
         #[arg(long)]
-        domain: String,
+        domain: Option<String>,
         /// The client secret value copied from the Entra ID portal.
         #[arg(long)]
         secret: String,
@@ -320,7 +319,7 @@ pub enum CredOpt {
         client_id: String,
         /// The tenant domain this certificate is associated with.
         #[arg(long)]
-        domain: String,
+        domain: Option<String>,
         /// Number of days the self-signed certificate will be valid.
         #[arg(long)]
         valid_days: u64,
@@ -345,7 +344,7 @@ pub enum CredOpt {
         debug: bool,
         /// The tenant domain whose creds will be deleted.
         #[arg(long)]
-        domain: String,
+        domain: Option<String>,
         /// Delete only the client secret (not the certificate).
         #[arg(long)]
         secret: bool,
@@ -365,7 +364,7 @@ pub enum CredOpt {
         #[clap(short, long)]
         debug: bool,
         #[arg(long)]
-        domain: String,
+        domain: Option<String>,
     },
 }
 
@@ -570,6 +569,9 @@ pub enum HimmelblauUnixOpt {
     clap(after_help = "Support Himmelblau: Financial support helps keep cloud identity for Linux open.\nLearn more: https://himmelblau-idm.org/donations/")
 )]
 pub struct HimmelblauUnixParser {
+    /// Select a configured tenant by its primary domain or an alias.
+    #[clap(long)]
+    pub domain: Option<String>,
     #[clap(subcommand)]
     pub commands: HimmelblauUnixOpt,
 }

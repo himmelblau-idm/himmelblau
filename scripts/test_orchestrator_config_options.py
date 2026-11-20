@@ -2,6 +2,7 @@
 """Isolated regressions for opt-in orchestrator configuration generation."""
 
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,86 @@ ORCHESTRATOR_NAMES = (
 
 
 class OrchestratorConfigTests(unittest.TestCase):
+    def test_enum_examples_expand_and_reject_invalid_alternatives(self):
+        cases = (
+            ("&lt;name|uuid&gt;", ("name", "uuid")),
+            ("uuid", ("uuid",)),
+            ("&lt;name|unknown&gt;", None),
+            ("&lt;name||uuid&gt;", None),
+            ("&lt;&gt;", None),
+        )
+        for example, expected in cases:
+            with self.subTest(example=example), tempfile.TemporaryDirectory(dir=ROOT) as directory:
+                root = Path(directory)
+                xml = root / "xml/base"
+                xml.mkdir(parents=True)
+                (xml / "id_attr_map.xml").write_text(
+                    '<parameter name="id_attr_map" type="enum" rust_type="IdAttr">'
+                    '<handler>get_id_attr_map</handler>'
+                    f'<example>id_attr_map = {example}</example>'
+                    '<enum_values><value rust="IdAttr::Name">name</value>'
+                    '<value rust="IdAttr::Uuid">uuid</value></enum_values>'
+                    '</parameter>', encoding="utf-8",
+                )
+                output = root / "config_gen.rs"
+                result = subprocess.run(
+                    [sys.executable, str(GENERATOR), "--xml-dir", str(xml.parent),
+                     "--gen-rust", "--rust-output", str(output)],
+                    capture_output=True, text=True,
+                )
+                if expected is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Invalid enum alternative for id_attr_map", result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    rust = output.read_text(encoding="utf-8")
+                    self.assertEqual(rust.count("fn global_id_attr_map_"), len(expected))
+                    for value in expected:
+                        self.assertIn(f'id_attr_map = {value}"#', rust)
+
+    def test_tenant_examples_and_options_are_generated(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            output = Path(directory)
+            command = [sys.executable, str(GENERATOR)]
+            for kind in ("man", "nix", "rust", "conf-example", "debian-conf-example"):
+                command.extend([f"--gen-{kind}", f"--{kind}-output", str(output / kind)])
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            for kind in ("man", "conf-example", "debian-conf-example"):
+                text = (output / kind).read_text(encoding="utf-8")
+                self.assertIn("[tenant.contoso]", text)
+                self.assertIn("[tenant.partners]", text)
+            rust = (output / "rust").read_text(encoding="utf-8")
+            self.assertIn("fn tenant_configuration_0()", rust)
+            self.assertIn("fn tenant_configuration_1()", rust)
+            self.assertIn("fn global_oidc_account_id_claims_0()", rust)
+            nix = (output / "nix").read_text(encoding="utf-8")
+            self.assertIn("type = types.attrsOf (types.submodule {", nix)
+            tenant_options = nix.split("    tenant = mkOption {", 1)[1]
+            self.assertNotIn("type = mkOption {", tenant_options)
+            self.assertNotIn("domain_aliases = mkOption {", tenant_options)
+            self.assertTrue(all(line == line.rstrip() for line in tenant_options.splitlines()))
+            home_prefix = tenant_options.split("home_prefix = mkOption {", 1)[1].split("};", 1)[0]
+            self.assertIn("default = null;", home_prefix)
+
+    @unittest.skipUnless(shutil.which("nix-instantiate"), "Nix is required for tenant rendering")
+    def test_tenant_options_render_as_separate_ini_sections(self):
+        result = subprocess.run(
+            ["nix-instantiate", "--eval", "--strict", "--json",
+             str(ROOT / "nix/tests/tenant-settings.nix")],
+            check=True, capture_output=True, text=True,
+        )
+        settings = json.loads(result.stdout)
+        self.assertNotIn("tenant", settings)
+        self.assertNotIn("domain", settings["global"])
+        self.assertEqual(settings["global"]["home_prefix"], "/home/shared/")
+        self.assertNotIn("home_prefix", settings["tenant.work"])
+        self.assertEqual(settings["tenant.work"]["default"], "true")
+        self.assertNotIn("domain_aliases", settings["tenant.work"])
+        self.assertEqual(settings["tenant.partners"]["home_prefix"], "/home/partners/")
+        self.assertNotIn("type", settings["tenant.partners"])
+        self.assertNotIn("domain", settings["tenant.partners"])
+        self.assertEqual(settings["tenant.partners"]["oidc_account_id_strip_at_suffix"], "false")
+
     @unittest.skipUnless(shutil.which("rustc"), "rustc is not installed")
     def test_daemon_build_script_preserves_package_example_selection(self):
         with tempfile.TemporaryDirectory() as directory:

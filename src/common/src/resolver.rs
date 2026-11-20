@@ -28,6 +28,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::config::InitgroupsMode;
+use crate::config::{HimmelblauConfig, ProviderConfig, ProviderKind};
 use crate::constants::SERVER_CONFIG_PATH;
 use crate::db::{Cache, CacheTxn, Db};
 use crate::idprovider::interface::{
@@ -131,6 +132,37 @@ fn refresh_due(state: &CacheState) -> bool {
     }
 }
 
+/// Home directory settings of the provider that owns a token.
+struct HomeSettings {
+    prefix: String,
+    attr: HomeAttr,
+    alias: Option<HomeAttr>,
+}
+
+impl HomeSettings {
+    fn value(attr: HomeAttr, token: &UserToken) -> String {
+        match attr {
+            HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
+            HomeAttr::Spn => token.spn.clone(),
+            HomeAttr::Name => token.name.clone(),
+            HomeAttr::Cn => token.spn.split('@').next().unwrap_or_default().to_string(),
+        }
+    }
+
+    fn name(&self, token: &UserToken) -> String {
+        Self::value(self.attr, token)
+    }
+
+    fn alias(&self, token: &UserToken) -> Option<String> {
+        self.alias.map(|attr| Self::value(attr, token))
+    }
+
+    fn absolute(&self, token: &UserToken) -> String {
+        let dir = self.alias(token).unwrap_or_else(|| self.name(token));
+        format!("{}{}", self.prefix, dir)
+    }
+}
+
 pub struct Resolver<I>
 where
     I: IdProvider + Sync,
@@ -193,6 +225,7 @@ impl Display for Id {
 #[cfg(test)]
 mod tests {
     use super::{AuthSession, CacheUpdateResult, OnExpiry, Resolver};
+    use crate::config::HimmelblauConfig;
     use crate::config::InitgroupsMode;
     use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{
@@ -211,6 +244,7 @@ mod tests {
     use tokio::sync::{broadcast, Notify};
 
     struct OfflineFallbackProvider {
+        settings: Option<HimmelblauConfig>,
         cache_state: RwLock<CacheState>,
         check_online_result: AtomicBool,
         probe_online_result: AtomicBool,
@@ -233,6 +267,7 @@ mod tests {
     impl OfflineFallbackProvider {
         fn new() -> Self {
             Self {
+                settings: None,
                 cache_state: RwLock::new(CacheState::Online),
                 check_online_result: AtomicBool::new(true),
                 probe_online_result: AtomicBool::new(true),
@@ -267,6 +302,10 @@ mod tests {
 
     #[async_trait]
     impl IdProvider for OfflineFallbackProvider {
+        fn provider_config(&self) -> Option<&HimmelblauConfig> {
+            self.settings.as_ref()
+        }
+
         async fn check_online(
             &self,
             _tpm: &mut tpm::provider::BoxedDynTpm,
@@ -593,6 +632,7 @@ mod tests {
             shell: None,
             groups: vec![group],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            oidc_account_id: None,
             valid: true,
         }
     }
@@ -1410,6 +1450,126 @@ mod tests {
         );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
         assert!(resolver.identity_refreshes.lock().await.queued.is_empty());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn mixed_provider_authorization_scopes_group_claims_and_home_settings() {
+        for (kind, allowed) in [("entra", false), ("oidc", true)] {
+            let mut resolver = setup_resolver().await;
+            resolver.client.user_get_error.store(6, Ordering::Release);
+            let issuer = if kind == "oidc" {
+                "oidc_issuer_url=https://id.example.com\napp_id=linux\n"
+            } else {
+                "domain=example.com\n"
+            };
+            let mut settings = HimmelblauConfig::from_test_config(&format!(
+                "[tenant.a]\n{issuer}default=true\nidmap_range=1000-10000\npam_allow_groups=linux-users\nhome_prefix=/home/a/\n\
+                 [tenant.b]\ndomain=other.example\nidmap_range=10001-20000\npam_allow_groups=linux-users\nhome_prefix=/home/b/\n"
+            ));
+            assert!(settings.validate().is_ok());
+            let mut token = test_token();
+            if kind == "oidc" {
+                let provider = settings.default_provider().unwrap();
+                token.tenant_id = provider.oidc_tenant_id(&settings);
+                token.oidc_account_id = Some(token.spn.clone());
+                token.spn = provider.local_account_name(&token.spn);
+                token.name.clone_from(&token.spn);
+            } else {
+                settings.set(
+                    "example.com",
+                    "tenant_id",
+                    &token.tenant_id.unwrap().to_string(),
+                );
+            }
+            resolver.client.settings = Some(settings);
+            resolver
+                .set_cache_usertoken(&mut token, false)
+                .await
+                .unwrap();
+            *resolver.client.auth_token.write().unwrap() = token.clone();
+            assert_eq!(
+                resolver.pam_account_allowed(&token.spn).await.unwrap(),
+                Some(allowed)
+            );
+            assert_eq!(
+                resolver.token_home_settings(&token).await.absolute(&token),
+                format!("/home/a/{}", token.spn)
+            );
+            let cfg = resolver.client.settings.as_mut().unwrap();
+            cfg.set("tenant.a", "pam_allow_groups", "different-group");
+            assert_eq!(
+                resolver.pam_account_allowed(&token.spn).await.unwrap(),
+                Some(false)
+            );
+            if kind == "entra" {
+                assert_eq!(resolver.get_nssaccounts().await.unwrap().len(), 1);
+                resolver.client.set_cache_state(CacheState::Offline);
+                resolver.client.settings.as_mut().unwrap().set(
+                    "example.com",
+                    "tenant_id",
+                    &uuid::Uuid::new_v4().to_string(),
+                );
+                assert!(resolver
+                    .get_usertoken(Id::Name(token.spn))
+                    .await
+                    .unwrap()
+                    .is_none());
+                assert!(resolver.get_nssaccounts().await.unwrap().is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn default_oidc_names_resolve_to_the_qualified_cached_account_offline() {
+        let mut resolver = setup_resolver().await;
+        let settings = HimmelblauConfig::from_test_config(
+            "[tenant.work]\n\
+             oidc_issuer_url=https://id.example\napp_id=linux\nidmap_range=1000-10000\n",
+        );
+        let mut token = test_token();
+        token.tenant_id = settings
+            .default_provider()
+            .unwrap()
+            .oidc_tenant_id(&settings);
+        token.oidc_account_id = Some("testuser".into());
+        token.name = "testuser@work".into();
+        token.spn.clone_from(&token.name);
+        resolver.client.settings = Some(settings);
+        resolver
+            .set_cache_usertoken(&mut token, false)
+            .await
+            .unwrap();
+        resolver.client.set_cache_state(CacheState::Offline);
+        for name in ["testuser", "testuser@work"] {
+            let cached = resolver
+                .get_usertoken(Id::Name(name.into()))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(cached.uuid, token.uuid);
+            assert_eq!(cached.spn, token.spn);
+            let nss = resolver
+                .get_nssaccount_name(name, OnExpiry::Refresh)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(nss.name, token.spn);
+        }
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        assert_eq!(resolver.get_nssaccounts().await.unwrap().len(), 1);
+        resolver.client.settings.as_mut().unwrap().set(
+            "tenant.work",
+            "oidc_issuer_url",
+            "https://different.example",
+        );
+        assert!(resolver
+            .get_usertoken(Id::Name(token.spn))
+            .await
+            .unwrap()
+            .is_none());
+        assert!(resolver.get_nssaccounts().await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -2889,6 +3049,45 @@ where
         self.client.import_broker_prts(data).await
     }
 
+    pub async fn provider_status(&self) -> Vec<(String, bool)> {
+        self.client.provider_status().await
+    }
+
+    pub async fn provider_for_account(&self, account: &str) -> Option<ProviderConfig> {
+        self.client.provider_for_account(account).await
+    }
+
+    async fn token_provider(
+        &self,
+        token: &UserToken,
+    ) -> Option<(&HimmelblauConfig, ProviderConfig)> {
+        let cfg = self.client.provider_config()?;
+        let provider = self.client.provider_for_token(token).await?;
+        Some((cfg, provider))
+    }
+
+    fn home_settings(
+        &self,
+        provider: Option<&(&HimmelblauConfig, ProviderConfig)>,
+    ) -> HomeSettings {
+        match provider {
+            Some((cfg, p)) => HomeSettings {
+                prefix: p.get_home_prefix(cfg),
+                attr: p.get_home_attr(cfg),
+                alias: p.get_home_alias(cfg),
+            },
+            None => HomeSettings {
+                prefix: self.home_prefix.clone(),
+                attr: self.home_attr,
+                alias: self.home_alias,
+            },
+        }
+    }
+
+    async fn token_home_settings(&self, token: &UserToken) -> HomeSettings {
+        self.home_settings(self.token_provider(token).await.as_ref())
+    }
+
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
         self.client.get_cachestate(account_id).await
     }
@@ -3120,11 +3319,12 @@ where
         //  * spn
         //  * uuid
         //  Attempt to search these in the db.
+        let canonical = self.canonical_account_id(account_id);
         let r = self
             .db
             .write()
             .await
-            .get_account(account_id)
+            .get_account(&canonical)
             .map_err(|err| {
                 trace!("get_cached_usertoken {:?}", err);
             })?;
@@ -3135,15 +3335,28 @@ where
         &self,
         account_id: &Id,
     ) -> ResolverResult<(bool, Option<UserToken>)> {
+        let canonical = self.canonical_account_id(account_id);
         let r = self
             .db
             .read()
             .await
-            .get_account(account_id)
+            .get_account(&canonical)
             .map_err(|err| {
                 trace!("lookup_cached_usertoken {:?}", err);
             })?;
         self.cached_usertoken_with_expiry(account_id, r).await
+    }
+
+    fn canonical_account_id(&self, id: &Id) -> Id {
+        match id {
+            Id::Name(name) if uuid::Uuid::parse_str(name).is_err() => self
+                .client
+                .provider_config()
+                .and_then(|cfg| cfg.canonical_account_name(name))
+                .map(Id::Name)
+                .unwrap_or_else(|| id.clone()),
+            _ => id.clone(),
+        }
     }
 
     async fn cached_usertoken_with_expiry(
@@ -3153,6 +3366,11 @@ where
     ) -> ResolverResult<(bool, Option<UserToken>)> {
         match r {
             Some((ut, ex)) => {
+                if self.client.provider_config().is_some()
+                    && self.client.provider_for_token(&ut).await.is_none()
+                {
+                    return Ok((true, None));
+                }
                 // Are we expired?
                 let offset = Duration::from_secs(ex);
                 let ex_time = SystemTime::UNIX_EPOCH + offset;
@@ -3382,11 +3600,16 @@ where
                 .is_some_and(|(cached, _)| {
                     cached.uuid == token.uuid && cached.tenant_id != token.tenant_id
                 });
-        token
-            .groups
-            .iter()
-            // We need to add the groups first
-            .try_for_each(|g| dbtxn.update_group(g, offset.as_secs()))
+        dbtxn
+            // Replaced accounts free their synthetic primary groups before the new ones are added.
+            .delete_replaced_accounts(token)
+            .and_then(|_| {
+                token
+                    .groups
+                    .iter()
+                    // We need to add the groups first
+                    .try_for_each(|g| dbtxn.update_group(g, offset.as_secs()))
+            })
             .and_then(|_|
                 // So that when we add the account it can make the relationships.
                 dbtxn
@@ -3879,7 +4102,14 @@ where
                 trace!("offline expired, next check {:?}, refresh cache", time);
                 // Attempt to refresh the item
                 // Return it.
-                if SystemTime::now() >= time && self.test_connection().await {
+                let account = item
+                    .as_ref()
+                    .map(|(t, _)| t.spn.as_str())
+                    .or(match &account_id {
+                        Id::Name(name) => Some(name.as_str()),
+                        Id::Gid(_) => None,
+                    });
+                if SystemTime::now() >= time && self.test_connection_for_account(account).await {
                     // We brought ourselves online, lets go
                     self.refresh_usertoken_with_cacheability(&account_id, item)
                         .await
@@ -3962,38 +4192,6 @@ where
     }
 
     #[inline(always)]
-    fn token_homedirectory_alias(&self, token: &UserToken) -> Option<String> {
-        self.home_alias.map(|t| match t {
-            // If we have an alias. use it.
-            HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
-            HomeAttr::Spn => token.spn.as_str().to_string(),
-            HomeAttr::Name => token.name.as_str().to_string(),
-            HomeAttr::Cn => token.spn.split('@').collect::<Vec<&str>>()[0].to_string(),
-        })
-    }
-
-    #[inline(always)]
-    fn token_homedirectory_attr(&self, token: &UserToken) -> String {
-        match self.home_attr {
-            HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
-            HomeAttr::Spn => token.spn.as_str().to_string(),
-            HomeAttr::Name => token.name.as_str().to_string(),
-            HomeAttr::Cn => token.spn.split('@').collect::<Vec<&str>>()[0].to_string(),
-        }
-    }
-
-    #[inline(always)]
-    fn token_homedirectory(&self, token: &UserToken) -> String {
-        self.token_homedirectory_alias(token)
-            .unwrap_or_else(|| self.token_homedirectory_attr(token))
-    }
-
-    #[inline(always)]
-    fn token_abs_homedirectory(&self, token: &UserToken) -> String {
-        format!("{}{}", self.home_prefix, self.token_homedirectory(token))
-    }
-
-    #[inline(always)]
     fn token_uidattr(&self, token: &UserToken) -> String {
         match self.uid_attr_map {
             UidAttr::Spn => token.spn.as_str(),
@@ -4011,15 +4209,22 @@ where
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| ResolverError)?
             .as_secs();
-        let mut dbtxn = self.db.read().await;
-        dbtxn
+        let tokens = self
+            .db
+            .read()
+            .await
             .get_unexpired_accounts(now)
-            .map(|l| {
-                l.into_iter()
-                    .map(|tok| self.nss_user_from_token(tok, true))
-                    .collect()
-            })
-            .map_err(|_| ResolverError)
+            .map_err(|_| ResolverError)?;
+        let mut users = Vec::with_capacity(tokens.len());
+        for tok in tokens {
+            if self.client.provider_config().is_some()
+                && self.client.provider_for_token(&tok).await.is_none()
+            {
+                continue;
+            }
+            users.push(self.nss_user_from_token(tok, true).await);
+        }
+        Ok(users)
     }
 
     async fn get_nssaccount(
@@ -4027,14 +4232,18 @@ where
         account_id: Id,
         on_expiry: OnExpiry,
     ) -> ResolverResult<Option<NssUser>> {
-        self.get_usertoken_with_cacheability(account_id, on_expiry)
-            .await
-            .map(|result| result.map(|(tok, cacheable)| self.nss_user_from_token(tok, cacheable)))
+        let result = self
+            .get_usertoken_with_cacheability(account_id, on_expiry)
+            .await?;
+        Ok(match result {
+            Some((tok, cacheable)) => Some(self.nss_user_from_token(tok, cacheable).await),
+            None => None,
+        })
     }
 
-    fn nss_user_from_token(&self, tok: UserToken, cacheable: bool) -> NssUser {
+    async fn nss_user_from_token(&self, tok: UserToken, cacheable: bool) -> NssUser {
         NssUser {
-            homedir: self.token_abs_homedirectory(&tok),
+            homedir: self.token_home_settings(&tok).await.absolute(&tok),
             name: self.token_uidattr(&tok),
             uid: tok.gidnumber,
             gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
@@ -4144,18 +4353,37 @@ where
     /// Without an allow list, a cached identity is allowed without a provider refresh, even if
     /// it has expired. An uncached account is resolved through the provider and allowed if found.
     pub async fn pam_account_allowed(&self, account_id: &str) -> ResolverResult<Option<bool>> {
-        if self.pam_allow_groups.is_empty() {
-            if self.check_nxset(Some(account_id), None).await {
-                return Ok(None);
-            }
-            let id = Id::Name(account_id.to_string());
-            if let (_, Some(_)) = self.lookup_cached_usertoken(&id).await? {
-                return Ok(Some(true));
-            }
-            return Ok(self.get_usertoken(id).await?.map(|_| true));
+        if self.check_nxset(Some(account_id), None).await {
+            return Ok(None);
         }
-
-        let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
+        let id = Id::Name(account_id.to_string());
+        let (_, cached) = self.lookup_cached_usertoken(&id).await?;
+        let provider = match cached.as_ref() {
+            Some(token) => self.client.provider_for_token(token).await,
+            None => None,
+        };
+        let provider = match provider {
+            Some(provider) => Some(provider),
+            None => self.client.provider_for_account(account_id).await,
+        };
+        let (allowed, oidc_auth) = match self.client.provider_config().zip(provider) {
+            Some((cfg, provider)) => (
+                provider
+                    .get_pam_allow_groups(cfg)
+                    .into_iter()
+                    .collect::<BTreeSet<_>>(),
+                provider.kind == ProviderKind::Oidc,
+            ),
+            None if self.client.provider_config().is_some() => return Ok(None),
+            None => (self.pam_allow_groups.clone(), self.oidc_auth),
+        };
+        if allowed.is_empty() {
+            return Ok(match cached {
+                Some(_) => Some(true),
+                None => self.get_usertoken(id).await?.map(|_| true),
+            });
+        }
+        let token = self.get_usertoken(id).await?;
         Ok(token.map(|tok| {
             // Never ever EVER list Entra group names in the allowed groups
             // set. This is a SECURITY RISK! See CVE-2025-49012. Group
@@ -4168,7 +4396,7 @@ where
                 .iter()
                 .flat_map(|g| {
                     let mut ids = vec![g.uuid.hyphenated().to_string()];
-                    if self.oidc_auth {
+                    if oidc_auth {
                         ids.push(g.spn.clone());
                     }
                     ids
@@ -4176,17 +4404,12 @@ where
                 .chain(std::iter::once(account_id.to_string()))
                 .collect();
 
+            let intersection_count = user_set.intersection(&allowed).count();
             debug!(
-                "Checking if user is in allowed groups ({:?}) -> {:?}",
-                self.pam_allow_groups,
-                user_set
-                    .iter()
-                    .filter(|s| s.as_str() != account_id)
-                    .cloned(),
+                intersection_count,
+                valid = tok.valid,
+                "Checking provider group access"
             );
-            let intersection_count = user_set.intersection(&self.pam_allow_groups).count();
-            debug!("Number of intersecting groups: {}", intersection_count);
-            debug!("User has valid token: {}", tok.valid);
 
             intersection_count > 0 && tok.valid
         }))
@@ -4226,7 +4449,7 @@ where
 
         let online_at_init = if !matches!(state, CacheState::Online) {
             // Attempt a cache online.
-            self.test_connection().await
+            self.test_connection_for_account(Some(account_id)).await
         } else {
             true
         };
@@ -4704,8 +4927,7 @@ where
             return Ok(false);
         };
 
-        let state = self.get_cachestate(Some(account_id)).await;
-        let online_at_init = self.test_connection_for_state(state).await;
+        let online_at_init = self.test_connection_for_account(Some(account_id)).await;
 
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
@@ -4752,23 +4974,26 @@ where
         account_id: &str,
     ) -> ResolverResult<Option<HomeDirectoryInfo>> {
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
-        Ok(token.as_ref().map(|tok| HomeDirectoryInfo {
-            uid: tok.gidnumber,
-            gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
-            name: self.token_homedirectory_attr(tok),
-            aliases: self
-                .token_homedirectory_alias(tok)
-                .map(|s| vec![s])
-                .unwrap_or_default(),
+        let Some(token) = token.as_ref() else {
+            return Ok(None);
+        };
+        let provider = self.token_provider(token).await;
+        let home = self.home_settings(provider.as_ref());
+        Ok(Some(HomeDirectoryInfo {
+            uid: token.gidnumber,
+            gid: token.real_gidnumber.unwrap_or(token.gidnumber),
+            name: home.name(token),
+            aliases: home.alias(token).map(|s| vec![s]).unwrap_or_default(),
+            provider_domain: provider.map(|(_, provider)| provider.domain),
         }))
     }
 
     pub async fn test_connection(&self) -> bool {
-        let state = self.get_cachestate(None).await;
-        self.test_connection_for_state(state).await
+        self.test_connection_for_account(None).await
     }
 
-    async fn test_connection_for_state(&self, state: CacheState) -> bool {
+    async fn test_connection_for_account(&self, account: Option<&str>) -> bool {
+        let state = self.get_cachestate(account).await;
         match state {
             CacheState::Offline => {
                 trace!("Offline -> no change");
@@ -4783,7 +5008,14 @@ where
 
                 let mut hsm_lock = self.hsm.lock().await;
 
-                let res = self.client.check_online(hsm_lock.deref_mut(), now).await;
+                let res = match account {
+                    Some(account) => {
+                        self.client
+                            .check_online_for_account(account, hsm_lock.deref_mut(), now)
+                            .await
+                    }
+                    None => self.client.check_online(hsm_lock.deref_mut(), now).await,
+                };
 
                 drop(hsm_lock);
 
