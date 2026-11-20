@@ -513,17 +513,18 @@ fn configure_pam_in(
     let password_files = detect(password_file, "password")?;
 
     // Refuse while lines earlier releases wrote to an including file remain. Removing them
-    // here could change where a [...=N] jump in that stage lands.
-    let unseal_check: Vec<&str> = TRY_UNSEAL_LINES
+    // here could change where a [...=N] jump in that stage lands. Both modes check the
+    // --try-unseal line too, since either one may have written it.
+    let auth_check: Vec<&str> = AUTH_LINES
         .iter()
-        .chain(&AUTH_LINES)
+        .chain(&TRY_UNSEAL_LINES)
         .copied()
         .collect();
     let stages: Vec<(&PamFiles, &[&str])> = if try_unseal {
-        vec![(&auth_files, &unseal_check)]
+        vec![(&auth_files, &auth_check)]
     } else {
         vec![
-            (&auth_files, &AUTH_LINES),
+            (&auth_files, &auth_check),
             (&account_files, &ACCOUNT_LINES),
             (&session_files, &SESSION_LINES),
             (&password_files, &PASSWORD_LINES),
@@ -2735,6 +2736,7 @@ mod tests {
         canonical, configure_pam_in, detect_pam_files, included_pam_files, insert_module_line,
         preserve_numeric_account_success, reachable_pam_files, PamFiles, ACCOUNT_LINE,
         ACCOUNT_LINES, AUTH_LINE, AUTH_LINES, PASSWORD_LINE, PASSWORD_LINES, SESSION_LINE,
+        TRY_UNSEAL_LINES,
     };
     use clap::CommandFactory;
     use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
@@ -3447,6 +3449,7 @@ mod tests {
             ACCOUNT_LINES[1],
             ACCOUNT_LINES[2],
             PASSWORD_LINES[1],
+            TRY_UNSEAL_LINES[0],
         ] {
             let legacy = format!("{}{}\n", ARCH_SYSTEM_LOGIN, line);
             let dir = temp_pam_dir(
@@ -3485,7 +3488,7 @@ mod tests {
     #[test]
     fn arch_rerun_keeps_pam_himmelblau_lines_it_did_not_write() -> anyhow::Result<()> {
         let kept = "auth required pam_himmelblau.so ignore_unknown_user set_authtok\n\
-            auth optional pam_himmelblau.so try_unseal\n";
+            auth optional pam_himmelblau.so debug\n";
         let system_login = format!("{}{}", kept, ARCH_SYSTEM_LOGIN);
         let dir = temp_pam_dir(
             "arch-foreign",
