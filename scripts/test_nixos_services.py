@@ -693,10 +693,22 @@ class NixosServiceTests(unittest.TestCase):
         self.assertIn("nscd.service", daemon["After"].split())
         self.assertNotIn("nscd.service", daemon.get("Conflicts", "").split())
 
-    def test_nixos_default_shell_exists_in_the_system_profile(self):
+    def test_nixos_default_shell_is_a_registered_bash(self):
         self.assertEqual(
             self.evaluated["defaultShell"],
-            "/run/current-system/sw/bin/bash",
+            self.evaluated["bashShell"],
+        )
+        self.assertIn(
+            self.evaluated["defaultShell"],
+            self.evaluated["allowedShells"].splitlines(),
+        )
+
+    def test_default_shell_survives_empty_core_packages(self):
+        evaluated = evaluate(emptyCorePackages=True)
+        self.assertEqual(evaluated["corePackages"], [])
+        self.assertEqual(evaluated["defaultShell"], evaluated["bashShell"])
+        self.assertIn(
+            evaluated["defaultShell"], evaluated["allowedShells"].splitlines()
         )
 
     def test_explicit_shell_overrides_nixos_default(self):

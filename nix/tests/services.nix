@@ -9,6 +9,7 @@
   tryUnseal ? false,
   dropInTarget ? "himmelblau/himmelblau.conf.d/90-test.conf",
   shell ? null,
+  emptyCorePackages ? false,
 }:
 let
   pkgs = import nixpkgs { };
@@ -38,6 +39,7 @@ let
         programs.chromium = pkgs.lib.mkIf (chromiumEnable != null) {
           enable = chromiumEnable;
         };
+        environment.corePackages = pkgs.lib.mkIf emptyCorePackages (pkgs.lib.mkForce [ ]);
         environment.etc."fixture-drop-in" = {
           target = dropInTarget;
           text = ''
@@ -65,6 +67,9 @@ in
     tasks = map toString cfg.systemd.services.himmelblaud-tasks.restartTriggers;
   };
   defaultShell = cfg.services.himmelblau.settings.shell;
+  bashShell = "${pkgs.bashInteractive}/bin/bash";
+  allowedShells = cfg.environment.etc.shells.text;
+  corePackages = map toString cfg.environment.corePackages;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
   chromiumPolicies = pkgs.lib.genAttrs [
     "chromium/policies/managed/default.json"
