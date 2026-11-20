@@ -218,8 +218,12 @@ fifteen-minute scheduled sweep catches it, other CI completions and missed event
 Event-driven runs evaluate only affected PRs and all siblings sharing their head
 SHA, using the workflow head SHA when fork wakeups omit PR numbers. Synchronization
 also refreshes the previous head's cohort. A changed selection head expands the
-work queue; membership is reloaded before publishing and again before merging,
-and any unevaluated sibling blocks success. Issue comments
+work queue, including when the head changes at the later freshness read. Late
+head changes immediately publish a blocking check on the new head before queuing
+its cohort; each PR gets at most three evaluation attempts per run. Membership is
+reloaded inside each publication's error handler and again before merging.
+Unevaluated current siblings block success; closed or moved siblings are removed,
+and departed items cannot publish stale results. Issue comments
 outside a PR still sweep all PRs because they may contain linked testing evidence.
 The serialized coordinator uses GitHub's `queue: max` so newer events do not
 replace other PRs' pending runs. GitHub caps that queue at 100 pending runs;
@@ -243,7 +247,8 @@ with the same scoped permissions instead of a bypass/admin credential.
 After publishing a successful check, automatic merging reloads mergeability up
 to three times, waiting one second between reads, because GitHub may still report
 the pre-update `blocked` state. It never merges a persistently blocked or unknown
-state.
+state. CI revalidation uses the synthetic merge SHA returned by this retry,
+and a further merge-SHA change at the final PR read defers merging.
 
 The check/merge API cannot make review reads and merge atomic. Reviews,
 threads, permissions, sponsorship, testing evidence and CI are reloaded before
