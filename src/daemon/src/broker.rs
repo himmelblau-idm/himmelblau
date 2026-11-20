@@ -33,7 +33,19 @@ use url::Url;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct AccountReq {
-    username: String,
+    username: Option<String>,
+}
+
+fn validate_account_username(
+    account: Option<&AccountReq>,
+    expected_username: &str,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(username) = account.and_then(|account| account.username.as_deref()) {
+        if username.to_lowercase() != expected_username.to_lowercase() {
+            return Err("Invalid request for user!".into());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -153,14 +165,9 @@ impl HimmelblauBroker for Broker {
             .ok_or("Unable to find account")?;
         let request: TokenReq =
             serde_json::from_str(&request_json).map_err(|e| format!("{:?}", e))?;
-        // account can be at root (Firefox, Chrome) or in authParameters (Edge)
-        let account = match request.account {
-            Some(x) => x,
-            None => request.auth_parameters.account.ok_or("Missing account")?,
-        };
-        if account.username.to_lowercase() != user.spn.to_lowercase() {
-            return Err("Invalid request for user!".into());
-        }
+        // Missing usernames use the account already resolved from the peer UID.
+        validate_account_username(request.account.as_ref(), &user.spn)?;
+        validate_account_username(request.auth_parameters.account.as_ref(), &user.spn)?;
         // Normalize and validate the redirect URI: treat empty/whitespace as
         // None, and reject values that are not valid URIs or that contain fragments.
         let redirect_uri = match request.auth_parameters.redirect_uri {
@@ -268,13 +275,14 @@ impl HimmelblauBroker for Broker {
         let authority_host = self.environment_for_account(&user.spn)?;
         let request: SsoCookieReq =
             serde_json::from_str(&request_json).map_err(|e| format!("{:?}", e))?;
-        let account = request
-            .account
-            .or_else(|| request.auth_parameters.and_then(|params| params.account))
-            .ok_or("Missing account")?;
-        if account.username.to_lowercase() != user.spn.to_lowercase() {
-            return Err("Invalid request for user!".into());
-        }
+        validate_account_username(request.account.as_ref(), &user.spn)?;
+        validate_account_username(
+            request
+                .auth_parameters
+                .as_ref()
+                .and_then(|params| params.account.as_ref()),
+            &user.spn,
+        )?;
         // Extract sso_nonce from the ssoUrl query parameter if present.
         // When no sso_nonce is provided (proactive SSO flow, e.g. the linux-entra-sso
         // extension setting a static header), the cookie will be generated
@@ -336,7 +344,7 @@ impl HimmelblauBroker for Broker {
 
 #[cfg(test)]
 mod tests {
-    use super::SsoCookieReq;
+    use super::{validate_account_username, AccountReq, SsoCookieReq, TokenReq};
     use serde_json::json;
 
     #[test]
@@ -348,8 +356,70 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            request.auth_parameters.unwrap().account.unwrap().username,
-            "alice@example.com"
+            request
+                .auth_parameters
+                .unwrap()
+                .account
+                .unwrap()
+                .username
+                .as_deref(),
+            Some("alice@example.com")
         );
+    }
+
+    #[test]
+    fn token_and_cookie_requests_accept_missing_usernames() {
+        for account in [
+            serde_json::Value::Null,
+            json!({}),
+            json!({"username": null}),
+        ] {
+            for request in [
+                json!({"authParameters": {"requestedScopes": ["User.Read"]}}),
+                json!({
+                    "account": account,
+                    "authParameters": {"requestedScopes": ["User.Read"]}
+                }),
+                json!({
+                    "authParameters": {
+                        "requestedScopes": ["User.Read"],
+                        "account": account
+                    }
+                }),
+            ] {
+                let token: TokenReq = serde_json::from_value(request.clone()).unwrap();
+                let cookie: SsoCookieReq = serde_json::from_value(request).unwrap();
+                for account in [
+                    token.account.as_ref(),
+                    token.auth_parameters.account.as_ref(),
+                    cookie.account.as_ref(),
+                    cookie
+                        .auth_parameters
+                        .as_ref()
+                        .and_then(|p| p.account.as_ref()),
+                ] {
+                    assert!(validate_account_username(account, "alice@example.com").is_ok());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_username_must_match_peer_account() {
+        for (username, accepted) in [
+            ("alice@example.com", true),
+            ("ALICE@EXAMPLE.COM", true),
+            ("bob@example.com", false),
+            ("", false),
+            ("  ", false),
+        ] {
+            let account = AccountReq {
+                username: Some(username.to_string()),
+            };
+            assert_eq!(
+                validate_account_username(Some(&account), "alice@example.com").is_ok(),
+                accepted
+            );
+        }
     }
 }
