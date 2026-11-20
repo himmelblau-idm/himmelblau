@@ -162,12 +162,14 @@ def expected_images(spec):
         if kind == "portable":
             filename = f"himmelblaud_{spec['version']}-{arch}.raw"
             name = f"himmelblau-{spec['channel']}-portable-{arch}"
+            tags = ["portable", spec["architecture"]]
         elif kind == "sysext":
             filename = f"himmelblau_{spec['version']}-{spec['distro']}-{arch}.sysext.raw"
             name = f"himmelblau-{spec['channel']}-{spec['distro']}-{arch}-sysext"
+            tags = ["ddi", kind, spec["channel"], spec["architecture"], spec["distro"]]
         else:
             raise ValueError(f"Invalid DDI kind: {kind}")
-        result.append({"kind": kind, "filename": filename, "name": name, "version": spec["version"]})
+        result.append({"kind": kind, "filename": filename, "name": name, "version": spec["version"], "tags": tags})
     return result
 
 
@@ -187,7 +189,8 @@ def install_sysupdate(root, spec):
         else:
             target = "/var/lib/extensions/himmelblau.sysext.raw.v"
         (directory / f"{index * 10}-{record['kind']}.transfer").write_text(template.format(
-            version=spec["version"], source=update_source(spec, record),
+            # The sysupdate .transfer files are shipped to users, so we use repo.himmelblau-idm.org as the URL
+            version=spec["version"], source=f"https://repo.himmelblau-idm.org/public/{spec['repository']}/raw/versions/{record['name']}",
             pattern=record["filename"], target=target,
         ))
 
@@ -399,12 +402,14 @@ def publish(artifacts, spec):
     validate_files(artifacts, spec, signed=True)
     uploaded = {}
     for record in missing_images(spec):
-        tags = f"ddi,{record['kind']},channel-{spec['channel']},source-{spec['source_sha']},distro-{spec['distro']}"
+        tags = record["tags"]
+        if record["kind"] == "sysext":
+            tags = [*tags, f"source-{spec['source_sha']}"]
         image.run([
             "cloudsmith", "push", "raw", spec["repository"], artifacts / record["filename"],
             "--version", record["name"],
             "--content-type", "application/vnd.efi.img",
-            "--no-republish", "--tags", tags,
+            "--no-republish", "--tags", ",".join(tags),
         ], env=os.environ.copy())
         uploaded[record["name"]] = packages.digest(artifacts / record["filename"])
     if missing_images(spec, uploaded):
@@ -587,6 +592,7 @@ def publish_checksums(spec):
                 directory = work / record["name"]
                 directory.mkdir()
                 write_checksums(directory, checksums, signing)
+                tags = [*record["tags"], "sysupdate"]
                 # Publish the manifest last. During replacement clients reject
                 # mismatched pairs rather than accepting unauthenticated data.
                 for filename in ("SHA256SUMS.gpg", "SHA256SUMS"):
@@ -594,7 +600,7 @@ def publish_checksums(spec):
                         "cloudsmith", "push", "raw", spec["repository"], directory / filename,
                         "--version", record["name"],
                         "--content-type", CHECKSUM_FILES[filename], "--republish",
-                        "--tags", f"ddi,sysupdate,channel-{spec['channel']}",
+                        "--tags", ",".join(tags),
                     ], env=os.environ.copy())
                 verify_catalog_publication(spec, record, directory)
                 packages.summary(f"Published signed sysupdate manifest: `{update_source(spec, record)}` "
