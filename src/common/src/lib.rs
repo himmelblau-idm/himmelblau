@@ -54,6 +54,8 @@ pub mod idmap_cache;
 #[cfg(target_family = "unix")]
 pub mod idprovider;
 #[cfg(target_family = "unix")]
+pub mod journal;
+#[cfg(target_family = "unix")]
 pub mod mapping;
 #[cfg(target_family = "unix")]
 pub mod nss_cache;
