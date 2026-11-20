@@ -290,7 +290,7 @@ function harness({ changeHead = false, changeBase = false, mergeState = 'clean',
     },
   };
   const core = { info: () => {}, error: () => {}, setFailed: value => calls.push(['error', value]) };
-  return { github, core, context: { repo: { owner: 'himmelblau-idm', repo: 'himmelblau' } }, calls };
+  return { github, core, sleep: async () => {}, context: { repo: { owner: 'himmelblau-idm', repo: 'himmelblau' } }, calls };
 }
 test('coordinator merges with expected SHA and squash only after reloading PR', async () => {
   const h = harness(); await run({ ...h, merge: true });
@@ -833,4 +833,87 @@ test('unchanged checks avoid writes, but a revoked approval updates the result',
   h.github.rest.pulls.listReviews = async () => [];
   await run(h);
   assert.equal(h.calls.find(c => c[0] === 'update')[1].conclusion, 'failure');
+});
+
+test('synchronization refreshes both old and new cohorts', () => {
+  const { affectedPRs } = require('./review-policy.js');
+  const prs = [pr(), { ...pr(), number: 2, head: { sha: OLD } },
+    { ...pr(), number: 3, head: { sha: 'c'.repeat(40) } }];
+  assert.deepEqual(affectedPRs(prs, { eventName: 'pull_request_target', payload: {
+    action: 'synchronize', before: OLD, pull_request: { number: 1 },
+  } }).map(p => p.number), [1, 2]);
+});
+
+test('changed selection head expands evaluation to new-head siblings', async () => {
+  const h = harness();
+  const peer = { ...pr(), number: 2, head: { sha: OLD } };
+  let lists = 0;
+  h.github.rest.pulls.list = async () => [
+    { ...pr(), head: { sha: ++lists === 1 ? SHA : OLD } }, peer,
+  ];
+  h.context.eventName = 'pull_request_target';
+  h.context.payload = { pull_request: { number: 1 } };
+  const fetched = [];
+  h.github.rest.pulls.get = async ({ pull_number }) => {
+    fetched.push(pull_number);
+    return { data: { ...pr(), number: pull_number, head: { sha: OLD } } };
+  };
+  h.github.rest.pulls.listReviews = async ({ pull_number }) => pull_number === 1
+    ? [review('maintainer', { commit_id: OLD })] : [];
+  await run(h);
+  assert.ok(fetched.includes(2));
+  assert.ok(h.calls.filter(c => c[0] === 'check').every(c => c[1].conclusion === 'failure'));
+});
+
+for (const phase of ['publication', 'merge']) {
+  test(`new unevaluated sibling blocks success at ${phase} boundary`, async () => {
+    const h = harness();
+    let lists = 0;
+    h.github.rest.pulls.list = async () => [pr(), { ...pr(), number: 2,
+      head: { sha: ++lists >= (phase === 'publication' ? 2 : 3) ? SHA : OLD } }];
+    h.context.eventName = 'pull_request_target';
+    h.context.payload = { pull_request: { number: 1 } };
+    await run({ ...h, merge: true });
+    assert.equal(h.calls.some(c => c[0] === 'merge'), false);
+    assert.equal(h.calls.filter(c => ['check', 'update'].includes(c[0])).at(-1)[1].conclusion, 'failure');
+  });
+}
+
+test('publishing success reloads blocked merge state and retries boundedly', async () => {
+  const h = harness({ mergeState: 'blocked' });
+  const get = h.github.rest.pulls.get;
+  let retries = 0;
+  let waits = 0;
+  h.sleep = async () => { waits++; };
+  h.github.rest.pulls.get = async args => {
+    const result = await get(args);
+    if (h.calls.some(c => c[0] === 'check') && ++retries >= 2) result.data.mergeable_state = 'clean';
+    return result;
+  };
+  await run({ ...h, merge: true });
+  assert.equal(waits, 1);
+  assert.equal(h.calls.filter(c => c[0] === 'merge').length, 1);
+  const blocked = harness({ mergeState: 'blocked' });
+  let blockedWaits = 0;
+  blocked.sleep = async () => { blockedWaits++; };
+  await run({ ...blocked, merge: true });
+  assert.equal(blockedWaits, 2);
+  assert.equal(blocked.calls.some(c => c[0] === 'merge'), false);
+});
+
+test('merge-boundary permissions bypass the per-run permission cache', async () => {
+  const h = harness();
+  let maintainerReads = 0;
+  h.github.rest.repos.getCollaboratorPermissionLevel = async ({ username }) => ({ data: {
+    permission: username === 'maintainer' && ++maintainerReads > 1 ? 'read' : 'write',
+  } });
+  await run({ ...h, merge: true });
+  assert.equal(h.calls.some(c => c[0] === 'merge'), false);
+  assert.equal(h.calls.filter(c => ['check', 'update'].includes(c[0])).at(-1)[1].conclusion, 'failure');
+});
+
+test('workflow preserves pending targets and refreshes authorization every fifteen minutes', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '../workflows/main-review-policy.yml'), 'utf8');
+  assert.match(workflow, /queue: max/);
+  assert.match(workflow, /cron: '2,17,32,47 \* \* \* \*'/);
 });
