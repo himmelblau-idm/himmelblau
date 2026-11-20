@@ -20,7 +20,6 @@ libnss = "0.9.0"
 libc = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
-tracing = { workspace = true }
 
 [package.metadata.deb]
 name = "nss-himmelblau"

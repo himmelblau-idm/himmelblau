@@ -951,15 +951,14 @@ impl IdProvider for HimmelblauProvider {
                                 .unwrap_or_else(|| account_id.clone())
                                 .to_lowercase();
                             let id_attr_map = config.get_id_attr_map();
+                            let legacy_alias = config.legacy_entra_account_name(&canonical_account_id)
+                                .unwrap_or_else(|| account_id.clone());
                             drop(config);
-                            let legacy_alias = account_id
-                                .contains('@')
-                                .then_some(account_id.as_str());
                             let (uid, gid) = match idmap_cache
                                 .get_user_by_provider_name_with_legacy_alias(
                                     &self.domain,
                                     &canonical_account_id,
-                                    legacy_alias,
+                                    Some(legacy_alias.as_str()),
                                 )
                             {
                                 Some(user) => {
@@ -4611,12 +4610,14 @@ impl HimmelblauProvider {
                     .canonical_account_name(&spn)
                     .unwrap_or_else(|| spn.clone())
                     .to_lowercase();
+                let legacy_alias = config
+                    .legacy_entra_account_name(&canonical_spn)
+                    .unwrap_or_else(|| spn.clone());
                 drop(config);
-                let legacy_alias = spn.contains('@').then_some(spn.as_str());
                 match idmap_cache.get_user_by_provider_name_with_legacy_alias(
                     &self.domain,
                     &canonical_spn,
-                    legacy_alias,
+                    Some(legacy_alias.as_str()),
                 ) {
                     Some(user) => (user.uid, user.gid),
                     None => {

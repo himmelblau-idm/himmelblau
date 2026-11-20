@@ -642,8 +642,16 @@ fn canonical_entra_account(cfg: &HimmelblauConfig, account: &str) -> String {
         .unwrap_or_else(|| account.to_string())
 }
 
-fn canonical_entra_account_key(cfg: &HimmelblauConfig, account: &str) -> String {
-    canonical_entra_account(cfg, account).to_lowercase()
+fn canonical_entra_account_key(
+    cfg: &HimmelblauConfig,
+    provider: &ProviderConfig,
+    account: &str,
+) -> String {
+    if account.contains('@') {
+        canonical_entra_account(cfg, account).to_lowercase()
+    } else {
+        format!("{account}@{}", provider.domain).to_lowercase()
+    }
 }
 
 /// First broker account matching `account_id` that belongs to the selected Entra provider.
@@ -2273,7 +2281,7 @@ async fn main() -> ExitCode {
                     };
 
                     let user = StaticUser {
-                        name: canonical_entra_account_key(&config, &account_id),
+                        name: canonical_entra_account_key(&config, &provider, &account_id),
                         uid,
                         gid,
                     };
@@ -2751,9 +2759,25 @@ mod tests {
             "riley@a.example"
         );
         assert_eq!(
-            super::canonical_entra_account_key(&cfg, "RILEY@A"),
+            super::canonical_entra_account_key(
+                &cfg,
+                &select_entra_provider(&cfg, None, Some("a.example")).unwrap(),
+                "RILEY@A",
+            ),
             "riley@a.example"
         );
+        for (domain, expected) in [
+            ("a.example", "riley@a.example"),
+            ("b.example", "riley@b.example"),
+        ] {
+            let provider = select_entra_provider(&cfg, None, Some(domain)).unwrap();
+            for account in ["RILEY".to_string(), expected.to_uppercase()] {
+                assert_eq!(
+                    super::canonical_entra_account_key(&cfg, &provider, &account),
+                    expected
+                );
+            }
+        }
         let select = |account, domain| {
             super::select_broker_account(&cfg, accounts.clone(), account, domain)
                 .map(|(_, username)| username)

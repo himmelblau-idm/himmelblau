@@ -1180,6 +1180,23 @@ impl HimmelblauConfig {
         Some(provider.local_account_name(&provider.upstream_account_name(account)?))
     }
 
+    /// Recover the tenant-qualified key used by older Entra mapping entries.
+    pub(crate) fn legacy_entra_account_name(&self, account: &str) -> Option<String> {
+        let provider = self.provider_for_account(account)?;
+        if provider.kind != ProviderKind::Entra
+            || !provider.section.starts_with(TENANT_SECTION_PREFIX)
+        {
+            return None;
+        }
+        let upstream = provider.upstream_account_name(account)?;
+        let name = upstream
+            .rsplit_once('@')
+            .filter(|(_, suffix)| suffix.eq_ignore_ascii_case(&provider.domain))
+            .map(|(name, _)| name)
+            .unwrap_or(&upstream);
+        Some(format!("{name}@{}", provider.label))
+    }
+
     pub(crate) fn provider_for_token(
         &self,
         token: &crate::idprovider::interface::UserToken,
@@ -1859,6 +1876,46 @@ mod tests {
         let file_path = format!("/tmp/himmelblau_test_config_{}.ini", uuid::Uuid::new_v4());
         fs::write(&file_path, contents).expect("Failed to write temporary config file");
         file_path
+    }
+
+    #[test]
+    fn entra_legacy_mapping_is_found_for_both_login_spellings() {
+        use crate::idmap_cache::{StaticIdCache, StaticUser};
+
+        let path = create_temp_config("[tenant.work]\ndomain=example.com\ndefault=true\n");
+        let cfg = HimmelblauConfig::new(Some(&path)).unwrap();
+        fs::remove_file(path).unwrap();
+        let cache = StaticIdCache::in_memory_for_test().unwrap();
+        cache
+            .set_provider_user_override(
+                "example.com",
+                &StaticUser {
+                    name: "Alice@Work".to_string(),
+                    uid: 1234,
+                    gid: 5678,
+                },
+            )
+            .unwrap();
+        for login in ["alice@work", "alice@example.com", "ALICE@EXAMPLE.COM"] {
+            let canonical = cfg.canonical_account_name(login).unwrap().to_lowercase();
+            let legacy = cfg.legacy_entra_account_name(&canonical).unwrap();
+            assert_eq!(legacy, "alice@work");
+            let user = cache
+                .get_user_by_provider_name_with_legacy_alias(
+                    "example.com",
+                    &canonical,
+                    Some(&legacy),
+                )
+                .unwrap();
+            assert_eq!((user.uid, user.gid), (1234, 5678));
+            assert!(cache
+                .get_user_by_provider_name_with_legacy_alias(
+                    "other.example",
+                    &canonical,
+                    Some(&legacy),
+                )
+                .is_none());
+        }
     }
 
     // Throwaway passwd file so map_name_to_upn_impl can be tested hermetically.

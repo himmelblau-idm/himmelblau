@@ -272,13 +272,16 @@ impl StaticIdCache {
             .ok()
             .flatten()
         };
-        let user = query_provider_user(name, false)
+        let user = query_provider_user(name, legacy_alias.is_some())
             .or_else(|| legacy_alias.and_then(|alias| query_provider_user(alias, true)));
         if let Some(user) = user {
             return static_user_is_safe(&user).then_some(user);
         }
         self.get_user_by_name(name).or_else(|| {
-            legacy_alias.and_then(|alias| self.get_user_by_name_case_insensitive(alias))
+            legacy_alias.and_then(|alias| {
+                self.get_user_by_name_case_insensitive(name)
+                    .or_else(|| self.get_user_by_name_case_insensitive(alias))
+            })
         })
     }
 
