@@ -786,3 +786,51 @@ test('revoked testing, new findings, and CI reruns at final evaluation prevent m
   }
 });
 
+
+test('event scans include same-head siblings but exclude unrelated PRs', () => {
+  const { affectedPRs } = require('./review-policy.js');
+  const prs = [pr(), { ...pr(), number: 2 }, { ...pr(), number: 3, head: { sha: OLD } }];
+  for (const context of [
+    { eventName: 'pull_request_target', payload: { pull_request: { number: 1 } } },
+    { eventName: 'issue_comment', payload: { issue: { number: 1, pull_request: {} } } },
+    { eventName: 'workflow_run', payload: { workflow_run: { head_sha: SHA, pull_requests: [] } } },
+    { eventName: 'workflow_run', payload: { workflow_run: { pull_requests: [{ number: 1 }] } } },
+    { eventName: 'status', payload: { sha: SHA } },
+    { eventName: 'check_run', payload: { check_run: { head_sha: SHA } } },
+  ]) assert.deepEqual(affectedPRs(prs, context).map(p => p.number), [1, 2]);
+  for (const context of [
+    { eventName: 'schedule' }, { eventName: 'workflow_dispatch' },
+    { eventName: 'issue_comment', payload: { issue: { number: 99 } } },
+    { eventName: 'workflow_run', payload: { workflow_run: {} } },
+  ]) assert.deepEqual(affectedPRs(prs, context), prs);
+  assert.deepEqual(affectedPRs(prs, { eventName: 'status', payload: { sha: 'c'.repeat(40) } }), []);
+});
+
+test('targeted coordinator does not fetch unrelated PR details', async () => {
+  const h = harness();
+  h.github.rest.pulls.list = async () => [pr(), { ...pr(), number: 2, head: { sha: OLD } }];
+  const get = h.github.rest.pulls.get;
+  h.github.rest.pulls.get = async args => {
+    assert.equal(args.pull_number, 1);
+    return get(args);
+  };
+  h.context.eventName = 'workflow_run';
+  h.context.payload = { workflow_run: { head_sha: SHA, pull_requests: [] } };
+  await run(h);
+  assert.equal(h.calls.filter(c => c[0] === 'check').length, 1);
+});
+
+test('unchanged checks avoid writes, but a revoked approval updates the result', async () => {
+  const h = harness();
+  await run(h);
+  const published = h.calls.find(c => c[0] === 'check')[1];
+  const list = h.github.rest.checks.listForRef;
+  h.github.rest.checks.listForRef = async args => [...await list(args),
+    { ...published, id: 99, app: { id: 15368 } }];
+  h.calls.length = 0;
+  await run(h);
+  assert.equal(h.calls.some(c => ['check', 'update'].includes(c[0])), false);
+  h.github.rest.pulls.listReviews = async () => [];
+  await run(h);
+  assert.equal(h.calls.find(c => c[0] === 'update')[1].conclusion, 'failure');
+});

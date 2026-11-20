@@ -424,10 +424,40 @@ async function evaluateAtMergeBoundary({ github, owner, repo, item, canWrite }) 
   return { finalPolicy, finalCI };
 }
 
+// Event payloads select work only; all authorization still comes from fresh API reads.
+function affectedPRs(prs, context) {
+  const event = context.payload || {};
+  const numbers = new Set();
+  const shas = new Set();
+  if (context.eventName === 'pull_request_target') numbers.add(event.pull_request?.number);
+  else if (context.eventName === 'issue_comment' && event.issue?.pull_request) numbers.add(event.issue.number);
+  else if (context.eventName === 'workflow_run') {
+    for (const pr of event.workflow_run?.pull_requests || []) numbers.add(pr.number);
+    // Fork workflow runs can have an empty pull_requests array.
+    if (event.workflow_run?.head_sha) shas.add(event.workflow_run.head_sha);
+  } else if (context.eventName === 'check_run') {
+    if (event.check_run?.head_sha) shas.add(event.check_run.head_sha);
+  } else if (context.eventName === 'status' && event.sha) shas.add(event.sha);
+  // Schedules, dispatches, issue evidence comments and unknown payloads sweep all.
+  if (![...numbers, ...shas].some(Boolean)) return prs;
+  for (const pr of prs) {
+    if (numbers.has(pr.number) || shas.has(pr.merge_commit_sha)) shas.add(pr.head.sha);
+  }
+  // Always include every sibling sharing the affected commit's required check.
+  return prs.filter(pr => numbers.has(pr.number) || shas.has(pr.head.sha));
+}
+
+function sameCheck(existing, check) {
+  return existing.status === check.status && existing.conclusion === check.conclusion
+    && existing.output?.title === check.output.title
+    && existing.output?.summary === check.output.summary;
+}
+
 async function run({ github, context, core, merge = false }) {
   const { owner, repo } = context.repo;
   // Both the trigger and this API filter enforce the main-only scope.
-  const prs = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: 'main', per_page: 100 });
+  const open = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: 'main', per_page: 100 });
+  const prs = affectedPRs(open, context);
   let errors = 0;
   const evaluated = [];
   const evaluationFailuresBySha = new Map();
@@ -529,7 +559,7 @@ async function run({ github, context, core, merge = false }) {
         if (blocked.length) extraReasons.push(`Another open main PR on this commit still fails review policy: ${blocked.join(', ')}.`);
       }
       const description = [...policy.reasons, ...ci, ...policy.autoReasons, ...extraReasons];
-      const existing = checks.find(c => c.name === CHECK && c.app?.id === ACTIONS_APP
+      const existing = [...checks].sort((a, b) => Number(b.id) - Number(a.id)).find(c => c.name === CHECK && c.app?.id === ACTIONS_APP
         && c.external_id === `main-review-policy:${pr.number}`);
       const output = {
         title: sharedEligible ? 'Review requirements satisfied' : 'Waiting for reviews or discussion resolution',
@@ -546,7 +576,7 @@ async function run({ github, context, core, merge = false }) {
         conclusion: sharedEligible ? 'success' : 'failure', output };
       if (existing) {
         checkId = existing.id;
-        await github.rest.checks.update({ ...check, check_run_id: checkId });
+        if (!sameCheck(existing, check)) await github.rest.checks.update({ ...check, check_run_id: checkId });
       } else {
         const created = await github.rest.checks.create({ ...check, head_sha: sha, external_id: `main-review-policy:${pr.number}` });
         checkId = created.data.id;
@@ -603,5 +633,5 @@ async function run({ github, context, core, merge = false }) {
 
 module.exports = { run, evaluate, ciReasons, cleanBotReview, sensitiveChanges,
   sharedHeadCheckEligible, sharedHeadAutoEligible, peerPolicy,
-  testingConfirmation, command, REQUIRED_CI, CHECK };
+  testingConfirmation, command, REQUIRED_CI, CHECK, affectedPRs };
 

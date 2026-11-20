@@ -214,8 +214,14 @@ native CI requirements remain separate.
 Review submissions wake the coordinator through a read-only workflow, including
 fork reviews. PR updates, PR/issue comments, external checks, statuses and completion
 of `CI` also wake it. Thread resolution has no GitHub Actions event, so a
-five-minute scheduled sweep catches it, other CI completions and missed events.
-GitHub can delay scheduled runs. A manual Main review policy workflow dispatch
+hourly scheduled sweep catches it, other CI completions and missed events.
+Event-driven runs evaluate only affected PRs and all siblings sharing their head
+SHA, using the workflow head SHA when fork wakeups omit PR numbers. Issue comments
+outside a PR still sweep all PRs because they may contain linked testing evidence.
+Unchanged policy checks are not rewritten. This bounds API usage: previously every
+review, CI completion, comment and five-minute poll rescanned every open PR and
+could exhaust the installation quota, leaving old failing results visible even
+after approval. GitHub can delay scheduled runs. A manual Main review policy workflow dispatch
 also re-evaluates all open main PRs. No CI rerun is requested by this workflow.
 
 Automatic merges use `GITHUB_TOKEN`, so they do **not** trigger other workflows

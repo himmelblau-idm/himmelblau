@@ -15,7 +15,7 @@ on:
   # Thread resolution has no Actions trigger. Polling also catches missed
   # fork events, review deletions, permission changes and CI reruns.
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions: {}
