@@ -247,9 +247,9 @@ SHA256SUMS files (with a corresponding SHA256SUMS.gpg signature to verify them) 
 published (versioned) in the same directory, available for downloads:
 
 ```bash
-$ wget -O- -q https://dl.cloudsmith.io/public/himmelblau/nightly/raw/versions/himmelblau-nightly-portable-x86-64/SHA256SUMS
+$ wget -O- -q https://repo.himmelblau-idm.org/public/himmelblau/nightly/raw/versions/himmelblau-nightly-portable-x86-64/SHA256SUMS
 beb53fcf425adddd48b008d47dfa61783e1c2efc3f84cb041127ccfcc8a7eef2 *himmelblaud_2026-11-19.060403367496-0b6793501f96-x86-64.raw
-$ wget -O- -q https://dl.cloudsmith.io/public/himmelblau/nightly/raw/versions/himmelblau-nightly-portable-arm64/SHA256SUMS
+$ wget -O- -q https://repo.himmelblau-idm.org/public/himmelblau/nightly/raw/versions/himmelblau-nightly-portable-arm64/SHA256SUMS
 d38a5b205f4e82a1514b5cbfbd28a6571b01ae05cc45de0447e5558fe4850c8e *himmelblaud_2026-11-19.060403367496-0b6793501f96-arm64.raw
 ```
 
@@ -257,9 +257,9 @@ sysext for each distribution and release, and again for x86-64 and arm64, are al
 listed in distro-specific SHA256SUMS files with their nightly version strings:
 
 ```bash
-$ wget -O- -q https://dl.cloudsmith.io/public/himmelblau/nightly/raw/versions/himmelblau-nightly-fedora44-x86-64-sysext/SHA256SUMS
+$ wget -O- -q https://repo.himmelblau-idm.org/public/himmelblau/nightly/raw/versions/himmelblau-nightly-fedora44-x86-64-sysext/SHA256SUMS
 42113a7f470b9689a626b7377c39d99d2f73583fc4ef9f94cc8217519c3534cb *himmelblau_2026-11-19.060403367496-0b6793501f96-fedora44-x86-64.sysext.raw
-$ wget -O- -q https://dl.cloudsmith.io/public/himmelblau/nightly/raw/versions/himmelblau-nightly-debian13-arm64-sysext/SHA256SUMS
+$ wget -O- -q https://repo.himmelblau-idm.org/public/himmelblau/nightly/raw/versions/himmelblau-nightly-debian13-arm64-sysext/SHA256SUMS
 24be393a0d2424a2ef4fa43cbdc5b51fa1066ec60154592553bab8334f685573 *himmelblau_2026-11-19.060403367496-0b6793501f96-debian13-arm64.sysext.raw
 [...]
 ```

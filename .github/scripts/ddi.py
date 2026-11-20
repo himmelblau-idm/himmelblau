@@ -189,7 +189,8 @@ def install_sysupdate(root, spec):
         else:
             target = "/var/lib/extensions/himmelblau.sysext.raw.v"
         (directory / f"{index * 10}-{record['kind']}.transfer").write_text(template.format(
-            version=spec["version"], source=update_source(spec, record),
+            # The sysupdate .transfer files are shipped to users, so we use repo.himmelblau-idm.org as the URL
+            version=spec["version"], source=f"https://repo.himmelblau-idm.org/public/{spec['repository']}/raw/versions/{record['name']}",
             pattern=record["filename"], target=target,
         ))
 
