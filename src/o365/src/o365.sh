@@ -41,18 +41,23 @@ choose_dir() {
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
-get_current_version() {
-  local link="$TARGET_DIR/$APP_BASENAME.AppImage"
-  if [[ -L "$link" ]]; then
-    basename "$(readlink -f "$link")" | sed -n 's/.*-\([0-9][^-]*\)\.AppImage$/\1/p' || true
-  else
-    echo ""
-  fi
-}
-
 fetch_release_info() {
   # Uses GitHub redirect instead of rate-limited API
-  local releases_url="https://github.com/${GITHUB_REPO}/releases"
+  local releases_url="https://github.com/${GITHUB_REPO}/releases" machine_arch
+  machine_arch="$(uname -m)"
+
+  case "$machine_arch" in
+    x86_64|amd64)
+      ASSET_SUFFIX=""
+      ;;
+    aarch64|arm64)
+      ASSET_SUFFIX="-arm64"
+      ;;
+    *)
+      log "Unsupported architecture: $machine_arch"
+      return 1
+      ;;
+  esac
   
   if [[ -n "$PINNED_VERSION" ]]; then
     # Pinned version: normalize by stripping an optional leading 'v'
@@ -75,9 +80,9 @@ fetch_release_info() {
   fi
   
   # Construct download URLs directly (no API needed)
-  # AppImage naming: teams-for-linux-VERSION.AppImage (lowercase)
-  ASSET_URL="https://github.com/${GITHUB_REPO}/releases/download/v${REMOTE_TAG}/teams-for-linux-${REMOTE_TAG}.AppImage"
-  YML_URL="https://github.com/${GITHUB_REPO}/releases/download/v${REMOTE_TAG}/latest-linux.yml"
+  # ARM64 assets and their checksum manifest use a matching -arm64 suffix.
+  ASSET_URL="https://github.com/${GITHUB_REPO}/releases/download/v${REMOTE_TAG}/teams-for-linux-${REMOTE_TAG}${ASSET_SUFFIX}.AppImage"
+  YML_URL="https://github.com/${GITHUB_REPO}/releases/download/v${REMOTE_TAG}/latest-linux${ASSET_SUFFIX}.yml"
   
   # Verify the AppImage URL exists (HEAD request, no download)
   if ! "$CURL_BIN" -fsSL --head "$ASSET_URL" >/dev/null 2>&1; then
@@ -90,16 +95,14 @@ fetch_release_info() {
 }
 
 need_update() {
-  local have="$1" remote="$2"
-  if [[ ! -x "$TARGET_DIR/$APP_BASENAME.AppImage" ]]; then
-    return 0
-  fi
-  [[ -z "$remote" ]] && return 1
-  [[ "$have" != "$remote" ]]
+  local app="$TARGET_DIR/$APP_BASENAME.AppImage"
+  local expected="$APP_BASENAME-${REMOTE_TAG}${ASSET_SUFFIX}.AppImage"
+  [[ -x "$app" ]] || return 0
+  [[ "$(basename "$(readlink -f "$app")")" != "$expected" ]]
 }
 
 download_and_switch() {
-  local version="${REMOTE_TAG:-$(date -u +%Y%m%d%H%M%S)}"
+  local version="${REMOTE_TAG:-$(date -u +%Y%m%d%H%M%S)}${ASSET_SUFFIX:-}"
   local target="$TARGET_DIR/${APP_BASENAME}-${version}.AppImage"
   local temp="${target}.part"
 
@@ -210,9 +213,7 @@ maybe_update_then_run() {
     exec 9>"$TARGET_DIR/.update.lock"
     flock -n 9 || exit 0
     if fetch_release_info; then
-      local have_ver
-      have_ver="$(get_current_version)"
-      if need_update "$have_ver" "$REMOTE_TAG"; then
+      if need_update; then
         download_and_switch || true
       fi
     fi
