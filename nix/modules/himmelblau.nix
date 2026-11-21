@@ -106,6 +106,13 @@ in
         description = "Package himmelblau_broker - used for sso";
       };
 
+      pinentryPackage = lib.mkOption {
+        type = lib.types.package;
+        default = pkgs.pinentry-gnome3;
+        defaultText = lib.literalExpression "pkgs.pinentry-gnome3";
+        description = "Package providing bin/pinentry for graphical broker authentication.";
+      };
+
       pamPackage = lib.mkOption {
         type = lib.types.path;
         description = "Library for the pam module";
@@ -295,11 +302,16 @@ in
       description = "Himmelblau Authentication Broker";
       after = [ "graphical-session.target" ];
       partOf = [ "graphical-session.target" ];
+      path = [
+        cfg.pinentryPackage
+        pkgs.xdg-utils
+      ];
       serviceConfig = {
         Type = "dbus";
         BusName = "com.microsoft.identity.broker1";
         ExecStart = "${cfg.brokerPackage}/bin/himmelblau_broker";
         PassEnvironment = [ "DISPLAY" "WAYLAND_DISPLAY" "XAUTHORITY" ];
+        UnsetEnvironment = [ "TERM" ];
         Slice = "background.slice";
         TimeoutStopSec = 5;
         Restart = "on-failure";
