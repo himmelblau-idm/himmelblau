@@ -4855,7 +4855,7 @@ impl HimmelblauProvider {
 
         Ok(GroupToken {
             name: name.clone(),
-            spn: name.to_string(),
+            spn: id.as_hyphenated().to_string(),
             uuid: id,
             gidnumber,
         })
