@@ -290,7 +290,7 @@ function harness({ changeHead = false, changeBase = false, mergeState = 'clean',
     },
   };
   const core = { info: () => {}, error: () => {}, setFailed: value => calls.push(['error', value]) };
-  return { github, core, context: { repo: { owner: 'himmelblau-idm', repo: 'himmelblau' } }, calls };
+  return { github, core, sleep: async () => {}, context: { repo: { owner: 'himmelblau-idm', repo: 'himmelblau' } }, calls };
 }
 test('coordinator merges with expected SHA and squash only after reloading PR', async () => {
   const h = harness(); await run({ ...h, merge: true });
@@ -786,3 +786,267 @@ test('revoked testing, new findings, and CI reruns at final evaluation prevent m
   }
 });
 
+
+test('event scans include same-head siblings but exclude unrelated PRs', () => {
+  const { affectedPRs } = require('./review-policy.js');
+  const prs = [pr(), { ...pr(), number: 2 }, { ...pr(), number: 3, head: { sha: OLD } }];
+  for (const context of [
+    { eventName: 'pull_request_target', payload: { pull_request: { number: 1 } } },
+    { eventName: 'issue_comment', payload: { issue: { number: 1, pull_request: {} } } },
+    { eventName: 'workflow_run', payload: { workflow_run: { head_sha: SHA, pull_requests: [] } } },
+    { eventName: 'workflow_run', payload: { workflow_run: { pull_requests: [{ number: 1 }] } } },
+    { eventName: 'status', payload: { sha: SHA } },
+    { eventName: 'check_run', payload: { check_run: { head_sha: SHA } } },
+  ]) assert.deepEqual(affectedPRs(prs, context).map(p => p.number), [1, 2]);
+  for (const context of [
+    { eventName: 'schedule' }, { eventName: 'workflow_dispatch' },
+    { eventName: 'issue_comment', payload: { issue: { number: 99 } } },
+    { eventName: 'workflow_run', payload: { workflow_run: {} } },
+  ]) assert.deepEqual(affectedPRs(prs, context), prs);
+  assert.deepEqual(affectedPRs(prs, { eventName: 'status', payload: { sha: 'c'.repeat(40) } }), []);
+});
+
+test('targeted coordinator does not fetch unrelated PR details', async () => {
+  const h = harness();
+  h.github.rest.pulls.list = async () => [pr(), { ...pr(), number: 2, head: { sha: OLD } }];
+  const get = h.github.rest.pulls.get;
+  h.github.rest.pulls.get = async args => {
+    assert.equal(args.pull_number, 1);
+    return get(args);
+  };
+  h.context.eventName = 'workflow_run';
+  h.context.payload = { workflow_run: { head_sha: SHA, pull_requests: [] } };
+  await run(h);
+  assert.equal(h.calls.filter(c => c[0] === 'check').length, 1);
+});
+
+test('unchanged checks avoid writes, but a revoked approval updates the result', async () => {
+  const h = harness();
+  await run(h);
+  const published = h.calls.find(c => c[0] === 'check')[1];
+  const list = h.github.rest.checks.listForRef;
+  h.github.rest.checks.listForRef = async args => [...await list(args),
+    { ...published, id: 99, app: { id: 15368 } }];
+  h.calls.length = 0;
+  await run(h);
+  assert.equal(h.calls.some(c => ['check', 'update'].includes(c[0])), false);
+  h.github.rest.pulls.listReviews = async () => [];
+  await run(h);
+  assert.equal(h.calls.find(c => c[0] === 'update')[1].conclusion, 'failure');
+});
+
+test('synchronization refreshes both old and new cohorts', () => {
+  const { affectedPRs } = require('./review-policy.js');
+  const prs = [pr(), { ...pr(), number: 2, head: { sha: OLD } },
+    { ...pr(), number: 3, head: { sha: 'c'.repeat(40) } }];
+  assert.deepEqual(affectedPRs(prs, { eventName: 'pull_request_target', payload: {
+    action: 'synchronize', before: OLD, pull_request: { number: 1 },
+  } }).map(p => p.number), [1, 2]);
+});
+
+test('changed selection head expands evaluation to new-head siblings', async () => {
+  const h = harness();
+  const peer = { ...pr(), number: 2, head: { sha: OLD } };
+  let lists = 0;
+  h.github.rest.pulls.list = async () => [
+    { ...pr(), head: { sha: ++lists === 1 ? SHA : OLD } }, peer,
+  ];
+  h.context.eventName = 'pull_request_target';
+  h.context.payload = { pull_request: { number: 1 } };
+  const fetched = [];
+  h.github.rest.pulls.get = async ({ pull_number }) => {
+    fetched.push(pull_number);
+    return { data: { ...pr(), number: pull_number, head: { sha: OLD } } };
+  };
+  h.github.rest.pulls.listReviews = async ({ pull_number }) => pull_number === 1
+    ? [review('maintainer', { commit_id: OLD })] : [];
+  await run(h);
+  assert.ok(fetched.includes(2));
+  assert.ok(h.calls.filter(c => c[0] === 'check').every(c => c[1].conclusion === 'failure'));
+});
+
+for (const phase of ['publication', 'merge']) {
+  test(`new unevaluated sibling blocks success at ${phase} boundary`, async () => {
+    const h = harness();
+    let lists = 0;
+    h.github.rest.pulls.list = async () => [pr(), { ...pr(), number: 2,
+      head: { sha: ++lists >= (phase === 'publication' ? 2 : 3) ? SHA : OLD } }];
+    h.context.eventName = 'pull_request_target';
+    h.context.payload = { pull_request: { number: 1 } };
+    await run({ ...h, merge: true });
+    assert.equal(h.calls.some(c => c[0] === 'merge'), false);
+    assert.equal(h.calls.filter(c => ['check', 'update'].includes(c[0])).at(-1)[1].conclusion, 'failure');
+  });
+}
+
+test('publishing success reloads blocked merge state and retries boundedly', async () => {
+  const h = harness({ mergeState: 'blocked' });
+  const get = h.github.rest.pulls.get;
+  let retries = 0;
+  let waits = 0;
+  h.sleep = async () => { waits++; };
+  h.github.rest.pulls.get = async args => {
+    const result = await get(args);
+    if (h.calls.some(c => c[0] === 'check') && ++retries >= 2) result.data.mergeable_state = 'clean';
+    return result;
+  };
+  await run({ ...h, merge: true });
+  assert.equal(waits, 1);
+  assert.equal(h.calls.filter(c => c[0] === 'merge').length, 1);
+  const blocked = harness({ mergeState: 'blocked' });
+  let blockedWaits = 0;
+  blocked.sleep = async () => { blockedWaits++; };
+  await run({ ...blocked, merge: true });
+  assert.equal(blockedWaits, 2);
+  assert.equal(blocked.calls.some(c => c[0] === 'merge'), false);
+});
+
+test('merge-boundary permissions bypass the per-run permission cache', async () => {
+  const h = harness();
+  let maintainerReads = 0;
+  h.github.rest.repos.getCollaboratorPermissionLevel = async ({ username }) => ({ data: {
+    permission: username === 'maintainer' && ++maintainerReads > 1 ? 'read' : 'write',
+  } });
+  await run({ ...h, merge: true });
+  assert.equal(h.calls.some(c => c[0] === 'merge'), false);
+  assert.equal(h.calls.filter(c => ['check', 'update'].includes(c[0])).at(-1)[1].conclusion, 'failure');
+});
+
+test('workflow preserves pending targets and refreshes authorization every fifteen minutes', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '../workflows/main-review-policy.yml'), 'utf8');
+  assert.match(workflow, /queue: max/);
+  assert.match(workflow, /cron: '2,17,32,47 \* \* \* \*'/);
+});
+
+test('late head change invalidates the new head and evaluates its cohort in this run', async () => {
+  const h = harness();
+  const moved = { ...pr(), head: { sha: OLD } };
+  const sibling = { ...pr(), number: 2, head: { sha: OLD } };
+  let gets = 0;
+  const reviewsRead = [];
+  h.context.eventName = 'pull_request_target';
+  h.context.payload = { pull_request: { number: 1 } };
+  h.github.rest.pulls.list = async () => [gets < 2 ? pr() : moved, sibling];
+  h.github.rest.pulls.get = async ({ pull_number }) => ({ data: pull_number === 2 ? sibling
+    : ++gets === 1 ? pr() : moved });
+  h.github.rest.pulls.listReviews = async ({ pull_number }) => {
+    reviewsRead.push(pull_number);
+    return pull_number === 2 ? [review('maintainer', { commit_id: OLD })] : [];
+  };
+  await run({ ...h, merge: true });
+  assert.ok(reviewsRead.includes(2));
+  assert.ok(reviewsRead.filter(n => n === 1).length > 1);
+  const writes = h.calls.filter(c => c[0] === 'check' && c[1].head_sha === OLD);
+  assert.equal(writes[0][1].output.title, 'Policy reevaluation required after head change');
+  assert.ok(writes.every(c => c[1].conclusion === 'failure'));
+  assert.equal(h.calls.some(c => c[0] === 'merge'), false);
+});
+
+test('repeated late head changes stop after three attempts with blocking checks', async () => {
+  const h = harness();
+  let gets = 0;
+  const head = () => (++gets).toString(16).padStart(40, '0');
+  h.github.rest.pulls.get = async () => ({ data: { ...pr(), head: { sha: head() } } });
+  await run(h);
+  assert.ok(gets <= 6);
+  assert.ok(h.calls.filter(c => c[0] === 'check').every(c => c[1].conclusion === 'failure'));
+});
+
+test('each publication reloads membership after an earlier merge detects a new peer', async () => {
+  const h = harness();
+  let lists = 0;
+  const sibling = { ...pr(), number: 2 };
+  h.context.eventName = 'pull_request_target';
+  h.context.payload = { pull_request: { number: 1 } };
+  h.github.rest.pulls.list = async () => [pr(), sibling, { ...pr(), number: 3,
+    head: { sha: ++lists >= 3 ? SHA : OLD } }];
+  h.github.rest.pulls.get = async ({ pull_number }) => ({ data: { ...pr(), number: pull_number } });
+  await run({ ...h, merge: true });
+  const second = h.calls.filter(c => ['check', 'update'].includes(c[0])
+    && c[1].external_id === 'main-review-policy:2');
+  assert.equal(second[0][1].conclusion, 'failure');
+  assert.equal(h.calls.some(c => c[0] === 'merge'), false);
+});
+
+test('membership read failures replace an existing successful check with failure', async () => {
+  const h = harness();
+  let lists = 0;
+  h.github.rest.pulls.list = async () => {
+    if (++lists > 1) throw new Error('membership unavailable');
+    return [pr()];
+  };
+  h.github.rest.checks.listForRef = async () => [check('Review policy', {
+    id: 88, external_id: 'main-review-policy:1',
+  })];
+  await run(h);
+  const failure = h.calls.find(c => c[0] === 'update')[1];
+  assert.equal(failure.check_run_id, 88);
+  assert.equal(failure.conclusion, 'failure');
+  assert.equal(failure.output.title, 'Policy evaluation failed');
+  assert.equal(h.calls.find(c => c[0] === 'error')[1], '1 PR policy evaluation(s) failed.');
+});
+
+for (const departure of ['closed', 'moved']) {
+  test(`${departure} sibling neither blocks its former cohort nor publishes stale failure`, async () => {
+    const h = harness();
+    let lists = 0;
+    const sibling = { ...pr(), number: 2 };
+    h.github.rest.pulls.list = async () => ++lists === 1 ? [pr(), sibling]
+      : departure === 'closed' ? [pr()] : [pr(), { ...sibling, head: { sha: OLD } }];
+    h.github.rest.pulls.get = async ({ pull_number }) => ({ data: { ...pr(), number: pull_number } });
+    h.github.rest.pulls.listReviews = async ({ pull_number }) => pull_number === 1 ? [review()] : [];
+    await run(h);
+    const writes = h.calls.filter(c => ['check', 'update'].includes(c[0]));
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0][1].external_id, 'main-review-policy:1');
+    assert.equal(writes[0][1].conclusion, 'success');
+  });
+}
+
+test('new synthetic merge commit from mergeability retry is checked before merging', async () => {
+  const h = harness();
+  const mergeSha = 'c'.repeat(40);
+  const get = h.github.rest.pulls.get;
+  h.github.rest.pulls.get = async args => {
+    const result = await get(args);
+    if (h.calls.some(c => c[0] === 'check')) result.data.merge_commit_sha = mergeSha;
+    else result.data.mergeable = null;
+    return result;
+  };
+  const refs = [];
+  h.github.rest.checks.listForRef = async ({ ref }) => {
+    refs.push(ref);
+    return [...REQUIRED_CI.map(name => check(name)),
+      ...(ref === mergeSha ? [check('merge-specific', { conclusion: 'failure' })] : [])];
+  };
+  await run({ ...h, merge: true });
+  assert.ok(refs.includes(mergeSha));
+  assert.equal(h.calls.some(c => c[0] === 'merge'), false);
+  assert.match(h.calls.find(c => c[0] === 'update')[1].output.summary, /merge-specific is failure/);
+});
+
+test('late-head invalidation survives failure to reload its new cohort', async () => {
+  const h = harness();
+  let gets = 0;
+  let lists = 0;
+  h.github.rest.pulls.list = async () => {
+    if (++lists > 1) throw new Error('membership unavailable');
+    return [pr()];
+  };
+  h.github.rest.pulls.get = async () => ({ data: { ...pr(), head: { sha: ++gets === 1 ? SHA : OLD } } });
+  await run(h);
+  assert.ok(h.calls.some(c => c[0] === 'check' && c[1].head_sha === OLD && c[1].conclusion === 'failure'));
+});
+
+test('another synthetic merge SHA change after CI revalidation defers merging', async () => {
+  const h = harness();
+  const get = h.github.rest.pulls.get;
+  let gets = 0;
+  h.github.rest.pulls.get = async args => {
+    const result = await get(args);
+    result.data.merge_commit_sha = (++gets < 4 ? 'c' : 'd').repeat(40);
+    return result;
+  };
+  await run({ ...h, merge: true });
+  assert.equal(h.calls.some(c => c[0] === 'merge'), false);
+});

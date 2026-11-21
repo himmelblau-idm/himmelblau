@@ -424,27 +424,97 @@ async function evaluateAtMergeBoundary({ github, owner, repo, item, canWrite }) 
   return { finalPolicy, finalCI };
 }
 
-async function run({ github, context, core, merge = false }) {
+// Event payloads select work only; all authorization still comes from fresh API reads.
+function affectedPRs(prs, context) {
+  const event = context.payload || {};
+  const numbers = new Set();
+  const shas = new Set();
+  if (context.eventName === 'pull_request_target') {
+    numbers.add(event.pull_request?.number);
+    if (event.action === 'synchronize' && event.before) shas.add(event.before);
+  }
+  else if (context.eventName === 'issue_comment' && event.issue?.pull_request) numbers.add(event.issue.number);
+  else if (context.eventName === 'workflow_run') {
+    for (const pr of event.workflow_run?.pull_requests || []) numbers.add(pr.number);
+    // Fork workflow runs can have an empty pull_requests array.
+    if (event.workflow_run?.head_sha) shas.add(event.workflow_run.head_sha);
+  } else if (context.eventName === 'check_run') {
+    if (event.check_run?.head_sha) shas.add(event.check_run.head_sha);
+  } else if (context.eventName === 'status' && event.sha) shas.add(event.sha);
+  // Schedules, dispatches, issue evidence comments and unknown payloads sweep all.
+  if (![...numbers, ...shas].some(Boolean)) return prs;
+  for (const pr of prs) {
+    if (numbers.has(pr.number) || shas.has(pr.merge_commit_sha)) shas.add(pr.head.sha);
+  }
+  // Always include every sibling sharing the affected commit's required check.
+  return prs.filter(pr => numbers.has(pr.number) || shas.has(pr.head.sha));
+}
+
+// A new or changed sibling must never inherit an earlier cohort's success.
+function reconcilePeers(peers, open, sha) {
+  return open.filter(pr => pr.head.sha === sha).map(current =>
+    peers.find(peer => peer.pr?.number === current.number
+      && peer.sha === sha && peer.pr.base.sha === current.base.sha
+      && peer.pr.draft === current.draft)
+    || { summary: current, policy: { eligible: false, autoEligible: false } });
+}
+
+function sameCheck(existing, check) {
+  return existing.status === check.status && existing.conclusion === check.conclusion
+    && existing.output?.title === check.output.title
+    && existing.output?.summary === check.output.summary;
+}
+
+async function run({ github, context, core, merge = false, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const { owner, repo } = context.repo;
   // Both the trigger and this API filter enforce the main-only scope.
-  const prs = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: 'main', per_page: 100 });
+  const listOpen = () => github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: 'main', per_page: 100 });
+  const open = await listOpen();
+  const permissionCache = new Map();
+  const prs = [...affectedPRs(open, context)];
+  const queuedHeads = new Set(prs.map(pr => `${pr.number}:${pr.head.sha}`));
+  const attempts = new Map();
+  async function enqueueCohort(current, includeCurrent = false) {
+    const cohort = [...await listOpen()];
+    if (includeCurrent) cohort.push(current);
+    for (const peer of cohort.filter(peer => peer.head.sha === current.head.sha)) {
+      const key = `${peer.number}:${peer.head.sha}`;
+      if (!includeCurrent && peer.number === current.number) {
+        queuedHeads.add(key);
+        continue;
+      }
+      if (!queuedHeads.has(key) && (attempts.get(peer.number) || 0) < 3) {
+        queuedHeads.add(key);
+        prs.push(peer);
+      }
+    }
+  }
   let errors = 0;
   const evaluated = [];
   const evaluationFailuresBySha = new Map();
   for (const summary of prs) {
+    if ((attempts.get(summary.number) || 0) >= 3) continue;
+    attempts.set(summary.number, (attempts.get(summary.number) || 0) + 1);
     let pr;
     try {
       pr = (await github.rest.pulls.get({ owner, repo, pull_number: summary.number })).data;
       if (pr.base.ref !== 'main' || pr.state !== 'open') continue;
+      if (summary.head.sha !== pr.head.sha) {
+        // Reload membership and expand the work queue before evaluating a new head.
+        await enqueueCohort(pr);
+      }
       const sha = pr.head.sha;
       const args = { owner, repo, per_page: 100 };
       const permissions = {};
-      async function canWrite(login) {
+      async function canWrite(login, refresh = false) {
         if (Object.hasOwn(permissions, login)) return permissions[login];
         try {
+          if (!refresh && permissionCache.has(login)) return (permissions[login] = permissionCache.get(login));
           const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: login });
-          return (permissions[login] = data.user?.permissions?.push === true
-            || ['write', 'maintain', 'admin'].includes(data.permission));
+          const allowed = data.user?.permissions?.push === true
+            || ['write', 'maintain', 'admin'].includes(data.permission);
+          permissionCache.set(login, allowed);
+          return (permissions[login] = allowed);
         } catch (error) {
           if (error.status === 404) return (permissions[login] = false);
           throw error;
@@ -463,23 +533,32 @@ async function run({ github, context, core, merge = false }) {
       const files = await github.paginate(github.rest.pulls.listFiles, { ...args, pull_number: pr.number });
       const tested = await testingConfirmation({ github, owner, repo, pr, comments, permissions });
       const checks = await github.paginate(github.rest.checks.listForRef, { ...args, ref: sha, filter: 'all' });
-      const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: sha });
+      const statuses = merge ? await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: sha }) : [];
       const policy = evaluate({ pr, authorCanWrite, permissions, reviews, threads, files, tested,
         checks: latestBy(checks, c => `${c.app?.id}:${c.name}`), comments });
       let mergeChecks = [];
       let mergeStatuses = [];
-      if (pr.merge_commit_sha && pr.merge_commit_sha !== sha) {
+      if (merge && pr.merge_commit_sha && pr.merge_commit_sha !== sha) {
         mergeChecks = await github.paginate(github.rest.checks.listForRef, { ...args, ref: pr.merge_commit_sha, filter: 'all' });
         mergeStatuses = await github.paginate(github.rest.repos.listCommitStatusesForRef, { ...args, ref: pr.merge_commit_sha });
       }
       // PR workflows may report on the synthetic merge SHA instead of head.
       // Mandatory names may succeed on either ref; other checks and statuses
       // are evaluated per ref so one cannot hide a failure on the other.
-      const ci = ciReasons(checks, statuses, mergeChecks, mergeStatuses);
+      const ci = merge ? ciReasons(checks, statuses, mergeChecks, mergeStatuses) : [];
       const fresh = (await github.rest.pulls.get({ owner, repo, pull_number: pr.number })).data;
       if (fresh.head.sha !== sha || fresh.base.ref !== 'main' || fresh.base.sha !== pr.base.sha
           || fresh.state !== 'open' || fresh.draft !== pr.draft) {
-        core.info(`#${pr.number}: PR changed during evaluation; retry on next event.`);
+        core.info(`#${pr.number}: PR changed during evaluation; refresh its current cohort.`);
+        if (fresh.head.sha !== sha && fresh.base.ref === 'main' && fresh.state === 'open') {
+          // Immediately invalidate any shared success on the newly joined head,
+          // even if membership loading or a bounded reevaluation later fails.
+          await github.rest.checks.create({ owner, repo, name: CHECK, head_sha: fresh.head.sha,
+            external_id: `main-review-policy:${pr.number}`, status: 'completed', conclusion: 'failure',
+            output: { title: 'Policy reevaluation required after head change',
+              summary: 'The new head and its current peers must complete policy evaluation.' } });
+          await enqueueCohort(fresh, true);
+        }
         // Same commit-scoped required checks bind every PR on this head. Until a
         // full evaluation succeeds, treat a raced sibling as a blocking peer.
         const blocked = evaluationFailuresBySha.get(sha) || [];
@@ -487,6 +566,9 @@ async function run({ github, context, core, merge = false }) {
         evaluationFailuresBySha.set(sha, blocked);
         continue;
       }
+      // A stable reevaluation supersedes an earlier failure for this PR/head.
+      evaluationFailuresBySha.set(sha, (evaluationFailuresBySha.get(sha) || [])
+        .filter(peer => peer.summary.number !== pr.number));
       evaluated.push({ summary, pr, fresh, sha, args, permissions, canWrite, authorCanWrite, policy, ci,
         tested, files, checks });
     } catch (error) {
@@ -518,10 +600,15 @@ async function run({ github, context, core, merge = false }) {
   for (const item of evaluated) {
     let checkId;
     const { pr, fresh, sha, args, permissions, canWrite, authorCanWrite, policy, ci, tested, files, checks } = item;
-    const peers = peersBySha.get(sha);
-    const sharedEligible = sharedHeadCheckEligible(peers, policy);
-    const sharedAutoEligible = sharedHeadAutoEligible(peers, policy);
+    const existing = [...checks].sort((a, b) => Number(b.id) - Number(a.id)).find(c => c.name === CHECK && c.app?.id === ACTIONS_APP
+      && c.external_id === `main-review-policy:${pr.number}`);
+    checkId = existing?.id;
     try {
+      const publicationMembership = await listOpen();
+      if (!publicationMembership.some(current => current.number === pr.number && current.head.sha === sha)) continue;
+      const peers = reconcilePeers(peersBySha.get(sha), publicationMembership, sha);
+      const sharedEligible = sharedHeadCheckEligible(peers, policy);
+      const sharedAutoEligible = sharedHeadAutoEligible(peers, policy);
       const extraReasons = [];
       if (peers.length > 1 && !sharedEligible) {
         const blocked = peers.filter(peer => peer.summary?.number !== pr.number && !peerPolicy(peer).eligible)
@@ -529,8 +616,6 @@ async function run({ github, context, core, merge = false }) {
         if (blocked.length) extraReasons.push(`Another open main PR on this commit still fails review policy: ${blocked.join(', ')}.`);
       }
       const description = [...policy.reasons, ...ci, ...policy.autoReasons, ...extraReasons];
-      const existing = checks.find(c => c.name === CHECK && c.app?.id === ACTIONS_APP
-        && c.external_id === `main-review-policy:${pr.number}`);
       const output = {
         title: sharedEligible ? 'Review requirements satisfied' : 'Waiting for reviews or discussion resolution',
         summary: [`Author has write access: ${authorCanWrite}.`,
@@ -546,7 +631,7 @@ async function run({ github, context, core, merge = false }) {
         conclusion: sharedEligible ? 'success' : 'failure', output };
       if (existing) {
         checkId = existing.id;
-        await github.rest.checks.update({ ...check, check_run_id: checkId });
+        if (!sameCheck(existing, check)) await github.rest.checks.update({ ...check, check_run_id: checkId });
       } else {
         const created = await github.rest.checks.create({ ...check, head_sha: sha, external_id: `main-review-policy:${pr.number}` });
         checkId = created.data.id;
@@ -554,26 +639,40 @@ async function run({ github, context, core, merge = false }) {
       core.info(`#${pr.number}: ${description.join(' ') || 'Ready to merge.'}`);
       // GitHub enforces protections again at merge time; never use an admin
       // bypass. Unknown/blocked/behind states wait instead of forcing merge.
-      if (merge && sharedAutoEligible && ci.length === 0 && fresh.mergeable === true
-          && fresh.mergeable_state === 'clean') {
+      if (merge && sharedAutoEligible && ci.length === 0) {
+        // Publishing success can unblock GitHub's asynchronously computed merge state.
+        let mergeReady;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          mergeReady = (await github.rest.pulls.get({ owner, repo, pull_number: pr.number })).data;
+          if (mergeReady.head.sha !== sha || mergeReady.base.ref !== 'main'
+              || mergeReady.base.sha !== pr.base.sha || mergeReady.state !== 'open' || mergeReady.draft) break;
+          if (mergeReady.mergeable === true && mergeReady.mergeable_state === 'clean') break;
+          if (attempt < 2) await sleep(1000);
+        }
+        if (mergeReady.head.sha !== sha || mergeReady.base.ref !== 'main'
+            || mergeReady.base.sha !== pr.base.sha || mergeReady.state !== 'open' || mergeReady.draft
+            || mergeReady.mergeable !== true || mergeReady.mergeable_state !== 'clean') continue;
+        // Mergeability may have computed a new synthetic commit since evaluation.
+        item.pr = { ...pr, merge_commit_sha: mergeReady.merge_commit_sha };
         // Re-read reviews, threads, permissions and attestations at the merge
         // boundary. GitHub's SHA lease and native protections remain the final
         // guard; reads and a merge cannot be made atomic through this API.
         let finalCI;
         for (const peer of peers) {
           if (!peer.pr || !peer.canWrite) continue;
-          const reloaded = await evaluateAtMergeBoundary({ github, owner, repo, item: peer, canWrite: peer.canWrite });
+          const reloaded = await evaluateAtMergeBoundary({ github, owner, repo, item: peer, canWrite: login => peer.canWrite(login, true) });
           peer.finalPolicy = reloaded.finalPolicy;
           if (peer.summary.number === pr.number) finalCI = reloaded.finalCI;
         }
         if (finalCI === undefined) {
-          const reloaded = await evaluateAtMergeBoundary({ github, owner, repo, item, canWrite });
+          const reloaded = await evaluateAtMergeBoundary({ github, owner, repo, item, canWrite: login => canWrite(login, true) });
           item.finalPolicy = reloaded.finalPolicy;
           finalCI = reloaded.finalCI;
         }
         const finalPolicy = item.finalPolicy;
-        const finalSharedEligible = sharedHeadCheckEligible(peers, finalPolicy);
-        const finalSharedAutoEligible = sharedHeadAutoEligible(peers, finalPolicy);
+        const finalPeers = reconcilePeers(peers, await listOpen(), sha);
+        const finalSharedEligible = sharedHeadCheckEligible(finalPeers, finalPolicy);
+        const finalSharedAutoEligible = sharedHeadAutoEligible(finalPeers, finalPolicy);
         if (!finalSharedAutoEligible || finalCI.length) {
           await github.rest.checks.update({ ...check, check_run_id: checkId,
             conclusion: finalSharedEligible ? 'success' : 'failure',
@@ -583,6 +682,7 @@ async function run({ github, context, core, merge = false }) {
         }
         const finalPR = (await github.rest.pulls.get({ owner, repo, pull_number: pr.number })).data;
         if (finalPR.head.sha !== sha || finalPR.base.ref !== 'main' || finalPR.base.sha !== pr.base.sha
+            || finalPR.merge_commit_sha !== item.pr.merge_commit_sha
             || finalPR.state !== 'open' || finalPR.draft || finalPR.mergeable !== true
             || finalPR.mergeable_state !== 'clean') continue;
         const result = await github.rest.pulls.merge({ owner, repo, pull_number: pr.number,
@@ -603,5 +703,5 @@ async function run({ github, context, core, merge = false }) {
 
 module.exports = { run, evaluate, ciReasons, cleanBotReview, sensitiveChanges,
   sharedHeadCheckEligible, sharedHeadAutoEligible, peerPolicy,
-  testingConfirmation, command, REQUIRED_CI, CHECK };
+  testingConfirmation, command, REQUIRED_CI, CHECK, affectedPRs, reconcilePeers };
 

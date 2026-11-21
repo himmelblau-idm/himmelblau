@@ -214,14 +214,41 @@ native CI requirements remain separate.
 Review submissions wake the coordinator through a read-only workflow, including
 fork reviews. PR updates, PR/issue comments, external checks, statuses and completion
 of `CI` also wake it. Thread resolution has no GitHub Actions event, so a
-five-minute scheduled sweep catches it, other CI completions and missed events.
-GitHub can delay scheduled runs. A manual Main review policy workflow dispatch
+fifteen-minute scheduled sweep catches it, other CI completions and missed events.
+Event-driven runs evaluate only affected PRs and all siblings sharing their head
+SHA, using the workflow head SHA when fork wakeups omit PR numbers. Synchronization
+also refreshes the previous head's cohort. A changed selection head expands the
+work queue, including when the head changes at the later freshness read. Late
+head changes immediately publish a blocking check on the new head before queuing
+its cohort; each PR gets at most three evaluation attempts per run. Membership is
+reloaded inside each publication's error handler and again before merging.
+Unevaluated current siblings block success; closed or moved siblings are removed,
+and departed items cannot publish stale results. Issue comments
+outside a PR still sweep all PRs because they may contain linked testing evidence.
+The serialized coordinator uses GitHub's `queue: max` so newer events do not
+replace other PRs' pending runs. GitHub caps that queue at 100 pending runs;
+overflow or otherwise missed events are recovered by the scheduled sweep.
+Unchanged policy checks are not rewritten. Initial permission lookups are cached
+only within a run; merge-boundary authorization always bypasses that cache.
+Commit statuses and merge-ref CI are fetched only with automatic merging enabled;
+native required CI gates still apply in report-only mode. This reduces API usage: previously every
+review, CI completion, comment and five-minute poll rescanned every open PR and
+could exhaust the installation quota, leaving old failing results visible even
+after approval. Authorization removals without a wakeup and thread-resolution-only
+changes are recovered at the next sweep; GitHub can delay scheduled runs. No
+workflow check can provide an atomic authorization gate for manual merges. A manual Main review policy workflow dispatch
 also re-evaluates all open main PRs. No CI rerun is requested by this workflow.
 
 Automatic merges use `GITHUB_TOKEN`, so they do **not** trigger other workflows
 listening for push events, per GitHub's recursion prevention. PR CI has already
 passed. If push-triggered publication is added later, use a dedicated GitHub App
 with the same scoped permissions instead of a bypass/admin credential.
+
+After publishing a successful check, automatic merging reloads mergeability up
+to three times, waiting one second between reads, because GitHub may still report
+the pre-update `blocked` state. It never merges a persistently blocked or unknown
+state. CI revalidation uses the synthetic merge SHA returned by this retry,
+and a further merge-SHA change at the final PR read defers merging.
 
 The check/merge API cannot make review reads and merge atomic. Reviews,
 threads, permissions, sponsorship, testing evidence and CI are reloaded before
@@ -233,3 +260,10 @@ Protect policy changes with the normal review process.
 
 Local verification: `node --test .github/scripts/test_review_policy.js`.
 
+
+When troubleshooting stale checks, inspect **Main review policy** and its API
+quota errors as well as the read-only wakeup. CodeQL and Slop Guard share the
+installation quota and can fail at the same time. Dependency Review v5 maps any
+HTTP 403 to a misleading “not supported”/Dependency Graph message; correlate it
+with quota failures before changing repository security settings. After quota
+recovery, rerun failed CI and dispatch Main review policy to refresh stale results.

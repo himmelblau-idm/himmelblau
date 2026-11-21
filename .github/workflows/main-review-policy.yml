@@ -15,7 +15,7 @@ on:
   # Thread resolution has no Actions trigger. Polling also catches missed
   # fork events, review deletions, permission changes and CI reruns.
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '2,17,32,47 * * * *'
   workflow_dispatch:
 
 permissions: {}
@@ -24,6 +24,8 @@ permissions: {}
 concurrency:
   group: main-review-policy
   cancel-in-progress: false
+  # Preserve different PR targets instead of replacing the sole pending run.
+  queue: max
 
 jobs:
   evaluate:
