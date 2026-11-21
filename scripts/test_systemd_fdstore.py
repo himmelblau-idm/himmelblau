@@ -45,6 +45,26 @@ def read_unit(path):
 
 
 class GeneratorTests(unittest.TestCase):
+    def test_socket_activation_version_gating(self):
+        sockets = "himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket"
+        for version in (229, 239, 240, 253, 257):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+                output = generate(Path(tmp), version)
+                unit = read_unit(output / "himmelblaud.service")
+                if version >= 240:
+                    self.assertEqual(unit["Unit"].get("Requires"), sockets)
+                    self.assertEqual(unit["Service"].get("Sockets"), sockets)
+                    self.assertTrue(unit["Unit"]["After"].endswith(" " + sockets))
+                    self.assertIsNone(unit["Service"].get("RuntimeDirectory"))
+                else:
+                    self.assertIsNone(unit["Unit"].get("Requires"))
+                    self.assertIsNone(unit["Service"].get("Sockets"))
+                    self.assertNotIn(".socket", unit["Unit"]["After"])
+                    self.assertEqual(unit["Service"].get("RuntimeDirectory"), "himmelblaud")
+                # Stable package metadata requires these files even when inactive.
+                for name in sockets.split():
+                    self.assertTrue((output / name).is_file())
+
     def test_fd_store_version_gating(self):
         for version in (229, 234, 249, 252, 253, 254, 255, 256, 257, 260):
             with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
