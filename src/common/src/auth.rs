@@ -70,6 +70,26 @@ macro_rules! auth_handle_mfa_resp {
 
 pub trait MessagePrinter: Send + Sync {
     fn print_text(&self, msg: &str);
+    /// Show context for the next credential prompt. Printers may fold it into that prompt.
+    fn print_prompt_description(&self, msg: &str) {
+        self.print_text(msg);
+    }
+    /// Report a terminal authentication failure, with PAM guidance by default.
+    fn print_auth_failure(&self, code: PamResultCode, msg: &str) {
+        self.print_text(&tr_fmt(
+            "{code}: {message}\nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
+            &[
+                ("code", format!("{:?}", code)),
+                ("message", i18n::translate_external_message(msg)),
+            ],
+        ));
+    }
+    /// Report a denial and return whether to retry within this authentication call.
+    /// Returning false ends the call with `PAM_AUTH_ERR`, allowing caller-managed retries.
+    fn retry_after_denial(&self, msg: &str) -> bool {
+        self.print_text(msg);
+        true
+    }
     /// Show authentication secrets without recording their contents in logs.
     fn print_sensitive(&self, msg: &str) {
         self.print_text(msg);
@@ -149,7 +169,7 @@ pub(crate) fn fido_status_check(
                     )
                 });
                 let msg = tr_fmt("Wrong PIN! {message}", &[("message", detail)]);
-                msg_printer.print_text(&msg);
+                msg_printer.print_prompt_description(&msg);
                 match msg_printer.prompt_echo_off(&(tr("Fido PIN:") + " ")) {
                     Some(pin) => {
                         sender.send(Pin::new(&pin)).expect("Failed to send PIN");
@@ -662,13 +682,7 @@ pub fn fido_auth_with_qr_bluetooth(
 #[macro_export]
 macro_rules! pam_fail {
     ($msg_printer:expr, $msg:expr, $ret:expr) => {{
-        $msg_printer.print_text(&$crate::i18n::tr_fmt(
-            "{code}: {message}\nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
-            &[
-                ("code", format!("{:?}", $ret)),
-                ("message", $crate::i18n::translate_external_message(&$msg)),
-            ],
-        ));
+        $msg_printer.print_auth_failure($ret, &$msg);
 
         thread::sleep(Duration::from_secs(2));
         // Abort the auth attempt, and don't continue executing the stack
@@ -866,8 +880,11 @@ fn handle_pam_auth_response_success() -> PamWhatNext {
 }
 
 fn handle_pam_auth_response_denied(state: &AuthenticateState, msg: &str) -> PamWhatNext {
-    state.msg_printer.print_text(msg);
+    let retry = state.msg_printer.retry_after_denial(msg);
     thread::sleep(Duration::from_secs(2));
+    if !retry {
+        return PamWhatNext::Finish(PamResultCode::PAM_AUTH_ERR);
+    }
     let req = ClientRequest::PamAuthenticateInit(
         state.account_id.to_string(),
         state.service.to_string(),
@@ -899,7 +916,7 @@ fn handle_pam_auth_response_password(
         // authentication (e.g. MariaDB's auth_pam dialog).
         if !fold {
             if let Some(long_prompt) = long_prompt {
-                state.msg_printer.print_text(long_prompt);
+                state.msg_printer.print_prompt_description(long_prompt);
             }
         }
 
@@ -912,7 +929,7 @@ fn handle_pam_auth_response_password(
                 if fold {
                     format!("{}\n{}", info, tr("Entra Id Password:"))
                 } else {
-                    state.msg_printer.print_text(&info);
+                    state.msg_printer.print_prompt_description(&info);
                     tr("Entra Id Password:")
                 }
             }
@@ -946,7 +963,7 @@ fn handle_pam_auth_response_input(
 ) -> PamWhatNext {
     state
         .msg_printer
-        .print_text(&i18n::translate_external_message(msg));
+        .print_prompt_description(&i18n::translate_external_message(msg));
     let cred = match if echo_on {
         state.msg_printer.prompt_echo_on(&(tr("Value:") + " "))
     } else {
@@ -1008,7 +1025,7 @@ fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> P
     {
         match generate_unicode_qr(msg) {
             Ok(qr) => match hello_totp_enroll_qr_msg(msg, &qr) {
-                Ok(msg) => state.msg_printer.print_text(&msg),
+                Ok(msg) => state.msg_printer.print_prompt_description(&msg),
                 Err(msg) => {
                     pam_fail!(state.msg_printer, msg, PamResultCode::PAM_SYSTEM_ERR);
                 }
@@ -1017,7 +1034,7 @@ fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> P
                 debug!("failed to generate QR code: {:?}", e);
                 // Fallback to manual setup
                 match hello_totp_enroll_fallback_msg(msg) {
-                    Ok(msg) => state.msg_printer.print_text(&msg),
+                    Ok(msg) => state.msg_printer.print_prompt_description(&msg),
                     Err(msg) => {
                         pam_fail!(state.msg_printer, msg, PamResultCode::PAM_SYSTEM_ERR);
                     }
@@ -1027,7 +1044,7 @@ fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> P
     } else {
         state
             .msg_printer
-            .print_text(&i18n::translate_external_message(msg));
+            .print_prompt_description(&i18n::translate_external_message(msg));
     };
 
     let cred = match state.msg_printer.prompt_echo_off(&(tr("TOTP Code:") + " ")) {
@@ -1060,7 +1077,7 @@ fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> P
     let mut pin;
     let mut confirm;
     loop {
-        state.msg_printer.print_text(&msg);
+        state.msg_printer.print_prompt_description(&msg);
         pin = match state.msg_printer.prompt_echo_off(&(tr("New PIN:") + " ")) {
             Some(cred) => {
                 if cred.len() < state.cfg.get_hello_pin_min_length() {
@@ -1093,7 +1110,7 @@ fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> P
             }
         };
 
-        state.msg_printer.print_text(&msg);
+        state.msg_printer.print_prompt_description(&msg);
 
         confirm = match state
             .msg_printer
@@ -1140,7 +1157,7 @@ fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
     } else {
         state
             .msg_printer
-            .print_text(&i18n::translate_external_message(
+            .print_prompt_description(&i18n::translate_external_message(
                 &state.cfg.get_hello_pin_prompt(),
             ));
         match state.msg_printer.prompt_echo_off(&(tr("PIN:") + " ")) {
@@ -1318,7 +1335,7 @@ fn handle_pam_auth_response_change_password(state: &AuthenticateState, msg: &str
     loop {
         state
             .msg_printer
-            .print_text(&i18n::translate_external_message(msg));
+            .print_prompt_description(&i18n::translate_external_message(msg));
         password = match state
             .msg_printer
             .prompt_echo_off(&(tr("New password:") + " "))
@@ -1345,7 +1362,7 @@ fn handle_pam_auth_response_change_password(state: &AuthenticateState, msg: &str
 
         state
             .msg_printer
-            .print_text(&i18n::translate_external_message(msg));
+            .print_prompt_description(&i18n::translate_external_message(msg));
 
         confirm = match state
             .msg_printer
@@ -1830,6 +1847,28 @@ mod tests {
         }
     }
 
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn default_prompt_and_failure_messages_preserve_pam_output() {
+        let printer = RecordingPrinter::default();
+        printer.print_prompt_description("Use your Hello PIN");
+        printer.print_auth_failure(PamResultCode::PAM_AUTH_ERR, "Authentication failed.");
+        assert_eq!(
+            printer.text.lock().unwrap().as_slice(),
+            &[
+                "Use your Hello PIN".to_string(),
+                tr_fmt(
+                    "{code}: {message}\nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
+                    &[
+                        ("code", "PAM_AUTH_ERR".to_string()),
+                        ("message", i18n::translate_external_message("Authentication failed.")),
+                    ],
+                ),
+            ]
+        );
+        assert!(printer.error.lock().unwrap().is_empty());
+    }
+
     fn retryable_connect_error() -> io::Error {
         IoError::new(ErrorKind::NotFound, "missing socket")
     }
@@ -2151,6 +2190,20 @@ mod tests {
             },
             listener,
         )
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn default_denial_preserves_pam_automatic_retry() {
+        let printer = Arc::new(RecordingPrinter::default());
+        let (state, listener) = test_password_state(printer.clone());
+        let next = handle_pam_auth_response_denied(&state, "Wrong PIN");
+        assert!(matches!(
+            next,
+            PamWhatNext::Next(ClientRequest::PamAuthenticateInit(..))
+        ));
+        assert_eq!(printer.text.lock().unwrap().as_slice(), &["Wrong PIN"]);
+        fs::remove_file(listener.local_addr().unwrap().as_pathname().unwrap()).unwrap();
     }
 
     #[test]
