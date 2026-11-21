@@ -17,7 +17,9 @@
 */
 use crate::client_sync::DaemonClientBlocking;
 use crate::config::HimmelblauConfig;
-use crate::hello_pin_complexity::{is_simple_pin, meets_intune_pin_policy};
+use crate::hello_pin_complexity::{
+    is_simple_pin, meets_intune_pin_policy, record_enrolled_pin_composition,
+};
 use crate::i18n::{self, tr, tr_fmt, trn_fmt};
 use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse};
 use regex::{Match, Regex};
@@ -1128,6 +1130,9 @@ fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> P
         };
 
         if pin == confirm {
+            if let Err(e) = record_enrolled_pin_composition(&pin) {
+                debug!("Could not record Hello PIN composition for compliance: {}", e);
+            }
             break;
         } else {
             state
@@ -1152,6 +1157,7 @@ fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
     // If it's already been swapped, we are just swapping two null pointers
     // here effectively.
     std::mem::swap(&mut state.authtok, &mut consume_authtok);
+    let prompted_for_hello_pin = consume_authtok.is_none();
     let cred = if let Some(cred) = consume_authtok {
         cred
     } else {
@@ -1180,6 +1186,12 @@ fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
             }
         }
     };
+
+    if prompted_for_hello_pin {
+        if let Err(e) = record_enrolled_pin_composition(&cred) {
+            debug!("Could not record Hello PIN composition for compliance: {}", e);
+        }
+    }
 
     // Now setup the request for the next loop.
     let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
