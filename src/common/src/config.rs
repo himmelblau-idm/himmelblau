@@ -383,12 +383,7 @@ impl HimmelblauConfig {
         // Apply server generated config (generated during domain join)
         let srv_cfg_path: PathBuf = PathBuf::from(SERVER_CONFIG_PATH.to_string());
         if srv_cfg_path.exists() {
-            if let Err(e) = sconfig.load_and_append(SERVER_CONFIG_PATH) {
-                return Err(format!(
-                    "failed to read config from {} - cannot start up: {} Quitting.",
-                    SERVER_CONFIG_PATH, e
-                ));
-            }
+            Self::load_server_config(&mut sconfig, &srv_cfg_path)?;
         }
         Ok(HimmelblauConfig {
             config: sconfig,
@@ -674,10 +669,20 @@ impl HimmelblauConfig {
         self.config.write(self.filename.clone())
     }
 
-    pub fn write_server_config(&self) -> Result<(), Error> {
-        let mut srv_conf = self.config.clone();
-        srv_conf.remove_section("global");
+    fn load_server_config(config: &mut Ini, path: &Path) -> Result<(), String> {
+        let mut srv_conf = Ini::new();
+        load_config_file(&mut srv_conf, path)?;
+        Self::filter_server_config(&mut srv_conf);
+        for (section, keys) in srv_conf.get_map_ref() {
+            for (key, value) in keys {
+                config.set(section, key, value.clone());
+            }
+        }
+        Ok(())
+    }
 
+    fn filter_server_config(srv_conf: &mut Ini) {
+        srv_conf.remove_section("global");
         let permitted_keys = [
             "authority_host",
             "tenant_id",
@@ -686,17 +691,14 @@ impl HimmelblauConfig {
             "device_id",
             "intune_device_id",
         ];
-        let mut keys_to_remove = Vec::new();
-        for (section, keys) in srv_conf.get_map_ref() {
-            for key in keys.keys() {
-                if !permitted_keys.contains(&key.as_str()) {
-                    keys_to_remove.push((section.to_string(), key.clone()));
-                }
-            }
+        for keys in srv_conf.get_mut_map().values_mut() {
+            keys.retain(|key, _| permitted_keys.contains(&key.as_str()));
         }
-        for (section, key) in keys_to_remove {
-            srv_conf.remove_key(&section, &key);
-        }
+    }
+
+    pub fn write_server_config(&self) -> Result<(), Error> {
+        let mut srv_conf = self.config.clone();
+        Self::filter_server_config(&mut srv_conf);
 
         srv_conf.write(SERVER_CONFIG_PATH)
     }
@@ -1123,6 +1125,103 @@ mod tests {
     fn write_temp_config(path: &Path, contents: &str) {
         fs::create_dir_all(path.parent().unwrap()).expect("Failed to create config directory");
         fs::write(path, contents).expect("Failed to write temporary config file");
+    }
+
+    #[test]
+    fn test_load_server_config_preserves_trusted_options() {
+        let mut config = Ini::new();
+        config
+            .read(
+                r#"
+                [global]
+                domains = example.com
+                idmap_script = /trusted/idmap
+                logon_script = /trusted/logon
+                shell = /bin/bash
+                tenant_id = trusted-global-tenant
+                [example.com]
+                idmap_script = /trusted/domain-idmap
+                logon_script = /trusted/domain-logon
+                "#
+                .to_string(),
+            )
+            .unwrap();
+        let trusted = config.clone();
+        let server_path = create_temp_config(
+            r#"
+            [global]
+            domains = attacker.com
+            idmap_script = /malicious/idmap
+            logon_script = /malicious/logon
+            shell = /malicious/shell
+            tenant_id = malicious-global-tenant
+            [example.com]
+            idmap_script = /malicious/domain-idmap
+            logon_script = /malicious/domain-logon
+            [attacker.com]
+            idmap_script = /malicious/new-domain-idmap
+            logon_script = /malicious/new-domain-logon
+            "#,
+        );
+
+        HimmelblauConfig::load_server_config(&mut config, Path::new(&server_path)).unwrap();
+
+        assert_eq!(config, trusted);
+        fs::remove_file(server_path).unwrap();
+    }
+
+    #[test]
+    fn test_load_server_config_merges_permitted_domain_keys() {
+        let mut config = Ini::new();
+        config
+            .read(
+                "[global]\ndomains = example.com\n[example.com]\ntenant_id = old-tenant\nshell = /bin/bash\n"
+                    .to_string(),
+            )
+            .unwrap();
+        let server_path = create_temp_config(
+            r#"
+            [example.com]
+            authority_host = login.microsoftonline.com
+            tenant_id = generated-tenant
+            graph_url = https://graph.microsoft.com
+            domain_aliases = alias.example.com
+            device_id = generated-device
+            intune_device_id = generated-intune-device
+            idmap_script = /malicious/idmap
+            logon_script = /malicious/logon
+            [new.example.com]
+            tenant_id = new-tenant
+            "#,
+        );
+
+        HimmelblauConfig::load_server_config(&mut config, Path::new(&server_path)).unwrap();
+
+        for (key, value) in [
+            ("authority_host", "login.microsoftonline.com"),
+            ("tenant_id", "generated-tenant"),
+            ("graph_url", "https://graph.microsoft.com"),
+            ("domain_aliases", "alias.example.com"),
+            ("device_id", "generated-device"),
+            ("intune_device_id", "generated-intune-device"),
+        ] {
+            assert_eq!(config.get("example.com", key).as_deref(), Some(value));
+        }
+        assert_eq!(config.get("example.com", "idmap_script"), None);
+        assert_eq!(config.get("example.com", "logon_script"), None);
+        assert_eq!(
+            config.get("global", "domains").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            config.get("example.com", "shell").as_deref(),
+            Some("/bin/bash")
+        );
+        assert_eq!(
+            config.get("new.example.com", "tenant_id").as_deref(),
+            Some("new-tenant")
+        );
+        fs::remove_file(server_path).unwrap();
     }
 
     #[cfg(unix)]

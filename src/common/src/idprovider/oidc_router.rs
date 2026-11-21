@@ -1,6 +1,6 @@
 //! One conclusive OIDC backend selection per daemon lifetime. The standard
 //! provider supplies shared offline state while selection is pending.
-use super::common::oidc_issuer_matches;
+use super::common::{oidc_issuer_matches, TaskChannel};
 use super::interface::*;
 use super::okta::OktaProvider;
 use super::openidconnect::OidcProvider;
@@ -111,8 +111,9 @@ impl OidcRouter {
         config: &Arc<Mutex<HimmelblauConfig>>,
         domain: &str,
         idmap: &Arc<Mutex<Idmap>>,
+        task_channel: &TaskChannel,
     ) -> Result<Self, IdpError> {
-        let standard = Arc::new(OidcProvider::new(config, domain, idmap)?);
+        let standard = Arc::new(OidcProvider::new(config, domain, idmap, task_channel)?);
         let native = OktaProvider::new(config, domain, idmap, &standard)
             .await
             .map(Arc::new);
@@ -663,6 +664,13 @@ impl IdProvider for OidcRouter {
             Backend::Native(p) => p.offline_break_glass(ttl).await,
         }
     }
+
+    async fn validate_offline_token(&self, token: UserToken) -> Result<UserToken, IdpError> {
+        match self.offline_backend().await? {
+            Backend::Standard(p) => p.validate_offline_token(token).await,
+            Backend::Native(p) => p.validate_offline_token(token).await,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -683,7 +691,8 @@ mod tests {
         config.set("oidc", "app_id", "fixture-client");
         let config = Arc::new(Mutex::new(config));
         let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
-        let standard = Arc::new(OidcProvider::new(&config, "oidc", &idmap).unwrap());
+        let standard =
+            Arc::new(OidcProvider::new(&config, "oidc", &idmap, &TaskChannel::new()).unwrap());
         let native = OktaProvider::new(&config, "oidc", &idmap, &standard)
             .await
             .map(Arc::new);
@@ -920,5 +929,74 @@ mod tests {
             None,
             false
         ));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn router_shares_task_channel_with_standard_and_okta_backends() {
+        let mut config = HimmelblauConfig::new(Some("/dev/null")).unwrap();
+        config.set("global", "oidc_issuer_url", "https://127.0.0.1:9");
+        config.set("oidc", "app_id", "fixture-client");
+        let config = Arc::new(Mutex::new(config));
+        let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
+        let db_dir = std::env::temp_dir().join(format!("router-idmap-{}", uuid::Uuid::new_v4()));
+        let db_path = db_dir.join("idmap.cache.db");
+        let db_str = db_path.to_str().unwrap().to_string();
+        let cache = crate::idmap_cache::StaticIdCache::open_for_test(&db_str, true).unwrap();
+        let result = super::super::common::IdmapScriptResult {
+            username: Some("routed".to_string()),
+            uid: Some(3100),
+            gid: Some(3101),
+        };
+        cache
+            .apply_idmap_script("user@example.com", Some(&result), None)
+            .unwrap();
+
+        let task_channel = TaskChannel::with_cache_path(db_str);
+        let router = OidcRouter::new(&config, "oidc", &idmap, &task_channel)
+            .await
+            .unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        task_channel.set(tx).await;
+        let worker = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (_, reply) = rx.recv().await.unwrap();
+                let _ = reply.send(crate::unix_proto::TaskOutcome::Status(0));
+            }
+        });
+
+        let std_user = router
+            .standard
+            .task_channel
+            .run_idmap_script(
+                "user@example.com",
+                "tok1",
+                "oid",
+                "tid",
+                "example.com",
+                None,
+            )
+            .await
+            .unwrap();
+        let okta_user = router
+            .native
+            .as_ref()
+            .unwrap()
+            .task_channel
+            .run_idmap_script(
+                "user@example.com",
+                "tok2",
+                "oid",
+                "tid",
+                "example.com",
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(std_user.uid, 3100);
+        assert_eq!(okta_user.uid, 3100);
+        assert_eq!(okta_user.username.as_deref(), Some("routed"));
+        worker.await.unwrap();
+        let _ = std::fs::remove_dir_all(db_dir);
     }
 }

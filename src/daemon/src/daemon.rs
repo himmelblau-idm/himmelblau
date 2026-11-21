@@ -47,7 +47,7 @@ use himmelblau_unix_common::resolver::{AuthSession, OnExpiry, Resolver};
 use himmelblau_unix_common::unix_config::UidAttr;
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{
-    ClientRequest, ClientResponse, PamAuthResponse, TaskRequest, TaskResponse,
+    ClientRequest, ClientResponse, PamAuthResponse, TaskOutcome, TaskRequest, TaskResponse,
 };
 use himmelblau_unix_common::user_map::UserMap;
 use himmelblau_unix_common::{tpm_init, tpm_loadable_machine_key, tpm_machine_key};
@@ -83,12 +83,6 @@ use identity_dbus_broker::himmelblau_broker_serve_with_listener;
 mod prt_memfd;
 
 //=== the codec
-
-#[derive(Debug)]
-enum TaskOutcome {
-    Status(i32),
-    NonCompliant(Vec<NoncompliantRule>),
-}
 
 fn profile_photo_task_succeeded(outcome: &TaskOutcome) -> bool {
     matches!(outcome, TaskOutcome::Status(0))
@@ -2132,6 +2126,12 @@ async fn main() -> ExitCode {
             let task_channel_tx = Arc::new(task_channel_tx);
 
             let task_channel_tx_cln = task_channel_tx.clone();
+
+            // Make the task channel available to the identity provider so it
+            // can dispatch idmap_script execution to tasksd.
+            idprovider
+                .set_task_tx(task_channel_tx.as_ref().clone())
+                .await;
 
             let user_map = UserMap::new(&cfg.get_user_map_file());
             let cl_inner = match Resolver::new(

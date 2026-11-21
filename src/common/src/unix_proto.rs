@@ -331,7 +331,22 @@ pub enum TaskRequest {
     /// Set up subordinate UID/GID mappings for container support (podman, etc.)
     /// Parameters: (username, subid_start, subid_count)
     SubordinateIds(String, u32, u32),
+    /// Run the idmap_script to resolve username, uid, and gid for a user.
+    /// On first login the result is cached; on subsequent logins a
+    /// mismatch with the cache rejects the login.
+    /// Parameters: (username, access_token, object_id, tenant_id, domain, default_ids)
+    IdmapScript(String, String, String, String, String, Option<(u32, u32)>),
 }
+
+#[derive(Debug)]
+pub enum TaskOutcome {
+    Status(i32),
+    NonCompliant(Vec<NoncompliantRule>),
+}
+
+/// Sender half for dispatching task requests from himmelblaud to tasksd.
+pub type TaskSender =
+    tokio::sync::mpsc::Sender<(TaskRequest, tokio::sync::oneshot::Sender<TaskOutcome>)>;
 
 impl TaskRequest {
     /// Get a safe display version of the request, without credentials.
@@ -350,6 +365,9 @@ impl TaskRequest {
             }
             TaskRequest::SubordinateIds(username, start, count) => {
                 format!("SubordinateIds({}, {}, {})", username, start, count)
+            }
+            TaskRequest::IdmapScript(username, _, _, _, _, _) => {
+                format!("IdmapScript({})", username)
             }
         }
     }
@@ -500,4 +518,46 @@ fn enrollment_round_trip_and_translation_preserve_redacted_material() {
         presentation.qr.as_deref(),
         Some("data:image/png;base64,fixture")
     );
+}
+
+#[cfg(test)]
+mod idmap_task_tests {
+    use super::*;
+
+    #[test]
+    fn idmap_request_round_trip_preserves_identity_and_redacts_credentials() {
+        let request = TaskRequest::IdmapScript(
+            "alice@example.com".into(),
+            "secret-access-token".into(),
+            "object-id".into(),
+            "tenant-id".into(),
+            "example.com".into(),
+            Some((1000, 1001)),
+        );
+        assert_eq!(request.as_safe_string(), "IdmapScript(alice@example.com)");
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "IdmapScript": [
+                    "alice@example.com", "secret-access-token", "object-id",
+                    "tenant-id", "example.com", [1000, 1001]
+                ]
+            })
+        );
+        let decoded: TaskRequest = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), encoded);
+        assert_eq!(decoded.as_safe_string(), request.as_safe_string());
+    }
+
+    #[test]
+    fn idmap_request_rejects_command_bearing_payload() {
+        let payload = serde_json::json!({
+            "IdmapScript": [
+                "touch /tmp/untrusted-command", "alice@example.com", "secret-access-token",
+                "object-id", "tenant-id", "example.com", [1000, 1001]
+            ]
+        });
+        assert!(serde_json::from_value::<TaskRequest>(payload).is_err());
+    }
 }
