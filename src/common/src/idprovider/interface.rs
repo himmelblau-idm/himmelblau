@@ -11,6 +11,7 @@
 use crate::db::KeyStoreTxn;
 use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
+use himmelblau::error::MsalError;
 use himmelblau::{AuthOption, MFAAuthContinue, UserToken as UnixUserToken};
 use kanidm_hsm_crypto::structures::SealedData;
 use libkrimes::proto::KerberosCredentials;
@@ -45,6 +46,8 @@ pub enum IdpError {
     KeyStore,
     /// The idp failed to interact with the configured TPM
     Tpm,
+    /// Preserve the underlying Entra failure for token-request callers.
+    TokenAcquisition(Box<MsalError>),
 }
 
 #[derive(Debug, Clone)]

@@ -2812,9 +2812,9 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "identity_dbus_broker"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4392ca0f9ef191868587aa2a8b070f296c8887780e9e3900d7d14b05fa72cb5a"
+checksum = "b7fc25fbca8ddfd8247530a2cddab8953bd9ceeef2302da57e6eab931ba42e84"
 dependencies = [
  "async-trait",
  "bytes",

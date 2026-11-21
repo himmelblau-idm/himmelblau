@@ -227,6 +227,7 @@ mod tests {
         user_get_stall: AtomicBool,
         user_get_release: Notify,
         user_get_goes_offline: AtomicBool,
+        user_access_error: RwLock<Option<IdpError>>,
         auth_token: RwLock<UserToken>,
     }
 
@@ -249,6 +250,7 @@ mod tests {
                 user_get_stall: AtomicBool::new(false),
                 user_get_release: Notify::new(),
                 user_get_goes_offline: AtomicBool::new(false),
+                user_access_error: RwLock::new(None),
                 auth_token: RwLock::new(test_token()),
             }
         }
@@ -338,7 +340,12 @@ mod tests {
             _tpm: &mut tpm::provider::BoxedDynTpm,
             _machine_key: &tpm::structures::StorageKey,
         ) -> Result<UnixUserToken, IdpError> {
-            Err(IdpError::BadRequest)
+            Err(self
+                .user_access_error
+                .write()
+                .expect("access token error lock poisoned")
+                .take()
+                .unwrap_or(IdpError::BadRequest))
         }
 
         async fn unix_user_tgts<D: KeyStoreTxn + Send>(
@@ -661,6 +668,55 @@ mod tests {
 
     async fn setup_resolver() -> Resolver<OfflineFallbackProvider> {
         setup_resolver_with_expiry(0).await
+    }
+
+    #[tokio::test]
+    async fn access_token_requests_preserve_provider_errors() {
+        use himmelblau::error::{ErrorResponse, MsalError};
+
+        for error in [
+            MsalError::AcquireTokenFailed(ErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: "AADSTS70007: Unsupported response mode".to_string(),
+                suberror: Some("synthetic-suberror".to_string()),
+                error_codes: vec![70007],
+            }),
+            MsalError::RequestFailed("synthetic connection failure".to_string()),
+        ] {
+            let resolver = setup_resolver().await;
+            let expected = serde_json::to_value(&error).unwrap();
+            *resolver.client.user_access_error.write().unwrap() =
+                Some(IdpError::TokenAcquisition(Box::new(error)));
+
+            let result = resolver
+                .get_user_accesstoken(
+                    Id::Name(test_token().spn),
+                    vec!["User.Read".to_string()],
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+
+            let Err(IdpError::TokenAcquisition(error)) = result else {
+                panic!("expected the original token acquisition error");
+            };
+            assert_eq!(serde_json::to_value(error).unwrap(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn access_token_requests_reject_excluded_accounts() {
+        let resolver = setup_resolver().await;
+        let account_id = Id::Name(test_token().spn);
+        resolver.nxset.lock().await.insert(account_id.clone());
+
+        let result = resolver
+            .get_user_accesstoken(account_id, vec![], None, None, None)
+            .await;
+
+        assert!(matches!(result, Err(IdpError::NotFound { .. })));
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
     }
 
     async fn setup_sql_resolver() -> (Resolver<OfflineFallbackProvider>, rusqlite::Connection) {
@@ -3573,21 +3629,32 @@ where
         client_id: Option<String>,
         redirect_uri: Option<String>,
         req_cnf: Option<String>,
-    ) -> Option<UnixUserToken> {
+    ) -> Result<UnixUserToken, IdpError> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
             Id::Name(name) => (Some(name), None),
             Id::Gid(idnumber) => (None, Some(idnumber)),
         };
         if self.check_nxset(name.as_deref(), idnumber).await {
-            return None;
+            debug!("Access token request excluded by the local account list");
+            return Err(IdpError::NotFound {
+                what: "account".to_string(),
+                where_: "local account exclusion list".to_string(),
+            });
         }
 
         let token = match self.get_usertoken(account_id.clone()).await {
             Ok(Some(token)) => token,
-            _ => {
-                error!("Failed to fetch unix user token during access token request!");
-                return None;
+            Ok(None) => {
+                error!("No unix user token available during access token request");
+                return Err(IdpError::NotFound {
+                    what: "account".to_string(),
+                    where_: "access token request".to_string(),
+                });
+            }
+            Err(e) => {
+                error!(?e, "Failed to load account during access token request");
+                return Err(IdpError::KeyStore);
             }
         };
 
@@ -3610,18 +3677,15 @@ where
             .await;
 
         drop(hsm_lock);
-        if dbtxn.commit().is_err() {
-            error!("Failed to commit user token DB transaction");
-            return None;
+        if let Err(e) = dbtxn.commit() {
+            error!(?e, "Failed to commit user token DB transaction");
+            return Err(IdpError::KeyStore);
         }
 
-        match user_get_result {
-            Ok(token) => Some(token),
-            Err(e) => {
-                error!("Failed to fetch access token: {:?}", e);
-                None
-            }
-        }
+        user_get_result.map_err(|e| {
+            error!("Failed to fetch access token: {:?}", e);
+            e
+        })
     }
 
     pub async fn get_user_tgts(
