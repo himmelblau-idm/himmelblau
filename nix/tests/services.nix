@@ -8,6 +8,8 @@
   pinPath ? "/var/lib/himmelblaud/hsm-pin",
   tryUnseal ? false,
   dropInTarget ? "himmelblau/himmelblau.conf.d/90-test.conf",
+  shell ? null,
+  emptyCorePackages ? false,
 }:
 let
   pkgs = import nixpkgs { };
@@ -24,8 +26,10 @@ let
           brokerPackage = pkgs.emptyDirectory;
           pamPackage = pkgs.emptyDirectory // { lib = pkgs.emptyDirectory; };
           nssPackage = pkgs.emptyDirectory;
-          settings.tpm_tcti_name = tcti;
-          settings.hsm_pin_path = pinPath;
+          settings = {
+            tpm_tcti_name = tcti;
+            hsm_pin_path = pinPath;
+          } // pkgs.lib.optionalAttrs (shell != null) { inherit shell; };
           tryUnsealFlag = tryUnseal;
         };
         security.tpm2 = {
@@ -35,6 +39,7 @@ let
         programs.chromium = pkgs.lib.mkIf (chromiumEnable != null) {
           enable = chromiumEnable;
         };
+        environment.corePackages = pkgs.lib.mkIf emptyCorePackages (pkgs.lib.mkForce [ ]);
         environment.etc."fixture-drop-in" = {
           target = dropInTarget;
           text = ''
@@ -61,6 +66,11 @@ in
     daemon = map toString cfg.systemd.services.himmelblaud.restartTriggers;
     tasks = map toString cfg.systemd.services.himmelblaud-tasks.restartTriggers;
   };
+  defaultShell = cfg.services.himmelblau.settings.shell;
+  bashPackage = toString pkgs.bashInteractive;
+  systemPackages = map toString cfg.environment.systemPackages;
+  allowedShells = cfg.environment.etc.shells.text;
+  corePackages = map toString cfg.environment.corePackages;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
   chromiumPolicies = pkgs.lib.genAttrs [
     "chromium/policies/managed/default.json"
