@@ -442,5 +442,11 @@ fn main() {
         // Copy the modern extension files
         copy_dir_recursive(&src_ext_dir, &build_output_dir)
             .expect("Failed to copy modern extension files");
+
+        fs::copy(
+            src_assets_dir.join("ms-consumer-dag.png"),
+            build_output_dir.join("ms-consumer-dag.png"),
+        )
+        .expect("Failed to copy consumer sign-in QR asset");
     }
 }

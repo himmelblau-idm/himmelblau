@@ -317,6 +317,9 @@ def main():
     print(f"Copying {css_src} -> {css_dst}")
     shutil.copy(css_src, css_dst)
 
+    # The consumer sign-in URL still uses this static image at runtime.
+    shutil.copy(src_dir.parent / "ms-consumer-dag.png", legacy_dir / "ms-consumer-dag.png")
+
     # Create legacy metadata.json
     metadata_dst = legacy_dir / "metadata.json"
     print(f"Creating {metadata_dst}")
