@@ -747,6 +747,66 @@ class ReviewTests(unittest.TestCase):
         flow.final_check.assert_called_once()
         flow.prompt.assert_not_called()
 
+    def sibling_destination_report(self):
+        # Two distinct audit edges share destination 1.1.0.
+        return {
+            "conclusion": "fail (vetting)",
+            "failures": [{"name": "example", "version": "1.1.0",
+                          "missing_criteria": ["safe-to-deploy"]}],
+            "suggest": {"suggestions": [
+                {"name": "example", "notable_parents": "app",
+                 "suggested_diff": {"from": "1.0.0", "to": "1.1.0"}},
+                {"name": "example", "notable_parents": "lib",
+                 "suggested_diff": {"from": "0.9.0", "to": "1.1.0"}},
+            ]},
+        }
+
+    def test_auto_exempt_withholds_when_sibling_edge_blocks_destination(self):
+        # A HIGH block on one edge must prevent a LOW exemption for the same
+        # destination, regardless of review order.
+        cases = (
+            ("block_then_exempt",
+             [self.report(severity="high"), self.report(decision=False, severity="low")]),
+            ("exempt_then_block",
+             [self.report(decision=False, severity="low"), self.report(severity="high")]),
+        )
+        for label, responses in cases:
+            with self.subTest(order=label), \
+                 self.main_flow(responses, flags=["--auto-exempt"],
+                                vet_output=json.dumps(self.sibling_destination_report())) as flow, \
+                 patch.object(review, "exempt_crate") as exempt:
+                self.assertEqual(review.main(), 1)
+            exempt.assert_not_called()
+            self.assertEqual(flow.ai.call_count, 2)
+            flow.prompt.assert_not_called()
+            flow.final_check.assert_not_called()
+
+    def test_auto_exempt_applies_once_per_destination_across_sibling_edges(self):
+        # Distinct severities/explanations must both land in the single
+        # destination exemption note; the first edge alone is not enough.
+        low = "Low finding on the 1.0.0 -> 1.1.0 path."
+        medium = "Medium finding on the 0.9.0 -> 1.1.0 path."
+        responses = [
+            self.report(decision=False, severity="low", explanation=low),
+            self.report(decision=False, severity="medium", explanation=medium),
+        ]
+        with self.main_flow(responses, flags=["--auto-exempt"],
+                            vet_output=json.dumps(self.sibling_destination_report())) as flow, \
+             patch.object(review, "exempt_crate", return_value=True) as exempt:
+            self.assertEqual(review.main(), 0)
+        exempt.assert_called_once()
+        crate, version, note = exempt.call_args.args
+        self.assertEqual((crate, version), ("example", "1.1.0"))
+        self.assertIn("1.0.0 -> 1.1.0", note)
+        self.assertIn("0.9.0 -> 1.1.0", note)
+        self.assertIn(low, note)
+        self.assertIn(medium, note)
+        self.assertIn("AI severity: LOW", note)
+        self.assertIn("AI severity: MEDIUM", note)
+        self.assertEqual(flow.ai.call_count, 2)
+        flow.final_check.assert_called_once()
+        flow.prompt.assert_not_called()
+
     def test_auto_certification_failure_never_becomes_exemption(self):
         with self.main_flow([self.report()], certify=False, flags=["--auto-exempt"]) as flow, \
              patch.object(review, "exempt_crate") as exempt:
