@@ -51,6 +51,10 @@ const POLL_INTERVAL_MS: libc::c_int = 50;
 /// limit for the whole timeout budget.
 const MAX_STREAM_BYTES: usize = 16 * 1024 * 1024;
 
+/// Bound work per stream so a continuously readable pipe cannot starve the
+/// other stream or prevent the outer loop from checking its deadline.
+const MAX_DRAIN_READS: usize = 16;
+
 /// A child pipe read without blocking.
 ///
 /// Reader *threads* are deliberately avoided. A thread parked in `read_to_end()`
@@ -111,14 +115,14 @@ impl Pipe {
         self.src = None;
     }
 
-    /// Read everything currently buffered. Returns without blocking.
+    /// Read a bounded amount of currently buffered data without blocking.
     fn drain(&mut self) {
         let Some(src) = self.src.as_ref() else {
             return;
         };
         let fd = src.as_raw_fd();
         let mut chunk = [0u8; 8192];
-        loop {
+        for _ in 0..MAX_DRAIN_READS {
             // SAFETY: `fd` is owned by `self.src` and `chunk` is valid for
             // `chunk.len()` bytes.
             let n = unsafe { libc::read(fd, chunk.as_mut_ptr() as *mut libc::c_void, chunk.len()) };
@@ -229,7 +233,7 @@ fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output> {
             }
             // Exited, but something it left behind still holds a pipe open.
             // Take what was read rather than discarding a possibly complete
-            // result; truncated output fails JSON validation downstream anyway.
+            // result; truncated stdout is rejected below.
             Some(drain_deadline) if now >= drain_deadline => {
                 debug!(
                     stdout_open = out.open(),
@@ -248,7 +252,13 @@ fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output> {
         }
     }
 
-    if out.truncated || err.truncated {
+    if out.truncated {
+        return Err(anyhow!(
+            "Script stdout exceeded the {} byte limit",
+            MAX_STREAM_BYTES
+        ));
+    }
+    if err.truncated {
         debug!(
             max_bytes = MAX_STREAM_BYTES,
             "Script output exceeded the per-stream limit and was truncated"
@@ -283,6 +293,52 @@ fn poll_readable(pipes: &[&Pipe], timeout_ms: libc::c_int) {
     // for a child that has closed its output to exit.
     unsafe {
         libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms);
+    }
+}
+
+#[cfg(test)]
+mod bounded_output_tests {
+    use super::*;
+
+    fn shell(script: &str) -> Command {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", script]);
+        cmd
+    }
+
+    #[test]
+    fn continuously_writing_script_cannot_prevent_timeout() {
+        let start = Instant::now();
+        let result = output_with_timeout(
+            shell("while :; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done"),
+            Duration::from_millis(300),
+        );
+        assert!(result.is_err());
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn rejects_stdout_with_valid_json_prefix_followed_by_truncated_data() {
+        let result = output_with_timeout(
+            shell("printf '{}'; head -c 16777216 /dev/zero | tr '\\000' ' '; printf '{}'"),
+            Duration::from_secs(30),
+        );
+        match result {
+            Err(error) => assert!(error.to_string().contains("stdout exceeded")),
+            Ok(_) => panic!("accepted truncated stdout"),
+        }
+    }
+
+    #[test]
+    fn truncated_stderr_is_diagnostic_only() {
+        let output = output_with_timeout(
+            shell("printf '{}'; head -c 16777217 /dev/zero >&2"),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"{}");
+        assert_eq!(output.stderr.len(), MAX_STREAM_BYTES);
     }
 }
 
