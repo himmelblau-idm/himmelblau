@@ -718,6 +718,18 @@ class NixosServiceTests(unittest.TestCase):
             "/bin/custom-shell",
         )
 
+    def test_explicit_shell_override_with_empty_core_packages(self):
+        # An administrator's override must still win when Bash is supplied
+        # independently of corePackages for the NixOS default.
+        evaluated = evaluate(shell="/bin/custom-shell", emptyCorePackages=True)
+        self.assertEqual(evaluated["defaultShell"], "/bin/custom-shell")
+        self.assertEqual(evaluated["corePackages"], [])
+        self.assertIn(evaluated["bashPackage"], evaluated["systemPackages"])
+        self.assertIn(
+            "/run/current-system/sw/bin/bash",
+            evaluated["allowedShells"].splitlines(),
+        )
+
     def test_network_online_ordering_has_explicit_dependencies(self):
         for name, unit in self.units.items():
             if "network-online.target" not in unit["Unit"].get("After", "").split():
