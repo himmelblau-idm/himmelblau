@@ -2021,8 +2021,13 @@ class PrSummaryChecklistTests(unittest.TestCase):
                 with self.subTest(outcome=outcome, failure=failure):
                     value = {**self.state(), "backport_outcomes": outcome,
                              "backports_deferred": [sha], "backports_build_failed": [failure]}
-                    body = sm.build_pr_body(value)
-                    self.assertEqual(body.count(sha), 1)
+                    # CI supplies a repository, so the SHA occurs in both the
+                    # link label and URL. Count TODO entries, not SHA strings.
+                    with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r"}):
+                        body = sm.build_pr_body(value)
+                    tasks = [line for line in body.splitlines() if line.startswith("- [ ]") and sha in line]
+                    self.assertEqual(len(tasks), 1)
+                    self.assertIn(f"[{sha}](https://github.com/o/r/commit/{sha})", tasks[0])
                     self.assertIn("Fix the failed build and retry", body)
                     self.assertIn("Attempted backport was reverted after build failure", body)
                     self.assertNotIn("Reason: deferred", body)
