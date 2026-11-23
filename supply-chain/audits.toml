@@ -484,6 +484,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.1.9 -> 0.1.10"
 
+[[audits.form_urlencoded]]
+who = "Codex (automated via codex CLI)"
+criteria = "safe-to-deploy"
+delta = "1.2.2 -> 1.2.3"
+
 [[audits.futures]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"

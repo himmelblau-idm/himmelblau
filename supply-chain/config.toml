@@ -1011,6 +1011,18 @@ criteria = "safe-to-deploy"
 version = "0.3.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.url]]
+version = "2.5.9"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for url 2.5.9; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Safe-to-deploy certification is withheld because the file URL parser now retains a host that the Windows path converter treats as a device namespace, changing the target of a bare drive-letter path to a raw volume.
+Confirmed findings:
+source-1:findings:1: src/parser.rs:521 and src/lib.rs:2725,3135–3174. Preserving an explicit `.` host before a bare drive-letter segment changes Windows `Url::to_file_path()` output from an ordinary drive path to a device-namespace path that targets the raw volume. A Windows application must accept an untrusted file URL, pass the converted path to a file-opening API, and have sufficient privileges for direct volume access. Under those conditions, ordinary file handling can expose raw volume contents. Windows behavior was assessed from source and documented API semantics. [Microsoft CreateFileW documentation](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#physical-disks-and-volumes) ()
+Review scope: 68944 original characters (2334 lines); 0 deleted-file bodies intentionally omitted (0 patch characters). Remaining review material: 68944 characters (2334 lines), 1 initial source tasks. Source limits: 240000 characters / 6000 lines. Coverage applies to the retained diff and deletion metadata.
+Review artifacts: /home/dmulder/code/himmelblau/.cargo-vet-review-q18z_bqo.review"""
+
 [[exemptions.urlencoding]]
 version = "2.1.3"
 criteria = "safe-to-deploy"
