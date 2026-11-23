@@ -83,8 +83,10 @@ impl TestConfig {
 #[allow(unused_mut)]
 async fn initialize(path: &'static str) -> Option<AuthValue> {
     let cfg = TestConfig { path };
-    let (auth_value, _hsm) =
-        real_common::tpm_init!(cfg, async { Ok::<_, std::io::Error>(None) }, return None);
+    let no_machine_key = async {
+        Ok::<_, std::convert::Infallible>(None::<kanidm_hsm_crypto::structures::LoadableStorageKey>)
+    };
+    let (auth_value, _hsm) = real_common::tpm_init!(cfg, no_machine_key, return None);
     Some(auth_value)
 }
 
