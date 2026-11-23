@@ -548,17 +548,70 @@ impl InteractiveSessionBroker {
             .map_err(|e| dbus::MethodErr::failed(&format!("invalid UTF-8: {}", e)))
     }
 
-    /// Extract the account username from a broker request payload.
-    fn extract_account_id(request_json: &str) -> Option<String> {
-        serde_json::from_str::<serde_json::Value>(request_json)
-            .ok()
-            .and_then(|v| {
-                v.get("account")
-                    .or_else(|| v.get("authParameters").and_then(|ap| ap.get("account")))
-                    .and_then(|a| a.get("username"))
-                    .and_then(|u| u.as_str())
-                    .map(String::from)
-            })
+    /// Resolve the caller's session account and reject any supplied username
+    /// that does not match it before starting interactive authentication.
+    fn resolve_account_id(
+        request_json: &str,
+        get_accounts: impl FnOnce() -> Result<String, dbus::MethodErr>,
+    ) -> Result<String, dbus::MethodErr> {
+        let request: serde_json::Value = serde_json::from_str(request_json)
+            .map_err(|e| dbus::MethodErr::failed(&format!("Invalid broker request: {}", e)))?;
+        let request = request.as_object().ok_or_else(|| {
+            dbus::MethodErr::failed(&"Invalid broker request: expected an object")
+        })?;
+        let auth_parameters = match request.get("authParameters") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(parameters) => Some(parameters.as_object().ok_or_else(|| {
+                dbus::MethodErr::failed(&"Invalid broker request: authParameters must be an object")
+            })?),
+        };
+        let mut requested_usernames = Vec::new();
+        for account in [
+            request.get("account"),
+            auth_parameters.and_then(|parameters| parameters.get("account")),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|account| !account.is_null())
+        {
+            let account = account.as_object().ok_or_else(|| {
+                dbus::MethodErr::failed(&"Invalid broker request: account must be an object")
+            })?;
+            match account.get("username") {
+                None | Some(serde_json::Value::Null) => {}
+                Some(serde_json::Value::String(username)) => {
+                    requested_usernames.push(username);
+                }
+                Some(_) => {
+                    return Err(dbus::MethodErr::failed(
+                        &"Invalid broker request: account.username must be a string or null",
+                    ));
+                }
+            }
+        }
+        // getAccounts is scoped by the daemon to the socket peer's UID.
+        let response = get_accounts()?;
+        let response: serde_json::Value = serde_json::from_str(&response)
+            .map_err(|e| dbus::MethodErr::failed(&format!("Invalid accounts response: {}", e)))?;
+        let account_id = response
+            .get("accounts")
+            .and_then(|accounts| accounts.as_array())
+            .filter(|accounts| accounts.len() == 1)
+            .and_then(|accounts| accounts.first())
+            .and_then(|account| account.get("username"))
+            .and_then(|username| username.as_str())
+            .filter(|username| !username.trim().is_empty())
+            .ok_or_else(|| {
+                dbus::MethodErr::failed(&"Unable to resolve session account username")
+            })?;
+        let expected_username = account_id.to_lowercase();
+        if requested_usernames
+            .iter()
+            .any(|username| username.to_lowercase() != expected_username)
+        {
+            return Err(dbus::MethodErr::failed(&"Invalid request for user!"));
+        }
+        Ok(account_id.to_string())
     }
 
     /// Drive an interactive auth via pinentry to re-prime the daemon cache.
@@ -608,9 +661,9 @@ impl SessionBroker for InteractiveSessionBroker {
         correlation_id: String,
         request_json: String,
     ) -> Result<String, dbus::MethodErr> {
-        // Extract the username from the request for authenticate()
-        let account_id = Self::extract_account_id(&request_json)
-            .ok_or_else(|| dbus::MethodErr::failed(&"Missing account username in request"))?;
+        let account_id = Self::resolve_account_id(&request_json, || {
+            self.forward("getAccounts", &[&protocol_version, &correlation_id, "{}"])
+        })?;
 
         self.run_interactive_auth(&account_id)?;
 
@@ -683,8 +736,9 @@ impl SessionBroker for InteractiveSessionBroker {
             return Ok(resp);
         }
         info!("Silent PRT SSO cookie unavailable; attempting interactive re-auth");
-        let account_id = Self::extract_account_id(&request_json)
-            .ok_or_else(|| dbus::MethodErr::failed(&"Missing account username in request"))?;
+        let account_id = Self::resolve_account_id(&request_json, || {
+            self.forward("getAccounts", &[&protocol_version, &correlation_id, "{}"])
+        })?;
         self.run_interactive_auth(&account_id)?;
         self.forward(
             "acquirePrtSsoCookie",
@@ -870,34 +924,149 @@ mod tests {
     }
 
     #[test]
-    fn extracts_top_level_account() {
-        let json = r#"{"account":{"username":"user@example.com"}}"#;
-        assert_eq!(
-            InteractiveSessionBroker::extract_account_id(json).as_deref(),
-            Some("user@example.com")
-        );
+    fn resolves_missing_username_from_session_account() {
+        for request in [
+            "{}",
+            r#"{"account":null}"#,
+            r#"{"account":{}}"#,
+            r#"{"account":{"username":null}}"#,
+            r#"{"authParameters":null}"#,
+            r#"{"authParameters":{"account":{"username":null}}}"#,
+        ] {
+            let account_id = InteractiveSessionBroker::resolve_account_id(request, || {
+                Ok(r#"{"accounts":[{"username":"user@example.com"}]}"#.to_string())
+            })
+            .unwrap();
+            assert_eq!(account_id, "user@example.com");
+        }
     }
 
     #[test]
-    fn extracts_nested_auth_parameters() {
-        let json = r#"{"authParameters":{"account":{"username":"user@example.com"}}}"#;
-        assert_eq!(
-            InteractiveSessionBroker::extract_account_id(json).as_deref(),
-            Some("user@example.com")
-        );
+    fn malformed_request_fails_before_account_lookup() {
+        let mut queried = false;
+        let error = InteractiveSessionBroker::resolve_account_id("{", || {
+            queried = true;
+            Ok(r#"{"accounts":[{"username":"user@example.com"}]}"#.to_string())
+        })
+        .unwrap_err();
+        assert!(!queried);
+        assert!(error.to_string().contains("Invalid broker request"));
     }
 
     #[test]
-    fn none_when_missing() {
-        assert_eq!(InteractiveSessionBroker::extract_account_id("{}"), None);
-        assert_eq!(
-            InteractiveSessionBroker::extract_account_id("not json"),
-            None
-        );
-        assert_eq!(
-            InteractiveSessionBroker::extract_account_id(r#"{"account":{}}"#),
-            None
-        );
+    fn invalid_account_fields_fail_before_account_lookup() {
+        for invalid in [
+            serde_json::json!(7),
+            serde_json::json!(true),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            for request in [
+                serde_json::json!({"account": {"username": invalid}}),
+                serde_json::json!({"authParameters": {"account": {"username": invalid}}}),
+                serde_json::json!({
+                    "account": {"username": "user@example.com"},
+                    "authParameters": {"account": {"username": invalid}}
+                }),
+                serde_json::json!({
+                    "account": {"username": invalid},
+                    "authParameters": {"account": {"username": "user@example.com"}}
+                }),
+            ] {
+                let error =
+                    InteractiveSessionBroker::resolve_account_id(&request.to_string(), || {
+                        panic!("Invalid request must fail before account lookup")
+                    })
+                    .unwrap_err();
+                assert!(error
+                    .to_string()
+                    .contains("account.username must be a string or null"));
+            }
+        }
+        for request in [
+            "null",
+            "[]",
+            "7",
+            r#"{"account":true}"#,
+            r#"{"account":"user@example.com"}"#,
+            r#"{"authParameters":[]}"#,
+            r#"{"authParameters":{"account":7}}"#,
+            r#"{"account":{"username":"user@example.com"},"authParameters":true}"#,
+            r#"{"account":{"username":"user@example.com"},"authParameters":{"account":[]}}"#,
+        ] {
+            let error = InteractiveSessionBroker::resolve_account_id(request, || {
+                panic!("Invalid request must fail before account lookup")
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("Invalid broker request"));
+        }
+    }
+
+    #[test]
+    fn explicit_usernames_must_match_session_account() {
+        for request in [
+            r#"{"account":{"username":"explicit@example.com"}}"#,
+            r#"{"authParameters":{"account":{"username":"explicit@example.com"}}}"#,
+            r#"{"account":null,"authParameters":{"account":{"username":"explicit@example.com"}}}"#,
+            r#"{"account":{},"authParameters":{"account":{"username":"explicit@example.com"}}}"#,
+            r#"{"account":{"username":null},"authParameters":{"account":{"username":"explicit@example.com"}}}"#,
+            r#"{"account":{"username":"EXPLICIT@EXAMPLE.COM"}}"#,
+            r#"{"account":{"username":"explicit@example.com"},"authParameters":{"account":{"username":"EXPLICIT@EXAMPLE.COM"}}}"#,
+        ] {
+            let account_id = InteractiveSessionBroker::resolve_account_id(request, || {
+                Ok(r#"{"accounts":[{"username":"explicit@example.com"}]}"#.to_string())
+            })
+            .unwrap();
+            assert_eq!(account_id, "explicit@example.com");
+        }
+    }
+
+    #[test]
+    fn mismatched_usernames_fail_before_interactive_authentication() {
+        for username in ["other@another.org", "other@example.com", "", "  "] {
+            for request in [
+                serde_json::json!({"account": {"username": username}}),
+                serde_json::json!({"authParameters": {"account": {"username": username}}}),
+                serde_json::json!({
+                    "account": {"username": "user@example.com"},
+                    "authParameters": {"account": {"username": username}}
+                }),
+                serde_json::json!({
+                    "account": {"username": username},
+                    "authParameters": {"account": {"username": "user@example.com"}}
+                }),
+            ] {
+                let error =
+                    InteractiveSessionBroker::resolve_account_id(&request.to_string(), || {
+                        Ok(r#"{"accounts":[{"username":"user@example.com"}]}"#.to_string())
+                    })
+                    .unwrap_err();
+                assert!(error.to_string().contains("Invalid request for user!"));
+            }
+        }
+    }
+
+    #[test]
+    fn requests_require_one_usable_session_account() {
+        for request in ["{}", r#"{"account":{"username":"user@example.com"}}"#] {
+            for response in [
+                "not json",
+                "{}",
+                r#"{"accounts":[]}"#,
+                r#"{"accounts":[{}]}"#,
+                r#"{"accounts":[{"username":"  "}]}"#,
+                r#"{"accounts":[{"username":"one@example.com"},{"username":"two@example.com"}]}"#,
+            ] {
+                assert!(InteractiveSessionBroker::resolve_account_id(request, || {
+                    Ok(response.to_string())
+                })
+                .is_err());
+            }
+            assert!(InteractiveSessionBroker::resolve_account_id(request, || {
+                Err(dbus::MethodErr::failed(&"Account lookup failed"))
+            })
+            .is_err());
+        }
     }
 
     #[test]

@@ -8,6 +8,7 @@
   pinPath ? "/var/lib/himmelblaud/hsm-pin",
   tryUnseal ? false,
   dropInTarget ? "himmelblau/himmelblau.conf.d/90-test.conf",
+  customPinentry ? false,
 }:
 let
   pkgs = import nixpkgs { };
@@ -22,6 +23,7 @@ let
           aadToolPackage = pkgs.writeShellScriptBin "aad-tool" "";
           ssoPackage = pkgs.emptyDirectory;
           brokerPackage = pkgs.emptyDirectory;
+          pinentryPackage = pkgs.lib.mkIf customPinentry pkgs.pinentry-qt;
           pamPackage = pkgs.emptyDirectory // { lib = pkgs.emptyDirectory; };
           nssPackage = pkgs.emptyDirectory;
           settings.tpm_tcti_name = tcti;
@@ -75,6 +77,11 @@ in
     daemon = toString cfg.services.himmelblau.daemonPackage;
     aadTool = toString cfg.services.himmelblau.aadToolPackage;
     broker = toString cfg.services.himmelblau.brokerPackage;
+    brokerTools = map toString [
+      pkgs.pinentry-gnome3
+      pkgs.xdg-utils
+    ];
+    customPinentry = toString pkgs.pinentry-qt;
     config = toString cfg.environment.etc."himmelblau/himmelblau.conf".source;
     dropIn = toString cfg.environment.etc."fixture-drop-in".source;
     dropInTarget = cfg.environment.etc."fixture-drop-in".target;

@@ -49,6 +49,8 @@ NixOS-specific requirements and intentional deviations from the generated units:
 - Use configurable Nix package/configuration paths and Nix-provided tools,
   with additional network/time-service Wants and accounts-daemon/TPM-device
   startup dependencies.
+- Include graphical pinentry and xdg-open in the broker's service PATH.
+- Unset TERM for the broker so pinentry does not receive an empty ttytype.
 - Units ordered after network-online.target also explicitly Want it, including
   tasks and sockets, to satisfy NixOS's per-unit dependency checks.
 - Retain conditional TPM device access, DeviceAllow, and the configured TPM
@@ -75,6 +77,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # "add"/"remove" adjust list entries without exempting the rest of a directive;
 # "set" replaces an entire directive. Patterns cover matching unit names.
 NIXOS_DIRECTIVE_DIFFERENCES = {
+    "himmelblau-broker.service": {
+        "Service": {
+            "UnsetEnvironment": ("set", "TERM"),
+        },
+    },
     "himmelblaud.service": {
         "Unit": {
             "After": ("add", "tpm2-udev-trigger.service"),
@@ -156,7 +163,7 @@ NIXOS_ENVIRONMENT_TOOLS = {
     "himmelblaud.service": None,
     "himmelblaud-tasks.service": "tasksTools",
     "himmelblau-hsm-pin-init.service": "initializerTools",
-    "himmelblau-broker.service": None,
+    "himmelblau-broker.service": "brokerTools",
     "himmelblau-compliance-check.service": None,
 }
 
@@ -652,6 +659,15 @@ class NixosServiceTests(unittest.TestCase):
                 self.assertTrue(unit_differences(
                     actual, generated, GENERATED_ONLY
                 ))
+
+    def test_broker_uses_configured_pinentry(self):
+        evaluated = evaluate(customPinentry=True)
+        unit = canonical_unit(parse_unit(evaluated["userUnits"]["himmelblau-broker.service"]))
+        environment = dict(unit["Service"]["Environment"])
+        path = environment["PATH"][0].split(":")
+        self.assertIn(f"{evaluated['paths']['customPinentry']}/bin", path)
+        self.assertNotIn(f"{evaluated['paths']['brokerTools'][0]}/bin", path)
+        self.assertIn(f"{evaluated['paths']['brokerTools'][1]}/bin", path)
 
     def test_policy_cache_tmpfiles_rules_match_packaged_file(self):
         rules = "\n".join(self.evaluated["tmpfilesRules"]).splitlines()
