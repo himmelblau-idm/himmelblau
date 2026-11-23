@@ -2,6 +2,7 @@
 ignore = [
   "RUSTSEC-2021-0127", # serde_cbor - replaced via [patch] with serde_cbor_2
   "RUSTSEC-2024-0436", # paste - replaced via [patch] with pastey
-  "RUSTSEC-2023-0089", # atomic-polyfill - masked via [replace] and unused
-  "RUSTSEC-2023-0071", # rsa - replaced via patch with aws-lc-rs
+  "RUSTSEC-2026-0371", # Flagged unmaintained by zbus, ignoring in stable
+  "RUSTSEC-2026-0370", # Flagged unmaintained by zbus, ignoring in stable
+  "RUSTSEC-2026-0372", # Flagged unmaintained by zbus, ignoring in stable
 ]

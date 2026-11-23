@@ -204,11 +204,34 @@ async fn fido_status_check(
     status_tx
 }
 
+/// The commercial cloud uses a WebAuthn RP ID distinct from its authority.
+/// Other clouds use their configured authority host for the RP ID.
+#[derive(Debug, PartialEq, Eq)]
+struct FidoRelyingParty {
+    id: String,
+    origin: String,
+}
+
+fn fido_relying_party(authority_host: &str) -> FidoRelyingParty {
+    let id = if authority_host.eq_ignore_ascii_case("login.microsoftonline.com") {
+        "login.microsoft.com"
+    } else {
+        authority_host
+    };
+    // RP IDs are hashed as bytes, unlike case-insensitive DNS hostnames.
+    let id = id.to_ascii_lowercase();
+    FidoRelyingParty {
+        origin: format!("https://{id}"),
+        id,
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 pub fn fido_auth(
     msg_printer: Arc<dyn MessagePrinter>,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
+    authority_host: &str,
     timeout_ms: u64,
     prompt: &str,
     presence_prompt: &str,
@@ -217,6 +240,7 @@ pub fn fido_auth(
         msg_printer,
         fido_challenge,
         fido_allow_list,
+        authority_host,
         timeout_ms,
         prompt,
         presence_prompt,
@@ -228,11 +252,13 @@ fn fido_auth_inner(
     msg_printer: Arc<dyn MessagePrinter>,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
+    authority_host: &str,
     timeout_ms: u64,
     prompt: &str,
     presence_prompt: &str,
     qr_suffix: Option<&str>,
 ) -> Result<String, PamResultCode> {
+    let rp = fido_relying_party(authority_host);
     // Send FIDO_INSERT prompt, optionally with QR data appended to avoid
     // multiple PAM conversation round-trips (GDM adds ~2.5s per call).
     let msg = match qr_suffix {
@@ -250,7 +276,7 @@ fn fido_auth_inner(
     let challenge_str = json_to_string(&json!({
         "type": "webauthn.get",
         "challenge": URL_SAFE_NO_PAD.encode(fido_challenge),
-        "origin": "https://login.microsoft.com"
+        "origin": &rp.origin
     }))
     .map_err(|e| {
         error!("{:?}", e);
@@ -283,8 +309,8 @@ fn fido_auth_inner(
     let chall_bytes = Sha256::digest(challenge_str.clone()).into();
     let ctap_args = SignArgs {
         client_data_hash: chall_bytes,
-        origin: "https://login.microsoft.com".to_string(),
-        relying_party_id: "login.microsoft.com".to_string(),
+        origin: rp.origin,
+        relying_party_id: rp.id,
         allow_list,
         user_verification_req: UserVerificationRequirement::Preferred,
         user_presence_req: true,
@@ -424,9 +450,11 @@ async fn qr_bluetooth_fido_auth(
     msg_printer: Arc<dyn MessagePrinter>,
     fido_challenge: String,
     _fido_allow_list: Vec<String>,
+    authority_host: &str,
     qr_prompt: &str,
     device: Option<CableQrCodeDevice>,
 ) -> Result<String, PamResultCode> {
+    let rp = fido_relying_party(authority_host);
     let mut device = match device {
         Some(d) => d,
         None => {
@@ -457,9 +485,9 @@ async fn qr_bluetooth_fido_auth(
     // Empty allowList forces the phone to use a discoverable credential,
     // which includes userHandle (required by Entra to identify the user).
     let request = GetAssertionRequest {
-        relying_party_id: "login.microsoft.com".to_string(),
+        relying_party_id: rp.id,
         challenge: fido_challenge.as_bytes().to_vec(),
-        origin: "https://login.microsoft.com".to_string(),
+        origin: rp.origin,
         top_origin: None,
         allow: vec![],
         hints: vec![],
@@ -526,6 +554,7 @@ pub fn fido_auth_with_qr_bluetooth(
     msg_printer: &Arc<dyn MessagePrinter>,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
+    authority_host: &str,
     timeout_ms: u64,
     prompt: &str,
     presence_prompt: &str,
@@ -557,6 +586,7 @@ pub fn fido_auth_with_qr_bluetooth(
         let usb_challenge = fido_challenge.clone();
         let usb_allow = fido_allow_list.clone();
         let usb_printer = msg_printer.clone();
+        let usb_authority_host = authority_host.to_string();
         let usb_prompt = prompt.to_string();
         let usb_presence = presence_prompt.to_string();
 
@@ -565,6 +595,7 @@ pub fn fido_auth_with_qr_bluetooth(
                 usb_printer,
                 usb_challenge,
                 usb_allow,
+                &usb_authority_host,
                 timeout_ms,
                 &usb_prompt,
                 &usb_presence,
@@ -577,6 +608,7 @@ pub fn fido_auth_with_qr_bluetooth(
             msg_printer.clone(),
             fido_challenge,
             fido_allow_list,
+            authority_host,
             "",
             Some(cable_device),
         );
@@ -1138,6 +1170,7 @@ fn fido_auth_qr_bluetooth_only(
     msg_printer: Arc<dyn MessagePrinter>,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
+    authority_host: &str,
     qr_prompt: &str,
 ) -> Result<String, PamResultCode> {
     let rt = Runtime::new().map_err(|e| {
@@ -1148,9 +1181,18 @@ fn fido_auth_qr_bluetooth_only(
         msg_printer,
         fido_challenge,
         fido_allow_list,
+        authority_host,
         qr_prompt,
         None,
     ))
+}
+
+fn current_fido_authority_host(cfg: &HimmelblauConfig, account_id: &str) -> Result<String, String> {
+    // PAM initialization can discover and persist an alias after cfg was loaded.
+    let current = HimmelblauConfig::new(Some(&cfg.get_config_file()))?;
+    current
+        .get_authority_host_for_account(account_id)
+        .ok_or_else(|| "Cannot resolve authority host for FIDO account".to_string())
 }
 
 fn handle_pam_auth_response_fido(
@@ -1160,6 +1202,13 @@ fn handle_pam_auth_response_fido(
     has_physical_security_key: bool,
     has_cross_device: bool,
 ) -> PamWhatNext {
+    let authority_host = match current_fido_authority_host(&state.cfg, &state.account_id) {
+        Ok(host) => host,
+        Err(err) => {
+            error!("Failed to reload FIDO authority configuration: {}", err);
+            return PamWhatNext::Finish(PamResultCode::PAM_AUTH_ERR);
+        }
+    };
     let timeout_ms = state.cfg.get_fido_timeout().saturating_mul(1000);
     let fido_prompt = state.cfg.get_fido_prompt();
     let fido_presence_prompt = state.cfg.get_fido_presence_prompt();
@@ -1200,6 +1249,7 @@ fn handle_pam_auth_response_fido(
             &state.msg_printer,
             fido_challenge,
             fido_allow_list,
+            &authority_host,
             timeout_ms,
             &fido_prompt,
             &fido_presence_prompt,
@@ -1220,6 +1270,7 @@ fn handle_pam_auth_response_fido(
             state.msg_printer.clone(),
             fido_challenge,
             fido_allow_list,
+            &authority_host,
             &qr_prompt,
         ) {
             Ok(assertion) => assertion,
@@ -1237,6 +1288,7 @@ fn handle_pam_auth_response_fido(
             state.msg_printer.clone(),
             fido_challenge,
             fido_allow_list,
+            &authority_host,
             timeout_ms,
             &fido_prompt,
             &fido_presence_prompt,
@@ -1592,6 +1644,43 @@ mod tests {
     use std::io::Error as IoError;
     use std::sync::Mutex;
 
+    #[test]
+    fn fido_relying_party_preserves_commercial_and_uses_other_authorities() {
+        assert_eq!(
+            fido_relying_party("login.microsoftonline.com"),
+            FidoRelyingParty {
+                id: "login.microsoft.com".to_string(),
+                origin: "https://login.microsoft.com".to_string(),
+            }
+        );
+        assert_eq!(
+            fido_relying_party("login.microsoftonline.us"),
+            FidoRelyingParty {
+                id: "login.microsoftonline.us".to_string(),
+                origin: "https://login.microsoftonline.us".to_string(),
+            }
+        );
+        assert_eq!(
+            fido_relying_party("login.example.net"),
+            FidoRelyingParty {
+                id: "login.example.net".to_string(),
+                origin: "https://login.example.net".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn fido_relying_party_normalizes_authority_host_case() {
+        assert_eq!(
+            fido_relying_party("LOGIN.MicrosoftOnline.US"),
+            fido_relying_party("login.microsoftonline.us")
+        );
+        assert_eq!(
+            fido_relying_party("LOGIN.MicrosoftOnline.COM"),
+            fido_relying_party("login.microsoftonline.com")
+        );
+    }
+
     fn create_temp_config(contents: &str) -> String {
         let file_path = format!(
             "/tmp/himmelblau_auth_test_config_{}.ini",
@@ -1604,6 +1693,37 @@ mod tests {
     fn test_config(contents: &str) -> HimmelblauConfig {
         let temp_file = create_temp_config(contents);
         HimmelblauConfig::new(Some(&temp_file)).unwrap()
+    }
+
+    #[test]
+    fn fido_authority_sees_aliases_persisted_after_initial_config_load() {
+        let initial = "[global]\ndomains = example.com\n[example.com]\nauthority_host = login.microsoftonline.us\n";
+        let path = create_temp_config(initial);
+        let cfg = HimmelblauConfig::new(Some(&path)).unwrap();
+        let account = "alice@alias.example.com";
+        assert_eq!(
+            cfg.get_authority_host_for_account(account),
+            Some("login.microsoftonline.com".to_string())
+        );
+        fs::write(
+            &path,
+            format!("{initial}domain_aliases = alias.example.com\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            current_fido_authority_host(&cfg, account),
+            Ok("login.microsoftonline.us".to_string())
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn fido_authority_rejects_config_reload_errors() {
+        let path = create_temp_config("");
+        let cfg = HimmelblauConfig::new(Some(&path)).unwrap();
+        fs::write(&path, "[unterminated section").unwrap();
+        assert!(current_fido_authority_host(&cfg, "alice@example.com").is_err());
+        fs::remove_file(path).unwrap();
     }
 
     fn test_options(mfa_poll_prompt: bool) -> Options {

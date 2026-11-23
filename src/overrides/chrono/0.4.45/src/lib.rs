@@ -2,6 +2,10 @@
 
 use std::{fmt, marker::PhantomData};
 
+pub mod prelude {
+    pub use crate::DateTime;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Utc;
 
@@ -77,6 +81,15 @@ impl DateTime<Utc> {
     }
 }
 
+impl From<std::time::SystemTime> for DateTime<Utc> {
+    fn from(time: std::time::SystemTime) -> Self {
+        Self {
+            timestamp: jiff::Timestamp::try_from(time).expect("SystemTime out of range"),
+            timezone: PhantomData,
+        }
+    }
+}
+
 impl fmt::Display for DateTime<Utc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let datetime = self.timestamp.to_zoned(jiff::tz::TimeZone::UTC).datetime();
@@ -117,6 +130,24 @@ pub mod serde {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_time_conversion_for_credential_display() {
+        use crate::prelude::DateTime;
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let epoch = DateTime::<Utc>::from(UNIX_EPOCH);
+        assert_eq!(epoch, Utc.timestamp_opt(0, 0).single().unwrap());
+        assert_eq!(epoch.to_string(), "1970-01-01 00:00:00 UTC");
+        assert_eq!(
+            DateTime::<Utc>::from(UNIX_EPOCH - Duration::from_millis(500)),
+            Utc.timestamp_opt(-1, 500_000_000).single().unwrap()
+        );
+        assert_eq!(
+            DateTime::<Utc>::from(UNIX_EPOCH + Duration::from_secs(u32::MAX.into())),
+            Utc.timestamp_opt(u32::MAX.into(), 0).single().unwrap()
+        );
+    }
 
     #[test]
     fn unix_seconds_round_down_and_nanoseconds_are_validated() {

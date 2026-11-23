@@ -41,7 +41,6 @@ use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
 use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
 use crate::tpm::confidential_client_creds;
-use crate::unix_passwd::parse_etc_passwd;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
 use crate::{
@@ -83,15 +82,6 @@ use tokio::sync::{broadcast, Mutex, OnceCell};
 use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 use zeroize::Zeroizing;
-
-fn local_user_ids_from_passwd(contents: &[u8], username: &str) -> Option<(u32, u32)> {
-    contents
-        .split(|byte| *byte == b'\n')
-        .filter_map(|line| parse_etc_passwd(line).ok())
-        .flatten()
-        .find(|user| user.name == username && !user.name.starts_with(['+', '-']))
-        .map(|user| (user.uid, user.gid))
-}
 
 // AADSTS65002: Consent between first party application and resource is required.
 // This occurs when a tenant has not granted consent for an application to access
@@ -1037,6 +1027,33 @@ impl IdProvider for HimmelblauMultiProvider {
 
 // If the provider is offline, we need to backoff and wait a bit.
 const OFFLINE_NEXT_CHECK: Duration = Duration::from_secs(15);
+
+async fn probe_entra_authority(
+    authority_url: &str,
+    request_timeout: u64,
+    now: SystemTime,
+) -> CacheState {
+    // The authority root may redirect to an unrelated, proxy-blocked host.
+    // A response from the authority itself is sufficient for reachability.
+    let client = match build_online_probe_client(request_timeout, reqwest::redirect::Policy::none())
+    {
+        Ok(c) => c,
+        Err(e) => {
+            error!(?e, "Failed to build HTTP client for online check");
+            return CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
+        }
+    };
+    match client.get(authority_url).send().await {
+        Ok(_) => {
+            debug!("provider is now online");
+            CacheState::Online
+        }
+        Err(err) => {
+            error!(?err, "Provider online failed");
+            CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK)
+        }
+    }
+}
 
 pub struct HimmelblauProvider {
     state: Mutex<CacheState>,
@@ -4713,36 +4730,12 @@ impl HimmelblauProvider {
             .await
             .unwrap_or(self.config.lock().await.get_authority_host(&self.domain));
         let request_timeout = self.config.lock().await.get_request_timeout();
-        // The authority root may redirect to an unrelated, proxy-blocked host.
-        // A response from the authority itself is sufficient for reachability.
-        let client =
-            match build_online_probe_client(request_timeout, reqwest::redirect::Policy::none()) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!(?e, "Failed to build HTTP client for online check");
-                    let mut state = self.state.lock().await;
-                    *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
-                    return false;
-                }
-            };
-        match client
-            .get(format!("https://{}", authority_host))
-            .send()
-            .await
-        {
-            Ok(_) => {
-                debug!("provider is now online");
-                let mut state = self.state.lock().await;
-                *state = CacheState::Online;
-                return true;
-            }
-            Err(err) => {
-                error!(?err, "Provider online failed");
-                let mut state = self.state.lock().await;
-                *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
-                return false;
-            }
-        }
+        let next_state =
+            probe_entra_authority(&format!("https://{}", authority_host), request_timeout, now)
+                .await;
+        let online = matches!(next_state, CacheState::Online);
+        *self.state.lock().await = next_state;
+        online
     }
 
     impl_himmelblau_hello_key_helpers!();
@@ -5160,11 +5153,19 @@ impl HimmelblauProvider {
         let user_map = UserMap::new(&self.config.lock().await.get_user_map_file());
         let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
             Some(user) => {
-                let passwd = tokio::fs::read("/etc/passwd").await.map_err(|e| {
-                    error!("Failed reading /etc/passwd for mapped user {}: {}", user, e);
-                    IdpError::BadRequest
-                })?;
-                local_user_ids_from_passwd(&passwd, &user).ok_or(IdpError::NotFound {
+                let lookup_user = user.clone();
+                let ids =
+                    tokio::task::spawn_blocking(move || crate::nss_lookup::user_ids(&lookup_user))
+                        .await
+                        .map_err(|e| {
+                            error!("Mapped-user NSS lookup task failed for {}: {}", user, e);
+                            IdpError::BadRequest
+                        })?
+                        .map_err(|e| {
+                            error!("Failed resolving mapped user {} through NSS: {}", user, e);
+                            IdpError::BadRequest
+                        })?;
+                ids.ok_or(IdpError::NotFound {
                     what: user,
                     where_: "local user map".to_string(),
                 })?
@@ -5764,7 +5765,7 @@ impl HimmelblauProvider {
 mod tests {
     use super::{
         is_mfa_required_for_enrollment, is_sspr_required, is_unavailable_mfa_method_error,
-        local_user_ids_from_passwd, mfa_flow_uses_push_hint, password_change_required,
+        mfa_flow_uses_push_hint, password_change_required,
         seal_refresh_token_with_loaded_hello_key, unseal_refresh_token_with_loaded_hello_key,
         CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
@@ -5777,40 +5778,48 @@ mod tests {
     };
     use zeroize::Zeroizing;
 
-    #[test]
-    fn local_user_lookup_uses_passwd_file_only() {
-        let passwd = b"root:x:0:0:root:/root:/bin/bash\nlocal:x:1000:1001::/home/local:/bin/bash\n";
+    #[tokio::test]
+    async fn entra_authority_response_marks_online_without_following_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
 
-        assert_eq!(
-            local_user_ids_from_passwd(passwd, "local"),
-            Some((1000, 1001))
-        );
-        assert_eq!(local_user_ids_from_passwd(passwd, "directory-user"), None);
+        for status in ["302 Found", "404 Not Found", "503 Service Unavailable"] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                socket.read(&mut request).await.unwrap();
+                // Following the redirect would fail like the blocked host in #1733.
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nLocation: http://127.0.0.1:0/blocked\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            });
+            let state = super::probe_entra_authority(
+                &format!("http://{address}/"),
+                5,
+                std::time::SystemTime::now(),
+            )
+            .await;
+            assert!(matches!(state, super::CacheState::Online), "{status}");
+            server.await.unwrap();
+        }
     }
 
-    #[test]
-    fn local_user_lookup_skips_compat_and_invalid_records() {
-        let passwd = b"+::::::\n+directory-user::::::\nshort:record\ninvalid:x:bad:1001::/:/bin/bash\nlocal:x:1000:1001::/home/local:/bin/bash\n-::::::\n";
-
-        assert_eq!(
-            local_user_ids_from_passwd(passwd, "local"),
-            Some((1000, 1001))
-        );
-        assert_eq!(local_user_ids_from_passwd(passwd, "directory-user"), None);
-        assert_eq!(local_user_ids_from_passwd(passwd, "invalid"), None);
-        assert_eq!(local_user_ids_from_passwd(passwd, "loc"), None);
-    }
-
-    #[test]
-    fn local_user_lookup_keeps_valid_records_before_compat_entries() {
-        let passwd = b"local:x:1000:1001::/home/local:/bin/bash\n+::::::\n+local:x:2000:2001::/:/bin/bash\n-local:x:3000:3001::/:/bin/bash\n";
-
-        assert_eq!(
-            local_user_ids_from_passwd(passwd, "local"),
-            Some((1000, 1001))
-        );
-        assert_eq!(local_user_ids_from_passwd(passwd, "+local"), None);
-        assert_eq!(local_user_ids_from_passwd(passwd, "-local"), None);
+    #[tokio::test]
+    async fn entra_authority_connection_failure_keeps_offline_retry() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let now = std::time::SystemTime::now();
+        let state = super::probe_entra_authority(&format!("http://{address}/"), 5, now).await;
+        match state {
+            super::CacheState::OfflineNextCheck(deadline) => {
+                assert_eq!(deadline, now + super::OFFLINE_NEXT_CHECK);
+            }
+            _ => panic!("connection failure should schedule an offline retry"),
+        }
     }
 
     fn should_use_sspr_hello_fallback(e: &MsalError, is_remote_service: bool) -> bool {

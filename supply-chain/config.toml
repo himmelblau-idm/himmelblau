@@ -37,9 +37,6 @@ audit-as-crates-io = false
 [policy."anstyle-wincon:3.0.8"]
 audit-as-crates-io = false
 
-[policy."assert_hex:0.4.1"]
-audit-as-crates-io = false
-
 [policy."base64:0.21.7"]
 audit-as-crates-io = false
 
@@ -121,10 +118,16 @@ audit-as-crates-io = false
 [policy."js-sys:0.3.77"]
 audit-as-crates-io = false
 
-[policy."kqueue:1.1.1"]
+[policy.kanidm_lib_crypto]
 audit-as-crates-io = false
 
-[policy."ldap3_proto:0.6.2"]
+[policy.kanidm_lib_file_permissions]
+audit-as-crates-io = false
+
+[policy.kanidm_utils_users]
+audit-as-crates-io = false
+
+[policy."kqueue:1.1.1"]
 audit-as-crates-io = false
 
 [policy."libredox:0.1.3"]
@@ -172,7 +175,13 @@ audit-as-crates-io = false
 [policy."reqwest:0.12.24"]
 audit-as-crates-io = false
 
-[policy."rsa:0.9.999"]
+[policy."rsa:0.10.0-rc.19"]
+audit-as-crates-io = false
+
+[policy."rsa:0.10.0@git:48270237f4cd9c75ed511f1079518369f2213892"]
+audit-as-crates-io = true
+
+[policy."rsa:0.9.10"]
 audit-as-crates-io = false
 
 [policy."rustls-platform-verifier-android:0.1.1"]
@@ -273,6 +282,16 @@ criteria = "safe-to-deploy"
 version = "0.7.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.aes]]
+version = "0.9.4"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for aes 0.9.4; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Reviewed diff lines 1-11000 in 22 consecutive 500-line ranges, then 11001-11052, without truncation. No supplied-text coverage gaps; binary test fixtures appeared only as change notices. No malicious behavior, filesystem/network/process operations, privilege changes, build scripts, or git/path dependencies were introduced.
+Medium concern: src/lib.rs:147-149 detects VAES independently of AES and AVX2. Initialization at src/lib.rs:229 selects hardware key storage only when AES is detected, but encryption/decryption at src/lib.rs:261-273 and 311-323 select VAES without checking that invariant. The inspected cpufeatures 0.3.1 implementation does not enforce these feature dependencies. A VM exposing VAES while masking AES can therefore interpret software keys as hardware keys; combined-cipher decryption can read uninitialized union storage. Missing instruction support can also cause termination. This requires an unusual CPU feature configuration, not merely attacker-controlled plaintext. Rust documents that VAES target functions require AES and AVX2: [Rust Reference](https://doc.rust-lang.org/reference/attributes/codegen.html).
+Require AES and AVX2 in both VAES detection predicates, plus AVX512F for the 512-bit backend, and validate feature-masked configurations before certification. Native, forced-software, and compact-software all-feature tests each passed 17 tests; these do not resolve the dispatch concern. ARM and VAES execution were not validated."""
+
 [[exemptions.aes-gcm]]
 version = "0.10.3"
 criteria = "safe-to-deploy"
@@ -280,6 +299,19 @@ criteria = "safe-to-deploy"
 [[exemptions.aes-kw]]
 version = "0.2.1"
 criteria = "safe-to-deploy"
+
+[[exemptions.aes-kw]]
+version = "0.3.1"
+criteria = "safe-to-deploy"
+notes = "This is a cargo-vet exemption for aes-kw 0.3.1, not certification. The review reports unresolved empty-output authentication bypasses, uninitialized KWP padding that can cause failures and potentially disclose stale buffer contents, and an input-dependent panic that can cause denial of service. Review was static with no runtime tests; although both supplied batches were fully read, one omitted security-critical implementation and manifest context, dependency implementations were not audited, and integrated behavior remains unvalidated."
+
+[[exemptions.ar_archive_writer]]
+version = "0.5.5"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for ar_archive_writer 0.5.5; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Complete source review; certification withheld for confirmed input-triggered denial of service. ar_archive_writer writes object-file archives and COFF import libraries; its README describes an LLVM port and its manifest identifies the rust-lang repository. In src/coff_import_file.rs:59, ARM64EC import symbols undergo from_utf8(name).unwrap(); empty symbols reach another unwrap in src/mangler.rs:48. Minimal crafted import objects reproduced both panics through write_archive_to_stream with DEFAULT_OBJECT_READER. Exploitation requires supplying object bytes to an application using this API; uncaught panics terminate the operation, or the process with panic=abort. Additional malformed-symbol handling uses expect in src/object_reader.rs:41. Return InvalidData errors and add malformed-input regression tests before certification. No unsafe code, backdoors, exfiltration, network operations, or unexpected production filesystem access were found. Output goes to caller-provided streams; filesystem operations and LLVM subprocesses are confined to tests. Cargo.toml disables build scripts; object 0.39 is the sole runtime dependency, while cargo-binutils and pretty_assertions are development dependencies. Dependency implementation review was outside the supplied content. Reviewed sequential diff ranges 1–500, 501–1000, 1001–1500, 1501–2000, 2001–2500, 2501–3000, 3001–3500, 3501–4000, 4001–4500, 4501–5000, and 5001–5445 without truncation; no supplied-content coverage gaps. The final line lacks a newline. Reproducers ran against extracted source with development dependencies removed; the full upstream test suite was not run."""
 
 [[exemptions.argon2]]
 version = "0.5.3"
@@ -441,9 +473,25 @@ criteria = "safe-to-deploy"
 version = "0.7.10"
 criteria = "safe-to-deploy"
 
+[[exemptions.crypto-primes]]
+version = "0.7.2"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for crypto-primes 0.7.2; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Reviewed all diff lines 1–9546 sequentially; no coverage gaps. The truncated 3601–3800 output was fully reread in smaller chunks. crypto-primes implements prime generation and Miller–Rabin/Lucas primality checks. No intentionally malicious behavior, unsafe blocks, build scripts, or unexpected runtime filesystem/network access found. Core dependencies are crypto-bigint and rand_core; Rayon is optional, and native comparison libraries are optional test dependencies. Documentation loads integrity-pinned KaTeX resources; benchmark filesystem access reads bundled vectors. Certification withheld for confirmed denial-of-service defects: (1) src/hazmat/gcd.rs:21–33 permits a zero remainder into binary_gcd, whose shift at line 53 panics with overflow checks and hangs in the tested optimized build. Public hazmat::lucas_test reaches this with a custom base P=1,Q=3 and candidate 55340232221128654851; Jacobi(-11,n)=-1, so the base satisfies the required discriminant condition. Exploitation requires an application using such a custom base and accepting attacker-controlled candidates; reachability with built-in bases was not established. (2) src/hazmat/miller_rabin.rs:229 and src/hazmat/float.rs:87 use unchecked arithmetic: minimum_mr_iterations(0,128) and (65537,128) panic in debug probes. Applications exposing these parameters can suffer availability failures. Probes used unchanged library source with a minimal harness and compatible cached crypto-bigint 0.7.11; the original full test suite was not run. Required follow-up: handle zero GCD operands, validate iteration-helper inputs, use overflow-safe square-root arithmetic, and add regression tests in debug and release configurations."""
+
 [[exemptions.ctr]]
 version = "0.9.2"
 criteria = "safe-to-deploy"
+
+[[exemptions.cts]]
+version = "0.7.0"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for cts 0.7.0; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Reviewed all supplied content sequentially: diff lines 1–400, 401–800, 801–1200, 1201–1600, and 1601–1916, without truncation. No coverage gaps; the last line lacks a newline. This RustCrypto crate implements six CBC/ECB ciphertext-stealing modes. No unsafe code, build script, unexpected filesystem/network access, or malicious behavior was found. Cargo.toml forbids unsafe code and disables build scripts. The sole runtime dependency is cipher; AES, belt-block, and hex-literal are development dependencies. Buffer length checks and shared serial/parallel helpers appear sound for valid cipher implementations. Medium finding: src/cbc_cs3.rs, encryption closure at line 73 and decryption closure, mishandles exactly one block. Encryption computes E_K(E_K(P XOR IV)); decryption applies two decryptions. RFC 3962 specifies one AES operation for this case ([RFC 3962 section 5](https://www.rfc-editor.org/rfc/rfc3962.html#section-5)). Reproduced with zero AES-128 key, IV, and plaintext: expected 66e94bd4ef8a2c3b884cfa59ca342b2e, actual f795bd4a52e29ed713d313fa20e98dbc. Standard ciphertext also decrypts incorrectly. Impact is bounded interoperability failure and incorrect plaintext when applications accept exactly one-block messages; no key recovery or memory corruption was demonstrated. EcbCs3 has the analogous double-operation branch. All eight supplied integration tests and two doctests passed; an added independent one-block interoperability test failed. Existing round-trip tests conceal the CBC defect because encryption and decryption share it. Certification is withheld pending correction or explicit rejection of the one-block case, with independent known-answer regression tests."""
 
 [[exemptions.curve25519-dalek]]
 version = "4.1.0"
@@ -474,6 +522,10 @@ version = "0.7.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.der]]
+version = "0.8.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.der]]
 version = "0.8.3"
 criteria = "safe-to-deploy"
 notes = """
@@ -498,6 +550,11 @@ criteria = "safe-to-deploy"
 version = "0.16.9"
 criteria = "safe-to-deploy"
 
+[[exemptions.ecdsa]]
+version = "0.17.0"
+criteria = "safe-to-deploy"
+notes = "This is a cargo-vet exemption for ecdsa 0.17.0, not certification. Unresolved findings include potential private-key exposure from RFC6979 nonce reuse with certain P-521 prehashes, a panic on malformed Unicode signature text, and recovery accepting high-S signatures that ordinary verification rejects when normalization is required. The review covered all supplied textual diff lines, but assurance remains limited by cryptographic helpers, curve implementations, dependency/feature changes, and binary fixture provenance not established by those diffs."
+
 [[exemptions.ed25519-dalek]]
 version = "2.2.0"
 criteria = "safe-to-deploy"
@@ -509,6 +566,14 @@ criteria = "safe-to-deploy"
 [[exemptions.elliptic-curve]]
 version = "0.13.8"
 criteria = "safe-to-deploy"
+
+[[exemptions.elliptic-curve]]
+version = "0.14.3"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for elliptic-curve 0.14.3; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Withhold certification for two regressions. (1) Medium: src/sec1.rs, ToSec1Point::to_compressed_point and to_uncompressed_point copy the SEC1 encoding into fixed-size arrays using copy_from_slice. The valid identity encoding is one byte, so serializing an identity point panics. An attacker can cause denial of service if an application accepts identity points through FromSec1Point::from_sec1_bytes and invokes these helpers without containing panics; panic=abort terminates the process. Return a fallible result or explicitly handle identity, and add regression tests. PublicKey separately rejects identity. (2) Low: src/secret_key.rs, Generate for SecretKey directly wraps ScalarValue::try_generate_from_rng, which samples modulo ORDER and permits zero. Previously generation used NonZeroScalar rejection sampling. This violates the nonzero invariant assumed by to_nonzero_scalar and public-key/ECDH operations. Probability is negligible with a normal secure RNG, but the invariant should be restored by rejecting zero and tested with a controlled RNG. The four added unsafe casts use repr(transparent) wrappers and preserve shared borrowing, alignment, lengths, and lifetimes; no memory-safety issue identified. Manifest dependencies use registry sources, build scripts are disabled, and no malicious behavior, unexpected filesystem/network/process activity, or privilege changes were found. Reviewed sequential diff ranges: 1–500, 501–1000, 1001–1500, 1501–2000, 2001–2500, 2501–3000, 3001–3500, 3501–4000, 4001–4250, 4251–4500, 4501–5000, 5001–5500, 5501–6000, 6001–6500, 6501–7000, 7001–7500, 7501–8000, 8001–8500, 8501–9000, and 9001–9444. The truncated 4001–4500 output was reread successfully in smaller ranges. Coverage gaps: none. Findings are from static review; executable regression tests remain required."""
 
 [[exemptions.endi]]
 version = "1.1.0"
@@ -631,6 +696,10 @@ criteria = "safe-to-deploy"
 version = "0.1.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.integer-encoding]]
+version = "3.0.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.ipnet]]
 version = "2.5.0"
 criteria = "safe-to-deploy"
@@ -735,6 +804,10 @@ criteria = "safe-to-deploy"
 version = "5.0.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.object]]
+version = "0.39.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.once_cell]]
 version = "1.12.0"
 criteria = "safe-to-deploy"
@@ -803,6 +876,18 @@ criteria = "safe-to-deploy"
 version = "0.8.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.pest]]
+version = "2.9.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.pest_meta]]
+version = "2.9.6"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for pest_meta 2.9.6; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Reviewed all diff lines 1–9005 sequentially in ranges of at most 500 lines. Truncated reads were replaced by complete smaller reads, including all 48,260 characters of line 1869. Coverage gaps: none. pest_meta parses, validates, and optimizes pest grammar definitions. No intentionally malicious behavior, unsafe blocks, runtime network/filesystem access, or build script was found. Cargo.toml declares only pest; its transitive dependencies include native stack-support libraries and compiler tooling. Medium-risk availability findings prevent certification: src/parser.rs:426,435 unwrap out-of-range PEEK integers; src/parser.rs:449 and related literal conversions panic on invalid Unicode scalar escapes. Both were reproduced through parse_and_optimize in debug and release builds with a 5,000-call parser limit. src/optimizer/unroller.rs:20–63 expands attacker-controlled repetition bounds without an allocation budget and uses overflowing arithmetic. The tiny grammar r = { "a"{4294967295} } reproducibly panics in both builds; other large bounds can exhaust memory or stack. Exploitation requires control over grammar definitions reaching these APIs, rather than merely input parsed by a fixed application grammar. Trusted build-time grammars substantially reduce exposure, but that restriction is not established here. Required follow-up: return validation errors for invalid integers and Unicode, enforce checked repetition and AST expansion budgets, or establish that all grammar definitions are trusted and processing is contained. Dependency internals were not independently audited."""
+
 [[exemptions.pin-project]]
 version = "1.1.10"
 criteria = "safe-to-deploy"
@@ -819,9 +904,27 @@ criteria = "safe-to-deploy"
 version = "0.7.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.pkcs1]]
+version = "0.8.0"
+criteria = "safe-to-deploy"
+notes = "This is a cargo-vet exemption for pkcs1 0.8.0, not certification. Unresolved moderate-risk concerns include heap-backed private-key values and decoding temporaries that are not zeroized, even with the zeroize feature enabled, leaving recoverable secrets after decoding, cloning, and failed parses if memory is disclosed or released memory is accessed. The review covered the full supplied diff without truncation and inspected relevant der storage and decoder behavior, but tests were inspected rather than executed."
+
+[[exemptions.pkcs5]]
+version = "0.8.1"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for pkcs5 0.8.1; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Withhold certification: confirmed denial-of-service defects, with no evidence of intentional malicious behavior. pkcs5 implements password-based key derivation, encryption, and ASN.1 encoding within the established RustCrypto project (https://github.com/RustCrypto/formats). Findings: (1) src/pbes2.rs:546,552 slices IVs before validating length; attacker-supplied DER containing a short DES/3DES IV panics when the corresponding feature is enabled. (2) src/pbes2/kdf.rs:512 computes log2 before rejecting zero; a decoded scrypt cost of zero panics during parameter conversion or decryption with pbes2 enabled. (3) src/pbes2/kdf/salt.rs:22-30 accepts a salt longer than 32 bytes and panics while copying; exploitation requires untrusted salt bytes reaching this public constructor or its callers. DER salt decoding separately checks length. (4) src/pbes2/encryption.rs:64-73 accepts excess buffer space but copies the GCM tag into the entire remaining slice, causing a panic unless exactly 16 bytes remain; exploitation requires influence over plaintext position or buffer sizing in an encryption caller. These panics can terminate requests, worker threads, or processes depending on panic handling. (5) src/pbes2/kdf.rs:284 decodes iteration counts without enforcing MAX_ITERATION_COUNT; decryption forwards them to PBKDF2. Scrypt similarly lacks an operational resource budget, allowing excessive memory/CPU use when applications decrypt attacker-controlled parameters without prior limits. Four panic reproductions and the iteration-limit bypass were confirmed in debug and release builds; all 15 existing tests passed. No unsafe blocks: src/lib.rs forbids unsafe code. Cargo.toml disables build scripts. Dependencies are der/spki plus optional AES, AES-GCM, CBC, PBKDF2, scrypt, SHA, DES, and RNG crates; hex-literal is test-only. No unexpected production network/filesystem access was found; filesystem operations and OpenSSL commands are confined to tests and the manual fixture-generation script. Derived keys are not explicitly zeroized, a lower-severity residual-memory concern. Required follow-up: reject malformed parameters before indexing/arithmetic, correct GCM buffer bounds, enforce KDF resource limits, and add regression coverage before reassessment. Reviewed sequential diff ranges 1-500, 501-1000, 1001-1500, 1501-2000, 2001-2500, 2501-3000, 3001-3500, 3501-4000, and 4001-4005 without truncation; no supplied-text coverage gaps. Binary fixture bodies omitted by the diff and transitive dependency internals are outside the complete supplied-text coverage claim."""
+
 [[exemptions.pkcs8]]
 version = "0.10.2"
 criteria = "safe-to-deploy"
+
+[[exemptions.pkcs8]]
+version = "0.11.0"
+criteria = "safe-to-deploy"
+notes = "This is a cargo-vet exemption for pkcs8 0.11.0, not certification. Unresolved concerns include an approximately eightfold reduction in the default scrypt work factor, inconsistent parameter documentation, and decoded or cloned private-key storage without zeroization on drop, leaving secret copies potentially recoverable through another process-memory disclosure. The review covered the complete supplied diff and binary fixture and relevant dependency implementations, but did not include a full transitive dependency audit."
 
 [[exemptions.polling]]
 version = "3.7.4"
@@ -842,6 +945,11 @@ criteria = "safe-to-deploy"
 [[exemptions.primeorder]]
 version = "0.13.6"
 criteria = "safe-to-deploy"
+
+[[exemptions.primeorder]]
+version = "0.14.0"
+criteria = "safe-to-deploy"
+notes = "This cargo-vet exemption for primeorder 0.14.0 is not certification. An unresolved, potentially high-risk mapping invariant could allow coordinates on an isogenous curve to be treated as points on the target curve, compromising arithmetic and protocol security; no concrete downstream exploit was established, and `lincomb` may panic on empty inputs with debug assertions enabled. The review covered the entire supplied diff, but downstream mapping configurations and cryptographic integration tests were unavailable."
 
 [[exemptions.proc-macro-crate]]
 version = "3.3.0"
@@ -879,6 +987,11 @@ criteria = "safe-to-deploy"
 version = "0.4.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.rfc6979]]
+version = "0.6.0"
+criteria = "safe-to-deploy"
+notes = "This is an exemption for rfc6979 0.6.0, not certification. Unresolved concerns include unchecked buffer and key lengths that can cause out-of-range nonces or panics, and invalid group orders that can cause endless rejection; exploitability depends on caller constraints that were not established. The supplied diff was reviewed without coverage gaps, but tests were inspected rather than executed, caller use of valid inputs and raw hashes remains unconfirmed, and dependency implementations require separate cargo-vet coverage."
+
 [[exemptions.ring]]
 version = "0.17.14"
 criteria = "safe-to-deploy"
@@ -886,6 +999,11 @@ criteria = "safe-to-deploy"
 [[exemptions.rpassword]]
 version = "7.4.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.rsa]]
+version = "0.10.0@git:48270237f4cd9c75ed511f1079518369f2213892"
+criteria = "safe-to-deploy"
+notes = "Identical to crates.io version"
 
 [[exemptions.rtoolbox]]
 version = "0.0.3"
@@ -906,6 +1024,20 @@ criteria = "safe-to-deploy"
 [[exemptions.rustls-webpki]]
 version = "0.103.6"
 criteria = "safe-to-deploy"
+
+[[exemptions.rusty-leveldb]]
+version = "4.0.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.scrypt]]
+version = "0.12.0"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for scrypt 0.12.0; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Completed sequential review of diff lines 1-500, 501-1000, 1001-1500, 1501-2000, 2001-2500, and 2501-2796 without truncation; no coverage gaps. The final line lacks a terminating newline. This is RustCrypto's established scrypt password hashing/key derivation implementation. No intentionally malicious behavior, unexpected filesystem/network access, or build script was found; Cargo.toml explicitly sets build=false. Dependencies comprise cfg-if, pbkdf2, salsa20, sha2, and optional password-hash, ctutils, kdf, mcf, and rayon; dependency implementations are outside this review. Unsafe SSE2/Wasm SIMD operations have valid bounds through current internal callers and compile-time CPU-feature gating.
+Medium finding: src/params.rs:99 checks the parameter bound using unchecked u32 multiplication, r * p. An isolated reproduction using the supplied Params implementation confirmed that Params::new(1, 65536, 65536) panics with overflow checks enabled and incorrectly returns Ok with checks disabled. Attacker-controlled PHC/MCF parameters can reach this constructor. Impact includes request/task termination or process termination depending on panic policy; accepted parameters can subsequently request a 512 GiB allocation and terminate the process on allocation failure. Exploitation requires control of parameters passed to construction or hash verification. Replace multiplication with checked or widened arithmetic and add regression coverage before certification.
+Additional low-impact correctness concern: src/romix.rs:14 reads only 32 bits for Integerify although Params permits log_n greater than 32. Such configurations select only the first 2^32 entries during the second ROMix pass, departing from scrypt; exploitation requires impractically large working memory. Restrict supported N or implement wider Integerify. Verification also requires application limits on untrusted work factors because allocations and CPU costs are intentionally parameter-driven. Approval is withheld pending resolution of the parameter-validation defect and extreme-N correctness concern."""
 
 [[exemptions.sd-notify]]
 version = "0.4.5"
@@ -939,9 +1071,22 @@ criteria = "safe-to-deploy"
 version = "0.7.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.serdect]]
+version = "0.4.3"
+criteria = "safe-to-deploy"
+notes = "This is an exemption for serdect 0.4.3, not certification. The review identified an unresolved regression allowing empty or undersized hex strings to deserialize into zero-padded fixed-size arrays, weakening validation of security-sensitive values. All supplied diff content was reviewed, with supplemental array-code inspection, but base16ct 1 dependency audit coverage, helper bounds checks, malformed-input handling, allocation and constant-time behavior, and compatibility with the breaking binary wire-format change remain unverified."
+
 [[exemptions.sha-crypt]]
 version = "0.5.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.sha1]]
+version = "0.11.0"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for sha1 0.11.0; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Reviewed all supplied diff lines sequentially: 1–400, 401–800, and 801–1239 through EOF, without truncation or coverage gaps. Found a conditional denial-of-service issue in src/block_api.rs: deserialize accepts arbitrary block_len values, while finalize_fixed_core computes the bit length using ordinary multiplication. Reproduced an overflow panic by setting serialized state bytes 20–27 to 0xff and calling Sha1::deserialize followed by finalize. Exploitation requires attacker-controlled state restoration, overflow checks enabled, and an uncaught panic; process termination depends on application panic handling. Withholding certification pending rejection of excessive counters or appropriate wrapping arithmetic, with regression coverage. Standard integration tests and doctests passed. Reviewed backend dispatch and surrounding unsafe implementations; no additional memory-safety concern or malicious behavior identified. Manifest changes introduce no git/path dependencies or build script, and no unexpected filesystem, network, process, or privilege operations were found. SHA-1's documented collision weakness is pre-existing. Architecture execution testing was limited to the host; binary fixture payloads were not included in the supplied textual diff."""
 
 [[exemptions.sha2]]
 version = "0.11.1"
@@ -962,6 +1107,11 @@ criteria = "safe-to-deploy"
 [[exemptions.spki]]
 version = "0.7.3"
 criteria = "safe-to-deploy"
+
+[[exemptions.stacker]]
+version = "0.1.25"
+criteria = "safe-to-deploy"
+notes = "This is a cargo-vet exemption for stacker 0.1.25, not certification. Unresolved concerns include heap-backed stack overflow corrupting adjacent memory on affected targets, undefined behavior from zero-size allocations reachable through safe APIs, and insufficient guarantees for tiny stacks. The review covered all supplied content but relied on source analysis without a demonstrated exploit and did not fully audit dependency implementations."
 
 [[exemptions.tendril]]
 version = "0.4.3"
@@ -1011,6 +1161,18 @@ criteria = "safe-to-deploy"
 version = "0.3.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.url]]
+version = "2.5.9"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for url 2.5.9; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Safe-to-deploy certification is withheld because the file URL parser now retains a host that the Windows path converter treats as a device namespace, changing the target of a bare drive-letter path to a raw volume.
+Confirmed findings:
+source-1:findings:1: src/parser.rs:521 and src/lib.rs:2725,3135–3174. Preserving an explicit `.` host before a bare drive-letter segment changes Windows `Url::to_file_path()` output from an ordinary drive path to a device-namespace path that targets the raw volume. A Windows application must accept an untrusted file URL, pass the converted path to a file-opening API, and have sufficient privileges for direct volume access. Under those conditions, ordinary file handling can expose raw volume contents. Windows behavior was assessed from source and documented API semantics. [Microsoft CreateFileW documentation](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew#physical-disks-and-volumes) ()
+Review scope: 68944 original characters (2334 lines); 0 deleted-file bodies intentionally omitted (0 patch characters). Remaining review material: 68944 characters (2334 lines), 1 initial source tasks. Source limits: 240000 characters / 6000 lines. Coverage applies to the retained diff and deletion metadata.
+Review artifacts: /home/dmulder/code/himmelblau/.cargo-vet-review-q18z_bqo.review"""
+
 [[exemptions.urlencoding]]
 version = "2.1.3"
 criteria = "safe-to-deploy"
@@ -1023,13 +1185,50 @@ criteria = "safe-to-deploy"
 version = "4.3.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.wnaf]]
+version = "0.14.1"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for wnaf 0.14.1; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Complete review of diff ranges 1–500, 501–1000, and 1001–1435, all read without truncation; no coverage gaps. wnaf implements generic variable-time elliptic-curve scalar and multiscalar multiplication, attributed to RustCrypto and adapted from group. No intentionally malicious behavior found. Certification is withheld for verified arithmetic defects.
+
+1. src/scalar.rs:60–68 and src/lib.rs:178: reinitializing a WnafScalar with shorter bytes leaves old trailing digits, while wnaf_multi_exp reads the entire backing array rather than respecting each term's digit count. When another term is longer, stale digits contribute to the result. Running the extracted Rust routines in both debug and release configurations reproduced an expected 1G + 256G = 257G calculation yielding 513G after reinitializing the first scalar from 256 to 1. This requires scalar-buffer reuse followed by mixed-length multiscalar multiplication. Incorrect cryptographic arithmetic can affect verification or other protocol results; a concrete forgery was not established. Clear unused digits or enforce each term's logical length, and add regression coverage.
+
+2. src/base.rs:66–69: WnafBase::default fills every table entry with the generator instead of its required odd multiples. With window 4, multiplying this publicly constructible base by scalar 3 returns G instead of 3G. Construct a valid generator table or remove Default.
+
+3. src/lib.rs:70–126: supported windows 7 and 8 perform checked debug conversions of values exceeding i8::MAX. Window 7 with scalar 65 reproducibly panics because digit(width) attempts to convert 128. Input-controlled scalars can therefore cause availability failures in affected builds. Compute signed digits in a wider type before converting and test all supported windows.
+
+The crate forbids unsafe code; the unsafe search found only that prohibition and a lint setting. Cargo.toml disables build scripts, and no runtime filesystem, network, process execution, or unexpected I/O appears. Direct dependencies are hybrid-array, ff, group, and primefield; their source is outside this review. The README correctly warns that variable-time operations must not receive secret scalars. Required follow-up: fix the arithmetic and conversion defects, add regression tests, and review the corrected crate before certification."""
+
 [[exemptions.x509-cert]]
 version = "0.2.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.x509-cert]]
+version = "0.3.0"
+criteria = "safe-to-deploy"
+notes = """
+Automated exemption, not certification, for x509-cert 0.3.0; reviewed by codex. AI severity: MEDIUM; malicious: false. Findings remain unresolved and are accepted under --auto-exempt policy.
+
+Withhold certification for a confirmed revocation defect. In src/builder.rs, CrlBuilder::new_with_this_update copies the issuing certificate's AuthorityKeyIdentifier instead of its SubjectKeyIdentifier. For intermediate CAs with distinct parent keys, generated CRLs identify the parent key. An offline reproduction produced OpenSSL's 'unable to get certificate CRL'; correcting only the identifier and re-signing made verification pass. Impact: revocation-checking outages, or continued acceptance of revoked credentials if downstream applications tolerate unavailable CRLs. Use the signer's existing SKI, derive one only when absent, and add a distinct-key intermediate-CA regression test. This matches [RFC 5280 section 5.2.1](https://www.rfc-editor.org/rfc/rfc5280.html#section-5.2.1).
+Additional bounded issues: src/builder/profile/cabf/tls.rs stores DomainValidated.names but never emits SubjectAltName, confirmed by reproduction; certificates can lose their intended identities and fail hostname validation. Other advertised subscriber types reach todo! in get_subject and panic if selected. Implement these paths or return explicit errors. In src/time.rs, Validity encoding changes accepted GeneralizedTime dates into UTCTime; reproduction confirmed changed bytes, which can invalidate existing signatures when parsed certificates are re-encoded. Preserve parsed encodings or explicitly address verification and hashing compatibility.
+No intentional malicious behavior, added unsafe code, unexpected production I/O, privilege changes, or git/path production dependencies found. Cargo.toml disables build scripts.
+Coverage: reviewed lines 1-8000 in consecutive, separate 500-line ranges, then 8001-8304, including the final unterminated line. No truncation or coverage gaps."""
+
+[[exemptions.zbus]]
+version = "6.0.0"
+criteria = "safe-to-deploy"
+notes = "AI batch review found no reported malicious behavior. Accepting an exception with unresolved descriptor-safety, authentication, and input-validation concerns."
+
 [[exemptions.zbus_names]]
 version = "4.2.0"
 criteria = "safe-to-deploy"
+
+[[exemptions.zbus_utils]]
+version = "6.0.0"
+criteria = "safe-to-deploy"
+notes = "This cargo-vet exemption for zbus_utils 6.0.0 is not certification. Unresolved reported concerns include unbounded GVariant recursion, panics in generated conversions and Unicode comparisons, inconsistent signature ordering, and provisional dictionary-key validity concerns. The review synthesized four completed batch reports without independently validating source code and did not establish whole-crate integration, dependency safety, feature interactions, length/overflow behavior, downstream effects, or publisher provenance."
 
 [[exemptions.zerocopy]]
 version = "0.8.25"
@@ -1038,6 +1237,11 @@ criteria = "safe-to-deploy"
 [[exemptions.zmij]]
 version = "1.0.12"
 criteria = "safe-to-deploy"
+
+[[exemptions.zruntime]]
+version = "0.2.0"
+criteria = "safe-to-deploy"
+notes = "This is a cargo-vet exemption for zruntime 0.2.0, not certification. Unresolved concerns include unsafe descriptor lifetime and synchronization contracts, wakeup/cancellation/panic/shutdown behavior, possible descriptor inheritance races, SIGPIPE suppression, test-directory cleanup safety, and availability risks; these have not been established as serious vulnerabilities or resolved. The review synthesized fragment reports without inspecting source or rerunning reviews, and whole-crate coverage, cross-file invariants, resolved dependencies, and artifact/publisher provenance remain unverified."
 
 [[exemptions.zvariant]]
 version = "5.5.3"

@@ -20,7 +20,7 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 #![allow(unexpected_cfgs)]
 
-use std::ffi::CString;
+use std::ffi::{CString, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
@@ -496,52 +496,74 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
     // which will be '0' (root) for the tasks daemon because it runs as root. Force
     // the ccache name.
     // TODO: Add a new himmelblau.conf option to define the ccache name
-    let ccname = Some(format!("KEYRING:persistent:{}", uid));
+    let ccname = OsString::from(format!("KEYRING:persistent:{}", uid));
 
     debug!(?ccname, "Storing kerberos ticket in credential cache");
 
     let guard = uzers::switch::switch_user_group(uid, gid)
         .map_err(|e| format!("Failed to switch user/group: {}", e))?;
 
-    let mut ccache = match libkrimes::ccache::resolve(ccname.as_deref()) {
-        Ok(ccache) => ccache,
-        Err(e) => {
-            drop(guard);
-            let msg = format!("Failed to resolve credential cache {:?}: {:?}", ccname, e);
-            return Err(msg);
-        }
-    };
-
-    match ccache.init(tgt.name(), None) {
-        Ok(_) => (),
-        Err(e) => {
-            drop(guard);
-            let msg = format!("Failed to init credential cache {:?}: {:?}", ccname, e);
-            return Err(msg);
-        }
-    }
-
-    match ccache.store(tgt) {
-        Ok(_) => (),
-        Err(e) => {
-            drop(guard);
-            let msg = format!("Failed to store TGT in credential cache: {:?}", e);
-            return Err(msg);
-        }
-    }
+    // Prefer a subsidiary that already matches this principal. Using
+    // collection.primary() for every store would re-init the same cache and clear
+    // the other principal when KerberosTGTs stores both cloud and AD tickets.
+    //
+    // When find() misses: use primary() if it is empty/uninitialized so default
+    // lookups discover the ticket (new_unique() does not set primary). If primary
+    // already holds a different principal, create a unique subsidiary instead.
+    let res = libkrimes::ccache::resolve(Some(&ccname))
+        .map_err(|e| format!("Failed to resolve credential cache {:?}: {:?}", ccname, e))
+        .and_then(|cache| match cache {
+            libkrimes::ccache::ResolvedCredentialCache::Collection(collection) => match collection
+                .find(tgt.name())
+            {
+                Ok(cc) => Ok(cc),
+                Err(libkrimes::error::KrbError::CredentialCacheNotFound) => {
+                    match collection.primary() {
+                        Ok(primary) => match primary.principal() {
+                            Err(libkrimes::error::KrbError::CredentialCacheNotFound) => Ok(primary),
+                            Ok(existing) if &existing == tgt.name() => Ok(primary),
+                            Ok(_) => collection.new_unique(),
+                            Err(e) => Err(e),
+                        },
+                        Err(e) => Err(e),
+                    }
+                }
+                Err(e) => Err(e),
+            }
+            .map_err(|e| format!("Failed to get subsidiary credential cache: {:?}", e))
+            .and_then(|mut cc| {
+                cc.init(tgt.name(), None)
+                    .map_err(|e| format!("Failed to init credential cache: {:?}", e))
+                    .and_then(|_| {
+                        cc.store(tgt).map_err(|e| {
+                            format!("Failed to store credentials in credential cache: {:?}", e)
+                        })
+                    })
+            }),
+            libkrimes::ccache::ResolvedCredentialCache::Subsidiary(mut cc) => cc
+                .init(tgt.name(), None)
+                .map_err(|e| format!("Failed to init credential cache: {:?}", e))
+                .and_then(|_| {
+                    cc.store(tgt).map_err(|e| {
+                        format!("Failed to store credentials in credential cache: {:?}", e)
+                    })
+                }),
+        });
 
     drop(guard);
 
-    Ok(())
+    res
 }
 
 fn write_kerberos_config_snippet(
     top_level_names: Option<String>,
     tenant_id: &str,
+    authority_host: &str,
 ) -> Result<(), String> {
     write_kerberos_config_snippet_to(
         top_level_names,
         tenant_id,
+        authority_host,
         Path::new(DEFAULT_KERBEROS_CONF_DIR),
     )
 }
@@ -549,6 +571,7 @@ fn write_kerberos_config_snippet(
 fn write_kerberos_config_snippet_to(
     top_level_names: Option<String>,
     tenant_id: &str,
+    authority_host: &str,
     krb_conf_dir: &Path,
 ) -> Result<(), String> {
     if tenant_id.is_empty() {
@@ -584,7 +607,7 @@ fn write_kerberos_config_snippet_to(
         .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
 
     let realms = format!(
-        "[realms]\n\tKERBEROS.MICROSOFTONLINE.COM = {{\n\t\tkdc = https://login.microsoftonline.com/{tenant_id}/kerberos\n\t}}\n"
+        "[realms]\n\tKERBEROS.MICROSOFTONLINE.COM = {{\n\t\tkdc = https://{authority_host}/{tenant_id}/kerberos\n\t}}\n"
     );
     file.write_all(realms.as_bytes())
         .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
@@ -673,16 +696,16 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
-            Some(Ok(TaskRequest::KerberosConfig(top_level_names, tenant_id))) => {
+            Some(Ok(TaskRequest::KerberosConfig(top_level_names, tenant_id, authority_host))) => {
                 debug!("Received task -> KerberosConfig(...)");
 
-                let response = match tenant_id {
-                    Some(t) => match write_kerberos_config_snippet(top_level_names, &t) {
+                let response = match (tenant_id, authority_host) {
+                    (Some(t), Some(host)) => match write_kerberos_config_snippet(top_level_names, &t, &host) {
                         Ok(_) => TaskResponse::Success(0),
                         Err(msg) => TaskResponse::Error(msg),
                     },
-                    None => TaskResponse::Error(
-                        "Failed to write Kerberos config snippet, no tenant_id".to_string(),
+                    _ => TaskResponse::Error(
+                        "Failed to write Kerberos config snippet, missing tenant_id or authority_host".to_string(),
                     ),
                 };
 
@@ -1180,6 +1203,7 @@ mod tests {
         write_kerberos_config_snippet_to(
             Some(".example.com, example.com, invalid:realm".to_string()),
             TENANT_ID,
+            "login.microsoftonline.us",
             &krb_conf_dir,
         )
         .expect("expected kerberos config snippet to be written");
@@ -1190,7 +1214,7 @@ mod tests {
             fs::read_to_string(snippet_path).expect("expected kerberos config snippet to exist");
         assert!(contents.contains("[libdefaults]\n\tdns_canonicalize_hostname = false\n"));
         assert!(contents.contains(&format!(
-            "\t\tkdc = https://login.microsoftonline.com/{TENANT_ID}/kerberos"
+            "\t\tkdc = https://login.microsoftonline.us/{TENANT_ID}/kerberos"
         )));
         assert!(contents.contains("\t.example.com = KERBEROS.MICROSOFTONLINE.COM"));
         assert!(contents.contains("\texample.com = KERBEROS.MICROSOFTONLINE.COM"));
@@ -1202,8 +1226,13 @@ mod tests {
         let krb_conf_dir =
             tempfile::NamedTempFile::new().expect("failed to create temp config path");
 
-        let err = write_kerberos_config_snippet_to(None, TENANT_ID, krb_conf_dir.path())
-            .expect_err("expected non-directory config path to be rejected");
+        let err = write_kerberos_config_snippet_to(
+            None,
+            TENANT_ID,
+            "login.microsoftonline.com",
+            krb_conf_dir.path(),
+        )
+        .expect_err("expected non-directory config path to be rejected");
 
         assert!(err.contains("is not a directory"));
     }
@@ -1213,8 +1242,13 @@ mod tests {
         let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
         let krb_conf_dir = tmpdir.path().join("krb5.conf.d");
 
-        let err = write_kerberos_config_snippet_to(None, "not-a-tenant-id", &krb_conf_dir)
-            .expect_err("expected invalid tenant ID to be rejected");
+        let err = write_kerberos_config_snippet_to(
+            None,
+            "not-a-tenant-id",
+            "login.microsoftonline.com",
+            &krb_conf_dir,
+        )
+        .expect_err("expected invalid tenant ID to be rejected");
 
         assert!(err.contains("Failed to validate tenant ID"));
         assert!(!krb_conf_dir.exists());

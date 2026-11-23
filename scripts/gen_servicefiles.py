@@ -50,6 +50,9 @@ MINVER = {
     "FileDescriptorStoreMax": 234,
     "StartLimitIntervalSec": 229,
     "StartLimitBurst": 229,
+    # $SYSTEMD_ACTIVATION_UNIT is available from v240 and prevents NSS
+    # recursion during socket-activated daemon startup (#1930).
+    "SocketActivation": 240,
 }
 
 def detect_systemd_version():
@@ -201,6 +204,12 @@ def main():
         hsm_pin_init_wants = "Wants=himmelblau-hsm-pin-init.service"
 
     # ---- Compose himmelblaud.service ----
+    socket_units = "himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket"
+    socket_activation = supported("SocketActivation")
+    daemon_after_sockets = " " + socket_units if socket_activation else ""
+    daemon_requires = "Requires=" + socket_units if socket_activation else ""
+    daemon_sockets = "Sockets=" + socket_units if socket_activation else ""
+    daemon_runtime_directory = "" if socket_activation else "RuntimeDirectory=himmelblaud"
     daemon_private_devices = "PrivateDevices=false" if supported("PrivateDevices") else ""
     daemon_hardening = [h for h in hardening if h != "ProtectSystem=strict"] + ["ProtectSystem=strict"] if supported("ProtectSystemStrict") else [h for h in hardening if h != "ProtectSystem=strict"]
 
@@ -236,8 +245,8 @@ def main():
 
 [Unit]
 Description=Himmelblau Authentication Daemon
-After={' '.join(base_after)}{' ' + hsm_pin_init_after if hsm_pin_init_after else ''} himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket
-Requires=himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket
+After={' '.join(base_after)}{' ' + hsm_pin_init_after if hsm_pin_init_after else ''}{daemon_after_sockets}
+{daemon_requires}
 Before={' '.join(base_before)}
 Wants={' '.join(base_wants)}
 {hsm_pin_init_wants}
@@ -254,12 +263,13 @@ Conflicts=nscd.service
 [Service]
 {os.linesep.join(service_user_block)}
 {os.linesep.join(dirs_block)}
+{daemon_runtime_directory}
 
 {type_line}
 {'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc' if supported('LoadCredentialEncrypted') else ''}
 {'Environment=HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin' if supported('LoadCredentialEncrypted') else ''}
 ExecStart=/usr/sbin/himmelblaud
-Sockets=himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket
+{daemon_sockets}
 Restart=on-failure
 RestartSec=500ms
 WatchdogSec=120s
@@ -273,6 +283,8 @@ WatchdogSec=120s
 PrivateTmp=true
 # We have to disable this to allow tpmrm0 access for tpm binding.
 {daemon_private_devices}
+# Avoid NSS recursion through proxy
+InaccessiblePaths=-/run/nscd/socket -/var/run/nscd/socket
 
 [Install]
 WantedBy=multi-user.target
