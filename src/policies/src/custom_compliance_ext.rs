@@ -27,7 +27,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
-use std::process::{ChildStderr, ChildStdout, Command, Output, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 use tempfile::{NamedTempFile, TempPath};
 use tracing::{debug, error};
@@ -201,11 +201,14 @@ fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output> {
         out.drain();
         err.drain();
 
-        if status.is_none() {
-            status = child.try_wait().context("Failed to wait on script")?;
-            if status.is_some() {
-                drain_deadline = Some(deadline.max(Instant::now() + READER_GRACE));
+        if status.is_none() && child_has_exited(&child).context("Failed to observe script exit")? {
+            // Leave the group leader unreaped until after signalling. Its PID
+            // cannot be reused as an unrelated process group in that interval.
+            unsafe {
+                libc::killpg(pgid, libc::SIGKILL);
             }
+            status = Some(child.wait().context("Failed to wait on script")?);
+            drain_deadline = Some(deadline.max(Instant::now() + READER_GRACE));
         }
 
         if status.is_some() && !out.open() && !err.open() {
@@ -240,12 +243,8 @@ fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output> {
                     stderr_open = err.open(),
                     "Script exited but left a process holding its pipes open; using partial output"
                 );
-                // Best effort: anything still in the group gets cleaned up. A
-                // process that called setsid() is out of reach, but closing our
-                // read ends means we never block on it either way.
-                unsafe {
-                    libc::killpg(pgid, libc::SIGKILL);
-                }
+                // The original process group was signalled before reaping the
+                // leader. Escaped processes are out of reach; close our pipes.
                 break;
             }
             _ => {}
@@ -273,6 +272,32 @@ fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output> {
     })
 }
 
+/// Observe exit without reaping, preserving the process-group leader's PID
+/// until its remaining group members have been signalled.
+fn child_has_exited(child: &Child) -> io::Result<bool> {
+    // SAFETY: zero is a valid initial value for siginfo_t; waitid fills it.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    loop {
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id() as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == 0 {
+            break;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+    // SAFETY: waitid initialized siginfo_t; a zero PID means no exit yet.
+    Ok(unsafe { info.si_pid() } != 0)
+}
+
 /// Wait up to `timeout_ms` for any still-open pipe to become readable.
 ///
 /// Purely a throttle for the drain loop: errors are not actionable, since the
@@ -298,6 +323,8 @@ fn poll_readable(pipes: &[&Pipe], timeout_ms: libc::c_int) {
 
 #[cfg(test)]
 mod bounded_output_tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
     use super::*;
 
     fn shell(script: &str) -> Command {
@@ -339,6 +366,37 @@ mod bounded_output_tests {
         assert!(output.status.success());
         assert_eq!(output.stdout, b"{}");
         assert_eq!(output.stderr.len(), MAX_STREAM_BYTES);
+    }
+
+    #[test]
+    fn normal_exit_kills_background_group_members_with_closed_pipes() {
+        let output = output_with_timeout(
+            shell("sleep 60 </dev/null >/dev/null 2>&1 & echo $!"),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(output.status.success());
+        let pid: u32 = String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let stat = format!("/proc/{pid}/stat");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match std::fs::read_to_string(&stat) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+                Ok(content)
+                    if content
+                        .rsplit_once(") ")
+                        .is_some_and(|(_, rest)| rest.starts_with('Z')) =>
+                {
+                    break
+                }
+                _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                other => panic!("background process still running: {other:?}"),
+            }
+        }
     }
 }
 

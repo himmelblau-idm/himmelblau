@@ -20,12 +20,14 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 #![allow(unexpected_cfgs)]
 
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 use std::{fs, io};
 
@@ -59,6 +61,26 @@ use walkdir::WalkDir;
 use himmelblau_unix_common::selinux_util;
 
 struct TaskCodec;
+
+// Keep one asynchronous lock per icon path. Weak entries are removed as tasks
+// complete, so accounts do not accumulate permanently in the daemon.
+type PhotoLock = tokio::sync::Mutex<()>;
+type PhotoLocks = HashMap<String, Weak<PhotoLock>>;
+
+fn profile_photo_lock(path: &str) -> Arc<PhotoLock> {
+    static LOCKS: OnceLock<Mutex<PhotoLocks>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    locks.retain(|_, lock| lock.strong_count() != 0);
+    if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(PhotoLock::new(()));
+    locks.insert(path.to_owned(), Arc::downgrade(&lock));
+    lock
+}
 
 impl Decoder for TaskCodec {
     type Error = io::Error;
@@ -673,6 +695,8 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         // Set the profile picture
                         if let Some(domain) = domain {
                             let filename = format!("/var/lib/AccountsService/icons/{}", account_id);
+                            let photo_lock = profile_photo_lock(&filename);
+                            let _photo_guard = photo_lock.lock().await;
                             match File::create(&filename) {
                                 Ok(file) => {
                                     let authority_host = cfg.get_authority_host(domain);
@@ -993,6 +1017,20 @@ mod tests {
 
     /// The exact payload from GHSA-x259-23ph-65m5.
     const ADVISORY_PAYLOAD: &str = "padding:100000:65536\nattacker:0:65536\npadding";
+
+    #[tokio::test]
+    async fn photo_lock_serializes_matching_paths_without_blocking_other_accounts() {
+        let first = profile_photo_lock("/test/icons/alice");
+        let same = profile_photo_lock("/test/icons/alice");
+        let other = profile_photo_lock("/test/icons/bob");
+        assert!(Arc::ptr_eq(&first, &same));
+        assert!(!Arc::ptr_eq(&first, &other));
+        let guard = first.lock().await;
+        assert!(same.try_lock().is_err());
+        assert!(other.try_lock().is_ok());
+        drop(guard);
+        assert!(same.try_lock().is_ok());
+    }
 
     #[test]
     fn validate_subid_username_accepts_legitimate_names() {
