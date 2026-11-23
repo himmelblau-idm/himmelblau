@@ -1881,7 +1881,7 @@ sys.exit(int(sys.argv[1]))
         self.assertIn("b" * 40, body)
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "123"}):
             body = sm.build_pr_body({**value, "already_covered": [{"crate": "noise"}] * 500})
-        self.assertLessEqual(len(body.encode()), 2400)
+        self.assertLessEqual(len(body.encode()), 24000)
         for heading in ("Summary", "What Changed", "Testing", "Automated Checks", "System Integration Impact", "Checklist"):
             self.assertIn(f"## {heading}", body)
         self.assertIn("https://github.com/o/r/actions/runs/123", body)
@@ -1933,6 +1933,66 @@ sys.exit(int(sys.argv[1]))
                     sm.phase_publish(mock.Mock(), state, mock.Mock())
                 self.assertEqual(state.load()["pull_request"], 19)
                 self.assertIn("preserved", state.load()["events"][-1]["message"])
+
+
+class PrSummaryChecklistTests(unittest.TestCase):
+    def state(self):
+        return {"main_head": "a" * 40, "cutoff": "c" * 40,
+                "manual_audit_work": [{"gate": "cargo-audit", "reason": "check-failed"}],
+                "unresolved_advisories": [{"crate": "url", "version": "2.5.8"}],
+                "gate_results": ["clean-build: passed", "cargo-vet: passed"]}
+
+    def test_audit_draft_names_actual_blocker_and_known_context(self):
+        body = sm.build_pr_body(self.state())
+        self.assertIn("DRAFT: final cargo-audit requires manual work", body)
+        self.assertIn("All maintenance stages completed", body)
+        self.assertNotIn("incomplete maintenance stages or audits", body)
+        self.assertIn("failure details were not retained", body)
+        self.assertIn("url 2.5.8", body)
+        self.assertIn("may not explain the final audit failure", body)
+        self.assertIn("cargo-vet: passed", body)
+        self.assertIn("old checkpoint", body)
+
+    def test_all_sixteen_pending_backports_have_tasks_without_applied_noise(self):
+        rows = [{"sha": f"{i:040x}", "summary": f"Fix {i}", "outcome": "pending",
+                 "reason": "conflict could not be safely adapted"} for i in range(16)]
+        value = {**self.state(), "backport_outcomes": rows,
+                 "backports_deferred": [row["sha"] for row in rows],
+                 "backports_applied": ["f" * 40],
+                 "backports_conflict_details": [{"sha": rows[0]["sha"], "paths": ["src/example.rs"]}]}
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r"}):
+            body = sm.build_pr_body(value)
+        self.assertEqual(body.count("- [ ] Resolve the conflict"), 16)
+        self.assertIn("Conflicting paths: src/example.rs", body)
+        self.assertIn("https://github.com/o/r/commit/", body)
+        self.assertNotIn("f" * 40, body)
+        self.assertLessEqual(len(body.encode()), 24000)
+
+    def test_tool_error_context_and_uncertain_relevance_are_actionable(self):
+        value = {**self.state(), "backport_review_required": [
+            {"sha": "b" * 40, "reason": "unclassified-error", "check": "bug-fix", "stage": "main-patch"},
+            {"sha": "d" * 40, "reason": "uncertain"}]}
+        body = sm.build_pr_body(value)
+        self.assertIn("Investigate the deferred attempt", body)
+        self.assertIn("bug-fix / main-patch", body)
+        self.assertIn("Decide whether stable needs this fix", body)
+
+    def test_large_backlog_keeps_explicit_omission_and_cutoff(self):
+        value = {**self.state(), "backports_deferred": [f"{i:040x}" for i in range(500)]}
+        body = sm.build_pr_body(value, max_bytes=4096)
+        self.assertLessEqual(len(body.encode()), 4096)
+        self.assertIn("omitted; consult report.md/report.json", body)
+        self.assertTrue(body.endswith(sm.MARKER + " " + "c" * 40))
+
+    def test_recovery_and_incomplete_summaries_keep_tasks_and_avoid_success_claim(self):
+        value = {**self.state(), "incomplete_stages": ["backports-2"]}
+        body = sm.build_pr_body(value)
+        self.assertIn("incomplete stages: backports-2", body)
+        self.assertNotIn("All maintenance stages completed", body)
+        body = sm.build_pr_body({**value, "phase_failures": [{"phase": "prepare", "gate": "image", "reason": "failed"}]})
+        self.assertIn("Investigate `prepare` failure (image): failed", body)
+        self.assertIn("Re-run and review `backports-2`", body)
+        self.assertIn("cargo-audit:", body)
 
 
 class VersionPolicyTests(unittest.TestCase):
@@ -5857,7 +5917,7 @@ class ManualFinalAuditTests(unittest.TestCase):
                 self.assertTrue(payload["draft"])
                 self.assertIn("Manual audit work required", payload["title"])
                 body = payload["body"]
-                self.assertLessEqual(len(body.encode()), 2400)
+                self.assertLessEqual(len(body.encode()), 24000)
                 self.assertIn("cargo-audit:", body)
                 self.assertIn("cargo-vet:", body)
                 self.assertNotIn("all publication gates passed", body)
@@ -7100,6 +7160,7 @@ if __name__ == "__main__":
         unittest.main(verbosity=2)
     finally:
         faulthandler.cancel_dump_traceback_later()
+
 
 
 
