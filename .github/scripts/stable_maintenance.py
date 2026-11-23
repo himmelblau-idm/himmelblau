@@ -4199,6 +4199,11 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
     return lines
 
 
+def pr_summary_text(text: Any) -> str:
+    """Sanitize one summary field without discarding recorded context."""
+    return re.sub(r"[^A-Za-z0-9 _.,():/+=-]", "?", str(text))
+
+
 def pr_manual_tasks(value: Mapping[str, Any]) -> list[str]:
     """Describe recorded work only; never infer approval or publish raw diagnostics."""
     lines: list[str] = []
@@ -4214,14 +4219,14 @@ def pr_manual_tasks(value: Mapping[str, Any]) -> list[str]:
     advisories = value.get("unresolved_advisories", [])
     if advisories:
         lines.append("Recorded unresolved dependency advisories (may not explain the final audit failure):")
-        for row in advisories[:20]:
-            lines.append(f"- {display_summary(row.get('crate', 'unknown'))} {display_summary(row.get('version', 'unknown'))}")
+        for row in advisories:
+            lines.append(f"- {pr_summary_text(row.get('crate', 'unknown'))} {pr_summary_text(row.get('version', 'unknown'))}")
     for stage in value.get("incomplete_stages", []):
-        lines.append(f"- [ ] Re-run and review `{display_summary(stage)}`; checkpoint was not produced.")
+        lines.append(f"- [ ] Re-run and review `{pr_summary_text(stage)}`; checkpoint was not produced.")
     for row in value.get("phase_failures", []):
-        phase = display_summary(row.get("phase", "unknown"))
-        gate = display_summary(row.get("gate", ""))
-        reason = display_summary(row.get("reason", "failed"))
+        phase = pr_summary_text(row.get("phase", "unknown"))
+        gate = pr_summary_text(row.get("gate", ""))
+        reason = pr_summary_text(row.get("reason", "failed"))
         lines.append(f"- [ ] Investigate `{phase}` failure{(' (' + gate + ')') if gate else ''}: {reason}; rerun full release validation.")
 
     if manual_audit_work(value) or value.get("incomplete_stages") or value.get("phase_failures"):
@@ -4233,19 +4238,27 @@ def pr_manual_tasks(value: Mapping[str, Any]) -> list[str]:
                if row.get("outcome") == "pending"}
     for row in value.get("backport_review_required", []):
         pending.setdefault(row["sha"], {}).update(row)
-    for key, reason in (("backports_deferred", "deferred"), ("backports_build_failed", "build failed; attempted backport reverted")):
-        for item in value.get(key, []):
-            row = item if isinstance(item, dict) else {"sha": item}
-            pending.setdefault(row["sha"], {"reason": reason, **row})
+    for item in value.get("backports_deferred", []):
+        row = item if isinstance(item, dict) else {"sha": item}
+        pending.setdefault(row["sha"], {"reason": "deferred", **row})
+    for item in value.get("backports_build_failed", []):
+        row = item if isinstance(item, dict) else {"sha": item}
+        entry = pending.setdefault(row["sha"], {})
+        entry.update(row)
+        entry["build_reverted"] = True
+        if entry.get("reason") in (None, "pending", "deferred"):
+            entry["reason"] = "build failed"
     conflicts = {row["sha"]: row.get("paths", []) for row in value.get("backports_conflict_details", [])}
     if pending:
         lines += ["", f"### Backport decisions ({len(pending)})", "",
                   "These fixes were not included. Resolve or explicitly defer each item; backlog is separate from final validation."]
     for sha, row in pending.items():
         sha = require_sha(sha)
-        reason = display_summary(row.get("reason", "pending"))
-        summary = display_summary(row.get("summary", value.get("backport_summaries", {}).get(sha, "")))
-        if "conflict" in reason:
+        reason = pr_summary_text(row.get("reason", "pending"))
+        summary = pr_summary_text(row.get("summary", value.get("backport_summaries", {}).get(sha, "")))
+        if row.get("build_reverted"):
+            action = "Fix the failed build and retry, or document a deferral"
+        elif "conflict" in reason:
             action = "Resolve the conflict or document why stable does not need this fix"
         elif reason == "uncertain":
             action = "Decide whether stable needs this fix; backport or document why it does not"
@@ -4253,9 +4266,10 @@ def pr_manual_tasks(value: Mapping[str, Any]) -> list[str]:
             action = "Investigate the deferred attempt and retry, or document a deferral"
         repo = os.environ.get("GITHUB_REPOSITORY", "")
         identity = f"[{sha}](https://github.com/{repo}/commit/{sha})" if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) else sha
-        context = " / ".join(display_summary(row[k]) for k in ("check", "stage") if row.get(k))
-        paths = ", ".join(display_summary(path) for path in conflicts.get(sha, [])[:8])
+        context = " / ".join(pr_summary_text(row[k]) for k in ("check", "stage") if row.get(k))
+        paths = ", ".join(pr_summary_text(path) for path in conflicts.get(sha, []))
         lines.append(f"- [ ] {action}: {identity} {summary}. Reason: {reason}."
+                     + (" Attempted backport was reverted after build failure." if row.get("build_reverted") else "")
                      + (f" Context: {context}." if context else "")
                      + (f" Conflicting paths: {paths}." if paths else ""))
     remaining = len(value.get("backport_remaining", []))
@@ -4286,9 +4300,9 @@ def build_recovery_pr_body(value: Mapping[str, Any]) -> str:
              "", "## Manual work", ""]
     lines += ["- [ ] Review recovered changes and run every release gate before release.",
               "", "## Testing", "", "Checks recorded before failure:"]
-    lines += ["- " + result for result in value.get("gate_results", [])[:12]]
+    lines += ["- " + result for result in value.get("gate_results", [])]
     lines += ["Later checks may not have run. No claim of release readiness is made."]
-    append_pr_tasks(lines, [f"{MARKER} {maintenance_main_through(value)}"], value, 24000)
+    append_pr_tasks(lines, [f"{MARKER} {maintenance_main_through(value)}"], value, 60000)
     lines += ["", f"{MARKER} {maintenance_main_through(value)}"]
     repo, run = os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_RUN_ID", "")
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) and run.isdigit():
@@ -4296,7 +4310,7 @@ def build_recovery_pr_body(value: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 24000) -> str:
+def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 60000) -> str:
     manual = manual_audit_work(value)
     if value.get("phase_failures"):
         return build_recovery_pr_body(value)
@@ -4348,7 +4362,7 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 24000) -> str:
         "- [ ] Maintainer review of backports and integration impact.", "", marker,
     ]
     if value.get("gate_results"):
-        lines += ["", "Recorded final checks: " + "; ".join(display_summary(result) for result in value["gate_results"][:12]) + "."]
+        lines += ["", "Recorded final checks: " + "; ".join(pr_summary_text(result) for result in value["gate_results"]) + "."]
     append_pr_tasks(lines, ending, value, max_bytes)
     body = "\n".join([*lines, *ending])
     if len(body.encode()) > max_bytes:

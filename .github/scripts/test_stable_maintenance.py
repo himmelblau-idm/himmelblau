@@ -1984,6 +1984,52 @@ class PrSummaryChecklistTests(unittest.TestCase):
         self.assertIn("omitted; consult report.md/report.json", body)
         self.assertTrue(body.endswith(sm.MARKER + " " + "c" * 40))
 
+    def test_all_advisories_reach_body_budget_including_beyond_twenty(self):
+        advisories = [{"crate": f"crate-{i}", "version": "1.2.3"} for i in range(1000)]
+        body = sm.build_pr_body({**self.state(), "unresolved_advisories": advisories})
+        for row in advisories:
+            self.assertIn(f"- {row['crate']} {row['version']}\n", body)
+        self.assertNotIn("omitted", body)
+        # A deliberately small budget reports every line excluded by budgeting.
+        tasks = sm.pr_manual_tasks({"unresolved_advisories": advisories})
+        lines = []
+        sm.append_pr_tasks(lines, [], {"unresolved_advisories": advisories}, 1000)
+        rendered = [line for line in lines if line in tasks]
+        self.assertIn(f"{len(tasks) - len(rendered)} additional checklist/context lines omitted", lines[-1])
+
+    def test_all_conflict_paths_and_full_summary_fields_are_retained(self):
+        sha = "b" * 40
+        paths = [f"src/path-{i}.rs" for i in range(30)]
+        summary = "long summary " * 30 + "END"
+        value = {**self.state(), "backport_outcomes": [{"sha": sha, "outcome": "pending",
+                 "reason": "conflict could not be safely adapted", "summary": summary}],
+                 "backports_conflict_details": [{"sha": sha, "paths": paths}],
+                 "gate_results": [f"gate-{i}: passed" for i in range(30)]}
+        for recovery in (False, True):
+            with self.subTest(recovery=recovery):
+                body = sm.build_pr_body({**value, **({"phase_failures": [{"phase": "prepare"}]} if recovery else {})})
+                self.assertIn(summary, body)
+                for path in paths:
+                    self.assertIn(path, body)
+                for gate in value["gate_results"]:
+                    self.assertIn(gate, body)
+
+    def test_build_failure_metadata_overrides_deferred_placeholder_without_duplicate(self):
+        sha = "b" * 40
+        for outcome in ([], [{"sha": sha, "outcome": "pending", "reason": "deferred", "summary": "Fix example"}]):
+            for failure in (sha, {"sha": sha, "reason": "isolated-build-failed", "stage": "locked-build"}):
+                with self.subTest(outcome=outcome, failure=failure):
+                    value = {**self.state(), "backport_outcomes": outcome,
+                             "backports_deferred": [sha], "backports_build_failed": [failure]}
+                    body = sm.build_pr_body(value)
+                    self.assertEqual(body.count(sha), 1)
+                    self.assertIn("Fix the failed build and retry", body)
+                    self.assertIn("Attempted backport was reverted after build failure", body)
+                    self.assertNotIn("Reason: deferred", body)
+                    if isinstance(failure, dict):
+                        self.assertIn("Reason: isolated-build-failed", body)
+                        self.assertIn("Context: locked-build", body)
+
     def test_recovery_and_incomplete_summaries_keep_tasks_and_avoid_success_claim(self):
         value = {**self.state(), "incomplete_stages": ["backports-2"]}
         body = sm.build_pr_body(value)
