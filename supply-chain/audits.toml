@@ -319,6 +319,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.1 -> 0.5.0"
 
+[[audits.cookie]]
+who = "Codex (automated via Azure OpenAI)"
+criteria = "safe-to-deploy"
+delta = "0.18.1 -> 0.18.3"
+
 [[audits.cosey]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
