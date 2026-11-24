@@ -73,7 +73,7 @@ attempts, so the rest of the stack (for example
 The default, 0, asks again after every denial.
 Set \f[CR]max_tries=1\f[R] for display managers such as SDDM that
 answer prompts without the user and would otherwise resubmit the same
-password indefinitely. Network transport failures switch to the configured offline authentication method without counting as a denial. Invalid limits are ignored. If repeated options conflict, the smallest positive limit wins; zero does not override a positive limit.
+password indefinitely. Eligible online sessions attempt the configured offline authentication method after a network transport failure without counting it as a denial. Sessions with a staged identity, online-only credential handlers, forced reauthentication, or an already-offline state do not fall back. Authentication fails if offline initialization fails. Invalid limits are ignored. If repeated options conflict, the smallest positive limit wins; zero does not override a positive limit.
 .IP \(bu 2
 \f[B]try_unseal\f[R]
 .PD 0

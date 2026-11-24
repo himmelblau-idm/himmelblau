@@ -868,12 +868,12 @@ fn handle_pam_auth_response_success() -> PamWhatNext {
 fn handle_pam_auth_response_denied(state: &mut AuthenticateState, msg: &str) -> PamWhatNext {
     state.msg_printer.print_text(msg);
     state.denials = state.denials.saturating_add(1);
+    thread::sleep(Duration::from_secs(2));
     if state.opts.max_tries != 0 && state.denials >= state.opts.max_tries {
         // Callers that answer prompts without the user (display managers)
         // would otherwise resubmit the same credentials forever.
         return PamWhatNext::Finish(PamResultCode::PAM_MAXTRIES);
     }
-    thread::sleep(Duration::from_secs(2));
     let req = ClientRequest::PamAuthenticateInit(
         state.account_id.to_string(),
         state.service.to_string(),
