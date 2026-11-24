@@ -143,7 +143,7 @@ impl StateMachine {
                     None => return,
                 };
                 if args.internal_uv_only
-                    && dev.get_authenticator_info().is_none_or(|i| {
+                    && dev.get_authenticator_info().map_or(true, |i| {
                         i.options.user_verification != Some(true)
                             || !i.supports_hmac_secret()
                             || (i.options.bio_enroll.is_none()
@@ -205,7 +205,7 @@ impl StateMachine {
                     None => return,
                 };
                 if args.internal_uv_only
-                    && dev.get_authenticator_info().is_none_or(|i| {
+                    && dev.get_authenticator_info().map_or(true, |i| {
                         i.options.user_verification != Some(true)
                             || !i.supports_hmac_secret()
                             || (i.options.bio_enroll.is_none()

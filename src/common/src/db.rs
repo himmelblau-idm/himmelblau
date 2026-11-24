@@ -824,7 +824,14 @@ impl<'a> CacheTxn for DbTxn<'a> {
             "/fingerprint_reservation",
         ] {
             self.conn.execute(
-                "DELETE FROM hsm_data_t WHERE EXISTS (SELECT 1 FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber) AND (key = lower(name) || :suffix OR key = lower(spn) || :suffix))",
+                "WITH conflicts AS ( \
+                    SELECT name, spn FROM account_t \
+                    WHERE uuid != :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber) \
+                ) \
+                DELETE FROM hsm_data_t WHERE key IN ( \
+                    SELECT lower(name) || :suffix FROM conflicts \
+                    UNION ALL SELECT lower(spn) || :suffix FROM conflicts \
+                )",
                 named_params!{":uuid":&account_uuid,":name":&account.name,":spn":&account.spn,":gidnumber":&account.gidnumber,":suffix":suffix},
             ).map_err(|e|self.sqlite_error("delete reassigned account fingerprints",&e))?;
         }
