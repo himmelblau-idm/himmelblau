@@ -75,7 +75,7 @@ jobs:
             libunistring-dev \
             libgirepository1.0-dev \
             libcairo2-dev \
-            libgdk-pixbuf2.0-dev \
+            libgdk-pixbuf-xlib-2.0-dev \
             libsoup-3.0-dev \
             libpango1.0-dev \
             libatk1.0-dev \
@@ -161,7 +161,7 @@ jobs:
             libunistring-dev \
             libgirepository1.0-dev \
             libcairo2-dev \
-            libgdk-pixbuf2.0-dev \
+            libgdk-pixbuf-xlib-2.0-dev \
             libsoup-3.0-dev \
             libpango1.0-dev \
             libatk1.0-dev \
