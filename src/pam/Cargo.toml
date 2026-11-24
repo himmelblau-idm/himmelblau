@@ -37,14 +37,6 @@ assets = [
 recommends = ["patch"]
 maintainer-scripts = "scripts"
 
-# Ubuntu ships the OpenSSH PAM message fix; keep the default profile unchanged.
-# Debian needs the polling workaround. Select this variant for Debian builds only.
-[package.metadata.deb.variants.debian]
-name = "pam-himmelblau"
-merge-assets.by.dest = [
-  ["../../platform/debian/pam-config", "usr/share/pam-configs/himmelblau", "644"],
-]
-
 [package.metadata.generate-rpm]
 name = "pam-himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"

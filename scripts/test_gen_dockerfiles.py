@@ -1,5 +1,4 @@
 import importlib.util
-import shlex
 import tomllib
 import unittest
 from pathlib import Path
@@ -28,10 +27,6 @@ class DebianPamProfileTests(unittest.TestCase):
         default_assets = {asset[1]: asset for asset in metadata["assets"]}
         self.assertEqual(default_assets[destination],
                          ["../../platform/ubuntu/pam-config", destination, "644"])
-        variant = metadata["variants"]["debian"]
-        self.assertEqual(variant["name"], metadata["name"])
-        self.assertEqual(variant["merge-assets"]["by"]["dest"],
-                         [["../../platform/debian/pam-config", destination, "644"]])
         for distro, config in gen_dockerfiles.DISTS.items():
             if config["family"] != "deb" or distro == "test":
                 continue
@@ -42,23 +37,19 @@ class DebianPamProfileTests(unittest.TestCase):
                     self.assertTrue(commands)
                     pam = next(line for line in commands if "-p pam_himmelblau" in line)
                     expected = distro.startswith("debian")
-                    self.assertEqual("--variant=debian" in pam, expected)
+                    copy_profile = "cp platform/debian/pam-config platform/ubuntu/pam-config"
+                    self.assertEqual(copy_profile in pam, expected)
+                    self.assertNotIn("--variant", pam)
+                    if expected:
+                        self.assertIn("trap 'mv platform/ubuntu/pam-config.original", pam)
                     for command in commands:
                         if command != pam:
-                            self.assertNotIn("--variant", command)
-                    assets = dict(default_assets)
-                    if "--variant=debian" in shlex.split(pam):
-                        assets.update({asset[1]: asset for asset in variant["merge-assets"]["by"]["dest"]})
-                    profile = (root / "src/pam" / assets[destination][0]).read_text()
-                    self.assertEqual("mfa_poll_prompt" in profile, expected)
-                    self.assertEqual(set(assets), set(default_assets))
-                    for dest, asset in default_assets.items():
-                        if dest != destination:
-                            self.assertEqual(assets[dest], asset)
+                            self.assertNotIn(copy_profile, command)
+
 
     def test_unknown_deb_derivative_does_not_inherit_debian_workaround(self):
         command = gen_dockerfiles.build_deb_final_cmd([], "derivative1")
-        self.assertNotIn("--variant", command)
+        self.assertNotIn("cp platform/debian/pam-config", command)
 
 
 class Arm64RpmDockerfileTests(unittest.TestCase):

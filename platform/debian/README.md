@@ -17,14 +17,11 @@ The runtime service filter (`mfa_poll_prompt_services`, default `ssh,cockpit`)
 still applies to the Debian workaround, but is not a substitute for choosing
 the correct distribution profile.
 
-The Dockerfile generator selects `cargo deb --variant=debian` only for the
-Debian PAM package, on both amd64 and arm64. Ubuntu targets, including those
-selected for Linux Mint by `make`, retain the default metadata/profile.
-Direct `cargo deb -p pam_himmelblau` builds also retain the no-workaround
-profile; use `--variant=debian` when building for Debian. Other derivatives
-are not automatically opted into the workaround and should select the
-appropriate profile for their OpenSSH build. The variant preserves the
-`pam-himmelblau` package name and substitutes only the primary PAM profile.
+The Dockerfile generator stages the Debian profile immediately before
+building the PAM package on amd64 and arm64, then restores the default
+profile. Ubuntu targets, including those selected for Linux Mint by
+`make`, and direct `cargo deb -p pam_himmelblau` builds use the default
+profile. Use the Debian packaging targets to build with the workaround.
 
 Run the source/packaging selection regressions with:
 

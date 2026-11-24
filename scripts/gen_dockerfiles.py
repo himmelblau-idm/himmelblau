@@ -200,14 +200,16 @@ def build_deb_final_cmd(
         feat_str = f" --features {','.join(pkg_features)}" if pkg_features else ""
         if "pam" in pkg or "nss" in pkg:
             feat_str += " --multiarch=same"
-        # Ubuntu already patches OpenSSH's PAM message buffering. Do not enable
-        # Debian's workaround in Ubuntu packages (also used by Linux Mint).
-        variant_arg = (
-            " --variant=debian"
-            if pkg == "pam_himmelblau" and distro_slug.startswith("debian")
-            else ""
-        )
-        cmd = f"cargo deb ${{CARGO_PATCH_ARG}}{target_arg}{feat_str}{variant_arg} --deb-revision={distro_slug}${{DEB_REVISION_APPEND}} -p {pkg}"
+        cmd = f"cargo deb ${{CARGO_PATCH_ARG}}{target_arg}{feat_str} --deb-revision={distro_slug}${{DEB_REVISION_APPEND}} -p {pkg}"
+        if pkg == "pam_himmelblau" and distro_slug.startswith("debian"):
+            # Select the Debian profile in the packaging container. cargo-deb
+            # always consumes the single asset configured in Cargo.toml.
+            cmd = (
+                "(cp platform/ubuntu/pam-config platform/ubuntu/pam-config.original && "
+                "trap 'mv platform/ubuntu/pam-config.original platform/ubuntu/pam-config' EXIT && "
+                "cp platform/debian/pam-config platform/ubuntu/pam-config && "
+                f"{cmd})"
+            )
         if pkg == "apparmor":
             package_dir = f"target/{cross_target}/debian" if cross_target else "target/debian"
             cmd += f" && python3 scripts/patch_apparmor_deb_relationships.py --distro={distro_slug} --package-dir={package_dir}"
