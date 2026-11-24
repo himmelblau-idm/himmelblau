@@ -216,6 +216,15 @@ fn is_mfa_required_for_enrollment(e: &MsalError) -> bool {
     }
 }
 
+fn enrollment_error_to_user_message(e: &MsalError) -> String {
+    if let MsalError::GeneralFailure(message) = e {
+        if message.contains("Reason 'DeviceCapReached'") {
+            return tr("Your account has reached the Microsoft Entra device registration limit. Contact your administrator.");
+        }
+    }
+    tr("Failed to join domain. Please contact your administrator.")
+}
+
 fn password_change_required(
     cred_handler: &mut AuthCredHandler,
     old_cred: String,
@@ -1754,7 +1763,7 @@ impl IdProvider for HimmelblauProvider {
                         }
                         error!("Failed to join domain: {:?}", e);
                         return Ok((
-                            AuthResult::Denied(tr("Failed to join domain. Please contact your administrator.")),
+                            AuthResult::Denied(enrollment_error_to_user_message(&e)),
                             AuthCacheAction::None,
                         ));
                     }
@@ -5238,9 +5247,10 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
-        is_unavailable_mfa_method_error, mfa_flow_uses_push_hint, password_change_required,
-        unexpired_prt_entry, CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
+        enrollment_error_to_user_message, is_device_removed_error, is_mfa_required_for_enrollment,
+        is_sspr_required, is_unavailable_mfa_method_error, mfa_flow_uses_push_hint,
+        password_change_required, unexpired_prt_entry, CONSENT_REQUIRED,
+        PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::idprovider::common::RefreshCacheEntry;
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
@@ -5450,6 +5460,27 @@ mod tests {
         )));
         assert!(!mfa_flow_uses_push_hint(&mfa_flow_with_method("OneWaySMS")));
         assert!(!mfa_flow_uses_push_hint(&MFAAuthContinue::default()));
+    }
+
+    #[test]
+    fn enrollment_device_cap_uses_a_safe_specific_message() {
+        let response = r#"{"code":"invalid_request","subcode":"error_directory_quota_exceeded","message":"User 'private-id' is not eligible to enroll a device of type 'Linux'. Reason 'DeviceCapReached'."}"#;
+        let result = enrollment_error_to_user_message(&MsalError::GeneralFailure(response.into()));
+        assert_eq!(result, crate::i18n::tr("Your account has reached the Microsoft Entra device registration limit. Contact your administrator."));
+        assert!(!result.contains("private-id"));
+    }
+
+    #[test]
+    fn other_enrollment_errors_keep_the_generic_message() {
+        let generic = crate::i18n::tr("Failed to join domain. Please contact your administrator.");
+        for error in [
+            MsalError::GeneralFailure("Reason 'DeviceCapNotReached'".into()),
+            MsalError::GeneralFailure("unrelated DeviceCapReached detail".into()),
+            MsalError::RequestFailed("Reason 'DeviceCapReached'".into()),
+            MsalError::TPMFail("hardware error".into()),
+        ] {
+            assert_eq!(enrollment_error_to_user_message(&error), generic);
+        }
     }
 
     #[test]
