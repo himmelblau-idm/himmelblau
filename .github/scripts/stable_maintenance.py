@@ -4199,29 +4199,113 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
     return lines
 
 
+def pr_summary_text(text: Any) -> str:
+    """Sanitize one summary field without discarding recorded context."""
+    return re.sub(r"[^A-Za-z0-9 _.,():/+=-]", "?", str(text))
+
+
+def pr_manual_tasks(value: Mapping[str, Any]) -> list[str]:
+    """Describe recorded work only; never infer approval or publish raw diagnostics."""
+    lines: list[str] = []
+    for row in manual_audit_work(value):
+        gate, reason = row["gate"], row["reason"]
+        action = {
+            "findings": "resolve the recorded findings",
+            "check-failed": "reproduce the failed check and distinguish findings from an execution error (failure details were not retained)",
+            "execution-failed": "diagnose the execution failure before rerunning the check",
+        }[reason]
+        command = "cargo audit --json" if gate == "cargo-audit" else "cargo vet --locked"
+        lines.append(f"- [ ] {gate}: {action} with `{command}` in the isolated maintenance environment; rerun full release validation on the repaired PR HEAD.")
+    advisories = value.get("unresolved_advisories", [])
+    if advisories:
+        lines.append("Recorded unresolved dependency advisories (may not explain the final audit failure):")
+        for row in advisories:
+            lines.append(f"- {pr_summary_text(row.get('crate', 'unknown'))} {pr_summary_text(row.get('version', 'unknown'))}")
+    for stage in value.get("incomplete_stages", []):
+        lines.append(f"- [ ] Re-run and review `{pr_summary_text(stage)}`; checkpoint was not produced.")
+    for row in value.get("phase_failures", []):
+        phase = pr_summary_text(row.get("phase", "unknown"))
+        gate = pr_summary_text(row.get("gate", ""))
+        reason = pr_summary_text(row.get("reason", "failed"))
+        lines.append(f"- [ ] Investigate `{phase}` failure{(' (' + gate + ')') if gate else ''}: {reason}; rerun full release validation.")
+
+    if manual_audit_work(value) or value.get("incomplete_stages") or value.get("phase_failures"):
+        lines += ["", "After repairs, revalidate the existing PR HEAD using the validation-only procedure in "
+                  "`.github/stable-maintenance.md` (Revalidating a preserved manual-audit draft). "
+                  "Rerunning the maintenance run uses its old checkpoint; a new dispatch is blocked by the open PR."]
+
+    pending = {row["sha"]: dict(row) for row in value.get("backport_outcomes", [])
+               if row.get("outcome") == "pending"}
+    for row in value.get("backport_review_required", []):
+        pending.setdefault(row["sha"], {}).update(row)
+    for item in value.get("backports_deferred", []):
+        row = item if isinstance(item, dict) else {"sha": item}
+        pending.setdefault(row["sha"], {"reason": "deferred", **row})
+    for item in value.get("backports_build_failed", []):
+        row = item if isinstance(item, dict) else {"sha": item}
+        entry = pending.setdefault(row["sha"], {})
+        entry.update(row)
+        entry["build_reverted"] = True
+        if entry.get("reason") in (None, "pending", "deferred"):
+            entry["reason"] = "build failed"
+    conflicts = {row["sha"]: row.get("paths", []) for row in value.get("backports_conflict_details", [])}
+    if pending:
+        lines += ["", f"### Backport decisions ({len(pending)})", "",
+                  "These fixes were not included. Resolve or explicitly defer each item; backlog is separate from final validation."]
+    for sha, row in pending.items():
+        sha = require_sha(sha)
+        reason = pr_summary_text(row.get("reason", "pending"))
+        summary = pr_summary_text(row.get("summary", value.get("backport_summaries", {}).get(sha, "")))
+        if row.get("build_reverted"):
+            action = "Fix the failed build and retry, or document a deferral"
+        elif "conflict" in reason:
+            action = "Resolve the conflict or document why stable does not need this fix"
+        elif reason == "uncertain":
+            action = "Decide whether stable needs this fix; backport or document why it does not"
+        else:
+            action = "Investigate the deferred attempt and retry, or document a deferral"
+        repo = os.environ.get("GITHUB_REPOSITORY", "")
+        identity = f"[{sha}](https://github.com/{repo}/commit/{sha})" if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) else sha
+        context = " / ".join(pr_summary_text(row[k]) for k in ("check", "stage") if row.get(k))
+        paths = ", ".join(pr_summary_text(path) for path in conflicts.get(sha, []))
+        lines.append(f"- [ ] {action}: {identity} {summary}. Reason: {reason}."
+                     + (" Attempted backport was reverted after build failure." if row.get("build_reverted") else "")
+                     + (f" Context: {context}." if context else "")
+                     + (f" Conflicting paths: {paths}." if paths else ""))
+    remaining = len(value.get("backport_remaining", []))
+    if remaining:
+        lines.append(f"- [ ] Retry maintenance for {remaining} unexamined backports; see the full report.")
+    return lines
+
+
+def append_pr_tasks(lines: list[str], ending: list[str], value: Mapping[str, Any], max_bytes: int) -> None:
+    tasks = pr_manual_tasks(value)
+    if not tasks:
+        return
+    lines += ["", "### TODO", ""]
+    if len("\n".join([*lines, *tasks, *ending]).encode()) <= max_bytes:
+        lines.extend(tasks)
+        return
+    for index, task in enumerate(tasks):
+        notice = f"{len(tasks) - index} additional checklist/context lines omitted; consult report.md/report.json in the run artifacts."
+        if len("\n".join([*lines, task, notice, *ending]).encode()) > max_bytes:
+            lines.append(notice)
+            break
+        lines.append(task)
+
+
 def build_recovery_pr_body(value: Mapping[str, Any]) -> str:
-    failures = value.get("phase_failures", [])
     lines = ["## Summary", "", "DRAFT: recovered partial maintenance; human intervention required.",
              "Completed commits are preserved. Release validation is incomplete; never auto-merge.",
              "", "## What Changed", "",
              f"- Dependency updates: {len(value.get('dependency_updates', []))}",
              f"- Bug fixes backported: {len(value.get('backports_applied', []))}",
              "", "## Manual work", ""]
-    for phase in sorted({row["phase"] for row in failures}):
-        gates = sorted({row["gate"] for row in failures if row["phase"] == phase and row.get("gate")})
-        detail = " (" + ", ".join(gates) + ")" if gates else ""
-        lines.append(f"- [ ] Investigate `{phase}`{detail} failure and rerun; see run diagnostics.")
-    incomplete = value.get("incomplete_stages", [])
-    if incomplete:
-        lines.extend(["", "### Incomplete stages (manual action required)", ""])
-        lines.extend(
-            f"- [ ] Re-run and review `{stage}`; checkpoint was not produced." for stage in incomplete
-        )
-        lines.append("")
     lines += ["- [ ] Review recovered changes and run every release gate before release.",
               "", "## Testing", "", "Checks recorded before failure:"]
-    lines += ["- " + result for result in value.get("gate_results", [])[:12]]
+    lines += ["- " + result for result in value.get("gate_results", [])]
     lines += ["Later checks may not have run. No claim of release readiness is made."]
+    append_pr_tasks(lines, [f"{MARKER} {maintenance_main_through(value)}"], value, 60000)
     lines += ["", f"{MARKER} {maintenance_main_through(value)}"]
     repo, run = os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_RUN_ID", "")
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) and run.isdigit():
@@ -4229,7 +4313,7 @@ def build_recovery_pr_body(value: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
+def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 60000) -> str:
     manual = manual_audit_work(value)
     if value.get("phase_failures"):
         return build_recovery_pr_body(value)
@@ -4245,7 +4329,12 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
     )
     summary = "Refresh supply-chain metadata; no version bump." if value.get("metadata_only") else "Validated stable maintenance release."
     if manual or incomplete:
-        summary = "DRAFT: incomplete maintenance stages or audits require manual work."
+        summary = "DRAFT: " + "; ".join(
+            (["final " + ", ".join(row["gate"] for row in manual) + " requires manual work"] if manual else [])
+            + (["incomplete stages: " + ", ".join(incomplete)] if incomplete else [])
+        ) + "."
+    if not incomplete:
+        summary += " All maintenance stages completed."
 
     lines = [
         "## Summary", "", summary + " Human review required; never auto-merged.", "",
@@ -4265,42 +4354,19 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         "- Distro: pinned Ubuntu 24.04 maintenance image.",
         "- Steps: clean locked build, workspace tests, rustfmt, available NSS/packaging generator tests, cargo-audit, cargo-vet, clean worktree.",
         ("- Results: non-audit gates passed; final audits require manual work. No manual VM test performed."
-         if manual else "- Results: all publication gates passed. No manual VM test performed."), "",
+         if manual else "- Results: release validation incomplete; see TODO. No manual VM test performed." if incomplete else "- Results: all publication gates passed. No manual VM test performed."), "",
         "## Automated Checks", "",
         ("Build/tests passed; final audit work is listed above; distro packaging and SELinux policy tests were not run."
-         if manual else "Build/tests/audit/vet passed; distro packaging and SELinux policy tests were not run by this workflow."), "",
+         if manual else "Incomplete stages require review; see TODO." if incomplete else "Build/tests/audit/vet passed; distro packaging and SELinux policy tests were not run by this workflow."), "",
         "## System Integration Impact", "",
         "Review included backports for system integration changes; no automatic deployment.", "",
         "## Checklist", "",
-        "- [ ] Resolve final audit work and rerun all release validation." if manual else "- [x] Automated validation completed.",
+        "- [ ] Complete the TODO checklist and rerun all release validation." if manual or incomplete else "- [x] Automated validation completed.",
         "- [ ] Maintainer review of backports and integration impact.", "", marker,
     ]
-    if incomplete:
-        lines.extend(["", "### Incomplete stages (manual action required)", ""])
-        lines.extend(f"- [ ] Re-run and review `{stage}`; checkpoint was not produced." for stage in incomplete)
-    if manual:
-        lines.extend(["", "### Manual audit work", ""])
-        for row in manual:
-            task = "resolve findings and rerun" if row["reason"] == "findings" else "investigate failed check, resolve findings and rerun"
-            lines.append(f"- [ ] {row['gate']}: {task}; see run diagnostics/report.")
-    # Prioritize actionable changes and deferrals; never dump already-covered
-    # dependencies into the PR. The complete bounded inventory is in the report.
-    for key in ("backport_review_required", "backports_build_failed", "backports_deferred", "backports_applied", "dependabot_imported", "dependabot_skipped", "dependency_updates"):
-        for item in value.get(key, [])[:3]:
-            if isinstance(item, dict):
-                identity = item.get("sha", item.get("number", item.get("crate", "item")))
-                description = item.get("reason", item.get("new", "recorded"))
-            else:
-                identity, description = item, "pending" if key == "backports_deferred" else "applied"
-            summary = value.get("backport_summaries", {}).get(str(identity), "")
-            if summary:
-                description = summary + " (" + str(description) + ")"
-            identity = re.sub(r"[^A-Za-z0-9_.-]", "?", str(identity))[:40]
-            description = re.sub(r"[^A-Za-z0-9_. -]", "?", str(description))[:80]
-            detail = f"- {key.replace('_', ' ')}: {identity} — {description}"
-            if len("\n".join([*lines, detail, *ending]).encode()) > max_bytes:
-                break
-            lines.append(detail)
+    if value.get("gate_results"):
+        lines += ["", "Recorded final checks: " + "; ".join(pr_summary_text(result) for result in value["gate_results"]) + "."]
+    append_pr_tasks(lines, ending, value, max_bytes)
     body = "\n".join([*lines, *ending])
     if len(body.encode()) > max_bytes:
         raise MaintenanceError("reserved PR summary exceeds body budget")
@@ -4866,6 +4932,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 
