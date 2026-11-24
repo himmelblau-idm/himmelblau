@@ -245,14 +245,9 @@ impl ClientRequest {
             ClientRequest::AcquireSshCertificate { .. } => {
                 "AcquireSshCertificate(<public-key-redacted>)".to_string()
             }
-            ClientRequest::ValidateSshCertificateForAccount {
-                target_account,
-                target_uid,
-                ..
-            } => format!(
-                "ValidateSshCertificateForAccount({}, {}, <certificate-redacted>)",
-                target_account, target_uid
-            ),
+            ClientRequest::ValidateSshCertificateForAccount { .. } => {
+                "ValidateSshCertificateForAccount".to_string()
+            }
         }
     }
 }
