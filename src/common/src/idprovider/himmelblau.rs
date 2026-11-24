@@ -1473,7 +1473,13 @@ impl IdProvider for HimmelblauProvider {
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
         macro_rules! net_down_check {
+            (allow_token_retry, $res:expr, $($pat:pat => $result:expr),*) => {
+                net_down_check!(@check $res, true, $($pat => $result),*)
+            };
             ($res:expr, $($pat:pat => $result:expr),*) => {
+                net_down_check!(@check $res, false, $($pat => $result),*)
+            };
+            (@check $res:expr, $allow_token_retry:expr, $($pat:pat => $result:expr),*) => {
                 match $res {
                     Ok(val) => val,
                     Err(MsalError::RequestFailed(msg)) => {
@@ -2319,7 +2325,9 @@ impl IdProvider for HimmelblauProvider {
                         // Report the network outage to the user via PAM INFO.
                         return Ok((AuthResult::Denied(tr("Network outage detected.")), AuthCacheAction::None));
                     },
-                    Err(MsalError::AcquireTokenFailed(e)) => {
+                    Err(MsalError::AcquireTokenFailed(e))
+                        if !$allow_token_retry || is_device_removed_error(&e.error_codes) =>
+                    {
                         check_new_device_enrollment_required!(e, self, keystore)
                     },
                     $($pat => $result),*
@@ -2518,7 +2526,7 @@ impl IdProvider for HimmelblauProvider {
                     )
                     .await;
                 let mtoken2 = on_token_mfa_required!(mtoken2, $on_mfa_required);
-                net_down_check!(mtoken2,
+                net_down_check!(allow_token_retry, mtoken2,
                     Ok(token) => token,
                     Err(e) => {
                         error!("{:?}", e);
@@ -2540,8 +2548,7 @@ impl IdProvider for HimmelblauProvider {
                                     info!("Azure hasn't finished replicating the device...");
                                     info!("Retrying in 5 seconds");
                                     sleep(Duration::from_secs(5));
-                                    net_down_check!(
-                                        self.client
+                                    let retry = self.client
                                             .lock()
                                             .await
                                             .acquire_token_by_refresh_token(
@@ -2552,7 +2559,9 @@ impl IdProvider for HimmelblauProvider {
                                                 tpm,
                                                 machine_key,
                                             )
-                                            .await,
+                                            .await;
+                                    net_down_check!(
+                                        on_token_mfa_required!(retry, $on_mfa_required),
                                         Ok(token) => token,
                                         Err(e) => {
                                             error!("{:?}", e);
@@ -2579,7 +2588,7 @@ impl IdProvider for HimmelblauProvider {
                                          Retrying with default app ID.",
                                         err_resp.error_description
                                     );
-                                    match self.client
+                                    let retry = self.client
                                         .lock()
                                         .await
                                         .acquire_token_by_refresh_token(
@@ -2590,8 +2599,9 @@ impl IdProvider for HimmelblauProvider {
                                             tpm,
                                             machine_key,
                                         )
-                                        .await
-                                    {
+                                        .await;
+                                    net_down_check!(
+                                        on_token_mfa_required!(retry, $on_mfa_required),
                                         Ok(token) => token,
                                         Err(e) => {
                                             error!("{:?}", e);
@@ -2600,7 +2610,7 @@ impl IdProvider for HimmelblauProvider {
                                                 AuthCacheAction::None,
                                             ));
                                         }
-                                    }
+                                    )
                                 } else {
                                     // Return the AAD error description to the user
                                     return Ok((
@@ -2630,7 +2640,7 @@ impl IdProvider for HimmelblauProvider {
                                         machine_key,
                                     )
                                     .await;
-                                match on_token_mfa_required!(retry, $on_mfa_required) {
+                                net_down_check!(on_token_mfa_required!(retry, $on_mfa_required),
                                     Ok(token) => token,
                                     Err(e) => {
                                         error!("{:?}", e);
@@ -2639,7 +2649,7 @@ impl IdProvider for HimmelblauProvider {
                                             AuthCacheAction::None,
                                         ));
                                     }
-                                }
+                                )
                             }
                             _ => {
                                 // Return a user-friendly error message
