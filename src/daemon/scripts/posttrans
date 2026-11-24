@@ -25,10 +25,14 @@ if [ -f "$upgrade_restart_marker" ]; then
     rm -f -- "$upgrade_restart_marker"
     if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 \
         && systemctl is-enabled --quiet himmelblaud.service; then
+        set -- himmelblaud.service
+        if systemctl is-enabled --quiet himmelblaud-tasks.service; then
+            set -- "$@" himmelblaud-tasks.service
+        fi
         if [ "$config_restored" -eq 1 ]; then
-            systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+            systemctl restart "$@" 2>/dev/null || true
         else
-            systemctl start himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+            systemctl start "$@" 2>/dev/null || true
         fi
     fi
 elif [ "$config_restored" -eq 1 ] && command -v systemctl >/dev/null 2>&1; then

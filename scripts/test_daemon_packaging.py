@@ -25,6 +25,8 @@ with (root / "calls").open("a") as output:
 if command == "systemd-detect-virt":
     sys.exit(1)
 if command == "systemctl" and args[:2] == ["is-enabled", "--quiet"]:
+    if args[2] == "himmelblaud-tasks.service" and os.environ.get("TASKS_DISABLED") == "1":
+        sys.exit(1)
     sys.exit(int(os.environ.get("SERVICE_DISABLED", "0")))
 '''
 
@@ -124,6 +126,13 @@ class DaemonPackagingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.marker.exists())
         self.assertNotIn("start", [arg for call in self.calls() for arg in call])
+
+    def test_posttrans_recovers_main_without_starting_disabled_tasks(self):
+        self.marker.touch()
+        result = self.run_script("posttrans", "1", TASKS_DISABLED="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        starts = [call for call in self.calls() if call[:2] == ["systemctl", "start"]]
+        self.assertEqual(starts, [["systemctl", "start", "himmelblaud.service"]])
 
     def test_upgrade_with_restored_config_restarts_enabled_service(self):
         self.marker.touch()
