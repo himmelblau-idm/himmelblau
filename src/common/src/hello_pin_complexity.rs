@@ -38,10 +38,7 @@ pub fn pin_composition(pin: &str) -> PinComposition {
         digits: pin.chars().filter(|c| c.is_ascii_digit()).count() as u32,
         lowercase: pin.chars().filter(|c| c.is_ascii_lowercase()).count() as u32,
         uppercase: pin.chars().filter(|c| c.is_ascii_uppercase()).count() as u32,
-        symbols: pin
-            .chars()
-            .filter(|c| !(c.is_ascii_alphanumeric()))
-            .count() as u32,
+        symbols: pin.chars().filter(|c| !(c.is_ascii_alphanumeric())).count() as u32,
     }
 }
 
@@ -93,6 +90,7 @@ pub fn enrolled_pin_composition() -> Result<Option<PinComposition>, String> {
         .map_err(|_| "Failed to load policy cache.".to_string())?;
     Ok(policy_cache
         .get(ENROLLED_PIN_COMPOSITION_KEY)
+        .as_ref()
         .and_then(parse_enrolled_composition))
 }
 

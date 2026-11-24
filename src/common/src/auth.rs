@@ -1114,7 +1114,10 @@ fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> P
 
         if pin == confirm {
             if let Err(e) = record_enrolled_pin_composition(&pin) {
-                debug!("Could not record Hello PIN composition for compliance: {}", e);
+                debug!(
+                    "Could not record Hello PIN composition for compliance: {}",
+                    e
+                );
             }
             break;
         } else {
@@ -1172,7 +1175,10 @@ fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
 
     if prompted_for_hello_pin {
         if let Err(e) = record_enrolled_pin_composition(&cred) {
-            debug!("Could not record Hello PIN composition for compliance: {}", e);
+            debug!(
+                "Could not record Hello PIN composition for compliance: {}",
+                e
+            );
         }
     }
 

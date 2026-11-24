@@ -285,7 +285,12 @@ impl ComplianceCSE {
                     );
                 }
                 "linux_passwordpolicy_minimumsymbols" => {
-                    apply_password_policy_detail(details, &policy_cache, |c| c.symbols, &mut errors);
+                    apply_password_policy_detail(
+                        details,
+                        &policy_cache,
+                        |c| c.symbols,
+                        &mut errors,
+                    );
                 }
                 "linux_passwordpolicy_minimumuppercase" => {
                     apply_password_policy_detail(
