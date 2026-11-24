@@ -1984,6 +1984,18 @@ class PrSummaryChecklistTests(unittest.TestCase):
         self.assertIn("omitted; consult report.md/report.json", body)
         self.assertTrue(body.endswith(sm.MARKER + " " + "c" * 40))
 
+    def test_complete_checklist_that_exactly_fits_does_not_reserve_omission_notice(self):
+        value = {**self.state(), "backports_deferred": ["b" * 40]}
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo"}):
+            complete = sm.build_pr_body(value)
+            exact = sm.build_pr_body(value, max_bytes=len(complete.encode()))
+            shorter = sm.build_pr_body(value, max_bytes=len(complete.encode()) - 1)
+        self.assertEqual(exact, complete)
+        self.assertIn("b" * 40, exact)
+        self.assertNotIn("omitted; consult", exact)
+        self.assertIn("omitted; consult", shorter)
+        self.assertLessEqual(len(shorter.encode()), len(complete.encode()) - 1)
+
     def test_all_advisories_reach_body_budget_including_beyond_twenty(self):
         advisories = [{"crate": f"crate-{i}", "version": "1.2.3"} for i in range(1000)]
         body = sm.build_pr_body({**self.state(), "unresolved_advisories": advisories})

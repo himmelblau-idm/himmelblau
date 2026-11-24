@@ -4283,6 +4283,9 @@ def append_pr_tasks(lines: list[str], ending: list[str], value: Mapping[str, Any
     if not tasks:
         return
     lines += ["", "### TODO", ""]
+    if len("\n".join([*lines, *tasks, *ending]).encode()) <= max_bytes:
+        lines.extend(tasks)
+        return
     for index, task in enumerate(tasks):
         notice = f"{len(tasks) - index} additional checklist/context lines omitted; consult report.md/report.json in the run artifacts."
         if len("\n".join([*lines, task, notice, *ending]).encode()) > max_bytes:
