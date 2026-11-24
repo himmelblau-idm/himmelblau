@@ -56,6 +56,7 @@ class DaemonPackagingTests(unittest.TestCase):
     def run_script(self, name, argument, **environment):
         text = (SCRIPTS / name).read_text()
         text = text.replace("/run/systemd/system", str(self.systemd))
+        text = text.replace("/etc/systemd/system/", str(self.root / "etc/systemd/system") + "/")
         text = text.replace("/run/himmelblau-rpm-upgrade-restart", str(self.marker))
         text = text.replace("/etc/himmelblau/himmelblau.conf", str(self.config))
         script = self.root / name
