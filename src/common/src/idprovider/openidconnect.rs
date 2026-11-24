@@ -1696,16 +1696,17 @@ fn parse_device_authorization_response(
             let mut object = serde_json::Map::new();
             while let Some((key, value)) = fields.next_entry()? {
                 if object.insert(key, value).is_some() {
-                    return Err(serde::de::Error::custom("duplicate device authorization field"));
+                    return Err(serde::de::Error::custom(
+                        "duplicate device authorization field",
+                    ));
                 }
             }
             Ok(Value::Object(object))
         }
     }
 
-    let invalid_response = |_| {
-        MsalError::GeneralFailure("Invalid device authorization response JSON".to_string())
-    };
+    let invalid_response =
+        |_| MsalError::GeneralFailure("Invalid device authorization response JSON".to_string());
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let mut value = serde::Deserializer::deserialize_map(&mut deserializer, UniqueDeviceFields)
         .map_err(invalid_response)?;
@@ -2172,11 +2173,7 @@ impl OidcApplication {
             Scope::new("offline_access".to_string()),
         ];
         if let Some(delayed_init) = &*self.client.lock().await {
-            let device_url = delayed_init
-                .client
-                .device_authorization_url()
-                .url()
-                .clone();
+            let device_url = delayed_init.client.device_authorization_url().url().clone();
 
             let client_id = delayed_init.client.client_id().as_str();
             let scope = scopes
@@ -2236,7 +2233,9 @@ impl OidcApplication {
                         _ => None,
                     });
                 let message = match error_code {
-                    Some(code) => format!("HTTP error during device code request: {status} ({code})"),
+                    Some(code) => {
+                        format!("HTTP error during device code request: {status} ({code})")
+                    }
                     None => format!("HTTP error during device code request: {status}"),
                 };
                 error!(%message, "Error requesting device code");
