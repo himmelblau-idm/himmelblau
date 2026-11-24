@@ -9,4 +9,4 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-jiff = { version = "1.0", default-features = false, features = ["std"] }
+jiff = { version = "0.2", default-features = false, features = ["std"] }

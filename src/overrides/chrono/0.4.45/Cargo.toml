@@ -16,7 +16,7 @@ wasmbind = []
 alloc = []
 
 [dependencies]
-jiff = { version = "1.0", default-features = false, features = ["std"] }
+jiff = { version = "0.2", default-features = false, features = ["std"] }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
