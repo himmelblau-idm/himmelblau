@@ -235,8 +235,7 @@ fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output> {
                 ));
             }
             // Exited, but something it left behind still holds a pipe open.
-            // Take what was read rather than discarding a possibly complete
-            // result; truncated stdout is rejected below.
+            // Stdout is not complete until EOF; stderr is diagnostic only.
             Some(drain_deadline) if now >= drain_deadline => {
                 debug!(
                     stdout_open = out.open(),
@@ -245,6 +244,11 @@ fn output_with_timeout(mut cmd: Command, timeout: Duration) -> Result<Output> {
                 );
                 // The original process group was signalled before reaping the
                 // leader. Escaped processes are out of reach; close our pipes.
+                if out.open() {
+                    return Err(anyhow!(
+                        "Script stdout remained open after the drain deadline"
+                    ));
+                }
                 break;
             }
             _ => {}
@@ -396,6 +400,32 @@ mod bounded_output_tests {
                 _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
                 other => panic!("background process still running: {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn open_stdout_after_drain_deadline_is_not_accepted_as_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let ready = dir.path().join("escaped-pid");
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args([
+            "-c",
+            "setsid /bin/sh -c 'echo $$ > \"$1\"; sleep 30' _ \"$1\" & while [ ! -s \"$1\" ]; do sleep 0.01; done; printf '{}'",
+            "_",
+        ]).arg(&ready);
+        let result = output_with_timeout(cmd, Duration::from_millis(500));
+        let pid: libc::pid_t = std::fs::read_to_string(&ready)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // The escaped group is still anchored by the shell sleeping for 30s.
+        unsafe {
+            libc::killpg(pid, libc::SIGKILL);
+        }
+        match result {
+            Err(error) => assert!(error.to_string().contains("stdout remained open")),
+            Ok(_) => panic!("accepted output whose stdout never closed"),
         }
     }
 }
