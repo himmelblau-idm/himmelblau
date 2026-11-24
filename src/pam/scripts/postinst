@@ -36,12 +36,13 @@ EOF
 if [[ -f /etc/apparmor.d/unix-chkpwd ]]; then
     # Idempotent, non-interactive: only patch if needed
     if ! grep -q 'flags=(attach_disconnected)' /etc/apparmor.d/unix-chkpwd; then
-        if echo "$UNIX_CHKPWD_PATCH" | patch --batch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/unix-chkpwd >/dev/null 2>&1; then
-            apparmor_parser -r /etc/apparmor.d/unix-chkpwd >/dev/null 2>&1 || echo "apparmor reload failed"
-        else
+        if ! echo "$UNIX_CHKPWD_PATCH" | patch --batch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/unix-chkpwd >/dev/null 2>&1; then
             echo "apparmor unix-chkpwd patch failed" >&2
         fi
     fi
+    # The package may have changed the included local fragment even when the
+    # parent profile already has the flag (or could not be patched).
+    apparmor_parser -r /etc/apparmor.d/unix-chkpwd >/dev/null 2>&1 || echo "apparmor reload failed"
 fi
 
 # Check if the file /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin exists

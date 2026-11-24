@@ -75,7 +75,6 @@ use reqwest::Url;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::sync::Arc;
-use std::thread::sleep;
 use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, Mutex, OnceCell};
@@ -1495,7 +1494,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(val) => val,
                     Err(MsalError::RequestFailed(_)) => {
                         // Retry on network failure, as these can be rather common
-                        sleep(Duration::from_millis(500));
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         net_down_check!(
                             self.client
                                 .lock()
@@ -1635,7 +1634,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(val) => val,
                     Err(MsalError::RequestFailed(_)) => {
                         // Retry on network failure, as these can be rather common
-                        sleep(Duration::from_millis(500));
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                         net_down_check!(
                             client
                                 .acquire_token_by_refresh_token(
@@ -2196,7 +2195,7 @@ impl IdProvider for HimmelblauProvider {
                                      * device object. Wait 5 seconds and try again. */
                                     info!("Azure hasn't finished replicating the device...");
                                     info!("Retrying in 5 seconds");
-                                    sleep(Duration::from_secs(5));
+                                    tokio::time::sleep(Duration::from_secs(5)).await;
                                     net_down_check!(
                                         self.client
                                             .lock()
@@ -3530,7 +3529,7 @@ impl IdProvider for HimmelblauProvider {
                 // MFA is required and the PRT sign-in frequency check fails, we'll
                 // need ForceMFA. If ROPC was skipped (device not enrolled), the
                 // enrollment flow may be MFA or password-only per MS policy.
-                let mfa_confirmed_required = ropc_result.is_some();
+                let mut mfa_confirmed_required = ropc_result.is_some();
 
                 match ropc_result {
                     Some(Ok(token)) => {
@@ -3581,6 +3580,19 @@ impl IdProvider for HimmelblauProvider {
                     }
                     Some(Err(MsalError::ChangePassword)) => {
                         return Ok(password_change_required(cred_handler, cred));
+                    }
+                    Some(Err(MsalError::AADSTSError(ref aadsts_err)))
+                        if [50058, 50133].contains(&aadsts_err.code) =>
+                    {
+                        // Entra won't sign in silently with this password, as when it must be changed:
+                        // AADSTS50058 (it issued the PRT, then wants an interactive sign-in) or AADSTS50133 (the
+                        // session ended with a password reset or expiry). The interactive flow below shows what it
+                        // wants (the change page, or MFA if policy asks), and checks the password again.
+                        debug!(
+                            "ROPC: interactive sign-in required (AADSTS{}), trying the interactive flow",
+                            aadsts_err.code
+                        );
+                        mfa_confirmed_required = false;
                     }
                     Some(Err(e)) => {
                         // ROPC failed - this could be a bad password or other error
@@ -4493,7 +4505,7 @@ impl HimmelblauProvider {
                     "PRT exchange failed, retrying after network error: {:?}",
                     msg
                 );
-                sleep(Duration::from_millis(500));
+                tokio::time::sleep(Duration::from_millis(500)).await;
                 self.client
                     .lock()
                     .await
