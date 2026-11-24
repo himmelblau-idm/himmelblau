@@ -1371,6 +1371,19 @@ mod tests {
     }
 
     #[test]
+    fn device_response_rejects_repeated_json_members() {
+        let payload = br#"{
+            "user_code": "USER-CODE",
+            "device_code": "DEVICE-CODE",
+            "verification_uri": "https://idp.example.com/a",
+            "verification_uri": "https://idp.example.com/b",
+            "verification_url": "https://idp.example.com/b",
+            "expires_in": 300
+        }"#;
+        assert!(parse_device_authorization_response(payload).is_err());
+    }
+
+    #[test]
     fn orchestrator_extra_data_round_trip() {
         let original = OidcMfaExtraData::Orchestrator {
             state: OrchestratorFlowState {
@@ -1656,10 +1669,10 @@ fn normalize_device_authorization_response_json(value: &mut Value) -> Result<(),
         (Some(uri), Some(url)) if uri == url => {
             obj.remove("verification_url");
         }
-        (Some(uri), Some(url)) => {
-            return Err(MsalError::GeneralFailure(format!(
-                "Device authorization response has conflicting verification_uri ({uri}) and verification_url ({url})"
-            )));
+        (Some(_), Some(_)) => {
+            return Err(MsalError::GeneralFailure(
+                "Device authorization response has conflicting verification URI fields".to_string(),
+            ));
         }
         _ => {}
     }
@@ -1670,12 +1683,36 @@ fn normalize_device_authorization_response_json(value: &mut Value) -> Result<(),
 fn parse_device_authorization_response(
     bytes: &[u8],
 ) -> Result<DeviceAuthorizationResponse<EmptyExtraDeviceAuthorizationFields>, MsalError> {
-    let mut value: Value = serde_json::from_slice(bytes).map_err(|e| {
-        MsalError::GeneralFailure(format!("Failed to parse device authorization response: {e}"))
-    })?;
+    struct UniqueDeviceFields;
+
+    impl<'de> serde::de::Visitor<'de> for UniqueDeviceFields {
+        type Value = Value;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a device authorization response with unique fields")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut fields: A) -> Result<Value, A::Error> {
+            let mut object = serde_json::Map::new();
+            while let Some((key, value)) = fields.next_entry()? {
+                if object.insert(key, value).is_some() {
+                    return Err(serde::de::Error::custom("duplicate device authorization field"));
+                }
+            }
+            Ok(Value::Object(object))
+        }
+    }
+
+    let invalid_response = |_| {
+        MsalError::GeneralFailure("Invalid device authorization response JSON".to_string())
+    };
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let mut value = serde::Deserializer::deserialize_map(&mut deserializer, UniqueDeviceFields)
+        .map_err(invalid_response)?;
+    deserializer.end().map_err(invalid_response)?;
     normalize_device_authorization_response_json(&mut value)?;
-    serde_json::from_value(value).map_err(|e| {
-        MsalError::GeneralFailure(format!("Failed to parse device authorization response: {e}"))
+    serde_json::from_value(value).map_err(|_| {
+        MsalError::GeneralFailure("Invalid device authorization response fields".to_string())
     })
 }
 
@@ -2138,11 +2175,6 @@ impl OidcApplication {
             let device_url = delayed_init
                 .client
                 .device_authorization_url()
-                .ok_or_else(|| {
-                    MsalError::GeneralFailure(
-                        "OIDC client missing device authorization endpoint URL".to_string(),
-                    )
-                })?
                 .url()
                 .clone();
 
@@ -2188,10 +2220,27 @@ impl OidcApplication {
                     e
                 })
             } else {
-                error!(%status, "Error requesting device code");
-                Err(MsalError::RequestFailed(format!(
-                    "HTTP error during device code request: {status}"
-                )))
+                #[derive(Deserialize)]
+                struct DeviceAuthorizationError {
+                    error: String,
+                }
+
+                let error_code = serde_json::from_slice::<DeviceAuthorizationError>(&bytes)
+                    .ok()
+                    .and_then(|response| match response.error.as_str() {
+                        "invalid_request" => Some("invalid_request"),
+                        "invalid_client" => Some("invalid_client"),
+                        "unauthorized_client" => Some("unauthorized_client"),
+                        "invalid_scope" => Some("invalid_scope"),
+                        "unsupported_grant_type" => Some("unsupported_grant_type"),
+                        _ => None,
+                    });
+                let message = match error_code {
+                    Some(code) => format!("HTTP error during device code request: {status} ({code})"),
+                    None => format!("HTTP error during device code request: {status}"),
+                };
+                error!(%message, "Error requesting device code");
+                Err(MsalError::RequestFailed(message))
             }
         } else {
             Err(MsalError::RequestFailed(
