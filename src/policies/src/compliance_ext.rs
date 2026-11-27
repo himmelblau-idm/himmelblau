@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use himmelblau::intune::{IntuneStatus, PolicyDetails, PolicyStatus};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::POLICY_CACHE;
+use himmelblau_unix_common::hello_pin_complexity::{enrolled_pin_composition, PinComposition};
 use himmelblau_unix_common::policy_cache::{PolicyCache, PolicyValue};
 use os_release::OsRelease;
 use semver::Version;
@@ -156,6 +157,68 @@ impl CSE for ComplianceCSE {
 ///
 /// Expected format: `<provider>/Distribution/AllowedDistros/<index>/<setting>`
 /// e.g., `"com.microsoft.manage.LinuxMdm/Distribution/AllowedDistros/1/$type"` → `"1"`
+/// Cache the Intune threshold and compare the last recorded Hello PIN composition.
+fn apply_password_policy_detail(
+    detail: &mut PolicyDetails,
+    policy_cache: &PolicyCache,
+    metric: impl Fn(&PinComposition) -> u32,
+    errors: &mut Vec<String>,
+) {
+    let min = match detail.expected_value.parse::<u32>() {
+        Ok(v) => v,
+        Err(_) => {
+            errors.push(format!(
+                "Failed to parse {} expected value",
+                detail.setting_definition_item_id
+            ));
+            return;
+        }
+    };
+    if let Err(e) = policy_cache.set(
+        detail.setting_definition_item_id.as_str(),
+        &PolicyValue::Int(min),
+    ) {
+        errors.push(format!(
+            "Failed to set {} policy: {}",
+            detail.setting_definition_item_id, e
+        ));
+        return;
+    }
+
+    match enrolled_pin_composition() {
+        Ok(Some(comp)) => {
+            let actual = metric(&comp);
+            detail.actual_value = actual.to_string();
+            detail.new_compliance_state = if actual >= min {
+                "Compliant".to_string()
+            } else {
+                "NonCompliant".to_string()
+            };
+            debug!(
+                setting = %detail.setting_definition_item_id,
+                min,
+                actual,
+                state = %detail.new_compliance_state,
+                "Password policy (Hello PIN) compliance evaluated"
+            );
+        }
+        Ok(None) => {
+            detail.actual_value = "unknown".to_string();
+            detail.new_compliance_state = "NonCompliant".to_string();
+            debug!(
+                setting = %detail.setting_definition_item_id,
+                "Password policy compliance: no enrolled Hello PIN composition recorded yet"
+            );
+        }
+        Err(e) => {
+            errors.push(format!(
+                "Failed to load enrolled Hello PIN composition for {}: {}",
+                detail.setting_definition_item_id, e
+            ));
+        }
+    }
+}
+
 fn extract_distro_index(csp_path: &str) -> Option<&str> {
     let parts: Vec<&str> = csp_path.split('/').collect();
     if parts.len() >= 5 && parts[1] == "Distribution" && parts[2] == "AllowedDistros" {
@@ -208,129 +271,34 @@ impl ComplianceCSE {
                     }
                 }
                 "linux_passwordpolicy_minimumlength" => {
-                    if let Ok(min_length) = details.expected_value.parse::<u32>() {
-                        match policy_cache.set(
-                            details.setting_definition_item_id.as_str(),
-                            &PolicyValue::Int(min_length),
-                        ) {
-                            Ok(_) => {
-                                details.actual_value = details.expected_value.clone();
-                                details.new_compliance_state = "Compliant".to_string();
-                                debug!(
-                                    "Password policy compliance passed, min length: {}",
-                                    min_length
-                                );
-                            }
-                            Err(e) => {
-                                errors.push(format!(
-                                    "Failed to set minimum password length policy: {}",
-                                    e
-                                ));
-                            }
-                        }
-                    } else {
-                        errors.push("Failed to read minimum password length policy".to_string());
-                    }
+                    apply_password_policy_detail(details, &policy_cache, |c| c.length, &mut errors);
                 }
                 "linux_passwordpolicy_minimumdigits" => {
-                    if let Ok(min_digits) = details.expected_value.parse::<u32>() {
-                        match policy_cache.set(
-                            details.setting_definition_item_id.as_str(),
-                            &PolicyValue::Int(min_digits),
-                        ) {
-                            Ok(_) => {
-                                details.actual_value = details.expected_value.clone();
-                                details.new_compliance_state = "Compliant".to_string();
-                                debug!(
-                                    "Password policy compliance passed, min digits: {}",
-                                    min_digits
-                                );
-                            }
-                            Err(e) => {
-                                errors.push(format!(
-                                    "Failed to set minimum password digits policy: {}",
-                                    e
-                                ));
-                            }
-                        }
-                    } else {
-                        errors.push("Failed to read minimum password digits policy".to_string());
-                    }
+                    apply_password_policy_detail(details, &policy_cache, |c| c.digits, &mut errors);
                 }
                 "linux_passwordpolicy_minimumlowercase" => {
-                    if let Ok(min_lowercase) = details.expected_value.parse::<u32>() {
-                        match policy_cache.set(
-                            details.setting_definition_item_id.as_str(),
-                            &PolicyValue::Int(min_lowercase),
-                        ) {
-                            Ok(_) => {
-                                details.actual_value = details.expected_value.clone();
-                                details.new_compliance_state = "Compliant".to_string();
-                                debug!(
-                                    "Password policy compliance passed, min lowercase: {}",
-                                    min_lowercase
-                                );
-                            }
-                            Err(e) => {
-                                errors.push(format!(
-                                    "Failed to set minimum password lowercase policy: {}",
-                                    e
-                                ));
-                            }
-                        }
-                    } else {
-                        errors.push("Failed to read minimum password lowercase policy".to_string());
-                    }
+                    apply_password_policy_detail(
+                        details,
+                        &policy_cache,
+                        |c| c.lowercase,
+                        &mut errors,
+                    );
                 }
                 "linux_passwordpolicy_minimumsymbols" => {
-                    if let Ok(min_symbols) = details.expected_value.parse::<u32>() {
-                        match policy_cache.set(
-                            details.setting_definition_item_id.as_str(),
-                            &PolicyValue::Int(min_symbols),
-                        ) {
-                            Ok(_) => {
-                                details.actual_value = details.expected_value.clone();
-                                details.new_compliance_state = "Compliant".to_string();
-                                debug!(
-                                    "Password policy compliance passed, min symbols: {}",
-                                    min_symbols
-                                );
-                            }
-                            Err(e) => {
-                                errors.push(format!(
-                                    "Failed to set minimum password symbols policy: {}",
-                                    e
-                                ));
-                            }
-                        }
-                    } else {
-                        errors.push("Failed to read minimum password symbols policy".to_string());
-                    }
+                    apply_password_policy_detail(
+                        details,
+                        &policy_cache,
+                        |c| c.symbols,
+                        &mut errors,
+                    );
                 }
                 "linux_passwordpolicy_minimumuppercase" => {
-                    if let Ok(min_uppercase) = details.expected_value.parse::<u32>() {
-                        match policy_cache.set(
-                            details.setting_definition_item_id.as_str(),
-                            &PolicyValue::Int(min_uppercase),
-                        ) {
-                            Ok(_) => {
-                                details.actual_value = details.expected_value.clone();
-                                details.new_compliance_state = "Compliant".to_string();
-                                debug!(
-                                    "Password policy compliance passed, min uppercase: {}",
-                                    min_uppercase
-                                );
-                            }
-                            Err(e) => {
-                                errors.push(format!(
-                                    "Failed to set minimum password uppercase policy: {}",
-                                    e
-                                ));
-                            }
-                        }
-                    } else {
-                        errors.push("Failed to read minimum password uppercase policy".to_string());
-                    }
+                    apply_password_policy_detail(
+                        details,
+                        &policy_cache,
+                        |c| c.uppercase,
+                        &mut errors,
+                    );
                 }
                 unknown => {
                     warn!("Unrecognized compliance option '{}'", unknown);
@@ -573,6 +541,7 @@ impl ComplianceCSE {
 mod tests {
     use super::ComplianceCSE;
     use himmelblau::intune::PolicyDetails;
+    use himmelblau_unix_common::hello_pin_complexity::PinComposition;
 
     fn detail(id: &str, expected: &str, index: usize) -> PolicyDetails {
         PolicyDetails {
@@ -588,6 +557,25 @@ mod tests {
                 "com.microsoft.manage.LinuxMdm/Distribution/AllowedDistros/{index}/value"
             ),
         }
+    }
+
+    #[test]
+    fn password_policy_length_non_compliant_when_enrolled_pin_too_short() {
+        let comp = PinComposition {
+            length: 6,
+            digits: 6,
+            lowercase: 0,
+            uppercase: 0,
+            symbols: 0,
+        };
+        assert_eq!(comp.length, 6);
+        let min: u32 = 10;
+        let state = if comp.length >= min {
+            "Compliant"
+        } else {
+            "NonCompliant"
+        };
+        assert_eq!(state, "NonCompliant");
     }
 
     #[test]

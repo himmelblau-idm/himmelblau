@@ -20,6 +20,80 @@ use crate::{
     policy_cache::{PolicyCache, PolicyValue},
 };
 
+/// Composition of an enrolled Hello PIN (stored for compliance reporting; never the PIN itself).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PinComposition {
+    pub length: u32,
+    pub digits: u32,
+    pub lowercase: u32,
+    pub uppercase: u32,
+    pub symbols: u32,
+}
+
+const ENROLLED_PIN_COMPOSITION_KEY: &str = "hello_pin_enrolled_composition";
+
+pub fn pin_composition(pin: &str) -> PinComposition {
+    PinComposition {
+        length: pin.chars().count() as u32,
+        digits: pin.chars().filter(|c| c.is_ascii_digit()).count() as u32,
+        lowercase: pin.chars().filter(|c| c.is_ascii_lowercase()).count() as u32,
+        uppercase: pin.chars().filter(|c| c.is_ascii_uppercase()).count() as u32,
+        symbols: pin.chars().filter(|c| !(c.is_ascii_alphanumeric())).count() as u32,
+    }
+}
+
+fn composition_to_policy_value(comp: PinComposition) -> PolicyValue {
+    PolicyValue::Text(format!(
+        "{}:{}:{}:{}:{}",
+        comp.length, comp.digits, comp.lowercase, comp.uppercase, comp.symbols
+    ))
+}
+
+fn parse_enrolled_composition(value: &PolicyValue) -> Option<PinComposition> {
+    let PolicyValue::Text(raw) = value else {
+        return None;
+    };
+    let mut parts = raw.split(':');
+    let length = parts.next()?.parse().ok()?;
+    let digits = parts.next()?.parse().ok()?;
+    let lowercase = parts.next()?.parse().ok()?;
+    let uppercase = parts.next()?.parse().ok()?;
+    let symbols = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(PinComposition {
+        length,
+        digits,
+        lowercase,
+        uppercase,
+        symbols,
+    })
+}
+
+/// Persist the last known Hello PIN composition (requires root).
+pub fn record_enrolled_pin_composition(pin: &str) -> Result<(), String> {
+    let policy_cache = PolicyCache::new(POLICY_CACHE, true)
+        .map_err(|_| "Failed to open policy cache.".to_string())?;
+    let comp = pin_composition(pin);
+    policy_cache
+        .set(
+            ENROLLED_PIN_COMPOSITION_KEY,
+            &composition_to_policy_value(comp),
+        )
+        .map_err(|_| "Failed to store enrolled Hello PIN composition.".to_string())
+}
+
+/// Last recorded Hello PIN composition, if any (for compliance checks).
+pub fn enrolled_pin_composition() -> Result<Option<PinComposition>, String> {
+    let policy_cache = PolicyCache::new(POLICY_CACHE, false)
+        .map_err(|_| "Failed to load policy cache.".to_string())?;
+    Ok(policy_cache
+        .get(ENROLLED_PIN_COMPOSITION_KEY)
+        .as_ref()
+        .and_then(parse_enrolled_composition))
+}
+
 /// Returns true if the provided PIN is too simple (constant delta pattern)
 /// and should be disallowed, per Hello PIN rules.
 /// Only numeric PINs are supported (non-digit PINs will return false).
@@ -53,11 +127,13 @@ pub fn meets_intune_pin_policy(pin: &str) -> Result<(), String> {
     let policy_cache = PolicyCache::new(POLICY_CACHE, false)
         .map_err(|_| "Failed to load policy cache.".to_string())?;
 
-    let count_digits = pin.chars().filter(|c| c.is_ascii_digit()).count() as u32;
-    let count_lower = pin.chars().filter(|c| c.is_ascii_lowercase()).count() as u32;
-    let count_upper = pin.chars().filter(|c| c.is_ascii_uppercase()).count() as u32;
-    let count_symbols = pin.chars().filter(|c| !(c.is_ascii_alphanumeric())).count() as u32;
-    let length = pin.chars().count() as u32;
+    let PinComposition {
+        length,
+        digits: count_digits,
+        lowercase: count_lower,
+        uppercase: count_upper,
+        symbols: count_symbols,
+    } = pin_composition(pin);
 
     macro_rules! check_policy {
         ($key:expr, $actual:expr, $label:expr) => {
@@ -108,6 +184,16 @@ mod tests {
         assert!(is_simple_pin("")); // too short
         assert!(is_simple_pin("1")); // too short
         assert!(is_simple_pin("abcx")); // too short
+    }
+
+    #[test]
+    fn pin_composition_counts_mixed_pin() {
+        let comp = pin_composition("Ab1!2345");
+        assert_eq!(comp.length, 8);
+        assert_eq!(comp.digits, 5);
+        assert_eq!(comp.lowercase, 1);
+        assert_eq!(comp.uppercase, 1);
+        assert_eq!(comp.symbols, 1);
     }
 
     #[test]
