@@ -288,6 +288,78 @@ impl<'a> DbTxn<'a> {
     }
 
     /// This handles an error coming back from an sqlite event and dumps more information from it
+    fn disambiguated_group_cache_name(name: &str, gidnumber: u32) -> String {
+        format!("{name}~{gidnumber}")
+    }
+
+    /// Entra group display names are not unique; keep every cached row addressable by
+    /// disambiguating an incumbent that already owns the incoming name/spn.
+    fn disambiguate_group_cache_collisions(
+        &mut self,
+        incoming: &GroupToken,
+    ) -> Result<(), CacheError> {
+        let incoming_uuid = incoming.uuid.as_hyphenated().to_string();
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT uuid, token, gidnumber FROM group_t \
+                 WHERE uuid != :uuid AND (name = :name OR spn = :spn)",
+            )
+            .map_err(|e| self.sqlite_error("prepare group collision select", &e))?;
+
+        let rows = stmt
+            .query_map(
+                named_params! {
+                    ":uuid": &incoming_uuid,
+                    ":name": &incoming.name,
+                    ":spn": &incoming.spn,
+                },
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, u32>(2)?,
+                    ))
+                },
+            )
+            .map_err(|e| self.sqlite_error("query group collision", &e))?;
+
+        for row in rows {
+            let (uuid, token_bytes, gidnumber) =
+                row.map_err(|e| self.sqlite_error("map group collision", &e))?;
+            let mut token: GroupToken = serde_json::from_slice(&token_bytes).map_err(|e| {
+                error!("group collision json error -> {:?}", e);
+                CacheError::SerdeJson
+            })?;
+            let mut name = token.name.clone();
+            let mut spn = token.spn.clone();
+            if name == incoming.name {
+                name = Self::disambiguated_group_cache_name(&name, gidnumber);
+                token.name = name.clone();
+            }
+            if spn == incoming.spn {
+                spn = Self::disambiguated_group_cache_name(&spn, gidnumber);
+                token.spn = spn.clone();
+            }
+            let data = serde_json::to_vec(&token).map_err(|e| {
+                error!("group collision serialize error -> {:?}", e);
+                CacheError::SerdeJson
+            })?;
+            self.conn
+                .execute(
+                    "UPDATE group_t SET name = :name, spn = :spn, token = :token WHERE uuid = :uuid",
+                    named_params! {
+                        ":uuid": &uuid,
+                        ":name": &name,
+                        ":spn": &spn,
+                        ":token": &data,
+                    },
+                )
+                .map_err(|e| self.sqlite_error("update group collision", &e))?;
+        }
+        Ok(())
+    }
+
     fn sqlite_error(&self, msg: &str, error: &rusqlite::Error) -> CacheError {
         error!(
             "sqlite {} error: {:?} db_path={:?}",
@@ -1144,6 +1216,8 @@ impl<'a> CacheTxn for DbTxn<'a> {
     }
 
     fn update_group(&mut self, grp: &GroupToken, expire: u64) -> Result<(), CacheError> {
+        self.disambiguate_group_cache_collisions(grp)?;
+
         let data = serde_json::to_vec(grp).map_err(|e| {
             error!("json error -> {:?}", e);
             CacheError::SerdeJson
@@ -1153,25 +1227,39 @@ impl<'a> CacheTxn for DbTxn<'a> {
             CacheError::Parse
         })?;
 
-        let mut stmt = self.conn
-            .prepare("INSERT OR REPLACE INTO group_t (uuid, name, spn, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry)")
-            .map_err(|e| {
-                self.sqlite_error("prepare", &e)
-            })?;
+        let group_uuid = grp.uuid.as_hyphenated().to_string();
+        let updated = self
+            .conn
+            .execute(
+                "UPDATE group_t SET name=:name, spn=:spn, gidnumber=:gidnumber, token=:token, expiry=:expiry WHERE uuid = :uuid",
+                named_params! {
+                    ":uuid": &group_uuid,
+                    ":name": &grp.name,
+                    ":spn": &grp.spn,
+                    ":gidnumber": &grp.gidnumber,
+                    ":token": &data,
+                    ":expiry": &expire,
+                },
+            )
+            .map_err(|e| self.sqlite_error("update group_t", &e))?;
 
-        // We have to to-str uuid as the sqlite impl makes it a blob which breaks our selects in get.
-        stmt.execute(named_params! {
-            ":uuid": &grp.uuid.as_hyphenated().to_string(),
-            ":name": &grp.name,
-            ":spn": &grp.spn,
-            ":gidnumber": &grp.gidnumber,
-            ":token": &data,
-            ":expiry": &expire,
-        })
-        .map(|r| {
-            trace!("insert -> {:?}", r);
-        })
-        .map_err(|e| self.sqlite_error("execute", &e))
+        if updated == 0 {
+            self.conn
+                .execute(
+                    "INSERT INTO group_t (uuid, name, spn, gidnumber, token, expiry) \
+                     VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry)",
+                    named_params! {
+                        ":uuid": &group_uuid,
+                        ":name": &grp.name,
+                        ":spn": &grp.spn,
+                        ":gidnumber": &grp.gidnumber,
+                        ":token": &data,
+                        ":expiry": &expire,
+                    },
+                )
+                .map_err(|e| self.sqlite_error("insert group_t", &e))?;
+        }
+        Ok(())
     }
 
     fn delete_group(&mut self, g_uuid: Uuid) -> Result<(), CacheError> {
@@ -1884,6 +1972,40 @@ mod tests {
         assert!(r4.unwrap().0.uuid == uuid::uuid!("799123b2-3802-4b19-b0b8-1ffae2aa9a4b"));
         let r5 = dbtxn.get_group(&id_name2).unwrap();
         assert!(r5.unwrap().0.uuid == uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"));
+
+        assert!(dbtxn.commit().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_entra_duplicate_group_display_names() {
+        let db = Db::new("").expect("failed to create.");
+        let mut dbtxn = db.write().await;
+        assert!(dbtxn.migrate().is_ok());
+
+        let shared_name = "AWS-992558786080-AD-AccountAdministrator";
+        let gt1 = GroupToken {
+            name: shared_name.to_string(),
+            spn: "82a29f1e-920d-4d58-89df-dfe1e8dad049".to_string(),
+            gidnumber: 5_581_678,
+            uuid: uuid::uuid!("82a29f1e-920d-4d58-89df-dfe1e8dad049"),
+        };
+        let gt2 = GroupToken {
+            name: shared_name.to_string(),
+            spn: "9fc3e0f0-c503-44b4-9e40-6e3ab2bb8732".to_string(),
+            gidnumber: 5_469_406,
+            uuid: uuid::uuid!("9fc3e0f0-c503-44b4-9e40-6e3ab2bb8732"),
+        };
+
+        dbtxn.update_group(&gt1, 0).unwrap();
+        dbtxn.update_group(&gt2, 0).unwrap();
+
+        let first = dbtxn.get_group(&Id::Gid(5_581_678)).unwrap().unwrap().0;
+        let second = dbtxn.get_group(&Id::Gid(5_469_406)).unwrap().unwrap().0;
+        assert_eq!(first.uuid, gt1.uuid);
+        assert_eq!(second.uuid, gt2.uuid);
+        assert_eq!(second.name, shared_name);
+        assert_eq!(first.name, format!("{shared_name}~{}", gt1.gidnumber),);
+        assert_ne!(first.spn, second.spn);
 
         assert!(dbtxn.commit().is_ok());
     }
