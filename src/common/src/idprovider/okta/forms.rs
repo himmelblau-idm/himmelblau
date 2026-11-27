@@ -1666,7 +1666,13 @@ mod regression_tests {
                 cfg.set("oidc", "app_id", "fixture-client");
                 let cfg = Arc::new(Mutex::new(cfg));
                 let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
-                let standard = OidcProvider::new(&cfg, "oidc", &idmap).unwrap();
+                let standard = OidcProvider::new(
+                    &cfg,
+                    "oidc",
+                    &idmap,
+                    &crate::idprovider::common::TaskChannel::new(),
+                )
+                .unwrap();
                 let mut provider = OktaProvider::new(&cfg, "oidc", &idmap, &standard)
                     .await
                     .unwrap();
@@ -2185,7 +2191,13 @@ mod regression_tests {
         cfg.set("oidc", "app_id", "fixture-client");
         let cfg = Arc::new(Mutex::new(cfg));
         let idmap = Arc::new(Mutex::new(Idmap::new().unwrap()));
-        let standard = OidcProvider::new(&cfg, "oidc", &idmap).unwrap();
+        let standard = OidcProvider::new(
+            &cfg,
+            "oidc",
+            &idmap,
+            &crate::idprovider::common::TaskChannel::new(),
+        )
+        .unwrap();
         let mut provider = OktaProvider::new(&cfg, "oidc", &idmap, &standard)
             .await
             .unwrap();
