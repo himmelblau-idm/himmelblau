@@ -585,39 +585,54 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
     // collection.primary() for every store would re-init the same cache and clear
     // the other principal when KerberosTGTs stores both cloud and AD tickets.
     //
-    // When find() misses: use primary() if it is empty/uninitialized so default
-    // lookups discover the ticket (new_unique() does not set primary). If primary
-    // already holds a different principal, create a unique subsidiary instead.
+    // Do not use collection.find(): libkrimes 0.2.0 propagates principal()
+    // CredentialCacheNotFound from an empty subsidiary and stops scanning, so a
+    // later matching cache would be missed. Skip uninitialized subsidiaries, then
+    // fall back to primary() when empty (so default lookups discover the first
+    // ticket) or new_unique() when primary already holds another principal.
     let res = libkrimes::ccache::resolve(Some(&ccname))
         .map_err(|e| format!("Failed to resolve credential cache {:?}: {:?}", ccname, e))
         .and_then(|cache| match cache {
-            libkrimes::ccache::ResolvedCredentialCache::Collection(collection) => match collection
-                .find(tgt.name())
-            {
-                Ok(cc) => Ok(cc),
-                Err(libkrimes::error::KrbError::CredentialCacheNotFound) => {
-                    match collection.primary() {
-                        Ok(primary) => match primary.principal() {
-                            Err(libkrimes::error::KrbError::CredentialCacheNotFound) => Ok(primary),
-                            Ok(existing) if &existing == tgt.name() => Ok(primary),
-                            Ok(_) => collection.new_unique(),
-                            Err(e) => Err(e),
-                        },
+            libkrimes::ccache::ResolvedCredentialCache::Collection(collection) => {
+                let selected = (|| -> Result<_, libkrimes::error::KrbError> {
+                    let mut matched = None;
+                    for cc in collection.subsidiaries()? {
+                        match cc.principal() {
+                            Ok(existing) if &existing == tgt.name() => {
+                                matched = Some(cc);
+                                break;
+                            }
+                            Ok(_) => {}
+                            Err(libkrimes::error::KrbError::CredentialCacheNotFound) => {}
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    if let Some(cc) = matched {
+                        return Ok(cc);
+                    }
+                    let primary = collection.primary()?;
+                    match primary.principal() {
+                        Err(libkrimes::error::KrbError::CredentialCacheNotFound) => Ok(primary),
+                        Ok(existing) if &existing == tgt.name() => Ok(primary),
+                        Ok(_) => collection.new_unique(),
                         Err(e) => Err(e),
                     }
-                }
-                Err(e) => Err(e),
-            }
-            .map_err(|e| format!("Failed to get subsidiary credential cache: {:?}", e))
-            .and_then(|mut cc| {
-                cc.init(tgt.name(), None)
-                    .map_err(|e| format!("Failed to init credential cache: {:?}", e))
-                    .and_then(|_| {
-                        cc.store(tgt).map_err(|e| {
-                            format!("Failed to store credentials in credential cache: {:?}", e)
-                        })
+                })();
+                selected
+                    .map_err(|e| format!("Failed to get subsidiary credential cache: {:?}", e))
+                    .and_then(|mut cc| {
+                        cc.init(tgt.name(), None)
+                            .map_err(|e| format!("Failed to init credential cache: {:?}", e))
+                            .and_then(|_| {
+                                cc.store(tgt).map_err(|e| {
+                                    format!(
+                                        "Failed to store credentials in credential cache: {:?}",
+                                        e
+                                    )
+                                })
+                            })
                     })
-            }),
+            }
             libkrimes::ccache::ResolvedCredentialCache::Subsidiary(mut cc) => cc
                 .init(tgt.name(), None)
                 .map_err(|e| format!("Failed to init credential cache: {:?}", e))
