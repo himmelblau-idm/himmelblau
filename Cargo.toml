@@ -28,7 +28,7 @@ quinn-0-11-8 = { package = "quinn", path = "src/overrides/quinn/0.11.8" }
 serde_cbor-0-11-2 = { package = "serde_cbor", path = "src/serde_cbor" }
 
 [workspace.package]
-version = "2.3.15"
+version = "2.3.16"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
@@ -64,7 +64,7 @@ jsonwebtoken = "^9.2.0"
 zeroize = "^1.8.2"
 idmap = { path = "src/idmap" }
 identity_dbus_broker = "0.1.4"
-rustls = ">=0.23.19" # CVE-2024-11738
+rustls = "^0.23.46" # CVE-2024-11738, CVE-2026-123613
 console-subscriber = "0.5.0"
 broker-client = { path = "src/broker-client" }
 libkrimes = { version = "0.1.0", features = ["keyring"] }

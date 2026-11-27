@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "aad-tool"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "anyhow",
  "broker-client",
@@ -364,9 +364,9 @@ checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.16.2"
+version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a054912289d18629dc78375ba2c3726a3afe3ff71b4edba9dedfca0e3446d1fc"
+checksum = "ce2b2dcc879c3bae0d371e77c99f2238400ef24ec001394befa67b6e543add9e"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -374,14 +374,15 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.39.0"
+version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fa7e52a4c5c547c741610a2c6f123f3881e409b714cd27e6798ef020c514f0a"
+checksum = "f09fae7be8bb3174e05c6afdb34199e6dc0c7c04ba9fa237b1967adfbde27483"
 dependencies = [
  "cc",
  "cmake",
  "dunce",
  "fs_extra",
+ "pkg-config",
 ]
 
 [[package]]
@@ -600,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "broker"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "dbus",
  "himmelblau_unix_common",
@@ -611,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "broker-client"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "serde_json",
  "zbus",
@@ -1862,7 +1863,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau-fuzz"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "arbitrary",
  "himmelblau_unix_common",
@@ -1874,7 +1875,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_policies"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1896,7 +1897,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_unix_common"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1938,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblaud"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2318,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "idmap"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "bindgen",
  "cc",
@@ -3033,7 +3034,7 @@ checksum = "5e0826a989adedc2a244799e823aece04662b66609d96af8dff7ac6df9a8925d"
 
 [[package]]
 name = "nss_himmelblau"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "himmelblau_unix_common",
  "lazy_static",
@@ -3139,7 +3140,7 @@ dependencies = [
 
 [[package]]
 name = "o365"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "anyhow",
  "reqwest 0.12.24",
@@ -3367,7 +3368,7 @@ dependencies = [
 
 [[package]]
 name = "pam_himmelblau"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "himmelblau_unix_common",
  "libc",
@@ -3766,7 +3767,7 @@ dependencies = [
 
 [[package]]
 name = "qr-greeter"
-version = "2.3.15"
+version = "2.3.16"
 
 [[package]]
 name = "quinn"
@@ -4107,9 +4108,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "aws-lc-rs",
  "once_cell",
@@ -4170,9 +4171,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -4311,7 +4312,7 @@ dependencies = [
 
 [[package]]
 name = "selinux"
-version = "2.3.15"
+version = "2.3.16"
 
 [[package]]
 name = "semver"
@@ -4605,11 +4606,11 @@ dependencies = [
 
 [[package]]
 name = "sshd-config"
-version = "2.3.15"
+version = "2.3.16"
 
 [[package]]
 name = "sso"
-version = "2.3.15"
+version = "2.3.16"
 dependencies = [
  "broker-client",
  "clap",
