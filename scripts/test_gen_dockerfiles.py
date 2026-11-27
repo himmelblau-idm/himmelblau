@@ -1,4 +1,5 @@
 import importlib.util
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -7,6 +8,48 @@ MODULE_PATH = Path(__file__).with_name("gen_dockerfiles.py")
 SPEC = importlib.util.spec_from_file_location("gen_dockerfiles", MODULE_PATH)
 gen_dockerfiles = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(gen_dockerfiles)
+
+
+class DebianPamProfileTests(unittest.TestCase):
+    def test_profiles_differ_only_in_debian_auth_workaround(self):
+        root = MODULE_PATH.parent.parent
+        ubuntu = (root / "platform/ubuntu/pam-config").read_text()
+        debian = (root / "platform/debian/pam-config").read_text()
+        auth = "pam_himmelblau.so ignore_unknown_user set_authtok"
+        self.assertNotIn("mfa_poll_prompt", ubuntu)
+        self.assertEqual(debian.count("mfa_poll_prompt"), 1)
+        self.assertEqual(debian, ubuntu.replace(auth + "\n", auth + " mfa_poll_prompt\n", 1))
+
+    def test_generated_packages_select_only_debian_profile(self):
+        root = MODULE_PATH.parent.parent
+        metadata = tomllib.loads((root / "src/pam/Cargo.toml").read_text())["package"]["metadata"]["deb"]
+        destination = "usr/share/pam-configs/himmelblau"
+        default_assets = {asset[1]: asset for asset in metadata["assets"]}
+        self.assertEqual(default_assets[destination],
+                         ["../../platform/ubuntu/pam-config", destination, "644"])
+        for distro, config in gen_dockerfiles.DISTS.items():
+            if config["family"] != "deb" or distro == "test":
+                continue
+            for arch in gen_dockerfiles.ARCH_MAP:
+                with self.subTest(distro=distro, arch=arch):
+                    rendered = gen_dockerfiles.render(distro, config, False, arch=arch)
+                    commands = [line for line in rendered.splitlines() if "cargo deb " in line]
+                    self.assertTrue(commands)
+                    pam = next(line for line in commands if "-p pam_himmelblau" in line)
+                    expected = distro.startswith("debian")
+                    copy_profile = "cp platform/debian/pam-config platform/ubuntu/pam-config"
+                    self.assertEqual(copy_profile in pam, expected)
+                    self.assertNotIn("--variant", pam)
+                    if expected:
+                        self.assertIn("trap 'mv platform/ubuntu/pam-config.original", pam)
+                    for command in commands:
+                        if command != pam:
+                            self.assertNotIn(copy_profile, command)
+
+
+    def test_unknown_deb_derivative_does_not_inherit_debian_workaround(self):
+        command = gen_dockerfiles.build_deb_final_cmd([], "derivative1")
+        self.assertNotIn("cp platform/debian/pam-config", command)
 
 
 class Arm64RpmDockerfileTests(unittest.TestCase):

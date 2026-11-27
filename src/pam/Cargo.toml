@@ -30,7 +30,7 @@ name = "pam-himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   ["target/release/libpam_himmelblau.so", "usr/lib/security/pam_himmelblau.so", "755"],
-  ["../../platform/debian/pam-config", "usr/share/pam-configs/himmelblau", "644"],
+  ["../../platform/ubuntu/pam-config", "usr/share/pam-configs/himmelblau", "644"],
   ["../../platform/debian/pam-config-unseal", "usr/share/pam-configs/himmelblau-unseal", "644"],
   ["../../man/man8/pam_himmelblau.8", "usr/share/man/man8/", "644"],
 ]
