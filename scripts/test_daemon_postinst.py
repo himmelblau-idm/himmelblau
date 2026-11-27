@@ -1,6 +1,7 @@
 """Run the daemon post-install script with isolated systemctl helpers."""
 
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -18,7 +19,11 @@ class DaemonPostinstTests(unittest.TestCase):
         self.bin.mkdir()
         self.log = self.root / "calls"
 
-        self.helper("grep", "#!/bin/sh\nexec /usr/bin/grep \"$@\"\n")
+        for tool in ("awk", "grep"):
+            self.helper(tool, f'#!/bin/sh\nexec "{shutil.which(tool)}" "$@"\n')
+        # Host unit files under /etc/systemd/system are visible to the script;
+        # never match a known hash so the test cannot remove them.
+        self.helper("md5sum", "#!/bin/sh\necho 0\n")
         self.helper("systemd-detect-virt", "#!/bin/sh\nexit 1\n")
         self.helper("systemd-tmpfiles", "#!/bin/sh\nexit 0\n")
         self.helper(
