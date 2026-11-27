@@ -383,6 +383,9 @@ msgid_plural "You have {attempts} attempts left."
 msgstr[0] ""
 msgstr[1] ""
 
+msgid "Your account has reached the Microsoft Entra device registration limit. Contact your administrator."
+msgstr ""
+
 msgid "Your session has expired. Please sign in again."
 msgstr ""
 
